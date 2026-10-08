@@ -79,6 +79,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         }
         if (u.protocol !== 'https:') throw new KernelError('policy_denied', `G-EGRESS: only https is allowed (${url})`);
         if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${url})`);
+        if (u.username !== '' || u.password !== '') throw new KernelError('policy_denied', 'G-EGRESS: credentials in URLs are not allowed');
         checkHost(u.hostname);
         let res;
         let body;

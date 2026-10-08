@@ -148,8 +148,16 @@ describe('capability broker', () => {
       const f = fakeFetch({ [`${H}/x`]: { body: 'ok' } });
       const ctx = issue(fetcher, 'P0', { fetch: f });
       await expect(ctx.http!.getText('https://BOARDS-API.greenhouse.io/x')).resolves.toMatchObject({ status: 200 });
-      await expect(ctx.http!.getText('https://evil.example@boards-api.greenhouse.io/x')).resolves.toBeDefined();
       await expect(ctx.http!.getText('https://boards-api.greenhouse.io@evil.example/x')).rejects.toThrow(/G-EGRESS/);
+    });
+
+    it('refuses credentials in URLs before any fetch', async () => {
+      const f = fakeFetch({});
+      const ctx = issue(fetcher, 'P0', { fetch: f });
+      for (const url of ['https://evil.example@boards-api.greenhouse.io/x', 'https://u:p@boards-api.greenhouse.io/x', 'https://:p@boards-api.greenhouse.io/x']) {
+        await expect(ctx.http!.getText(url)).rejects.toMatchObject({ code: 'policy_denied', message: 'G-EGRESS: credentials in URLs are not allowed' });
+      }
+      expect(f.calls).toHaveLength(0);
     });
 
     it('maps an external abort to unknown and a body read failure to network', async () => {
