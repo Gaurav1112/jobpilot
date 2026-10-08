@@ -316,6 +316,14 @@ export class Store {
     return rows.sort((a, b) => (a.step_key < b.step_key ? -1 : a.step_key > b.step_key ? 1 : 0));
   }
 
+  /** The policy hash of the run that last quarantined this step key, from its `step_quarantined` event. */
+  quarantinePolicyHash(stepKey: string): string | undefined {
+    const row = this.db
+      .prepare(`SELECT policy_hash FROM events WHERE kind = 'step_quarantined' AND json_extract(data, '$.stepKey') = ? ORDER BY seq DESC LIMIT 1`)
+      .get(stepKey) as { policy_hash: string } | undefined;
+    return row?.policy_hash;
+  }
+
   /**
    * Forgets a quarantined step so the next run executes it again, and puts every entity
    * a quarantined outcome moved under that step key back where it was (whatever the event

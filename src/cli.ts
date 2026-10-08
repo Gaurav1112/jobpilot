@@ -88,7 +88,9 @@ program
     const k = demoKernel({ dbPath: o.db, clock: systemClock });
     try {
       const now = systemClock.now();
-      const r = k.store.releaseQuarantine(stepKey, `release-${now.slice(0, 10)}`, now, k.policyHash);
+      // Audited under the policy that quarantined the step; the current one only if that run is unknown.
+      const policyHash = k.store.quarantinePolicyHash(stepKey) ?? k.policyHash;
+      const r = k.store.releaseQuarantine(stepKey, `release-${now.slice(0, 10)}`, now, policyHash);
       if (!r.released) {
         console.error(`nothing is quarantined under ${stepKey}`);
         process.exitCode = 1;

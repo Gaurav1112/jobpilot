@@ -45,6 +45,21 @@ describe('jobpilot quarantined / release', () => {
     store.close();
   });
 
+  it('records the release under the policy hash of the run that quarantined the step', async () => {
+    const k = demoKernel({ dbPath: db, userPolicy: { maxUsdPerRun: 1 }, llm: fakeLlm(() => JSON.stringify({ score: 99, reason: 'too keen' })) });
+    await k.supervisor.start('run-1', [{ count: 1, prefix: 'demo' }]);
+    const [key] = k.store.quarantinedSteps().map((s) => s.step_key);
+    const runPolicy = k.policyHash;
+    k.store.close();
+    expect(runPolicy).not.toBe(demoKernel().policyHash);
+    expect(cli('release', key!, '--db', db).status).toBe(0);
+    const store = Store.open(db);
+    expect(store.quarantinePolicyHash(key!)).toBe(runPolicy);
+    expect(store.quarantinePolicyHash('no-such-key')).toBeUndefined();
+    expect(store.events().find((e) => e.kind === 'quarantine_released')?.policy_hash).toBe(runPolicy);
+    store.close();
+  });
+
   it('says so when nothing is quarantined', () => {
     execFileSync(process.execPath, ['--import', 'tsx', join(root, 'src/bin.ts'), 'demo', '--db', db, '--run', 'r1', '--count', '1'], { cwd: root });
     const listed = cli('quarantined', '--db', db);
