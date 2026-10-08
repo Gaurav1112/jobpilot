@@ -136,9 +136,13 @@ export function issueContext(a: IssueArgs): AgentContext {
           // Every call reserves a full usdPerCall (or the largest call this agent has already
           // been charged in the run, if that was more) before it is made, so the caps are hard:
           // a call that costs more than usdPerCall is latched above, everything else fits.
-          // Bounds: (a) a run can exceed policy.maxUsdPerRun by at most (actual - usdPerCall) once per LLM
-          // agent per run, because a call's price is only known after it returns; (b) spend of a call in
-          // flight when the process itself dies is not recorded (the step re-runs on resume).
+          // Bounds, stated exactly: (a) a call that returns in time and costs more than usdPerCall is charged
+          // in full and stops this agent for the rest of the run, so a run can exceed policy.maxUsdPerRun by at
+          // most (actual - usdPerCall) once per LLM agent; (b) a call still in flight when the step times out
+          // is recorded at its reservation (max of usdPerCall and the largest call seen); what the provider
+          // actually bills for it is not visible to the kernel and is bounded only per call by the provider's
+          // pricing for maxTokens; (c) spend of a call in flight when the process itself dies is not recorded
+          // and the step re-runs on resume.
           const reserve = Math.max(a.contract.budget.usdPerCall, prior.maxCallUsd ?? 0);
           if (exceeds(usd + reserve, a.contract.budget.usdPerRun)) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
