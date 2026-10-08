@@ -1,9 +1,20 @@
 import { describe, expect, it } from 'vitest';
+import { defineAgent } from '../../src/kernel/agent.js';
+import { fixedClock } from '../../src/kernel/clock.js';
+import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { fakeLlm } from '../../src/kernel/fakes.js';
+import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
+import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
+import type { LlmProvider } from '../../src/kernel/providers.js';
+import { Registry } from '../../src/kernel/registry.js';
 import { verifyChain } from '../../src/kernel/store/audit.js';
 import { Store } from '../../src/kernel/store/store.js';
+import { Supervisor, type SupervisorDeps } from '../../src/kernel/supervisor.js';
+import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
+import { demoScorer, demoScorerContract, demoSource } from '../../src/demo/agents.js';
 import { demoKernel } from '../../src/demo/kernel.js';
+import { demoLlm, demoMachine, demoPipeline } from '../../src/demo/pipeline.js';
 
 const seed = { count: 5, prefix: 'demo' };
 const invocations = () => {
@@ -98,7 +109,110 @@ describe('supervisor end to end', () => {
 
   it('refuses to resume a run under a different policy', async () => {
     const store = Store.open(':memory:');
-    await demoKernel({ store }).supervisor.start('run-1', [seed]);
+    const crashing = demoKernel({ store, afterStep: (n) => { if (n === 2) throw new Error('simulated crash'); } });
+    await expect(crashing.supervisor.start('run-1', [seed])).rejects.toThrow('simulated crash');
     await expect(demoKernel({ store, userPolicy: { maxUsdPerRun: 1 } }).supervisor.resume('run-1')).rejects.toThrow(/different policy/);
   });
+
+  it('survives the same entity arriving twice: the duplicate is audited, the run completes', async () => {
+    const k = demoKernel();
+    const r = await k.supervisor.start('run-1', [{ count: 2, prefix: 'demo' }, { count: 3, prefix: 'demo' }]);
+    expect(r.queue).toMatchObject({ pending: 0, failed: 0 });
+    const rejected = k.store.events('run-1').filter((e) => e.kind === 'transition_rejected').map((e) => JSON.parse(e.data).entity as string);
+    expect(rejected).toContain('demo-001');
+    expect(rejected).toContain('demo-002');
+    expect(k.store.entityState('demo-003')).toBe('SCORED');
+  });
+
+  it('keeps open obligations across a resume', async () => {
+    const store = Store.open(':memory:');
+    const crashing = handBuilt({ store, afterStep: (n) => { if (n === 3) throw new Error('simulated crash'); } });
+    await expect(crashing.start('run-1', [seed])).rejects.toThrow('simulated crash');
+    const r = await handBuilt({ store }).resume('run-1');
+    expect(r.openObligations).toHaveLength(5);
+    for (const o of r.openObligations) {
+      expect(o.ids).toEqual(['demo.scored']);
+      expect(store.getEnvelope(o.envelopeId).type).toBe('DemoScore@1');
+    }
+    expect([...r.openObligations].map((o) => o.envelopeId)).toEqual([...r.openObligations].map((o) => o.envelopeId).sort());
+  });
+
+  it('does not carry one run\'s obligations or replay count into the next run on the same instance', async () => {
+    const sup = handBuilt({ store: Store.open(':memory:') });
+    const r1 = await sup.start('run-1', [{ count: 2, prefix: 'a' }]);
+    expect(r1.openObligations).toHaveLength(2);
+    expect(r1.replayed).toBe(0);
+    const r2 = await sup.start('run-2', [{ count: 2, prefix: 'a' }]);
+    expect(r2.replayed).toBe(3);
+    expect(r2.openObligations).toEqual(r1.openObligations);
+    const r3 = await sup.start('run-3', [{ count: 1, prefix: 'b' }]);
+    expect(r3.replayed).toBe(0);
+    expect(r3.openObligations).toHaveLength(1);
+    expect(r1.openObligations.map((o) => o.envelopeId)).not.toContain(r3.openObligations[0]!.envelopeId);
+  });
+
+  it('survives a crash right after the source step, before its fan-out is routed', async () => {
+    const store = Store.open(':memory:');
+    const inv = invocations();
+    const crashing = demoKernel({ store, onInvoke: inv.onInvoke, afterStep: (n) => { if (n === 1) throw new Error('simulated crash'); } });
+    await expect(crashing.supervisor.start('run-1', [seed])).rejects.toThrow('simulated crash');
+    const r = await demoKernel({ store, onInvoke: inv.onInvoke }).supervisor.resume('run-1');
+    expect(r.queue.done).toBe(6);
+    expect(new Set(inv.calls).size).toBe(inv.calls.length);
+    expect(r.replayed).toBe(1);
+  });
+
+  it('guards the run lifecycle', async () => {
+    const k = demoKernel();
+    await k.supervisor.start('run-1', [seed]);
+    await expect(k.supervisor.start('run-1', [seed])).rejects.toThrow(/already exists/);
+    await expect(k.supervisor.resume('run-1')).rejects.toThrow(/already completed/);
+    await expect(k.supervisor.start('run-x', [{ count: 0, prefix: 'demo' }])).rejects.toThrow(/not a valid/);
+    expect(k.store.getRun('run-x')).toBeUndefined();
+  });
+
+  it('opens the team breaker before the agent breaker when the team is stricter', async () => {
+    const down = { host: 'api.anthropic.com', async complete() { throw new KernelError('overloaded', '529'); } };
+    const strict: Pipeline = { ...demoPipeline, teams: demoPipeline.teams.map((t) => (t.id === 'evaluation' ? { ...t, breaker: { consecutiveFailures: 2 } } : t)) };
+    const store = Store.open(':memory:');
+    const r = await handBuilt({ store, llm: down, pipeline: strict, scorer: demoScorer }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ done: 1, failed: 2, skipped: 3 });
+    const opened = store.events('run-1').filter((e) => e.kind === 'breaker_open').map((e) => JSON.parse(e.data).key as string);
+    expect(opened).toContain('team:evaluation');
+  });
 });
+
+/** The demoKernel wiring, by hand, with a scorer that by default leaves `demo.scored` open. */
+function handBuilt(o: {
+  store: Store;
+  llm?: LlmProvider;
+  pipeline?: Pipeline;
+  scorer?: typeof demoScorer;
+  afterStep?: SupervisorDeps['afterStep'];
+}): Supervisor {
+  const lazyScorer = defineAgent(defineContract({ ...demoScorerContract, obligations: { adds: [], discharges: [] } }), demoScorer.run);
+  const registry = new Registry();
+  registry.register(demoSource);
+  registry.register(o.scorer ?? lazyScorer);
+  const guardrails = builtinGuardrails();
+  const compiled = compileWiring(registry, o.pipeline ?? demoPipeline, guardrails);
+  const policy = mergePolicy(PRODUCT_POLICY_V1, {});
+  return new Supervisor({
+    store: o.store,
+    registry,
+    compiled,
+    guardrails,
+    policy,
+    policyHash: policyHash(policy),
+    providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: o.llm ?? demoLlm() },
+    clock: fixedClock('2026-10-08T07:00:00.000Z'),
+    sleep: async () => {},
+    tracker: {
+      kind: 'demo-item',
+      machine: demoMachine,
+      keyOf: (env) => (env.type === 'DemoItem@1' || env.type === 'DemoScore@1' ? (env.payload as { id: string }).id : null),
+      eventFor: (agentId, outcome) => (outcome === 'quarantined' ? 'trip' : agentId === 'demo-source' ? 'discovered' : agentId === 'demo-scorer' ? 'scored' : null),
+    },
+    ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+  });
+}

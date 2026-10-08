@@ -3,13 +3,14 @@ import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
 import { contractHash, contractShape } from './contract.js';
 import { type Envelope, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
+import { InvalidTransition } from './errors.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import type { Policy } from './policy.js';
 import type { Providers } from './providers.js';
 import type { Registry } from './registry.js';
 import type { StateMachine } from './state-machine.js';
-import type { Store } from './store/store.js';
+import type { EventRow, Store } from './store/store.js';
 import { type CompiledPipeline, SUPERVISOR_ID } from './wiring.js';
 
 /** Maps envelopes and outcomes onto an entity state machine (e.g. one row per job). */
@@ -51,9 +52,12 @@ export interface RunReport {
  * total order, state from the tracker's machine.
  */
 export class Supervisor {
-  private readonly breakers = new Breakers();
-  private replayed = 0;
-  private readonly leaves: { envelopeId: string; ids: string[] }[] = [];
+  /**
+   * Breakers are per run and in memory only: their counts restart after a
+   * resume, so a resumed run re-learns failures. Everything else a report
+   * needs is read back from the store.
+   */
+  private readonly breakersByRun = new Map<string, Breakers>();
 
   constructor(private readonly d: SupervisorDeps) {}
 
@@ -72,6 +76,12 @@ export class Supervisor {
     };
   }
 
+  private breakers(runId: string): Breakers {
+    let b = this.breakersByRun.get(runId);
+    if (!b) this.breakersByRun.set(runId, (b = new Breakers()));
+    return b;
+  }
+
   private event(runId: string, kind: string, data: unknown): void {
     this.d.store.appendEvent(runId, this.d.clock.now(), kind, data, this.d.policyHash);
   }
@@ -79,6 +89,7 @@ export class Supervisor {
   /** Validates seeds, records the run and drains its queue. */
   async start(runId: string, seeds: readonly unknown[]): Promise<RunReport> {
     const { store, compiled, policyHash, clock } = this.d;
+    if (store.getRun(runId)) throw new Error(`run ${runId} already exists; resume it instead`);
     const seedType = compiled.pipeline.seed.type;
     const envs: Envelope[] = seeds.map((payload) => {
       const r = seedType.schema.safeParse(payload);
@@ -105,8 +116,8 @@ export class Supervisor {
         store.putSeed(e.stepKey, e, compiled.pipeline.version, compiled.seedHash);
         this.route(runId, e);
       }
+      this.event(runId, 'run_started', { pipeline: compiled.pipeline.id, seeds: envs.length });
     });
-    this.event(runId, 'run_started', { pipeline: compiled.pipeline.id, seeds: envs.length });
     return this.drain(runId);
   }
 
@@ -114,6 +125,7 @@ export class Supervisor {
   async resume(runId: string): Promise<RunReport> {
     const run = this.d.store.getRun(runId);
     if (!run) throw new Error(`unknown run ${runId}`);
+    if (run.status === 'completed') throw new Error(`run ${runId} is already completed`);
     if (run.policy_hash !== this.d.policyHash) throw new Error(`run ${runId} used a different policy; start a new run instead`);
     this.event(runId, 'run_resumed', {});
     return this.drain(runId);
@@ -124,23 +136,25 @@ export class Supervisor {
     for (const to of consumers) this.d.store.enqueue(runId, this.d.compiled.stage.get(to) ?? 0, to, env.envelopeId);
     if (consumers.length === 0) {
       const ids = openObligations(env);
-      if (ids.length > 0) this.leaves.push({ envelopeId: env.envelopeId, ids });
+      if (ids.length > 0) this.event(runId, 'obligation_open', { envelopeId: env.envelopeId, ids });
     }
   }
 
   private failure(key: string, threshold: number, runId: string): void {
-    if (this.breakers.failure(key, threshold)) this.event(runId, 'breaker_open', { key });
+    if (this.breakers(runId).failure(key, threshold)) this.event(runId, 'breaker_open', { key });
   }
 
   private async drain(runId: string): Promise<RunReport> {
-    const { store, registry, compiled, tracker } = this.d;
+    const { store, registry, compiled } = this.d;
+    const breakers = this.breakers(runId);
     let count = 0;
     for (let item = store.nextQueued(runId); item; item = store.nextQueued(runId)) {
       const agent = registry.get(item.agent_id);
       const team = compiled.teamOf.get(item.agent_id);
       const agentKey = `agent:${item.agent_id}`;
-      const teamKey = `team:${team?.id ?? '?'}`;
-      if (this.breakers.isOpen(agentKey) || this.breakers.isOpen(teamKey)) {
+      // An agent without a team has no team breaker.
+      const teamKey = team ? `team:${team.id}` : undefined;
+      if (breakers.isOpen(agentKey) || (teamKey !== undefined && breakers.isOpen(teamKey))) {
         store.markQueue(runId, item.agent_id, item.envelope_id, 'skipped');
         this.event(runId, 'step_skipped', { agent: item.agent_id, reason: 'breaker_open' });
         continue;
@@ -152,43 +166,63 @@ export class Supervisor {
 
       store.tx(() => {
         if (outcome.kind === 'done') {
-          if (outcome.replayed) this.replayed += 1;
           for (const out of outcome.outputs) {
             this.route(runId, out);
-            this.track(out, outcome.stepKey, item.agent_id, 'done');
+            this.track(runId, out, outcome.stepKey, item.agent_id, 'done');
           }
         } else if (outcome.kind === 'quarantined') {
-          this.track(input, outcome.stepKey, item.agent_id, 'quarantined');
+          this.track(runId, input, outcome.stepKey, item.agent_id, 'quarantined');
         }
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 
       if (outcome.kind === 'failed') {
         this.failure(agentKey, agent.contract.breaker.consecutiveFailures, runId);
-        if (team) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
+        if (team && teamKey !== undefined) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
       } else if (outcome.kind === 'done') {
-        this.breakers.success(agentKey);
-        this.breakers.success(teamKey);
+        breakers.success(agentKey);
+        if (teamKey !== undefined) breakers.success(teamKey);
       }
     }
     store.finishRun(runId, this.d.clock.now());
+    const events = store.events(runId);
     const report: RunReport = {
       runId,
       status: 'completed',
       queue: store.queueCounts(runId),
-      replayed: this.replayed,
-      openObligations: [...this.leaves].sort((a, b) => (a.envelopeId < b.envelopeId ? -1 : 1)),
+      replayed: events.filter((e) => e.kind === 'step_replayed').length,
+      openObligations: openObligationsOf(events),
       costUsd: store.runCost(runId),
     };
     this.event(runId, 'run_finished', report);
     return report;
   }
 
-  private track(env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
+  private track(runId: string, env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
     const t = this.d.tracker;
     if (!t) return;
     const key = t.keyOf(env);
     const ev = t.eventFor(agentId, outcome);
-    if (key !== null && ev !== null) this.d.store.applyTransition(key, t.kind, stepKey, ev, t.machine);
+    if (key === null || ev === null) return;
+    try {
+      this.d.store.applyTransition(key, t.kind, stepKey, ev, t.machine);
+    } catch (err) {
+      // The same entity can legitimately arrive twice (two sources list the same job): it keeps its state and the duplicate is audited.
+      if (!(err instanceof InvalidTransition)) throw err;
+      this.event(runId, 'transition_rejected', { entity: key, event: ev, agent: agentId, stepKey });
+    }
   }
+}
+
+/** The run's `obligation_open` events, one per envelope, in envelope order. */
+function openObligationsOf(events: readonly EventRow[]): RunReport['openObligations'] {
+  const byEnvelope = new Map<string, readonly string[]>();
+  for (const e of events) {
+    if (e.kind !== 'obligation_open') continue;
+    const d = JSON.parse(e.data) as { envelopeId: string; ids: string[] };
+    byEnvelope.set(d.envelopeId, d.ids);
+  }
+  return [...byEnvelope]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([envelopeId, ids]) => ({ envelopeId, ids }));
 }
