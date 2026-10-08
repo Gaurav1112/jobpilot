@@ -10,11 +10,12 @@ import type { LlmProvider } from '../../src/kernel/providers.js';
 import { Registry } from '../../src/kernel/registry.js';
 import { verifyChain } from '../../src/kernel/store/audit.js';
 import { Store } from '../../src/kernel/store/store.js';
-import { Supervisor, type SupervisorDeps } from '../../src/kernel/supervisor.js';
+import { StateMachine } from '../../src/kernel/state-machine.js';
+import { Supervisor, type SupervisorDeps, type Tracker } from '../../src/kernel/supervisor.js';
 import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
 import { demoScorer, demoScorerContract, demoSource, demoSourceContract } from '../../src/demo/agents.js';
 import { demoKernel } from '../../src/demo/kernel.js';
-import { demoLlm, demoMachine, demoPipeline } from '../../src/demo/pipeline.js';
+import { demoLlm, demoPipeline, demoTracker } from '../../src/demo/pipeline.js';
 
 const seed = { count: 5, prefix: 'demo' };
 const invocations = () => {
@@ -269,6 +270,41 @@ describe('supervisor end to end', () => {
     expect(k.store.getStep(done)?.status).toBe('done');
     expect(k.store.events()).toHaveLength(before);
   });
+
+  /** A second view: one entity per score, whose event depends on the envelope's payload. */
+  const scoreTracker: Tracker = {
+    kind: 'demo-score',
+    machine: new StateMachine({ id: 'demo-score', initial: 'NEW', terminal: ['HIGH', 'LOW'], transitions: [{ from: 'NEW', on: 'high', to: 'HIGH' }, { from: 'NEW', on: 'low', to: 'LOW' }] }),
+    keyOf: (env) => (env.type === 'DemoScore@1' ? `score-${(env.payload as { id: string }).id}` : null),
+    eventFor: (_agent, outcome, env) => (outcome === 'done' ? ((env.payload as { score: number }).score >= 5 ? 'high' : 'low') : null),
+  };
+
+  it('applies every tracker independently, and passes the envelope to eventFor', async () => {
+    const store = Store.open(':memory:');
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, scoreTracker] }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ done: 6, failed: 0 });
+    const scores = store.envelopesOfStep(JSON.parse(store.events('run-1').filter((e) => e.kind === 'step_done').at(-1)!.data).stepKey);
+    const s = scores[0]!.payload as { id: string; score: number };
+    expect(store.entityState(s.id)).toBe('SCORED');
+    expect(store.entityState(`score-${s.id}`)).toBe(s.score >= 5 ? 'HIGH' : 'LOW');
+    for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) {
+      expect(store.entityState(id)).toBe('SCORED');
+      expect(['HIGH', 'LOW']).toContain(store.entityState(`score-${id}`));
+    }
+  });
+
+  it('a throwing tracker is audited and does not wedge the run or the other trackers', async () => {
+    const store = Store.open(':memory:');
+    const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: () => { throw new Error('keyOf exploded'); } };
+    const badEvent: Tracker = { ...scoreTracker, kind: 'bad-event', eventFor: () => { throw new Error('eventFor exploded'); } };
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [broken, demoTracker, badEvent] }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ pending: 0, done: 6, failed: 0 });
+    const errors = store.events('run-1').filter((e) => e.kind === 'tracker_error').map((e) => JSON.parse(e.data) as { tracker: string; agent: string; stepKey: string; message: string });
+    expect(errors.filter((e) => e.tracker === 'broken')).toHaveLength(10);
+    expect(errors.filter((e) => e.tracker === 'bad-event')).toHaveLength(5);
+    expect(errors[0]).toMatchObject({ tracker: 'broken', agent: 'demo-source', message: 'keyOf exploded', stepKey: expect.any(String) });
+    expect(store.entityState('demo-003')).toBe('SCORED');
+  });
 });
 
 /** The demoKernel wiring, by hand, with a scorer that by default leaves `demo.scored` open. */
@@ -279,6 +315,7 @@ function handBuilt(o: {
   scorer?: typeof demoScorer;
   source?: typeof demoSource;
   onInvoke?: SupervisorDeps['onInvoke'];
+  trackers?: readonly Tracker[];
   afterStep?: SupervisorDeps['afterStep'];
 }): Supervisor {
   const lazyScorer = defineAgent(defineContract({ ...demoScorerContract, obligations: { adds: [], discharges: [] } }), demoScorer.run);
@@ -298,12 +335,7 @@ function handBuilt(o: {
     providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: o.llm ?? demoLlm() },
     clock: fixedClock('2026-10-08T07:00:00.000Z'),
     sleep: async () => {},
-    tracker: {
-      kind: 'demo-item',
-      machine: demoMachine,
-      keyOf: (env) => (env.type === 'DemoItem@1' || env.type === 'DemoScore@1' ? (env.payload as { id: string }).id : null),
-      eventFor: (agentId, outcome) => (outcome === 'quarantined' ? 'trip' : agentId === 'demo-source' ? 'discovered' : agentId === 'demo-scorer' ? 'scored' : null),
-    },
+    trackers: o.trackers ?? [demoTracker],
     ...(o.onInvoke ? { onInvoke: o.onInvoke } : {}),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });

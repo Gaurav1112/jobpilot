@@ -1,5 +1,6 @@
 import { fakeLlm } from '../kernel/fakes.js';
 import { StateMachine } from '../kernel/state-machine.js';
+import type { Tracker } from '../kernel/supervisor.js';
 import type { Pipeline } from '../kernel/wiring.js';
 import { demoScorer, demoSource } from './agents.js';
 import { countPositive, DemoRequest } from './types.js';
@@ -31,6 +32,14 @@ export const demoMachine = new StateMachine<'NEW' | 'DISCOVERED' | 'SCORED' | 'Q
     { from: '*', on: 'trip', to: 'QUARANTINED' },
   ],
 });
+
+/** One entity per demo item, keyed by its id. */
+export const demoTracker: Tracker = {
+  kind: 'demo-item',
+  machine: demoMachine,
+  keyOf: (env) => (env.type === 'DemoItem@1' || env.type === 'DemoScore@1' ? (env.payload as { id: string }).id : null),
+  eventFor: (agentId, outcome) => (outcome === 'quarantined' ? 'trip' : agentId === 'demo-source' ? 'discovered' : agentId === 'demo-scorer' ? 'scored' : null),
+};
 
 /** Deterministic stand-in for the model: the score is the prompt length mod 11. */
 export function demoLlm(usdPerCall = 0.001) {

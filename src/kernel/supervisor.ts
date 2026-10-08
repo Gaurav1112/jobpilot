@@ -18,7 +18,8 @@ export interface Tracker {
   readonly kind: string;
   readonly machine: StateMachine;
   keyOf(env: Envelope): string | null;
-  eventFor(agentId: string, outcome: 'done' | 'quarantined'): string | null;
+  /** `env` is the tracked envelope: an output when the step is done, its input when it is quarantined. */
+  eventFor(agentId: string, outcome: 'done' | 'quarantined', env: Envelope): string | null;
 }
 
 export interface SupervisorDeps {
@@ -31,7 +32,8 @@ export interface SupervisorDeps {
   readonly providers: Providers;
   readonly clock: Clock;
   readonly sleep?: (ms: number) => Promise<void>;
-  readonly tracker?: Tracker;
+  /** Applied independently, in array order. */
+  readonly trackers?: readonly Tracker[];
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
   /** Test hook: runs after a step's own transaction, before routing. Throwing here simulates a crash. */
   readonly afterStep?: (count: number) => void;
@@ -215,10 +217,20 @@ export class Supervisor {
   }
 
   private track(runId: string, env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
-    const t = this.d.tracker;
-    if (!t) return;
-    const key = t.keyOf(env);
-    const ev = t.eventFor(agentId, outcome);
+    for (const t of this.d.trackers ?? []) this.trackOne(t, runId, env, stepKey, agentId, outcome);
+  }
+
+  private trackOne(t: Tracker, runId: string, env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
+    // Tracker callbacks are pluggable code: one that throws is audited, never allowed to wedge the run.
+    let key: string | null;
+    let ev: string | null = null;
+    try {
+      key = t.keyOf(env);
+      if (key !== null) ev = t.eventFor(agentId, outcome, env);
+    } catch (err) {
+      this.event(runId, 'tracker_error', { tracker: t.kind, agent: agentId, stepKey, message: messageOf(err) });
+      return;
+    }
     if (key === null || ev === null) return;
     const { store } = this.d;
     if (store.hasTransition(key, stepKey, ev)) return; // a replayed step never re-applies
@@ -237,6 +249,14 @@ export class Supervisor {
       return;
     }
     store.applyTransition(key, t.kind, stepKey, ev, t.machine);
+  }
+}
+
+function messageOf(err: unknown): string {
+  try {
+    return err instanceof Error ? err.message : String(err);
+  } catch {
+    return 'unprintable error';
   }
 }
 
