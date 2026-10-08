@@ -1,0 +1,109 @@
+{
+  "hash": "d6126ca5baa3de827b59d5590254b1e588a2f551c10f38476bf12378380bef4f",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 3
+    },
+    "budget": {
+      "usdPerCall": 0.01,
+      "usdPerRun": 0.5
+    },
+    "capabilities": {
+      "llm": {
+        "maxTokens": 200,
+        "model": "claude-sonnet-5-5"
+      }
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "type": "object"
+      },
+      "type": "DemoItem@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "api.anthropic.com"
+    ],
+    "guarantees": [
+      "score.in-range"
+    ],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "demo-scorer",
+    "kind": "llm",
+    "obligations": {
+      "adds": [],
+      "discharges": [
+        "demo.scored"
+      ]
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "score": {
+            "maximum": 9007199254740991,
+            "minimum": -9007199254740991,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "score",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "type": "DemoScore@1"
+    },
+    "redactor": false,
+    "requires": [
+      "item.id-nonempty"
+    ],
+    "retry": {
+      "backoffMs": [
+        100,
+        400
+      ],
+      "max": 2,
+      "on": [
+        "overloaded",
+        "rate_limit",
+        "timeout"
+      ]
+    },
+    "team": "evaluation",
+    "timeoutMs": 5000,
+    "version": "1.0.0"
+  }
+}

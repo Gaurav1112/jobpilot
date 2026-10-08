@@ -1,0 +1,95 @@
+{
+  "hash": "5d8d41f8f185ab4467215fb040d70b17b9d81ec8e6ec79a83caf5e86e132cf22",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {},
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "maximum": 50,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "prefix": {
+            "pattern": "^[a-z]+$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "count",
+          "prefix"
+        ],
+        "type": "object"
+      },
+      "type": "DemoRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [],
+    "guarantees": [
+      "item.id-nonempty"
+    ],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "demo-source",
+    "kind": "deterministic",
+    "obligations": {
+      "adds": [
+        {
+          "dischargedBy": "demo-scorer",
+          "id": "demo.scored"
+        }
+      ],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "type": "object"
+      },
+      "type": "DemoItem@1"
+    },
+    "redactor": false,
+    "requires": [
+      "request.count-positive"
+    ],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "sourcing",
+    "timeoutMs": 1000,
+    "version": "1.0.0"
+  }
+}
