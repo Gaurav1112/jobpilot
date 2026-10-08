@@ -310,3 +310,12 @@ describe('capability broker: denials are recorded', () => {
     expect(ctx.denials()).toEqual([]);
   });
 });
+
+describe('capability broker: error messages', () => {
+  it('the only-https denial names the scheme and host, never the path, query or credentials', async () => {
+    const ctx = issue(fetcher, 'P0', { fetch: fakeFetch({}) });
+    const err = (await ctx.http!.getText('http://boards-api.greenhouse.io/v1/secret-path?token=abc123').catch((e: unknown) => e)) as Error;
+    expect(err.message).toBe('G-EGRESS: only https is allowed (http://boards-api.greenhouse.io)');
+    expect(ctx.denials()).toEqual([err.message]);
+  });
+});

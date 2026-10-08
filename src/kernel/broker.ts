@@ -89,7 +89,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         } catch {
           throw deny('G-EGRESS: invalid URL');
         }
-        if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${url})`);
+        if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${u.protocol}//${u.hostname})`);
         if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
         if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
         checkHost(u.hostname);
