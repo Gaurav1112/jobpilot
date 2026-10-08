@@ -12,7 +12,7 @@ import { verifyChain } from '../../src/kernel/store/audit.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { Supervisor, type SupervisorDeps } from '../../src/kernel/supervisor.js';
 import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
-import { demoScorer, demoScorerContract, demoSource } from '../../src/demo/agents.js';
+import { demoScorer, demoScorerContract, demoSource, demoSourceContract } from '../../src/demo/agents.js';
 import { demoKernel } from '../../src/demo/kernel.js';
 import { demoLlm, demoMachine, demoPipeline } from '../../src/demo/pipeline.js';
 
@@ -180,6 +180,29 @@ describe('supervisor end to end', () => {
     const opened = store.events('run-1').filter((e) => e.kind === 'breaker_open').map((e) => JSON.parse(e.data).key as string);
     expect(opened).toContain('team:evaluation');
   });
+
+  it('replays across a minor version bump of the source (G-LINEAGE remembers past versions of the same major)', async () => {
+    const store = Store.open(':memory:');
+    await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
+    const minor = defineAgent(defineContract({ ...demoSourceContract, version: '1.1.0' }), demoSource.run);
+    const inv = invocations();
+    const r = await handBuilt({ store, scorer: demoScorer, source: minor, onInvoke: inv.onInvoke }).start('run-2', [seed]);
+    expect(r.queue).toMatchObject({ pending: 0, done: 6, quarantined: 0, failed: 0 });
+    expect(inv.calls).toEqual([]);
+    expect(store.events('run-2').filter((e) => e.kind === 'step_replayed')).toHaveLength(6);
+    expect(store.entityState('demo-003')).toBe('SCORED');
+  });
+
+  it('re-executes the source after a major bump and still completes without quarantine', async () => {
+    const store = Store.open(':memory:');
+    await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
+    const major = defineAgent(defineContract({ ...demoSourceContract, version: '2.0.0' }), demoSource.run);
+    const inv = invocations();
+    const r = await handBuilt({ store, scorer: demoScorer, source: major, onInvoke: inv.onInvoke }).start('run-2', [seed]);
+    expect(r.queue).toMatchObject({ pending: 0, done: 6, quarantined: 0, failed: 0 });
+    expect(inv.calls.map((c) => c.split(':')[0])).toEqual(['demo-source']);
+    expect(store.entityState('demo-003')).toBe('SCORED');
+  });
 });
 
 /** The demoKernel wiring, by hand, with a scorer that by default leaves `demo.scored` open. */
@@ -188,11 +211,13 @@ function handBuilt(o: {
   llm?: LlmProvider;
   pipeline?: Pipeline;
   scorer?: typeof demoScorer;
+  source?: typeof demoSource;
+  onInvoke?: SupervisorDeps['onInvoke'];
   afterStep?: SupervisorDeps['afterStep'];
 }): Supervisor {
   const lazyScorer = defineAgent(defineContract({ ...demoScorerContract, obligations: { adds: [], discharges: [] } }), demoScorer.run);
   const registry = new Registry();
-  registry.register(demoSource);
+  registry.register(o.source ?? demoSource);
   registry.register(o.scorer ?? lazyScorer);
   const guardrails = builtinGuardrails();
   const compiled = compileWiring(registry, o.pipeline ?? demoPipeline, guardrails);
@@ -213,6 +238,7 @@ function handBuilt(o: {
       keyOf: (env) => (env.type === 'DemoItem@1' || env.type === 'DemoScore@1' ? (env.payload as { id: string }).id : null),
       eventFor: (agentId, outcome) => (outcome === 'quarantined' ? 'trip' : agentId === 'demo-source' ? 'discovered' : agentId === 'demo-scorer' ? 'scored' : null),
     },
+    ...(o.onInvoke ? { onInvoke: o.onInvoke } : {}),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });
 }

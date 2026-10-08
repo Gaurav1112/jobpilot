@@ -118,6 +118,7 @@ export class Supervisor {
       }
       this.event(runId, 'run_started', { pipeline: compiled.pipeline.id, seeds: envs.length });
     });
+    this.rememberContracts();
     return this.drain(runId);
   }
 
@@ -128,7 +129,13 @@ export class Supervisor {
     if (run.status === 'completed') throw new Error(`run ${runId} is already completed`);
     if (run.policy_hash !== this.d.policyHash) throw new Error(`run ${runId} used a different policy; start a new run instead`);
     this.event(runId, 'run_resumed', {});
+    this.rememberContracts();
     return this.drain(runId);
+  }
+
+  /** Past minor versions recorded by earlier runs stay valid producers (G-LINEAGE). */
+  private rememberContracts(): void {
+    for (const c of this.d.store.contracts()) this.d.registry.rememberVersion(c.agent_id, c.version, c.hash);
   }
 
   private route(runId: string, env: Envelope): void {

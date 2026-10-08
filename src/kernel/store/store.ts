@@ -269,6 +269,15 @@ export class Store {
       .run(agentId, version, hash, canonicalJson(shape));
   }
 
+  /** Every contract version any run on this database has used. */
+  contracts(): { agent_id: string; version: string; hash: string }[] {
+    return this.db.prepare(`SELECT agent_id, version, hash FROM contracts ORDER BY agent_id, version`).all() as {
+      agent_id: string;
+      version: string;
+      hash: string;
+    }[];
+  }
+
   /** Test and audit helper: a whole table as canonical text, in a fixed order. */
   dump(table: 'envelopes' | 'entities' | 'steps', orderBy: string): string {
     if (!['envelopes', 'entities', 'steps'].includes(table) || !/^[a-z_]+(, ?[a-z_]+)*$/.test(orderBy)) {

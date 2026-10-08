@@ -1,5 +1,5 @@
 import type { AnyAgent } from './agent.js';
-import { contractHash } from './contract.js';
+import { contractHash, contractMajor } from './contract.js';
 
 export class Registry {
   private readonly agents = new Map<string, AnyAgent>();
@@ -25,6 +25,18 @@ export class Registry {
   /** Sorted by id so iteration order never depends on registration order. */
   list(): AnyAgent[] {
     return [...this.agents.values()].sort((a, b) => (a.contract.id < b.contract.id ? -1 : 1));
+  }
+
+  /**
+   * Accepts the hash of a past version of a registered agent, so envelopes it produced
+   * under the same major (and replayed) still pass G-LINEAGE. Other majors, unknown
+   * agents and the current version itself are ignored: the registered contract wins.
+   */
+  rememberVersion(agentId: string, version: string, hash: string): void {
+    const a = this.agents.get(agentId);
+    if (!a || contractMajor({ version }) !== contractMajor(a.contract)) return;
+    const key = `${agentId}@${version}`;
+    if (!this.hashes.has(key)) this.hashes.set(key, hash);
   }
 
   contractHashOf(agentId: string, version: string): string | undefined {
