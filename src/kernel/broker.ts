@@ -25,6 +25,8 @@ export interface AgentContext {
   readonly http?: HttpTool;
   readonly llm?: LlmTool;
   spent(): Cost;
+  /** Every policy denial the broker raised in this context, in order, whether or not the agent caught it. */
+  denials(): readonly string[];
 }
 
 export interface IssueArgs {
@@ -55,13 +57,19 @@ export function issueContext(a: IssueArgs): AgentContext {
   let inputTokens = 0;
   let outputTokens = 0;
   const prior = a.priorSpend ?? { agentUsd: 0, runUsd: 0 };
+  const denied: string[] = [];
+  /** A policy denial is recorded before it is thrown, so an agent cannot hide it by catching. */
+  const deny = (message: string): KernelError => {
+    denied.push(message);
+    return new KernelError('policy_denied', message);
+  };
 
   const checkHost = (host: string): void => {
     if (!a.contract.egress.includes(host)) {
-      throw new KernelError('policy_denied', `G-EGRESS: ${a.contract.id} may not contact ${host}`);
+      throw deny(`G-EGRESS: ${a.contract.id} may not contact ${host}`);
     }
     if (!egressAllowed(a.policy, host, a.inputClass)) {
-      throw new KernelError('policy_denied', `G-PII-EGRESS: ${a.inputClass} data may not be sent to ${host}`);
+      throw deny(`G-PII-EGRESS: ${a.inputClass} data may not be sent to ${host}`);
     }
   };
 
@@ -69,6 +77,7 @@ export function issueContext(a: IssueArgs): AgentContext {
     clock: a.clock,
     signal: a.signal,
     spent: () => ({ usd, inputTokens, outputTokens }),
+    denials: () => [...denied],
   };
 
   if (a.contract.capabilities.http) {
@@ -78,11 +87,11 @@ export function issueContext(a: IssueArgs): AgentContext {
         try {
           u = new URL(url);
         } catch {
-          throw new KernelError('policy_denied', 'G-EGRESS: invalid URL');
+          throw deny('G-EGRESS: invalid URL');
         }
-        if (u.protocol !== 'https:') throw new KernelError('policy_denied', `G-EGRESS: only https is allowed (${url})`);
-        if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${u.hostname})`);
-        if (u.username !== '' || u.password !== '') throw new KernelError('policy_denied', 'G-EGRESS: credentials in URLs are not allowed');
+        if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${url})`);
+        if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
+        if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
         checkHost(u.hostname);
         if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
         let res;
@@ -90,7 +99,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         try {
           res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual' });
           if (res.status >= 300 && res.status < 400) {
-            throw new KernelError('policy_denied', `G-EGRESS: redirect from ${u.hostname} refused`);
+            throw deny(`G-EGRESS: redirect from ${u.hostname} refused`);
           }
           if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
           if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
@@ -110,9 +119,9 @@ export function issueContext(a: IssueArgs): AgentContext {
     let inFlight = false;
     ctx.llm = {
       async complete(req) {
-        if (!provider) throw new KernelError('policy_denied', 'no LLM provider is configured');
+        if (!provider) throw deny('no LLM provider is configured');
         checkHost(provider.host);
-        if (inFlight) throw new KernelError('policy_denied', 'G-BUDGET: one model call at a time per step');
+        if (inFlight) throw deny('G-BUDGET: one model call at a time per step');
         if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new model calls');
         inFlight = true;
         try {

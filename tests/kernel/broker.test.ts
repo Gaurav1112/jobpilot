@@ -274,3 +274,39 @@ describe('capability broker: prior run spend (G-BUDGET)', () => {
     expect(llm.calls).toHaveLength(0);
   });
 });
+
+describe('capability broker: denials are recorded', () => {
+  const H = 'https://boards-api.greenhouse.io';
+  const swallow = (p: Promise<unknown>) => p.catch(() => undefined);
+
+  it('records every policy denial, even when the agent catches it', async () => {
+    const f = fakeFetch({ [`${H}/r`]: { status: 302, body: '' } });
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    expect(ctx.denials()).toEqual([]);
+    await swallow(ctx.http!.getText('https://evil.example/x'));
+    await swallow(ctx.http!.getText('http://boards-api.greenhouse.io/x'));
+    await swallow(ctx.http!.getText(`https://boards-api.greenhouse.io:8443/x`));
+    await swallow(ctx.http!.getText('https://u:p@boards-api.greenhouse.io/x'));
+    await swallow(ctx.http!.getText('not a url'));
+    await swallow(ctx.http!.getText(`${H}/r`));
+    expect(ctx.denials()).toHaveLength(6);
+    expect(ctx.denials()[0]).toMatch(/^G-EGRESS: fetcher may not contact evil\.example/);
+    expect(ctx.denials()[5]).toMatch(/redirect/);
+  });
+
+  it('records PII egress and a missing provider', async () => {
+    const pii = issue(thinker, 'P1', { fetch: fakeFetch({}), llm: fakeLlm(() => 'ok') });
+    await swallow(pii.llm!.complete({ system: 's', prompt: 'p' }));
+    expect(pii.denials()).toEqual([expect.stringMatching(/^G-PII-EGRESS/)]);
+    const none = issue(thinker, 'P0', { fetch: fakeFetch({}) });
+    await swallow(none.llm!.complete({ system: 's', prompt: 'p' }));
+    expect(none.denials()).toEqual(['no LLM provider is configured']);
+  });
+
+  it('does not record ordinary failures', async () => {
+    const f = fakeFetch({ [`${H}/a`]: { status: 503, body: '' } });
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    await swallow(ctx.http!.getText(`${H}/a`));
+    expect(ctx.denials()).toEqual([]);
+  });
+});

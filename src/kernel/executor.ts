@@ -142,6 +142,14 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       }
       stepSpent = addCost(stepSpent, ctx.spent());
 
+      // A denial is final even if the agent caught it and carried on: the attempt tried to break policy.
+      const denials = ctx.denials();
+      const firstDenial = denials[0];
+      if (firstDenial !== undefined) {
+        finish('failed', [], eventOf('step_failed', { error: 'policy_denied', detail: firstDenial, denials }), { errorCode: 'policy_denied', detail: firstDenial });
+        return { kind: 'failed', stepKey, error: 'policy_denied', detail: firstDenial };
+      }
+
       if (!result.ok) {
         const code = classify(result.err);
         if (c.retry.on.includes(code) && attempt < c.retry.max) {
