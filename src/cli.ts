@@ -19,6 +19,16 @@ const allAgents = () => {
   return r;
 };
 
+/** The detail of a quarantined step is its guardrail verdicts as JSON; show the one that tripped. */
+function lastVerdict(detail: string | null): string {
+  try {
+    const v = (JSON.parse(detail ?? '[]') as { id?: string; detail?: string }[]).at(-1);
+    return v ? `${v.id ?? '?'}: ${v.detail ?? ''}` : '';
+  } catch {
+    return detail ?? '';
+  }
+}
+
 const program = new Command().name('jobpilot').description('Deterministic multi-agent job search kernel');
 
 program
@@ -50,6 +60,41 @@ program
     const k = demoKernel({ dbPath: o.db, clock: systemClock });
     try {
       console.log(JSON.stringify(await k.supervisor.resume(runId), null, 2));
+    } finally {
+      k.store.close();
+    }
+  });
+
+program
+  .command('quarantined')
+  .description('List quarantined steps with their last guardrail verdict')
+  .option('--db <path>', 'SQLite file', 'jobpilot.db')
+  .action((o: { db: string }) => {
+    const store = Store.open(o.db);
+    try {
+      const steps = store.quarantinedSteps();
+      if (steps.length === 0) console.log('no quarantined steps');
+      for (const s of steps) console.log(`${s.step_key}  ${s.agent_id}  ${lastVerdict(s.detail)}`);
+    } finally {
+      store.close();
+    }
+  });
+
+program
+  .command('release <stepKey>')
+  .description('Release a quarantined step so the next run executes it again')
+  .option('--db <path>', 'SQLite file', 'jobpilot.db')
+  .action((stepKey: string, o: { db: string }) => {
+    const k = demoKernel({ dbPath: o.db, clock: systemClock });
+    try {
+      const now = systemClock.now();
+      const r = k.store.releaseQuarantine(stepKey, `release-${now.slice(0, 10)}`, now, k.policyHash);
+      if (!r.released) {
+        console.error(`nothing is quarantined under ${stepKey}`);
+        process.exitCode = 1;
+      } else {
+        console.log(`released ${stepKey}${r.entities.length > 0 ? ` (entities back: ${r.entities.join(', ')})` : ''}`);
+      }
     } finally {
       k.store.close();
     }

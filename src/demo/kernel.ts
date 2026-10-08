@@ -27,13 +27,14 @@ export function demoKernel(o: DemoKernelOptions = {}) {
   const guardrails = builtinGuardrails();
   const compiled = compileWiring(registry, demoPipeline, guardrails);
   const policy = mergePolicy(PRODUCT_POLICY_V1, o.userPolicy ?? {});
+  const pHash = policyHash(policy);
   const supervisor = new Supervisor({
     store,
     registry,
     compiled,
     guardrails,
     policy,
-    policyHash: policyHash(policy),
+    policyHash: pHash,
     providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: o.llm ?? demoLlm() },
     clock: o.clock ?? fixedClock('2026-10-08T07:00:00.000Z'),
     sleep: async () => {},
@@ -46,5 +47,5 @@ export function demoKernel(o: DemoKernelOptions = {}) {
     ...(o.onInvoke ? { onInvoke: o.onInvoke } : {}),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });
-  return { store, registry, compiled, supervisor, policy };
+  return { store, registry, compiled, supervisor, policy, policyHash: pHash };
 }

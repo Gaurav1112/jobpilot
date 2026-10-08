@@ -203,6 +203,39 @@ describe('supervisor end to end', () => {
     expect(inv.calls.map((c) => c.split(':')[0])).toEqual(['demo-source']);
     expect(store.entityState('demo-003')).toBe('SCORED');
   });
+
+  it('releases quarantined steps: a new run with a good model scores every item', async () => {
+    const store = Store.open(':memory:');
+    const bad = demoKernel({ store, llm: fakeLlm(() => JSON.stringify({ score: 99, reason: 'too keen' })) });
+    await bad.supervisor.start('run-1', [seed]);
+    const q = store.quarantinedSteps();
+    expect(q).toHaveLength(5);
+    expect(q.every((s) => s.agent_id === 'demo-scorer' && (s.detail ?? '').includes('G-POST'))).toBe(true);
+    expect(store.entityState('demo-001')).toBe('QUARANTINED');
+    for (const s of q) {
+      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toMatchObject({ released: true, entities: [expect.any(String)] });
+    }
+    expect(store.quarantinedSteps()).toEqual([]);
+    expect(store.entityState('demo-001')).toBe('DISCOVERED');
+    expect(store.events('release-x').map((e) => e.kind)).toEqual(Array(5).fill('quarantine_released'));
+    const good = demoLlm();
+    const r = await demoKernel({ store, llm: good }).supervisor.start('run-2', [seed]);
+    expect(r.queue).toMatchObject({ done: 6, quarantined: 0 });
+    expect(good.calls).toHaveLength(5);
+    for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) expect(store.entityState(id)).toBe('SCORED');
+    expect(verifyChain(store)).toMatchObject({ ok: true });
+  });
+
+  it('does not release a step that is not quarantined', async () => {
+    const k = demoKernel();
+    await k.supervisor.start('run-1', [seed]);
+    const done = JSON.parse(k.store.events('run-1').find((e) => e.kind === 'step_done')!.data).stepKey as string;
+    const before = k.store.events().length;
+    expect(k.store.releaseQuarantine(done, 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [] });
+    expect(k.store.releaseQuarantine('no-such-key', 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [] });
+    expect(k.store.getStep(done)?.status).toBe('done');
+    expect(k.store.events()).toHaveLength(before);
+  });
 });
 
 /** The demoKernel wiring, by hand, with a scorer that by default leaves `demo.scored` open. */

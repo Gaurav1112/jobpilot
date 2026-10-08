@@ -269,6 +269,36 @@ export class Store {
       .run(agentId, version, hash, canonicalJson(shape));
   }
 
+  // quarantine release: the user fixed the cause, so the step may run again
+  quarantinedSteps(): { step_key: string; agent_id: string; detail: string | null }[] {
+    return this.db.prepare(`SELECT step_key, agent_id, detail FROM steps WHERE status = 'quarantined' ORDER BY step_key`).all() as {
+      step_key: string;
+      agent_id: string;
+      detail: string | null;
+    }[];
+  }
+
+  /**
+   * Forgets a quarantined step so the next run executes it again, and puts every entity
+   * its trip moved back where it was. One transaction, audited as `quarantine_released`.
+   */
+  releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[] } {
+    return this.tx(() => {
+      if (this.getStep(stepKey)?.status !== 'quarantined') return { released: false, entities: [] };
+      this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
+      const trips = this.db
+        .prepare(`SELECT entity_id, from_state FROM entity_transitions WHERE step_key = ? AND event = 'trip' ORDER BY entity_id`)
+        .all(stepKey) as { entity_id: string; from_state: string }[];
+      for (const t of trips) {
+        this.db.prepare(`UPDATE entities SET state = ? WHERE entity_id = ?`).run(t.from_state, t.entity_id);
+        this.db.prepare(`DELETE FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = 'trip'`).run(t.entity_id, stepKey);
+      }
+      const entities = trips.map((t) => t.entity_id);
+      this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities }, policyHash);
+      return { released: true, entities };
+    });
+  }
+
   /** Every contract version any run on this database has used. */
   contracts(): { agent_id: string; version: string; hash: string }[] {
     return this.db.prepare(`SELECT agent_id, version, hash FROM contracts ORDER BY agent_id, version`).all() as {
