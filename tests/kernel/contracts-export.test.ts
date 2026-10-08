@@ -43,6 +43,17 @@ describe('contract export and drift', () => {
     expect(checkDrift(registry(bumped, demoAgents[1]), dir)[0]).toMatch(/1\.1\.0 is not exported yet/);
   });
 
+  it('refuses a security-relevant change in a minor version', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    exportContracts(registry(...demoAgents), dir);
+    const emits = defineAgent(defineContract({ ...demoSource.contract, version: '1.1.0', emits: 'P0' }), demoSource.run);
+    expect(checkDrift(registry(emits, demoAgents[1]), dir)).toEqual(['demo-source: emits changed in a minor version; security-relevant changes need a major bump']);
+    const wider = defineAgent(defineContract({ ...demoSource.contract, version: '1.0.1', dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }), demoSource.run);
+    expect(checkDrift(registry(wider, demoAgents[1]), dir)).toEqual(['demo-source: dataClasses, emits changed in a minor version; security-relevant changes need a major bump']);
+    const timeout = defineAgent(defineContract({ ...demoSource.contract, version: '1.1.0', timeoutMs: 2_000 }), demoSource.run);
+    expect(checkDrift(registry(timeout, demoAgents[1]), dir)[0]).toMatch(/1\.1\.0 is not exported yet/);
+  });
+
   it('notices a hand-edited contract file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
     const [scorer] = exportContracts(registry(...demoAgents), dir);

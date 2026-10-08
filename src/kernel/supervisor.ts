@@ -1,7 +1,7 @@
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
-import { contractHash, contractShape } from './contract.js';
+import { contractHash, contractShape, securityDiff } from './contract.js';
 import { type Envelope, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
@@ -136,9 +136,18 @@ export class Supervisor {
     return this.drain(runId);
   }
 
-  /** Past minor versions recorded by earlier runs stay valid producers (G-LINEAGE). */
+  /**
+   * Past minor versions recorded by earlier runs stay valid producers (G-LINEAGE), but only
+   * when their security-relevant fields match the current contract. Otherwise their outputs
+   * fail G-LINEAGE downstream: a taint or capability change must never ride on a replay.
+   */
   private rememberContracts(): void {
-    for (const c of this.d.store.contracts()) this.d.registry.rememberVersion(c.agent_id, c.version, c.hash);
+    const { registry } = this.d;
+    for (const c of this.d.store.contracts()) {
+      if (!registry.has(c.agent_id)) continue;
+      if (securityDiff(c.shape, contractShape(registry.get(c.agent_id).contract)).length > 0) continue;
+      registry.rememberVersion(c.agent_id, c.version, c.hash);
+    }
   }
 
   private route(runId: string, env: Envelope): void {

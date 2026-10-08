@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { canonicalJson } from './canonical.js';
-import { contractHash, contractMajor, contractShape } from './contract.js';
+import { contractHash, contractMajor, contractShape, securityDiff } from './contract.js';
 import type { Registry } from './registry.js';
 
 export interface ContractDoc {
@@ -74,6 +74,9 @@ export function checkDrift(registry: Registry, dir: string): string[] {
       problems.push(`${c.id}@${c.version}: contracts-out file was edited by hand; run node --run contracts:export`);
     } else if (committedVersion !== c.version && typeof committedVersion === 'string' && compareVersions(committedVersion, c.version) > 0) {
       problems.push(`${c.id}: code version ${c.version} is older than the exported ${committedVersion}`);
+    } else if (committedVersion !== c.version && securityDiff(doc.shape, contractShape(c)).length > 0) {
+      // Same file, so same major: past outputs of the committed version would still pass G-LINEAGE.
+      problems.push(`${c.id}: ${securityDiff(doc.shape, contractShape(c)).join(', ')} changed in a minor version; security-relevant changes need a major bump`);
     } else if (committedVersion !== c.version) {
       problems.push(`${c.id}: version ${c.version} is not exported yet (committed ${committedVersion}); run node --run contracts:export`);
     }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { hashOf } from './canonical.js';
+import { canonicalJson, hashOf } from './canonical.js';
 import { DATA_CLASSES, type DataClass } from './data-class.js';
 import { ERROR_CODES, RETRYABLE, type ErrorCode } from './errors.js';
 import type { Predicate } from './predicates.js';
@@ -192,6 +192,14 @@ export function contractShape(c: AnyContract): Record<string, unknown> {
     retry: { max: c.retry.max, on: [...c.retry.on].sort(), backoffMs: c.retry.backoffMs },
     guardrails: { in: c.guardrails.in, out: c.guardrails.out },
   };
+}
+
+/** The fields that decide what an agent may touch and how tainted its outputs are. Changing any of them needs a major version. */
+export const SECURITY_FIELDS = ['kind', 'capabilities', 'egress', 'dataClasses', 'redactor', 'emits'] as const;
+
+/** Security-relevant fields that differ between two contract shapes, in SECURITY_FIELDS order. */
+export function securityDiff(a: Record<string, unknown>, b: Record<string, unknown>): string[] {
+  return SECURITY_FIELDS.filter((f) => canonicalJson({ v: a[f] }) !== canonicalJson({ v: b[f] }));
 }
 
 export function contractHash(c: AnyContract): string {

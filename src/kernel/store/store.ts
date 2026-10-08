@@ -304,12 +304,14 @@ export class Store {
   }
 
   /** Every contract version any run on this database has used. */
-  contracts(): { agent_id: string; version: string; hash: string }[] {
-    return this.db.prepare(`SELECT agent_id, version, hash FROM contracts ORDER BY agent_id, version`).all() as {
+  contracts(): { agent_id: string; version: string; hash: string; shape: Record<string, unknown> }[] {
+    const rows = this.db.prepare(`SELECT agent_id, version, hash, shape FROM contracts ORDER BY agent_id, version`).all() as {
       agent_id: string;
       version: string;
       hash: string;
+      shape: string;
     }[];
+    return rows.map((r) => ({ ...r, shape: JSON.parse(r.shape) as Record<string, unknown> }));
   }
 
   /** Test and audit helper: a whole table as canonical text, in a fixed order. */

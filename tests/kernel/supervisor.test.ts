@@ -251,6 +251,19 @@ describe('supervisor end to end', () => {
     expect(store.entityState('demo-003')).toBe('SCORED');
   });
 
+  it('does not trust past outputs of a minor version whose security-relevant fields differ (fail closed)', async () => {
+    const store = Store.open(':memory:');
+    await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
+    const minor = defineAgent(defineContract({ ...demoSourceContract, version: '1.1.0', dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }), demoSource.run);
+    const inv = invocations();
+    const r = await handBuilt({ store, scorer: demoScorer, source: minor, onInvoke: inv.onInvoke }).start('run-2', [seed]);
+    expect(inv.calls.filter((c) => c.startsWith('demo-scorer:'))).toEqual([]);
+    expect(r.queue).toMatchObject({ done: 1, quarantined: 5 });
+    const trips = store.events('run-2').filter((e) => e.kind === 'step_quarantined').map((e) => JSON.parse(e.data) as { agent: string; verdict: { id: string } });
+    expect(trips.every((t) => t.agent === 'demo-scorer' && t.verdict.id === 'G-LINEAGE')).toBe(true);
+    expect(store.contracts().find((c) => c.version === '1.0.0' && c.agent_id === 'demo-source')?.shape).toMatchObject({ version: '1.0.0', kind: 'deterministic' });
+  });
+
   it('re-executes the source after a major bump and still completes without quarantine', async () => {
     const store = Store.open(':memory:');
     await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
