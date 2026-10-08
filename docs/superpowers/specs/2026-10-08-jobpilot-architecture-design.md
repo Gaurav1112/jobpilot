@@ -204,7 +204,7 @@ export const ScorerClaudeContract = defineContract({
    changed its output without bumping its version, the hash mismatch
    quarantines the message.
 4. **Redundancy by declaration.** When several agents produce the same type
-   (13 discovery agents produce `RawPosting@1`; three scorers produce
+   (12 discovery agents produce `RawPosting@1`; three scorers produce
    `ScoreResult@1`), the supervisor treats them as interchangeable providers.
    If one fails or its breaker opens, the run continues with the rest, and the
    gap is recorded (`source_health`, `FusedScore.singleScorer`).
