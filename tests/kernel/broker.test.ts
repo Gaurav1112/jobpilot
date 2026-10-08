@@ -5,6 +5,7 @@ import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
+import type { FetchLike, LlmProvider } from '../../src/kernel/providers.js';
 import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import { defineType } from '../../src/kernel/types.js';
 
@@ -91,5 +92,109 @@ describe('capability broker', () => {
     const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}), llm });
     await ctx.llm!.complete({ system: 's', prompt: 'p' });
     expect(llm.calls[0]).toMatchObject({ model: 'claude-sonnet-5-5', maxTokens: 100 });
+  });
+  describe('hardening', () => {
+    const H = 'https://boards-api.greenhouse.io';
+    const thrown = (p: Promise<unknown>) => p.catch((e: unknown) => e);
+    const stubLlm = (fail: unknown, usd = 0.001): LlmProvider & { n: number } => {
+      const p = {
+        host: 'api.anthropic.com',
+        n: 0,
+        async complete() {
+          p.n++;
+          if (fail !== undefined) throw fail;
+          return { text: 'x', inputTokens: 1, outputTokens: 1, usd };
+        },
+      };
+      return p;
+    };
+    const capped = defineContract({
+      ...common,
+      id: 'capped',
+      description: 'Asks the model under a run cap',
+      kind: 'llm',
+      capabilities: { llm: { model: 'claude-sonnet-5-5', maxTokens: 100 } },
+      egress: ['api.anthropic.com'],
+      budget: { usdPerCall: 0.002, usdPerRun: 0.003 },
+    });
+
+    it.each([301, 302])('refuses a %i redirect and never follows it', async (status) => {
+      const f = fakeFetch({ [`${H}/r`]: { status, body: '' } });
+      const err = await thrown(issue(fetcher, 'P0', { fetch: f }).http!.getText(`${H}/r`));
+      expect(err).toMatchObject({ code: 'policy_denied' });
+      expect((err as Error).message).toMatch(/redirect/);
+      expect(f.calls).toHaveLength(1);
+    });
+
+    it('always passes redirect: manual to fetch', async () => {
+      const inits: unknown[] = [];
+      const f: FetchLike = async (_u, init) => {
+        inits.push(init);
+        return { status: 200, text: async () => 'ok' };
+      };
+      await issue(fetcher, 'P0', { fetch: f }).http!.getText(`${H}/x`);
+      expect(inits[0]).toMatchObject({ redirect: 'manual' });
+    });
+
+    it('rejects explicit ports and unparseable URLs', async () => {
+      const f = fakeFetch({});
+      const ctx = issue(fetcher, 'P0', { fetch: f });
+      await expect(ctx.http!.getText(`${H}:8443/x`)).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/port/) });
+      await expect(ctx.http!.getText('not a url')).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/invalid URL/) });
+      expect(f.calls).toHaveLength(0);
+    });
+
+    it('judges the real host, and URL parsing lowercases it', async () => {
+      const f = fakeFetch({ [`${H}/x`]: { body: 'ok' } });
+      const ctx = issue(fetcher, 'P0', { fetch: f });
+      await expect(ctx.http!.getText('https://BOARDS-API.greenhouse.io/x')).resolves.toMatchObject({ status: 200 });
+      await expect(ctx.http!.getText('https://evil.example@boards-api.greenhouse.io/x')).resolves.toBeDefined();
+      await expect(ctx.http!.getText('https://boards-api.greenhouse.io@evil.example/x')).rejects.toThrow(/G-EGRESS/);
+    });
+
+    it('maps an external abort to unknown and a body read failure to network', async () => {
+      const aborted: FetchLike = async () => {
+        throw { name: 'AbortError' };
+      };
+      const badBody: FetchLike = async () => ({
+        status: 200,
+        text: async () => {
+          throw new Error('socket hang up');
+        },
+      });
+      expect(await thrown(issue(fetcher, 'P0', { fetch: aborted }).http!.getText(`${H}/x`))).toMatchObject({ code: 'unknown' });
+      expect(await thrown(issue(fetcher, 'P0', { fetch: badBody }).http!.getText(`${H}/x`))).toMatchObject({ code: 'network' });
+    });
+
+    it('maps provider status failures to retryable codes', async () => {
+      const a = issue(thinker, 'P0', { fetch: fakeFetch({}), llm: stubLlm({ status: 429 }) });
+      const b = issue(thinker, 'P0', { fetch: fakeFetch({}), llm: stubLlm({ status: 529 }) });
+      expect(await thrown(a.llm!.complete({ system: 's', prompt: 'p' }))).toMatchObject({ code: 'rate_limit' });
+      expect(await thrown(b.llm!.complete({ system: 's', prompt: 'p' }))).toMatchObject({ code: 'overloaded' });
+    });
+
+    it('blocks every call after one exceeded usdPerCall, without calling the provider', async () => {
+      const llm = stubLlm(undefined, 0.5);
+      const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}), llm });
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded' });
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toThrow(/previous call exceeded usdPerCall/);
+      expect(llm.n).toBe(1);
+    });
+
+    it('refuses a call once cumulative usd has reached usdPerRun', async () => {
+      const llm = stubLlm(undefined, 0.002);
+      const ctx = issue(capped, 'P0', { fetch: fakeFetch({}), llm });
+      await ctx.llm!.complete({ system: 's', prompt: 'p' });
+      await ctx.llm!.complete({ system: 's', prompt: 'p' });
+      expect(ctx.spent().usd).toBeCloseTo(0.004);
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toThrow(/usdPerRun reached/);
+      expect(llm.n).toBe(2);
+    });
+
+    it('fails with policy_denied when no LLM provider is configured', async () => {
+      const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}) });
+      expect(ctx.llm).toBeDefined();
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'policy_denied' });
+    });
   });
 });

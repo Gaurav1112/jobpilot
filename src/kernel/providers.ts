@@ -3,7 +3,7 @@ export interface FetchResponse {
   text(): Promise<string>;
 }
 
-export type FetchLike = (url: string, init: { signal: AbortSignal }) => Promise<FetchResponse>;
+export type FetchLike = (url: string, init: { signal: AbortSignal; redirect: 'manual' }) => Promise<FetchResponse>;
 
 export interface LlmRequest {
   readonly model: string;
@@ -31,4 +31,4 @@ export interface Providers {
   readonly llm?: LlmProvider;
 }
 
-export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal });
+export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal, redirect: init.redirect });

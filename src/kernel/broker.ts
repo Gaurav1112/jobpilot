@@ -36,6 +36,18 @@ export interface IssueArgs {
   readonly signal: AbortSignal;
 }
 
+function mapProviderError(e: unknown): unknown {
+  if (e instanceof KernelError) return e;
+  const o = typeof e === 'object' && e !== null ? (e as { name?: unknown; status?: unknown; message?: unknown }) : {};
+  if (o.name === 'TimeoutError') return e;
+  if (typeof o.status === 'number') {
+    if (o.status === 429) return new KernelError('rate_limit', `provider returned ${o.status}`);
+    if (o.status >= 500) return new KernelError('overloaded', `provider returned ${o.status}`);
+  }
+  if (o.name === 'AbortError') return new KernelError('unknown', 'request aborted');
+  return new KernelError('network', typeof o.message === 'string' ? o.message : 'provider call failed');
+}
+
 export function issueContext(a: IssueArgs): AgentContext {
   let usd = 0;
   let inputTokens = 0;
@@ -59,34 +71,57 @@ export function issueContext(a: IssueArgs): AgentContext {
   if (a.contract.capabilities.http) {
     ctx.http = {
       async getText(url) {
-        const u = new URL(url);
+        let u: URL;
+        try {
+          u = new URL(url);
+        } catch {
+          throw new KernelError('policy_denied', 'G-EGRESS: invalid URL');
+        }
         if (u.protocol !== 'https:') throw new KernelError('policy_denied', `G-EGRESS: only https is allowed (${url})`);
+        if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${url})`);
         checkHost(u.hostname);
         let res;
+        let body;
         try {
-          res = await a.providers.fetch(url, { signal: a.signal });
+          res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual' });
+          if (res.status >= 300 && res.status < 400) {
+            throw new KernelError('policy_denied', `G-EGRESS: redirect from ${u.hostname} refused`);
+          }
+          if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
+          if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
+          body = await res.text();
         } catch (e) {
-          if ((e as { name?: string }).name === 'TimeoutError') throw e;
-          throw new KernelError('network', `fetch failed for ${url}`);
+          throw mapProviderError(e);
         }
-        if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
-        if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
-        return { status: res.status, body: await res.text() };
+        return { status: res.status, body };
       },
     };
   }
 
   const llmCap = a.contract.capabilities.llm;
   const provider = a.providers.llm;
-  if (llmCap && provider) {
+  if (llmCap) {
+    let overCall = false;
     ctx.llm = {
       async complete(req) {
+        if (!provider) throw new KernelError('policy_denied', 'no LLM provider is configured');
         checkHost(provider.host);
-        const res = await provider.complete({ ...req, model: llmCap.model, maxTokens: llmCap.maxTokens }, a.signal);
+        if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
+        if (usd >= a.contract.budget.usdPerRun) {
+          throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
+        }
+        let res;
+        try {
+          res = await provider.complete({ ...req, model: llmCap.model, maxTokens: llmCap.maxTokens }, a.signal);
+        } catch (e) {
+          // A failed provider call reports no usage, so spend is left unchanged.
+          throw mapProviderError(e);
+        }
         usd += res.usd;
         inputTokens += res.inputTokens;
         outputTokens += res.outputTokens;
         if (res.usd > a.contract.budget.usdPerCall) {
+          overCall = true;
           throw new KernelError('budget_exceeded', `G-BUDGET: call cost ${res.usd} > usdPerCall ${a.contract.budget.usdPerCall}`);
         }
         return res;
