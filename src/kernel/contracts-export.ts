@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { canonicalJson } from './canonical.js';
 import { contractHash, contractMajor, contractShape } from './contract.js';
@@ -26,7 +26,7 @@ export function exportContracts(registry: Registry, dir: string): string[] {
   });
   // The directory is generated: anything this run did not write is stale.
   const written = new Set(paths.map((p) => basename(p)));
-  for (const f of readdirSync(dir)) if (f.endsWith('.json') && !written.has(f)) unlinkSync(join(dir, f));
+  for (const f of readdirSync(dir)) if (f.endsWith('.json') && !written.has(f) && statSync(join(dir, f)).isFile()) unlinkSync(join(dir, f));
   return paths;
 }
 
@@ -79,7 +79,7 @@ export function checkDrift(registry: Registry, dir: string): string[] {
     }
   }
   const expected = new Set(registry.list().map((a) => `${a.contract.id}@${contractMajor(a.contract)}.json`));
-  const stale = readdirSync(dir).filter((f) => f.endsWith('.json') && !expected.has(f)).sort();
+  const stale = (existsSync(dir) ? readdirSync(dir) : []).filter((f) => f.endsWith('.json') && !expected.has(f)).sort();
   for (const f of stale) problems.push(`${f}: no registered agent exports this contract; delete it or restore the agent`);
   return problems;
 }

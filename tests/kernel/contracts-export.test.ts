@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -82,5 +82,20 @@ describe('contract export and drift', () => {
     const [, source] = exportContracts(registry(...demoAgents), dir);
     writeFileSync(source!, 'not json {');
     expect(checkDrift(registry(...demoAgents), dir)).toEqual(['demo-source@1: contract file is unreadable; run node --run contracts:export']);
+  });
+
+  it('reports a missing export directory instead of throwing', () => {
+    const dir = join(mkdtempSync(join(tmpdir(), 'contracts-')), 'nope');
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual([
+      'demo-scorer@1: no exported contract; run node --run contracts:export',
+      'demo-source@1: no exported contract; run node --run contracts:export',
+    ]);
+  });
+
+  it('leaves a directory named like a json file alone on export', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    mkdirSync(join(dir, 'x.json'));
+    expect(() => exportContracts(registry(...demoAgents), dir)).not.toThrow();
+    expect(existsSync(join(dir, 'x.json'))).toBe(true);
   });
 });
