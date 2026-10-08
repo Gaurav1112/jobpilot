@@ -144,8 +144,17 @@ const contracts = program.command('contracts').description('Agent contract tools
 contracts
   .command('export')
   .description('Write every contract as JSON Schema into contracts-out/')
-  .action(() => {
-    for (const p of exportContracts(allAgents(), join(root, 'contracts-out'))) console.log(`wrote ${p}`);
+  .option('--out <dir>', 'directory to write into', join(root, 'contracts-out'))
+  .action((o: { out: string }) => {
+    let paths: string[];
+    try {
+      paths = exportContracts(allAgents(), o.out);
+    } catch (e) {
+      console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 1;
+      return;
+    }
+    for (const p of paths) console.log(`wrote ${p}`);
   });
 contracts
   .command('check')

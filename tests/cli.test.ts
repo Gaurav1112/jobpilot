@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -57,4 +57,25 @@ describe('audit verify', () => {
     const r = cli('audit', 'verify', '--db', db, '--expect-head', 'nonsense');
     expect(r.status).toBe(1);
   }, 30_000);
+});
+
+describe('contracts export', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'jobpilot-contracts-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  const cli = (...args: string[]) =>
+    spawnSync(process.execPath, ['--import', 'tsx', 'src/bin.ts', ...args], { cwd: join(import.meta.dirname, '..'), encoding: 'utf8' });
+
+  it('prints a refusal as error: <message> with exit code 1 and no stack', () => {
+    const ok = cli('contracts', 'export', '--out', dir);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain(`wrote ${join(dir, 'demo-source@1.json')}`);
+    // The exported 1.0.0 file now records a different egress than the code has at the same version.
+    const file = join(dir, 'demo-source@1.json');
+    const doc = JSON.parse(readFileSync(file, 'utf8'));
+    writeFileSync(file, JSON.stringify({ hash: 'other', shape: { ...doc.shape, egress: ['evil.example'] } }));
+    const r = cli('contracts', 'export', '--out', dir);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toBe('error: demo-source@1.0.0: egress changed without a version bump; bump the major version before exporting\n');
+    expect(r.stdout).toBe('');
+  }, 60_000);
 });
