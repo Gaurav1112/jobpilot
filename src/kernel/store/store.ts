@@ -8,6 +8,12 @@ import { MIGRATIONS } from './migrations.js';
 export type StepStatus = 'running' | 'done' | 'failed' | 'quarantined';
 export type QueueStatus = 'pending' | 'done' | 'failed' | 'quarantined' | 'skipped';
 
+/** One entity, named by its tracker kind and id. */
+export interface EntityRef {
+  readonly kind: string;
+  readonly entityId: string;
+}
+
 export interface StepRow {
   readonly step_key: string;
   readonly agent_id: string;
@@ -340,37 +346,39 @@ export class Store {
    * was called). An entity that has moved on since the trip (its state is no longer the
    * trip's `to_state`) is left alone, its transition row kept, and reported in `skipped`.
    * Works for door trips too, which have no step row. One transaction, audited as
-   * `quarantine_released`.
+   * `quarantine_released`. Idempotent: when nothing was reverted and no step row deleted,
+   * returns `released: false` and appends no event.
    */
-  releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[]; skipped: string[] } {
+  releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: EntityRef[]; skipped: EntityRef[] } {
     return this.tx(() => {
       const trips = this.db
         .prepare(
           `SELECT kind, entity_id, event, from_state, to_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, kind, event`,
         )
         .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string; to_state: string }[];
-      const stepQuarantined = this.getStep(stepKey)?.status === 'quarantined';
-      if (!stepQuarantined && trips.length === 0) return { released: false, entities: [], skipped: [] };
-      if (stepQuarantined) this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
-      const reverted: string[] = [];
-      const skipped: string[] = [];
+      const deletedStep = this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey).changes > 0;
+      const entities = new Map<string, EntityRef>();
+      const skipped = new Map<string, EntityRef>();
       for (const t of trips) {
+        const ref = { kind: t.kind, entityId: t.entity_id };
+        const id = `${t.kind}/${t.entity_id}`;
         const res = this.db
           .prepare(`UPDATE entities SET state = ? WHERE kind = ? AND entity_id = ? AND state = ?`)
           .run(t.from_state, t.kind, t.entity_id, t.to_state);
         if (res.changes !== 1) {
-          skipped.push(t.entity_id);
+          skipped.set(id, ref);
           continue;
         }
-        reverted.push(t.entity_id);
+        entities.set(id, ref);
         this.db
           .prepare(`DELETE FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`)
           .run(t.kind, t.entity_id, stepKey, t.event);
       }
-      const entities = [...new Set(reverted)];
-      const skippedIds = [...new Set(skipped)];
-      this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities, skipped: skippedIds }, policyHash);
-      return { released: true, entities, skipped: skippedIds };
+      const result = { entities: [...entities.values()], skipped: [...skipped.values()] };
+      // Idempotent: a release that changes nothing is not a release and leaves no event.
+      if (!deletedStep && result.entities.length === 0) return { released: false, ...result };
+      this.appendEvent(runId, at, 'quarantine_released', { stepKey, ...result }, policyHash);
+      return { released: true, ...result };
     });
   }
 

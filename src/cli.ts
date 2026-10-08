@@ -91,13 +91,14 @@ program
       // Audited under the policy that quarantined the step; the current one only if that run is unknown.
       const policyHash = k.store.quarantinePolicyHash(stepKey) ?? k.policyHash;
       const r = k.store.releaseQuarantine(stepKey, `release-${now.slice(0, 10)}`, now, policyHash);
+      const refs = (xs: readonly { kind: string; entityId: string }[]) => xs.map((x) => `${x.kind}/${x.entityId}`).join(', ');
       if (!r.released) {
         console.error(`nothing is quarantined under ${stepKey}`);
         process.exitCode = 1;
       } else {
-        console.log(`released ${stepKey}${r.entities.length > 0 ? ` (entities back: ${r.entities.join(', ')})` : ''}`);
-        if (r.skipped.length > 0) console.log(`left alone (moved on since the trip): ${r.skipped.join(', ')}`);
+        console.log(`released ${stepKey}${r.entities.length > 0 ? ` (entities back: ${refs(r.entities)})` : ''}`);
       }
+      if (r.skipped.length > 0) console.log(`left alone (moved on since the trip): ${refs(r.skipped)}`);
     } finally {
       k.store.close();
     }

@@ -35,6 +35,7 @@ describe('jobpilot quarantined / release', () => {
     const released = cli('release', keys[0]!, '--db', db);
     expect(released.status).toBe(0);
     expect(released.stdout).toContain(keys[0]);
+    expect(released.stdout).toMatch(/\(entities back: demo-item\/demo-00\d\)/);
     const again = cli('release', keys[0]!, '--db', db);
     expect(again.status).toBe(1);
 

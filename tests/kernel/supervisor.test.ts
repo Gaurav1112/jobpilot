@@ -284,7 +284,7 @@ describe('supervisor end to end', () => {
     expect(q.every((s) => s.agent_id === 'demo-scorer' && (s.detail ?? '').includes('G-POST'))).toBe(true);
     expect(store.entityState('demo-001')).toBe('QUARANTINED');
     for (const s of q) {
-      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toMatchObject({ released: true, entities: [expect.any(String)] });
+      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [{ kind: 'demo-item', entityId: expect.any(String) }], skipped: [] });
     }
     expect(store.quarantinedSteps()).toEqual([]);
     expect(store.entityState('demo-001')).toBe('DISCOVERED');
@@ -312,7 +312,7 @@ describe('supervisor end to end', () => {
     }
     const policy = mergePolicy(PRODUCT_POLICY_V1, {});
     for (const s of q) {
-      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toMatchObject({ released: true, entities: [expect.any(String)] });
+      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toEqual({ released: true, entities: [{ kind: 'demo-item', entityId: expect.any(String) }], skipped: [] });
     }
     expect(store.quarantinedSteps()).toEqual([]);
     expect(store.entityState('demo-001')).toBe('DISCOVERED');
@@ -337,15 +337,20 @@ describe('supervisor end to end', () => {
     expect(trip(moved).to_state).toBe('QUARANTINED');
     // someone advanced the entity by hand after the trip
     store.db.prepare(`UPDATE entities SET state = 'SCORED' WHERE kind = 'demo-item' AND entity_id = ?`).run(movedId);
-    expect(store.releaseQuarantine(moved, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [], skipped: [movedId] });
+    const movedRef = { kind: 'demo-item', entityId: movedId };
+    expect(store.releaseQuarantine(moved, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [], skipped: [movedRef] });
     expect(store.entityState(movedId, 'demo-item')).toBe('SCORED');
     expect(trip(moved)).toEqual({ entity_id: movedId, to_state: 'QUARANTINED' });
     expect(store.getStep(moved)).toBeUndefined();
     const ev = store.events('release-x').at(-1)!;
-    expect(JSON.parse(ev.data)).toEqual({ stepKey: moved, entities: [], skipped: [movedId] });
+    expect(JSON.parse(ev.data)).toEqual({ stepKey: moved, entities: [], skipped: [movedRef] });
+    // releasing it again reverts nothing and deletes no step row: not released, no event
+    const events = store.events().length;
+    expect(store.releaseQuarantine(moved, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: false, entities: [], skipped: [movedRef] });
+    expect(store.events()).toHaveLength(events);
     // the untouched one is reverted as before
     const keptId = trip(kept).entity_id;
-    expect(store.releaseQuarantine(kept, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [keptId], skipped: [] });
+    expect(store.releaseQuarantine(kept, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [{ kind: 'demo-item', entityId: keptId }], skipped: [] });
     expect(store.entityState(keptId, 'demo-item')).toBe('DISCOVERED');
     expect(verifyChain(store)).toMatchObject({ ok: true });
   });
