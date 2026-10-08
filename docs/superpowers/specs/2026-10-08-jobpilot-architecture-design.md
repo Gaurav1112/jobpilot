@@ -967,6 +967,21 @@ test; the change is recorded with its eval report in `events`.
 | 11 | **Plugin SDK + distribution** | SDK, sandboxed plugins, `npx jobpilot init`, schedulers | 1–5 |
 | 12 | **Coverage + online evals** | company-finder, assisted Workday, weekly online evals | 3, 5 |
 
+### 16.1 Kernel extensions each sub-project must schedule (from the kernel's final review, 2026-10-08)
+
+The kernel is deliberately small, so later sub-projects extend it. These are additive kernel
+changes, each planned and reviewed as kernel work at the start of its sub-project, not afterthoughts.
+Already done in the kernel: seed data class, contract `emits` (taint can rise), a policy allow-list
+of redactors, `trackers[]` with envelope-aware events, quarantine release, past-version lineage.
+
+| Sub-project | Kernel extensions it needs |
+|---|---|
+| 2 User pack | Read-only pack capability whose content hash joins the step key, so editing the pack re-runs affected steps; local-file read capability for resume ingest; strict contract meta-schema (unknown keys rejected); spend recorded per attempt so a crash cannot lose cost; tracker `keyOf` errors documented |
+| 3 ATS discovery | Per-host rate limits and bulkheads (G-RATE); response size cap; request and response headers in the HTTP tool; egress from approved source manifests or policy-validated host patterns (for the generic JSON-LD adapter); bounded drain concurrency that keeps the total write order; eval metrics beyond exact match (precision/recall with a non-vacuous empty case, Spearman); evals forced offline |
+| 4 Big boards | Session-browser and MCP capabilities; a broker interceptor hook for G-CHALLENGE, G-PACE and G-READONLY (these inspect each request and response, so they are not envelope guardrails); persistent cross-run state for pacing counters and "rung disabled until re-enabled"; a non-retryable `challenged` error code; ladder routing on `StrategyResult` values (rungs always emit a result rather than failing) |
+| 7 Approval + submit | G-APPROVAL token; enforcement of `deniedSubmitHosts`, `maxSubmitsPerDay`, `requireApprovalForEffects`; the wiring's refusal of `effect` agents is lifted only together with these |
+| 11 Distribution | Step/run leases so two processes cannot run one step twice |
+
 ## 17. Out of scope (v1)
 
 Onsite, hybrid and Japan roles and contractor roles **for the user's pack** (other users configure their own eligibility); a hosted SaaS; headless or high-volume crawling of LinkedIn, Indeed, Naukri and similar boards beyond the opt-in session-browse rung; **any anti-bot evasion** (CAPTCHA solving, proxy rotation, fingerprint spoofing, fake accounts); mass auto-apply without
