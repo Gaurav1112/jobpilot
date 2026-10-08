@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -49,5 +49,38 @@ describe('contract export and drift', () => {
     const doc = JSON.parse(readFileSync(scorer!, 'utf8'));
     writeFileSync(scorer!, JSON.stringify({ ...doc, hash: 'tampered' }));
     expect(checkDrift(registry(...demoAgents), dir)).toEqual(['demo-scorer@1.0.0: contract changed without a version bump']);
+  });
+
+  it('reports a stale export no agent maps to, and export removes it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    exportContracts(registry(...demoAgents), dir);
+    writeFileSync(join(dir, 'ghost@1.json'), '{}');
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual(['ghost@1.json: no registered agent exports this contract; delete it or restore the agent']);
+    exportContracts(registry(...demoAgents), dir);
+    expect(existsSync(join(dir, 'ghost@1.json'))).toBe(false);
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual([]);
+  });
+
+  it('notices a shape edited by hand while the hash is intact', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    const [, source] = exportContracts(registry(...demoAgents), dir);
+    const doc = JSON.parse(readFileSync(source!, 'utf8'));
+    writeFileSync(source!, JSON.stringify({ ...doc, shape: { ...doc.shape, kind: 'tampered' } }));
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual(['demo-source@1.0.0: contracts-out file was edited by hand; run node --run contracts:export']);
+  });
+
+  it('reports a committed version newer than the code', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    const [, source] = exportContracts(registry(...demoAgents), dir);
+    const doc = JSON.parse(readFileSync(source!, 'utf8'));
+    writeFileSync(source!, JSON.stringify({ ...doc, shape: { ...doc.shape, version: '9.0.0' } }));
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual(['demo-source: code version 1.0.0 is older than the exported 9.0.0']);
+  });
+
+  it('reports an unreadable contract file instead of throwing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    const [, source] = exportContracts(registry(...demoAgents), dir);
+    writeFileSync(source!, 'not json {');
+    expect(checkDrift(registry(...demoAgents), dir)).toEqual(['demo-source@1: contract file is unreadable; run node --run contracts:export']);
   });
 });
