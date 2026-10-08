@@ -1,0 +1,3 @@
+{"id":"one","input":{"count":1,"prefix":"demo"},"expected":["demo-001"]}
+{"id":"three","input":{"count":3,"prefix":"acme"},"expected":["acme-001","acme-002","acme-003"]}
+{"id":"padding","input":{"count":12,"prefix":"x"},"expected":["x-001","x-002","x-003","x-004","x-005","x-006","x-007","x-008","x-009","x-010","x-011","x-012"]}
