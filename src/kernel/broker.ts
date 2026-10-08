@@ -81,6 +81,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${u.hostname})`);
         if (u.username !== '' || u.password !== '') throw new KernelError('policy_denied', 'G-EGRESS: credentials in URLs are not allowed');
         checkHost(u.hostname);
+        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
         let res;
         let body;
         try {
@@ -109,6 +110,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         if (!provider) throw new KernelError('policy_denied', 'no LLM provider is configured');
         checkHost(provider.host);
         if (inFlight) throw new KernelError('policy_denied', 'G-BUDGET: one model call at a time per step');
+        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new model calls');
         inFlight = true;
         try {
           if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');

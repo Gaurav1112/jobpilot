@@ -186,6 +186,15 @@ describe('executeStep: spec order, spend, events, never throws', () => {
     expect(store.events('r').map((e) => e.kind)).toContain('step_failed');
   });
 
+  it('never throws while formatting an unprintable error', async () => {
+    const store = Store.open(':memory:');
+    const invoked: string[] = [];
+    const a = payingAgent({ usdPerRun: 0.5, failOn: [1] });
+    const sleep = async (): Promise<void> => { throw Object.create(null); };
+    const out = await executeStep(depsFor(store, a, invoked, { sleep }), 'r', a, seedEnv());
+    expect(out).toMatchObject({ kind: 'failed', error: 'unknown' });
+  });
+
   it('chains a step_done event for every done step', async () => {
     const store = Store.open(':memory:');
     const a = payingAgent({ usdPerRun: 0.5, failOn: [] });

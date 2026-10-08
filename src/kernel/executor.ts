@@ -55,7 +55,13 @@ const addCost = (a: Cost, b: Cost): Cost => ({
   outputTokens: a.outputTokens + b.outputTokens,
 });
 
-const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+const messageOf = (err: unknown): string => {
+  try {
+    return err instanceof Error ? err.message : String(err);
+  } catch {
+    return 'unprintable error';
+  }
+};
 
 /**
  * Spec §6.1: the same thirteen steps for every agent. Never throws: anything

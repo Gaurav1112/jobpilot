@@ -225,6 +225,25 @@ describe('capability broker', () => {
       expect((err as Error).message).not.toMatch(/secret/);
     });
 
+    it('refuses new model calls once the signal has aborted, and keeps refusing', async () => {
+      const llm = fakeLlm(() => 'ok');
+      const ac = new AbortController();
+      const ctx = issueContext({ contract: thinker, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: fakeFetch({}), llm }, clock: fixedClock('2026-10-08T00:00:00Z'), signal: ac.signal });
+      ac.abort();
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'timeout' });
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'timeout' });
+      expect(llm.calls).toHaveLength(0);
+    });
+
+    it('refuses new requests once the signal has aborted', async () => {
+      const f = fakeFetch({ 'https://boards-api.greenhouse.io/x': { body: '{}' } });
+      const ac = new AbortController();
+      const ctx = issueContext({ contract: fetcher, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: f }, clock: fixedClock('2026-10-08T00:00:00Z'), signal: ac.signal });
+      ac.abort();
+      await expect(ctx.http!.getText('https://boards-api.greenhouse.io/x')).rejects.toMatchObject({ code: 'timeout' });
+      expect(f.calls).toHaveLength(0);
+    });
+
     it('fails with policy_denied when no LLM provider is configured', async () => {
       const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}) });
       expect(ctx.llm).toBeDefined();
