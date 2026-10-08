@@ -40,7 +40,7 @@ describe('supervisor end to end', () => {
     await a.supervisor.start('run-a', [seed]);
     await b.supervisor.start('run-b', [seed]);
     expect(a.store.dump('envelopes', 'envelope_id')).toBe(b.store.dump('envelopes', 'envelope_id'));
-    expect(a.store.dump('entities', 'entity_id')).toBe(b.store.dump('entities', 'entity_id'));
+    expect(a.store.dump('entities', 'kind, entity_id')).toBe(b.store.dump('entities', 'kind, entity_id'));
     expect(a.store.dump('steps', 'step_key')).toBe(b.store.dump('steps', 'step_key'));
   });
 
@@ -67,7 +67,7 @@ describe('supervisor end to end', () => {
     const clean = demoKernel();
     await clean.supervisor.start('run-1', [seed]);
     expect(store.dump('envelopes', 'envelope_id')).toBe(clean.store.dump('envelopes', 'envelope_id'));
-    expect(store.dump('entities', 'entity_id')).toBe(clean.store.dump('entities', 'entity_id'));
+    expect(store.dump('entities', 'kind, entity_id')).toBe(clean.store.dump('entities', 'kind, entity_id'));
   });
 
   it('quarantines outputs that break a guarantee and moves the entity to QUARANTINED', async () => {
@@ -316,11 +316,37 @@ describe('supervisor end to end', () => {
     }
     expect(store.quarantinedSteps()).toEqual([]);
     expect(store.entityState('demo-001')).toBe('DISCOVERED');
-    expect(store.releaseQuarantine(q[0]!.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toEqual({ released: false, entities: [] });
+    expect(store.releaseQuarantine(q[0]!.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toEqual({ released: false, entities: [], skipped: [] });
     const fixed = defineAgent(defineContract({ ...demoSourceContract, version: '2.0.0' }), demoSource.run);
     const r2 = await handBuilt({ store, scorer: demoScorer, source: fixed }).start('run-2', [seed]);
     expect(r2.queue).toMatchObject({ done: 6, quarantined: 0 });
     for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) expect(store.entityState(id)).toBe('SCORED');
+    expect(verifyChain(store)).toMatchObject({ ok: true });
+  });
+
+  it('leaves an entity that moved on since the trip, keeps its transition row and reports it as skipped', async () => {
+    const store = Store.open(':memory:');
+    const bad = demoKernel({ store, llm: fakeLlm(() => JSON.stringify({ score: 99, reason: 'too keen' })) });
+    await bad.supervisor.start('run-1', [{ count: 2, prefix: 'demo' }]);
+    const q = store.quarantinedSteps();
+    expect(q).toHaveLength(2);
+    const trip = (key: string) =>
+      store.db.prepare(`SELECT entity_id, to_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined'`).get(key) as { entity_id: string; to_state: string };
+    const [moved, kept] = q.map((s) => s.step_key) as [string, string];
+    const movedId = trip(moved).entity_id;
+    expect(trip(moved).to_state).toBe('QUARANTINED');
+    // someone advanced the entity by hand after the trip
+    store.db.prepare(`UPDATE entities SET state = 'SCORED' WHERE kind = 'demo-item' AND entity_id = ?`).run(movedId);
+    expect(store.releaseQuarantine(moved, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [], skipped: [movedId] });
+    expect(store.entityState(movedId, 'demo-item')).toBe('SCORED');
+    expect(trip(moved)).toEqual({ entity_id: movedId, to_state: 'QUARANTINED' });
+    expect(store.getStep(moved)).toBeUndefined();
+    const ev = store.events('release-x').at(-1)!;
+    expect(JSON.parse(ev.data)).toEqual({ stepKey: moved, entities: [], skipped: [movedId] });
+    // the untouched one is reverted as before
+    const keptId = trip(kept).entity_id;
+    expect(store.releaseQuarantine(kept, 'release-x', '2026-10-08T08:00:00.000Z', bad.policyHash)).toEqual({ released: true, entities: [keptId], skipped: [] });
+    expect(store.entityState(keptId, 'demo-item')).toBe('DISCOVERED');
     expect(verifyChain(store)).toMatchObject({ ok: true });
   });
 
@@ -329,8 +355,8 @@ describe('supervisor end to end', () => {
     await k.supervisor.start('run-1', [seed]);
     const done = JSON.parse(k.store.events('run-1').find((e) => e.kind === 'step_done')!.data).stepKey as string;
     const before = k.store.events().length;
-    expect(k.store.releaseQuarantine(done, 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [] });
-    expect(k.store.releaseQuarantine('no-such-key', 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [] });
+    expect(k.store.releaseQuarantine(done, 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [], skipped: [] });
+    expect(k.store.releaseQuarantine('no-such-key', 'release-x', '2026-10-08T08:00:00.000Z', k.policyHash)).toEqual({ released: false, entities: [], skipped: [] });
     expect(k.store.getStep(done)?.status).toBe('done');
     expect(k.store.events()).toHaveLength(before);
   });

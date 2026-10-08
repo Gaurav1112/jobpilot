@@ -96,6 +96,7 @@ program
         process.exitCode = 1;
       } else {
         console.log(`released ${stepKey}${r.entities.length > 0 ? ` (entities back: ${r.entities.join(', ')})` : ''}`);
+        if (r.skipped.length > 0) console.log(`left alone (moved on since the trip): ${r.skipped.join(', ')}`);
       }
     } finally {
       k.store.close();

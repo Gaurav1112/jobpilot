@@ -337,26 +337,40 @@ export class Store {
   /**
    * Forgets a quarantined step so the next run executes it again, and puts every entity
    * a quarantined outcome moved under that step key back where it was (whatever the event
-   * was called). Works for door trips too, which have no step row. One transaction,
-   * audited as `quarantine_released`.
+   * was called). An entity that has moved on since the trip (its state is no longer the
+   * trip's `to_state`) is left alone, its transition row kept, and reported in `skipped`.
+   * Works for door trips too, which have no step row. One transaction, audited as
+   * `quarantine_released`.
    */
-  releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[] } {
+  releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[]; skipped: string[] } {
     return this.tx(() => {
       const trips = this.db
-        .prepare(`SELECT kind, entity_id, event, from_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, kind, event`)
-        .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string }[];
+        .prepare(
+          `SELECT kind, entity_id, event, from_state, to_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, kind, event`,
+        )
+        .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string; to_state: string }[];
       const stepQuarantined = this.getStep(stepKey)?.status === 'quarantined';
-      if (!stepQuarantined && trips.length === 0) return { released: false, entities: [] };
+      if (!stepQuarantined && trips.length === 0) return { released: false, entities: [], skipped: [] };
       if (stepQuarantined) this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
+      const reverted: string[] = [];
+      const skipped: string[] = [];
       for (const t of trips) {
-        this.db.prepare(`UPDATE entities SET state = ? WHERE kind = ? AND entity_id = ?`).run(t.from_state, t.kind, t.entity_id);
+        const res = this.db
+          .prepare(`UPDATE entities SET state = ? WHERE kind = ? AND entity_id = ? AND state = ?`)
+          .run(t.from_state, t.kind, t.entity_id, t.to_state);
+        if (res.changes !== 1) {
+          skipped.push(t.entity_id);
+          continue;
+        }
+        reverted.push(t.entity_id);
         this.db
           .prepare(`DELETE FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`)
           .run(t.kind, t.entity_id, stepKey, t.event);
       }
-      const entities = [...new Set(trips.map((t) => t.entity_id))];
-      this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities }, policyHash);
-      return { released: true, entities };
+      const entities = [...new Set(reverted)];
+      const skippedIds = [...new Set(skipped)];
+      this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities, skipped: skippedIds }, policyHash);
+      return { released: true, entities, skipped: skippedIds };
     });
   }
 
