@@ -297,6 +297,33 @@ describe('supervisor end to end', () => {
     expect(verifyChain(store)).toMatchObject({ ok: true });
   });
 
+  it('lists and releases a door trip (no step row): after the cause is fixed a new run scores the item', async () => {
+    const store = Store.open(':memory:');
+    const p1src = defineAgent(defineContract({ ...demoSourceContract, dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }), demoSource.run);
+    const r1 = await handBuilt({ store, scorer: demoScorer, source: p1src }).start('run-1', [seed]);
+    expect(r1.queue).toMatchObject({ done: 1, quarantined: 5 });
+    expect(store.entityState('demo-001')).toBe('QUARANTINED');
+    const q = store.quarantinedSteps();
+    expect(q).toHaveLength(5);
+    for (const s of q) {
+      expect(store.getStep(s.step_key)).toBeUndefined();
+      expect(s.agent_id).toBe('demo-scorer');
+      expect(s.detail ?? '').toContain('G-DATACLASS');
+    }
+    const policy = mergePolicy(PRODUCT_POLICY_V1, {});
+    for (const s of q) {
+      expect(store.releaseQuarantine(s.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toMatchObject({ released: true, entities: [expect.any(String)] });
+    }
+    expect(store.quarantinedSteps()).toEqual([]);
+    expect(store.entityState('demo-001')).toBe('DISCOVERED');
+    expect(store.releaseQuarantine(q[0]!.step_key, 'release-x', '2026-10-08T08:00:00.000Z', policyHash(policy))).toEqual({ released: false, entities: [] });
+    const fixed = defineAgent(defineContract({ ...demoSourceContract, version: '2.0.0' }), demoSource.run);
+    const r2 = await handBuilt({ store, scorer: demoScorer, source: fixed }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ done: 6, quarantined: 0 });
+    for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) expect(store.entityState(id)).toBe('SCORED');
+    expect(verifyChain(store)).toMatchObject({ ok: true });
+  });
+
   it('does not release a step that is not quarantined', async () => {
     const k = demoKernel();
     await k.supervisor.start('run-1', [seed]);

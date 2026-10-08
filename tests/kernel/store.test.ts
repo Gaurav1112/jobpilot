@@ -51,8 +51,8 @@ describe('Store', () => {
 
   it('applies a transition once per (entity, step, event), however often it is replayed', () => {
     const s = Store.open(':memory:');
-    expect(s.applyTransition('job-1', 'job', 'k1', 'discovered', jobMachine)).toBe('DISCOVERED');
-    expect(s.applyTransition('job-1', 'job', 'k1', 'discovered', jobMachine)).toBeUndefined();
+    expect(s.applyTransition('job-1', 'job', 'k1', 'discovered', jobMachine, 'done')).toBe('DISCOVERED');
+    expect(s.applyTransition('job-1', 'job', 'k1', 'discovered', jobMachine, 'done')).toBeUndefined();
     expect(s.entityState('job-1')).toBe('DISCOVERED');
   });
 });

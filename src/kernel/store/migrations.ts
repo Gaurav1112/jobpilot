@@ -72,6 +72,7 @@ export const MIGRATIONS: readonly string[] = [
     event TEXT NOT NULL,
     from_state TEXT NOT NULL,
     to_state TEXT NOT NULL,
+    outcome TEXT NOT NULL CHECK (outcome IN ('done', 'quarantined')),
     PRIMARY KEY (entity_id, step_key, event)
   );
   CREATE TABLE contracts (

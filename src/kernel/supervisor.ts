@@ -257,7 +257,7 @@ export class Supervisor {
       this.event(runId, 'obligation_blocked', { entity: key, event: ev, ids: open });
       return;
     }
-    store.applyTransition(key, t.kind, stepKey, ev, t.machine);
+    store.applyTransition(key, t.kind, stepKey, ev, t.machine, outcome);
   }
 }
 

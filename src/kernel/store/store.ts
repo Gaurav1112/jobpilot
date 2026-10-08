@@ -240,7 +240,14 @@ export class Store {
   }
 
   // entities: idempotent per (entity, step, event), so a replayed step never double-applies
-  applyTransition(entityId: string, kind: string, stepKey: string, event: string, machine: StateMachine): string | undefined {
+  applyTransition(
+    entityId: string,
+    kind: string,
+    stepKey: string,
+    event: string,
+    machine: StateMachine,
+    outcome: 'done' | 'quarantined',
+  ): string | undefined {
     return this.tx(() => {
       const done = this.db
         .prepare(`SELECT 1 FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`)
@@ -253,8 +260,8 @@ export class Store {
         .prepare(`INSERT INTO entities (entity_id, kind, state) VALUES (?, ?, ?) ON CONFLICT (entity_id) DO UPDATE SET state = excluded.state`)
         .run(entityId, kind, to);
       this.db
-        .prepare(`INSERT INTO entity_transitions (entity_id, step_key, event, from_state, to_state) VALUES (?, ?, ?, ?, ?)`)
-        .run(entityId, stepKey, event, from, to);
+        .prepare(`INSERT INTO entity_transitions (entity_id, step_key, event, from_state, to_state, outcome) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(entityId, stepKey, event, from, to, outcome);
       return to;
     });
   }
@@ -274,30 +281,54 @@ export class Store {
   }
 
   // quarantine release: the user fixed the cause, so the step may run again
+  /**
+   * Quarantined step rows, plus door trips: an input-side trip writes no step row, but a
+   * tracker may have moved entities under its step key. Those take agent and detail from
+   * the step's latest `step_quarantined` event.
+   */
   quarantinedSteps(): { step_key: string; agent_id: string; detail: string | null }[] {
-    return this.db.prepare(`SELECT step_key, agent_id, detail FROM steps WHERE status = 'quarantined' ORDER BY step_key`).all() as {
+    const rows = this.db.prepare(`SELECT step_key, agent_id, detail FROM steps WHERE status = 'quarantined'`).all() as {
       step_key: string;
       agent_id: string;
       detail: string | null;
     }[];
+    const listed = new Set(rows.map((r) => r.step_key));
+    const doorKeys = (
+      this.db.prepare(`SELECT DISTINCT step_key FROM entity_transitions WHERE outcome = 'quarantined' ORDER BY step_key`).all() as { step_key: string }[]
+    ).filter((r) => !listed.has(r.step_key));
+    for (const { step_key } of doorKeys) {
+      const ev = this.db
+        .prepare(`SELECT data FROM events WHERE kind = 'step_quarantined' AND json_extract(data, '$.stepKey') = ? ORDER BY seq DESC LIMIT 1`)
+        .get(step_key) as { data: string } | undefined;
+      const d = ev ? (JSON.parse(ev.data) as { agent?: unknown; verdict?: unknown }) : {};
+      rows.push({
+        step_key,
+        agent_id: typeof d.agent === 'string' ? d.agent : '',
+        detail: d.verdict === undefined ? null : canonicalJson([d.verdict]),
+      });
+    }
+    return rows.sort((a, b) => (a.step_key < b.step_key ? -1 : a.step_key > b.step_key ? 1 : 0));
   }
 
   /**
    * Forgets a quarantined step so the next run executes it again, and puts every entity
-   * its trip moved back where it was. One transaction, audited as `quarantine_released`.
+   * a quarantined outcome moved under that step key back where it was (whatever the event
+   * was called). Works for door trips too, which have no step row. One transaction,
+   * audited as `quarantine_released`.
    */
   releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[] } {
     return this.tx(() => {
-      if (this.getStep(stepKey)?.status !== 'quarantined') return { released: false, entities: [] };
-      this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
       const trips = this.db
-        .prepare(`SELECT entity_id, from_state FROM entity_transitions WHERE step_key = ? AND event = 'trip' ORDER BY entity_id`)
-        .all(stepKey) as { entity_id: string; from_state: string }[];
+        .prepare(`SELECT entity_id, event, from_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, event`)
+        .all(stepKey) as { entity_id: string; event: string; from_state: string }[];
+      const stepQuarantined = this.getStep(stepKey)?.status === 'quarantined';
+      if (!stepQuarantined && trips.length === 0) return { released: false, entities: [] };
+      if (stepQuarantined) this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
       for (const t of trips) {
         this.db.prepare(`UPDATE entities SET state = ? WHERE entity_id = ?`).run(t.from_state, t.entity_id);
-        this.db.prepare(`DELETE FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = 'trip'`).run(t.entity_id, stepKey);
+        this.db.prepare(`DELETE FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`).run(t.entity_id, stepKey, t.event);
       }
-      const entities = trips.map((t) => t.entity_id);
+      const entities = [...new Set(trips.map((t) => t.entity_id))];
       this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities }, policyHash);
       return { released: true, entities };
     });
