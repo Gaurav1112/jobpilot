@@ -1,12 +1,5 @@
 import { join } from 'node:path';
 
-// A native addon built for another Node ABI segfaults instead of failing; refuse early and say why.
-const major = Number(process.versions.node.split('.')[0]);
-if (major < 24) {
-  console.error(`jobpilot needs Node 24 or newer; this is Node ${process.versions.node} (${process.execPath}).`);
-  process.exit(1);
-}
-
 import { Command } from 'commander';
 import { checkDrift, exportContracts } from './kernel/contracts-export.js';
 import { systemClock } from './kernel/clock.js';
@@ -35,10 +28,18 @@ program
   .option('--count <n>', 'items to generate', '5')
   .option('--run <id>', 'run id', `run-${new Date().toISOString().slice(0, 10)}`)
   .action(async (o: { db: string; count: string; run: string }) => {
+    const count = Number(o.count);
+    if (!Number.isInteger(count) || count < 1 || count > 50) {
+      console.error('--count must be an integer from 1 to 50');
+      process.exit(1);
+    }
     const k = demoKernel({ dbPath: o.db, clock: systemClock });
-    const report = await k.supervisor.start(o.run, [{ count: Number(o.count), prefix: 'demo' }]);
-    console.log(JSON.stringify(report, null, 2));
-    k.store.close();
+    try {
+      const report = await k.supervisor.start(o.run, [{ count, prefix: 'demo' }]);
+      console.log(JSON.stringify(report, null, 2));
+    } finally {
+      k.store.close();
+    }
   });
 
 program
@@ -47,8 +48,11 @@ program
   .option('--db <path>', 'SQLite file', 'jobpilot.db')
   .action(async (runId: string, o: { db: string }) => {
     const k = demoKernel({ dbPath: o.db, clock: systemClock });
-    console.log(JSON.stringify(await k.supervisor.resume(runId), null, 2));
-    k.store.close();
+    try {
+      console.log(JSON.stringify(await k.supervisor.resume(runId), null, 2));
+    } finally {
+      k.store.close();
+    }
   });
 
 const audit = program.command('audit').description('Audit log tools');
