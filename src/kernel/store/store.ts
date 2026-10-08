@@ -259,6 +259,10 @@ export class Store {
     });
   }
 
+  hasTransition(entityId: string, stepKey: string, event: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`).get(entityId, stepKey, event) !== undefined;
+  }
+
   entityState(entityId: string): string | undefined {
     return (this.db.prepare(`SELECT state FROM entities WHERE entity_id = ?`).get(entityId) as { state: string } | undefined)?.state;
   }

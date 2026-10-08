@@ -77,3 +77,14 @@ describe('breakers', () => {
     expect(b.isOpen('agent:x')).toBe(true);
   });
 });
+
+describe('success states', () => {
+  it('must be terminal', () => {
+    expect(() => new StateMachine({ id: 'm', initial: 'A', terminal: ['C'], success: ['B'], transitions: [{ from: 'A', on: 'go', to: 'B' }, { from: 'B', on: 'end', to: 'C' }] })).toThrow(/success state B is not terminal/);
+    expect(new StateMachine({ id: 'm', initial: 'A', terminal: ['B'], success: ['B'], transitions: [{ from: 'A', on: 'go', to: 'B' }] }).isSuccess('B')).toBe(true);
+  });
+
+  it('the job machine succeeds only in TRACKING', () => {
+    expect(jobMachine.def.success).toEqual(['TRACKING']);
+  });
+});

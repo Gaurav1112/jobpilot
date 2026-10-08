@@ -17,6 +17,7 @@ export const jobMachine = new StateMachine<JobState, JobEvent>({
   id: 'job',
   initial: 'NEW',
   terminal: ['PREFILTER_REJECTED', 'PARKED', 'DECLINED', 'EXPIRED', 'SUBMIT_FAILED', 'TRACKING', 'QUARANTINED'],
+  success: ['TRACKING'],
   transitions: [
     { from: 'NEW', on: 'discovered', to: 'DISCOVERED' },
     { from: 'DISCOVERED', on: 'normalized', to: 'NORMALIZED' },

@@ -5,6 +5,8 @@ export interface MachineDef<S extends string, E extends string> {
   /** State an entity is in before its first event. */
   readonly initial: S;
   readonly terminal: readonly S[];
+  /** Terminal states that mean the item finished well; an entity with open obligations may not enter one. */
+  readonly success?: readonly S[];
   /** `from: '*'` matches any non-terminal state; exact matches win. */
   readonly transitions: readonly { readonly from: S | '*'; readonly on: E; readonly to: S }[];
 }
@@ -17,6 +19,9 @@ export class StateMachine<S extends string = string, E extends string = string> 
       if (seen.has(k)) throw new Error(`${def.id}: duplicate transition ${t.from} --${t.on}-->`);
       seen.add(k);
       if (t.from !== '*' && def.terminal.includes(t.from)) throw new Error(`${def.id}: terminal state ${t.from} has an outgoing transition`);
+    }
+    for (const s of def.success ?? []) {
+      if (!def.terminal.includes(s)) throw new Error(`${def.id}: success state ${s} is not terminal`);
     }
   }
 
@@ -32,5 +37,9 @@ export class StateMachine<S extends string = string, E extends string = string> 
 
   isTerminal(s: S): boolean {
     return this.def.terminal.includes(s);
+  }
+
+  isSuccess(s: S): boolean {
+    return (this.def.success ?? []).includes(s);
   }
 }

@@ -107,6 +107,7 @@ export function compileWiring(registry: Registry, pipeline: Pipeline, guardrails
     routes.set(e.type, list.sort());
   }
 
+  checkObligations(registry, members, routes, teamOf, problems);
   checkSchemaIdentity(registry, pipeline, members, problems);
   if (!pipeline.edges.some((e) => e.type === pipeline.seed.type.id)) problems.push(`nothing consumes the seed type ${pipeline.seed.type.id}`);
 
@@ -142,6 +143,38 @@ function computeStages(registry: Registry, pipeline: Pipeline, routes: Map<strin
     for (const m of t.members) if (registry.has(m) && !stage.has(m)) problems.push(`agent ${m} is unreachable from the seed`);
   }
   return stage;
+}
+
+/** Agents an envelope from `from` can reach through the routes, excluding `from` itself unless a cycle leads back. */
+function downstreamOf(registry: Registry, from: string, routes: ReadonlyMap<string, readonly string[]>): Set<string> {
+  const seen = new Set<string>();
+  const queue = [...(routes.get(registry.get(from).contract.produces.id) ?? [])];
+  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
+    if (seen.has(next)) continue;
+    seen.add(next);
+    if (registry.has(next)) queue.push(...(routes.get(registry.get(next).contract.produces.id) ?? []));
+  }
+  return seen;
+}
+
+/** Whoever must discharge an obligation has to be a team member the item can actually reach after it is added. */
+function checkObligations(
+  registry: Registry,
+  members: readonly string[],
+  routes: ReadonlyMap<string, readonly string[]>,
+  teamOf: ReadonlyMap<string, Team>,
+  problems: string[],
+): void {
+  for (const m of [...members].sort()) {
+    const adds = registry.get(m).contract.obligations.adds;
+    if (adds.length === 0) continue;
+    const reachable = downstreamOf(registry, m, routes);
+    for (const a of adds) {
+      if (!registry.has(a.dischargedBy) || !teamOf.has(a.dischargedBy) || !reachable.has(a.dischargedBy)) {
+        problems.push(`${m} adds obligation ${a.id} but ${a.dischargedBy} is not reachable downstream`);
+      }
+    }
+  }
 }
 
 /** One type id must mean one payload shape everywhere it is used. */

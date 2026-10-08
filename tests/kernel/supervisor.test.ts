@@ -88,6 +88,24 @@ describe('supervisor end to end', () => {
     expect(k.store.events('run-1').some((e) => e.kind === 'breaker_open')).toBe(true);
   });
 
+  it('reports the open obligations of an input whose step failed', async () => {
+    const k = demoKernel({ llm: fakeLlm(() => 'not json') });
+    const r = await k.supervisor.start('run-1', [{ count: 2, prefix: 'demo' }]);
+    expect(r.queue).toMatchObject({ failed: 2 });
+    expect(r.openObligations).toHaveLength(2);
+    for (const o of r.openObligations) {
+      expect(o.ids).toEqual(['demo.scored']);
+      expect(k.store.getEnvelope(o.envelopeId).type).toBe('DemoItem@1');
+    }
+  });
+
+  it('reports the open obligations of inputs skipped by an open breaker', async () => {
+    const down = { host: 'api.anthropic.com', async complete() { throw new KernelError('overloaded', '529'); } };
+    const r = await demoKernel({ llm: down }).supervisor.start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ failed: 3, skipped: 2 });
+    expect(r.openObligations).toHaveLength(5);
+  });
+
   it('does not retry invalid model output', async () => {
     const llm = fakeLlm(() => 'not json');
     const r = await demoKernel({ llm }).supervisor.start('run-1', [{ count: 2, prefix: 'demo' }]);
@@ -124,11 +142,15 @@ describe('supervisor end to end', () => {
     expect(k.store.entityState('demo-003')).toBe('SCORED');
   });
 
-  it('keeps open obligations across a resume', async () => {
+  it('keeps open obligations across a resume, and blocks the success state while they are open', async () => {
     const store = Store.open(':memory:');
     const crashing = handBuilt({ store, afterStep: (n) => { if (n === 3) throw new Error('simulated crash'); } });
     await expect(crashing.start('run-1', [seed])).rejects.toThrow('simulated crash');
     const r = await handBuilt({ store }).resume('run-1');
+    for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) expect(store.entityState(id)).toBe('DISCOVERED');
+    const blocked = store.events('run-1').filter((e) => e.kind === 'obligation_blocked').map((e) => JSON.parse(e.data) as { entity: string; event: string; ids: string[] });
+    expect(blocked.map((b) => b.entity).sort()).toEqual(['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']);
+    expect(blocked.every((b) => b.event === 'scored' && b.ids.join() === 'demo.scored')).toBe(true);
     expect(r.openObligations).toHaveLength(5);
     for (const o of r.openObligations) {
       expect(o.ids).toEqual(['demo.scored']);

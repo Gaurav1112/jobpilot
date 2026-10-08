@@ -160,4 +160,16 @@ describe('compileWiring', () => {
     const p: Pipeline = { ...demoPipeline, edges: demoPipeline.edges.filter((e) => e.type !== demoPipeline.seed.type.id) };
     expect(problems(() => compileWiring(registryWith(...demoAgents), p, builtinGuardrails()))).toContain('nothing consumes the seed type DemoRequest@1');
   });
+
+  it('refuses an obligation whose discharger is not reachable downstream of the agent that adds it', () => {
+    const src = demoAgents[0];
+    const ghost = defineAgent(defineContract({ ...src.contract, obligations: { adds: [{ id: 'demo.scored', dischargedBy: 'ghost-scorer' }], discharges: [] } }), src.run);
+    expect(problems(() => compileWiring(registryWith(ghost, demoAgents[1]), demoPipeline, builtinGuardrails()))).toContain(
+      'demo-source adds obligation demo.scored but ghost-scorer is not reachable downstream',
+    );
+    const self = defineAgent(defineContract({ ...src.contract, obligations: { adds: [{ id: 'demo.scored', dischargedBy: 'demo-source' }], discharges: [] } }), src.run);
+    expect(problems(() => compileWiring(registryWith(self, demoAgents[1]), demoPipeline, builtinGuardrails()))).toContain(
+      'demo-source adds obligation demo.scored but demo-source is not reachable downstream',
+    );
+  });
 });

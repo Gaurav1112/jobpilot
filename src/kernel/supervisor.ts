@@ -141,10 +141,13 @@ export class Supervisor {
   private route(runId: string, env: Envelope): void {
     const consumers = this.d.compiled.routes.get(env.type) ?? [];
     for (const to of consumers) this.d.store.enqueue(runId, this.d.compiled.stage.get(to) ?? 0, to, env.envelopeId);
-    if (consumers.length === 0) {
-      const ids = openObligations(env);
-      if (ids.length > 0) this.event(runId, 'obligation_open', { envelopeId: env.envelopeId, ids });
-    }
+    if (consumers.length === 0) this.reportOpen(runId, env);
+  }
+
+  /** An envelope that goes no further with obligations still open is reported in the run. */
+  private reportOpen(runId: string, env: Envelope): void {
+    const ids = openObligations(env);
+    if (ids.length > 0) this.event(runId, 'obligation_open', { envelopeId: env.envelopeId, ids });
   }
 
   private failure(key: string, threshold: number, runId: string): void {
@@ -161,12 +164,15 @@ export class Supervisor {
       const agentKey = `agent:${item.agent_id}`;
       // An agent without a team has no team breaker.
       const teamKey = team ? `team:${team.id}` : undefined;
+      const input = store.getEnvelope(item.envelope_id);
       if (breakers.isOpen(agentKey) || (teamKey !== undefined && breakers.isOpen(teamKey))) {
-        store.markQueue(runId, item.agent_id, item.envelope_id, 'skipped');
-        this.event(runId, 'step_skipped', { agent: item.agent_id, reason: 'breaker_open' });
+        store.tx(() => {
+          store.markQueue(runId, item.agent_id, item.envelope_id, 'skipped');
+          this.event(runId, 'step_skipped', { agent: item.agent_id, reason: 'breaker_open' });
+          this.reportOpen(runId, input);
+        });
         continue;
       }
-      const input = store.getEnvelope(item.envelope_id);
       const outcome: StepOutcome = await executeStep(this.exec, runId, agent, input);
       count += 1;
       this.d.afterStep?.(count);
@@ -180,6 +186,8 @@ export class Supervisor {
         } else if (outcome.kind === 'quarantined') {
           this.track(runId, input, outcome.stepKey, item.agent_id, 'quarantined');
         }
+        // The input never got past this step, so whatever it still owes stays open.
+        if (outcome.kind !== 'done') this.reportOpen(runId, input);
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 
@@ -211,13 +219,23 @@ export class Supervisor {
     const key = t.keyOf(env);
     const ev = t.eventFor(agentId, outcome);
     if (key === null || ev === null) return;
+    const { store } = this.d;
+    if (store.hasTransition(key, stepKey, ev)) return; // a replayed step never re-applies
+    let to: string;
     try {
-      this.d.store.applyTransition(key, t.kind, stepKey, ev, t.machine);
+      to = t.machine.next(store.entityState(key) ?? t.machine.def.initial, ev);
     } catch (err) {
       // The same entity can legitimately arrive twice (two sources list the same job): it keeps its state and the duplicate is audited.
       if (!(err instanceof InvalidTransition)) throw err;
       this.event(runId, 'transition_rejected', { entity: key, event: ev, agent: agentId, stepKey });
+      return;
     }
+    const open = openObligations(env);
+    if (t.machine.isSuccess(to) && open.length > 0) {
+      this.event(runId, 'obligation_blocked', { entity: key, event: ev, ids: open });
+      return;
+    }
+    store.applyTransition(key, t.kind, stepKey, ev, t.machine);
   }
 }
 

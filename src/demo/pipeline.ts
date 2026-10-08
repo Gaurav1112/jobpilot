@@ -24,6 +24,7 @@ export const demoMachine = new StateMachine<'NEW' | 'DISCOVERED' | 'SCORED' | 'Q
   id: 'demo-item',
   initial: 'NEW',
   terminal: ['SCORED', 'QUARANTINED'],
+  success: ['SCORED'],
   transitions: [
     { from: 'NEW', on: 'discovered', to: 'DISCOVERED' },
     { from: 'DISCOVERED', on: 'scored', to: 'SCORED' },
