@@ -80,7 +80,7 @@ describe('contract export and drift', () => {
       'demo-source@1.0.0: dataClasses, emits changed without a version bump; bump the major version before exporting',
     );
     expect(paths.map((p) => readFileSync(p, 'utf8'))).toEqual(before);
-    // a same-version change that is not security-relevant is still exported (checkDrift reports it)
+    // a same-version budget/timeout change exports without a drift report: those fields are not security-relevant
     const timeout = defineAgent(defineContract({ ...demoSource.contract, timeoutMs: 2_000 }), demoSource.run);
     expect(() => exportContracts(registry(timeout, demoAgents[1]!), dir)).not.toThrow();
   });

@@ -361,7 +361,7 @@ export class Store {
       const skipped = new Map<string, EntityRef>();
       for (const t of trips) {
         const ref = { kind: t.kind, entityId: t.entity_id };
-        const id = `${t.kind}/${t.entity_id}`;
+        const id = JSON.stringify([t.kind, t.entity_id]);
         const res = this.db
           .prepare(`UPDATE entities SET state = ? WHERE kind = ? AND entity_id = ? AND state = ?`)
           .run(t.from_state, t.kind, t.entity_id, t.to_state);

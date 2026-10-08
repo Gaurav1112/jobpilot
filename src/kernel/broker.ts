@@ -152,7 +152,7 @@ export function issueContext(a: IssueArgs): AgentContext {
           }
           // A call still in flight when the step times out is charged its reservation at once, so the
           // executor (which reads spent() right after the abort) records it. Whatever the provider answers
-          // later is discarded, never added a second time. Bound: accounting for a timed-out call is the
+          // later is discarded, never added a second time. Bound (b) above: accounting for a timed-out call is the
           // reservation, never zero, even though the provider may bill more for it.
           let chargedOnAbort = false;
           const chargeOnAbort = (): void => {
