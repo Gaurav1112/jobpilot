@@ -50,6 +50,43 @@ describe('G-CONTAINMENT: submit-capable code lives only in src/agents/submit/', 
   });
 });
 
+const FORBIDDEN_MODULES = ['http', 'https', 'net', 'tls', 'dgram', 'fs', 'fs/promises', 'child_process', 'worker_threads'];
+const moduleRef = new RegExp(
+  `(?:\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\bimport\\s+|\\brequire\\s*\\(\\s*)['"\\x60](?:node:)?(?:${FORBIDDEN_MODULES.join('|')})['"\\x60]`,
+);
+const bypassPatterns = [/\bfetch\s*\(/, /globalThis\.fetch/, /XMLHttpRequest/, /WebSocket\s*\(/, moduleRef, /process\.binding/];
+const bypasses = (text: string) => bypassPatterns.some((p) => p.test(text));
+
+describe('G-CONTAINMENT: agent code reaches the outside world only through the broker', () => {
+  // src/kernel/, src/evals/, src/cli.ts and src/bin.ts are the trusted side and are not scanned.
+  const agentDirs = ['src/agents', 'src/demo'].map((d) => join(root, d)).filter((d) => existsSync(d));
+
+  it('finds no network, filesystem or process access in agent code', () => {
+    expect(agentDirs.length).toBeGreaterThan(0);
+    const offenders = agentDirs.flatMap(walk).flatMap((f) => (bypasses(readFileSync(f, 'utf8')) ? [rel(f)] : []));
+    expect(offenders).toEqual([]);
+  });
+
+  it('patterns match known bypasses and ignore look-alikes', () => {
+    const positives = [
+      "fetch('https://x')", 'await fetch (url)', 'globalThis.fetch', 'new XMLHttpRequest()', "new WebSocket('wss://x')",
+      "import http from 'node:http'", "import * as https from 'https'", "import { connect } from 'node:net'", "import tls from 'tls'",
+      "import dgram from 'node:dgram'", "import { readFileSync } from 'node:fs'", "import { readFile } from 'fs/promises'",
+      "import { readFile } from \"node:fs/promises\"", "import { spawn } from 'child_process'", "import { Worker } from 'node:worker_threads'",
+      "const fs = require('fs')", "await import('node:child_process')", "import 'node:fs'", "export * from 'fs'", "process.binding('fs')",
+    ];
+    for (const s of positives) expect(bypasses(s), s).toBe(true);
+    const negatives = [
+      'fetch: async () => ({ status: 404 })', 'prefetch(x)', "import { join } from 'node:path'", "import { z } from 'zod'",
+      "import x from 'fs-extra'", "import { createHash } from 'node:crypto'", 'ctx.http.getText(url)', 'const httpsOnly = true',
+    ];
+    for (const s of negatives) expect(bypasses(s), s).toBe(false);
+    // each pattern must pull its own weight
+    const own = ['fetch(u)', 'globalThis.fetch', 'XMLHttpRequest', 'WebSocket(u)', "from 'node:fs'", "process.binding('x')"];
+    bypassPatterns.forEach((p, i) => expect(p.test(own[i] as string), String(p)).toBe(true));
+  });
+});
+
 describe('G-NO-EVASION: anti-bot evasion tooling cannot be installed', () => {
   const deniedExact = [
     'puppeteer-extra', 'puppeteer-extra-plugin-stealth', 'playwright-extra', 'playwright-stealth', 'undetected-chromedriver',
