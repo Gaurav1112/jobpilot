@@ -118,4 +118,46 @@ describe('compileWiring', () => {
     const ps = problems(() => compileWiring(registryWith(...demoAgents, rescorer), p, builtinGuardrails()));
     expect(ps).toContain('cycle: demo-source → demo-scorer → rescorer → demo-scorer');
   });
+
+  it('rejects one type id defined with two different schemas', () => {
+    const Variant = defineType('DemoItem', 1, z.object({ id: z.string(), text: z.string(), extra: z.number() }).strict());
+    const variant = defineAgent(
+      defineContract({ id: 'variant', version: '1.0.0', description: 'Reads a different shape under the same id', skills: ['x'], team: 'evaluation', kind: 'deterministic', consumes: Variant, produces: defineType('VariantOut', 1, z.object({ id: z.string() }).strict()), dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 100 }),
+      async () => [],
+    );
+    const p: Pipeline = {
+      ...demoPipeline,
+      teams: demoPipeline.teams.map((t) => (t.id === 'evaluation' ? { ...t, members: [...t.members, 'variant'], exitGuarantees: [] } : t)),
+      edges: [...demoPipeline.edges, { type: 'DemoItem@1', to: 'variant' }],
+    };
+    const ps = problems(() => compileWiring(registryWith(...demoAgents, variant), p, builtinGuardrails())).filter((x) => /defined with different schemas/.test(x));
+    expect(ps).toHaveLength(1);
+    expect(ps[0]).toMatch(/type DemoItem@1 is defined with different schemas/);
+  });
+
+  it('does not flag a same-shape redefinition as a schema conflict', () => {
+    const Req = defineType('Q', 1, z.object({ s: z.string() }).strict());
+    const needs = definePredicate<{ s: string }>('q.checked', 'checked', () => true);
+    const greedy = defineAgent(
+      defineContract({
+        id: 'greedy', version: '1.0.0', description: 'Needs a promise nobody makes', skills: ['x'], team: 'evaluation', kind: 'deterministic',
+        consumes: defineType('DemoItem', 1, z.object({ id: z.string(), text: z.string() }).strict()), produces: Req, requires: [needs as never],
+        dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 100,
+      }),
+      async () => [],
+    );
+    const p: Pipeline = {
+      ...demoPipeline,
+      teams: demoPipeline.teams.map((t) => (t.id === 'evaluation' ? { ...t, members: [...t.members, 'greedy'], exitGuarantees: [] } : t)),
+      edges: [...demoPipeline.edges, { type: 'DemoItem@1', to: 'greedy' }],
+    };
+    const ps = problems(() => compileWiring(registryWith(...demoAgents, greedy), p, builtinGuardrails()));
+    expect(ps).toEqual(['greedy requires q.checked but producer demo-source does not guarantee it']);
+    expect(ps.some((x) => x.includes('different schemas'))).toBe(false);
+  });
+
+  it('rejects a pipeline whose seed type nothing consumes', () => {
+    const p: Pipeline = { ...demoPipeline, edges: demoPipeline.edges.filter((e) => e.type !== demoPipeline.seed.type.id) };
+    expect(problems(() => compileWiring(registryWith(...demoAgents), p, builtinGuardrails()))).toContain('nothing consumes the seed type DemoRequest@1');
+  });
 });

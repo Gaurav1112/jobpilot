@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { hashOf } from './canonical.js';
 import { WiringError } from './errors.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
@@ -106,6 +107,9 @@ export function compileWiring(registry: Registry, pipeline: Pipeline, guardrails
     routes.set(e.type, list.sort());
   }
 
+  checkSchemaIdentity(registry, pipeline, members, problems);
+  if (!pipeline.edges.some((e) => e.type === pipeline.seed.type.id)) problems.push(`nothing consumes the seed type ${pipeline.seed.type.id}`);
+
   const stage = computeStages(registry, pipeline, routes, problems);
   if (problems.length > 0) throw new WiringError(problems);
   return {
@@ -138,4 +142,26 @@ function computeStages(registry: Registry, pipeline: Pipeline, routes: Map<strin
     for (const m of t.members) if (registry.has(m) && !stage.has(m)) problems.push(`agent ${m} is unreachable from the seed`);
   }
   return stage;
+}
+
+/** One type id must mean one payload shape everywhere it is used. */
+function checkSchemaIdentity(registry: Registry, pipeline: Pipeline, members: string[], problems: string[]): void {
+  const uses = new Map<string, Map<string, string>>(); // type id → agent → schema hash
+  const note = (type: MessageType<any>, agent: string): void => {
+    const byAgent = uses.get(type.id) ?? new Map<string, string>();
+    if (!byAgent.has(agent)) byAgent.set(agent, hashOf(z.toJSONSchema(type.schema)));
+    uses.set(type.id, byAgent);
+  };
+  note(pipeline.seed.type, SUPERVISOR_ID);
+  for (const m of members) {
+    const c = registry.get(m).contract;
+    note(c.consumes, m);
+    note(c.produces, m);
+  }
+  for (const [id, byAgent] of [...uses].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const agents = [...byAgent.keys()].sort();
+    const first = agents[0];
+    const other = agents.find((a) => byAgent.get(a) !== byAgent.get(first ?? ''));
+    if (first !== undefined && other !== undefined) problems.push(`type ${id} is defined with different schemas (${first}, ${other})`);
+  }
 }
