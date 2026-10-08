@@ -203,3 +203,60 @@ describe('executeStep: spec order, spend, events, never throws', () => {
     expect(done.map((d) => d.stepKey)).toEqual([out.stepKey]);
   });
 });
+
+/** Calls the model ten times per step at 0.1 each and lets the first refusal propagate; records which call was refused. */
+const tenCaller = () => {
+  const refusedAt: number[] = [];
+  const agent = defineAgent(
+    defineContract({
+      id: 'ten-caller', version: '1.0.0', description: 'Writes one demo item with many model calls', skills: ['demo-writing'],
+      team: 'sourcing', kind: 'llm', consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet],
+      capabilities: { llm: { model: 'claude-sonnet-5-5', maxTokens: 50 } }, egress: ['api.anthropic.com'],
+      dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0.1, usdPerRun: 0.5 }, timeoutMs: 1_000,
+    }),
+    async (req, ctx) => {
+      for (let i = 1; i <= 10; i++) {
+        try {
+          await ctx.llm!.complete({ system: 's', prompt: 'p' });
+        } catch (e) {
+          refusedAt.push(i);
+          throw e;
+        }
+      }
+      return [{ id: `${req.prefix}-001`, text: 'written' }];
+    },
+  );
+  return { agent, refusedAt };
+};
+
+describe('executeStep: run budgets hold inside a step (G-BUDGET)', () => {
+  const run = async (store: Store, t: ReturnType<typeof tenCaller>, extra: Partial<ExecutorDeps> = {}) =>
+    executeStep({ ...depsFor(store, t.agent, [], extra), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: pricedLlm(0.1) } }, 'r', t.agent, seedEnv());
+
+  it('refuses the 6th call of a fresh step at usdPerRun 0.5', async () => {
+    const store = Store.open(':memory:');
+    const t = tenCaller();
+    const out = await run(store, t);
+    expect(out).toMatchObject({ kind: 'failed', error: 'budget_exceeded' });
+    expect(t.refusedAt).toEqual([6]);
+    expect(store.runCost('r')).toBeLessThanOrEqual(0.5 + 1e-9);
+  });
+
+  it('counts what the agent already spent earlier in the run', async () => {
+    const store = Store.open(':memory:');
+    store.markRunning({ stepKey: 'earlier', agentId: 'ten-caller', version: '1.0.0', contractHash: 'h', inputEnvelopeId: 'x' });
+    store.finishStep({ runId: 'r', stepKey: 'earlier', agentId: 'ten-caller', status: 'done', envelopes: [], cost: { usd: 0.2, inputTokens: 0, outputTokens: 0 } });
+    const t = tenCaller();
+    await run(store, t);
+    expect(t.refusedAt).toEqual([4]);
+    expect(store.runCost('r')).toBeLessThanOrEqual(0.5 + 1e-9);
+  });
+
+  it('holds the policy run cap too', async () => {
+    const store = Store.open(':memory:');
+    const t = tenCaller();
+    await run(store, t, { policy: { ...PRODUCT_POLICY_V1, maxUsdPerRun: 0.3 } });
+    expect(t.refusedAt).toEqual([4]);
+    expect(store.runCost('r')).toBeLessThanOrEqual(0.3 + 1e-9);
+  });
+});

@@ -129,7 +129,8 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
       const signal = AbortSignal.timeout(c.timeoutMs);
-      const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal });
+      const priorSpend = { agentUsd: deps.store.runCost(runId, c.id) + stepSpent.usd, runUsd: deps.store.runCost(runId) + stepSpent.usd };
+      const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal, priorSpend });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {
         deps.onInvoke?.(c.id, stepKey);

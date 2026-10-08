@@ -34,6 +34,8 @@ export interface IssueArgs {
   readonly providers: Providers;
   readonly clock: Clock;
   readonly signal: AbortSignal;
+  /** What the run had already paid before this context was issued: by this agent, and in total. */
+  readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number };
 }
 
 function mapProviderError(e: unknown): unknown {
@@ -52,6 +54,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   let usd = 0;
   let inputTokens = 0;
   let outputTokens = 0;
+  const prior = a.priorSpend ?? { agentUsd: 0, runUsd: 0 };
 
   const checkHost = (host: string): void => {
     if (!a.contract.egress.includes(host)) {
@@ -116,6 +119,9 @@ export function issueContext(a: IssueArgs): AgentContext {
           if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
           if (usd >= a.contract.budget.usdPerRun) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
+          }
+          if (prior.agentUsd + usd >= a.contract.budget.usdPerRun || prior.runUsd + usd >= a.policy.maxUsdPerRun) {
+            throw new KernelError('budget_exceeded', 'G-BUDGET: run budget reached');
           }
           let res;
           try {

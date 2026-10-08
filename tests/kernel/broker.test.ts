@@ -251,3 +251,26 @@ describe('capability broker', () => {
     });
   });
 });
+
+describe('capability broker: prior run spend (G-BUDGET)', () => {
+  const issueWith = (priorSpend: { agentUsd: number; runUsd: number }) => {
+    const llm = fakeLlm(() => 'yes', { usdPerCall: 0.001 });
+    const ctx = issueContext({
+      contract: thinker, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: fakeFetch({}), llm },
+      clock: fixedClock('2026-10-08T00:00:00Z'), signal: new AbortController().signal, priorSpend,
+    });
+    return { ctx, llm };
+  };
+
+  it('refuses a call once the agent has spent its usdPerRun earlier in the run', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 1, runUsd: 1 });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded', message: 'G-BUDGET: run budget reached' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('refuses a call once the run has reached the policy cap', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 0, runUsd: PRODUCT_POLICY_V1.maxUsdPerRun });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded' });
+    expect(llm.calls).toHaveLength(0);
+  });
+});
