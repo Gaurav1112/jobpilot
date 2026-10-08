@@ -42,9 +42,15 @@ describe('audit verify', () => {
     expect(good.status).toBe(0);
     expect(good.stdout).toContain('audit chain intact');
 
+    const upper = cli('audit', 'verify', '--db', db, '--expect-head', `${hash!.toUpperCase()}:${count}`);
+    expect(upper.status).toBe(0);
+    expect(upper.stdout).toContain('audit chain intact');
+
     const bad = cli('audit', 'verify', '--db', db, '--expect-head', 'deadbeef:1');
     expect(bad.status).toBe(1);
+    expect(bad.stdout).toContain('chain head mismatch');
     expect(bad.stdout).toContain('chain head differs from the expected head');
+    expect(bad.stdout).not.toContain('BROKEN');
   }, 60_000);
 
   it('rejects a malformed --expect-head', () => {

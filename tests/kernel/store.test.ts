@@ -106,7 +106,8 @@ describe('audit chain anchor', () => {
     expect(h1).toMatchObject({ seq: 1, count: 1 });
     expect(head).toMatchObject({ seq: 3, count: 3 });
     expect(head?.hash).not.toBe(h1?.hash);
-    expect(verifyChain(s, { hash: 'bad', count: 3 })).toMatchObject({ ok: false, reason: expect.stringMatching(/expected head/) });
+    expect(verifyChain(s, { hash: 'bad', count: 3 })).toEqual({ ok: false, headMismatch: true, events: 3, reason: 'chain head differs from the expected head' });
+    expect(verifyChain(s, { hash: 'bad', count: 3 })).not.toHaveProperty('brokenAt');
     expect(verifyChain(s, { hash: head?.hash ?? '', count: 3 })).toEqual({ ok: true, events: 3 });
   });
 });

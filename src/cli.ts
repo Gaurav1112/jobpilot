@@ -109,12 +109,12 @@ audit
   .action((o: { db: string; expectHead?: string }) => {
     let expected: { hash: string; count: number } | undefined;
     if (o.expectHead !== undefined) {
-      const m = /^([0-9a-f]+):(\d+)$/.exec(o.expectHead);
+      const m = /^([0-9a-fA-F]+):(\d+)$/.exec(o.expectHead);
       if (!m) {
         console.error('--expect-head must look like <hash>:<count>');
         process.exit(1);
       }
-      expected = { hash: m[1] as string, count: Number(m[2]) };
+      expected = { hash: (m[1] as string).toLowerCase(), count: Number(m[2]) };
     }
     const store = Store.open(o.db);
     try {
@@ -123,6 +123,11 @@ audit
         console.log(`audit chain intact: ${r.events} events`);
         const head = store.chainHead();
         if (head) console.log(`head ${head.hash} (${head.count} events)`);
+      } else if ('headMismatch' in r) {
+        const head = store.chainHead();
+        console.log(`audit chain intact (${r.events} events) but chain head mismatch: ${r.reason}`);
+        console.log(`head ${head?.hash ?? 'none'} (${head?.count ?? 0} events)`);
+        process.exitCode = 1;
       } else {
         console.log(`audit chain BROKEN at event ${r.brokenAt}: ${r.reason}`);
         process.exitCode = 1;

@@ -1,6 +1,10 @@
 import { GENESIS_HASH, type Store, eventHash } from './store.js';
 
-export type AuditResult = { ok: true; events: number } | { ok: false; brokenAt: number; reason: string };
+export type AuditResult =
+  | { ok: true; events: number }
+  | { ok: false; brokenAt: number; reason: string }
+  /** The chain itself is intact, but its head is not the one the caller expected. */
+  | { ok: false; headMismatch: true; events: number; reason: string };
 
 /**
  * Walks the event chain from genesis, then checks it against the stored chain head.
@@ -30,7 +34,7 @@ export function verifyChain(store: Store, expectedHead?: { hash: string; count: 
     }
   }
   if (expectedHead !== undefined && (head === undefined || head.hash !== expectedHead.hash || head.count !== expectedHead.count)) {
-    return { ok: false, brokenAt: rows[rows.length - 1]?.seq ?? 0, reason: 'chain head differs from the expected head' };
+    return { ok: false, headMismatch: true, events: rows.length, reason: 'chain head differs from the expected head' };
   }
   return { ok: true, events: rows.length };
 }
