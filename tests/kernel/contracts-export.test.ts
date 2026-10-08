@@ -54,6 +54,23 @@ describe('contract export and drift', () => {
     expect(checkDrift(registry(timeout, demoAgents[1]), dir)[0]).toMatch(/1\.1\.0 is not exported yet/);
   });
 
+  it('refuses to export a security-relevant minor change, writing nothing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
+    const paths = exportContracts(registry(...demoAgents), dir);
+    const before = paths.map((p) => readFileSync(p, 'utf8'));
+    const wider = defineAgent(defineContract({ ...demoSource.contract, version: '1.1.0', dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }), demoSource.run);
+    expect(() => exportContracts(registry(demoAgents[1]!, wider), dir)).toThrow(
+      'demo-source: dataClasses, emits changed in a minor version; bump the major version before exporting',
+    );
+    expect(paths.map((p) => readFileSync(p, 'utf8'))).toEqual(before);
+    // a non-security minor change still exports, and a major bump of the security change is a new file
+    const timeout = defineAgent(defineContract({ ...demoSource.contract, version: '1.1.0', timeoutMs: 2_000 }), demoSource.run);
+    expect(() => exportContracts(registry(timeout, demoAgents[1]!), dir)).not.toThrow();
+    const major = defineAgent(defineContract({ ...wider.contract, version: '2.0.0' }), demoSource.run);
+    expect(() => exportContracts(registry(major, demoAgents[1]!), dir)).not.toThrow();
+    expect(checkDrift(registry(major, demoAgents[1]!), dir)).toEqual([]);
+  });
+
   it('notices a hand-edited contract file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
     const [scorer] = exportContracts(registry(...demoAgents), dir);

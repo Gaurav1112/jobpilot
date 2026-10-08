@@ -17,6 +17,16 @@ function render(doc: ContractDoc): string {
 }
 
 export function exportContracts(registry: Registry, dir: string): string[] {
+  // Refuse before writing anything: re-exporting would erase the evidence that a minor
+  // version changed what the agent may touch (past outputs would still pass G-LINEAGE).
+  for (const a of registry.list()) {
+    const c = a.contract;
+    const path = fileOf(dir, c.id, contractMajor(c));
+    const doc = existsSync(path) ? readDoc(path) : undefined;
+    if (!doc || (doc.shape as { version?: unknown }).version === c.version) continue;
+    const changed = securityDiff(doc.shape, contractShape(c));
+    if (changed.length > 0) throw new Error(`${c.id}: ${changed.join(', ')} changed in a minor version; bump the major version before exporting`);
+  }
   mkdirSync(dir, { recursive: true });
   const paths = registry.list().map((a) => {
     const c = a.contract;
