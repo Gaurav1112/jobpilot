@@ -1,9 +1,14 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
-import { defineAgent } from '../../src/kernel/agent.js';
+import { defineAgent, type AnyAgent } from '../../src/kernel/agent.js';
 import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import { exactMatch, precisionRecall, spearman } from '../../src/evals/metrics.js';
-import { failedGates, runEval } from '../../src/evals/runner.js';
+import { defineContract } from '../../src/kernel/contract.js';
+import { defineType } from '../../src/kernel/types.js';
+import { failedGates, loadJsonl, runEval } from '../../src/evals/runner.js';
 import { demoSource } from '../../src/demo/agents.js';
 import { demoEvalSpecs } from '../../src/demo/evals.js';
 
@@ -48,5 +53,60 @@ describe('runEval', () => {
     const sloppy = defineAgent(demoSource.contract, async () => [{ id: 'x', text: 't', extra: 1 } as never]);
     const r = await runEval({ ...spec!, agent: sloppy }, env);
     expect(r.failures[0]?.actual).toEqual({ error: 'output does not match the produced schema' });
+  });
+
+  it('refuses vacuous gates', async () => {
+    const [spec] = demoEvalSpecs(join(import.meta.dirname, '../../evals/datasets'));
+    await expect(runEval({ ...spec!, cases: [] }, env)).rejects.toThrow(/no cases/);
+    await expect(runEval({ ...spec!, min: 0 }, env)).rejects.toThrow(/min must be in/);
+  });
+
+  const Padded = defineType('Padded', 1, z.object({ id: z.string(), tag: z.string().default('x') }).strict());
+  const mini = (timeoutMs: number) => defineContract({
+    id: 'mini', version: '1.0.0', description: 'Emits one padded item', skills: ['x'], team: 'sourcing', kind: 'deterministic',
+    consumes: Padded, produces: Padded, dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs,
+  });
+  const miniSpec = (a: unknown) => ({
+    agent: a as AnyAgent, cases: [{ id: 'c', input: { id: 'a', tag: 'x' }, expected: 1 }], project: () => 1, metric: 'exactMatch' as const, min: 1,
+  });
+
+  it('applies production no-coercion to outputs', async () => {
+    const agent = defineAgent(mini(1_000), async () => [{ id: 'a' } as never]);
+    const r = await runEval(miniSpec(agent), env);
+    expect(r.failures[0]?.actual).toEqual({ error: 'output would be coerced by the produced schema' });
+  });
+
+  it('applies production no-coercion to inputs', async () => {
+    const agent = defineAgent(mini(1_000), async () => []);
+    const spec = { ...miniSpec(agent), cases: [{ id: 'c', input: { id: 'a' }, expected: 1 }] };
+    const r = await runEval(spec, env);
+    expect(r.failures[0]?.actual).toEqual({ error: 'input would be coerced by the consumed schema' });
+  });
+
+  it('enforces the timeout even when the agent ignores its signal', async () => {
+    const agent = defineAgent(mini(20), () => new Promise<never>(() => {}));
+    const r = await runEval(miniSpec(agent), env);
+    expect(r.failures[0]?.actual).toEqual({ error: 'timeout' });
+    expect(r.pass).toBe(false);
+  });
+});
+
+describe('loadJsonl', () => {
+  const write = (body: string) => {
+    const p = join(mkdtempSync(join(tmpdir(), 'jp-evals-')), 'd.jsonl');
+    writeFileSync(p, body);
+    return p;
+  };
+  const ok = '{"id":"a","input":1,"expected":2}';
+
+  it('rejects a line that is not JSON', () => {
+    expect(() => loadJsonl(write(`${ok}\nnot json\n`))).toThrow(/:2: invalid JSON/);
+  });
+  it('rejects a line that is not an object with id, input, expected', () => {
+    expect(() => loadJsonl(write('5\n'))).toThrow(/needs id, input, expected/);
+    expect(() => loadJsonl(write('{"id":"a","input":1}\n'))).toThrow(/needs id, input, expected/);
+  });
+  it('rejects a repeated id', () => {
+    expect(() => loadJsonl(write(`${ok}\n${ok}\n`))).toThrow(/duplicate id/);
   });
 });

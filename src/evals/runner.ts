@@ -3,6 +3,7 @@ import type { AnyAgent } from '../kernel/agent.js';
 import { issueContext } from '../kernel/broker.js';
 import { canonicalJson } from '../kernel/canonical.js';
 import { fixedClock } from '../kernel/clock.js';
+import { classify } from '../kernel/errors.js';
 import type { Policy } from '../kernel/policy.js';
 import type { Providers } from '../kernel/providers.js';
 import { exactMatch } from './metrics.js';
@@ -34,33 +35,64 @@ export interface EvalReport {
 }
 
 export function loadJsonl(path: string): EvalCase[] {
+  const seen = new Set<string>();
   return readFileSync(path, 'utf8')
     .split('\n')
-    .filter((l) => l.trim() !== '')
-    .map((l, i) => {
-      const c = JSON.parse(l) as Partial<EvalCase>;
-      if (typeof c.id !== 'string' || !('input' in c) || !('expected' in c)) throw new TypeError(`${path}:${i + 1}: needs id, input, expected`);
+    .map((text, i) => ({ text, line: i + 1 }))
+    .filter((l) => l.text.trim() !== '')
+    .map(({ text, line }) => {
+      let raw: unknown;
+      try {
+        raw = JSON.parse(text);
+      } catch {
+        throw new TypeError(`${path}:${line}: invalid JSON`);
+      }
+      const c = raw as Partial<EvalCase> | null;
+      if (typeof raw !== 'object' || raw === null || Array.isArray(raw) || typeof c?.id !== 'string' || !('input' in c) || !('expected' in c)) {
+        throw new TypeError(`${path}:${line}: needs id, input, expected`);
+      }
+      if (seen.has(c.id)) throw new TypeError(`${path}:${line}: duplicate id ${c.id}`);
+      seen.add(c.id);
       return c as EvalCase;
     });
 }
 
+/** Rejects with the signal's reason as soon as it aborts, even if the work never settles. */
+function raceAbort<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(signal.reason);
+    if (signal.aborted) return onAbort();
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
+
 /** Runs each case through the agent with the same broker it gets in production; schema failures count as wrong. */
 export async function runEval(spec: EvalSpec, env: { providers: Providers; policy: Policy }): Promise<EvalReport> {
   const c = spec.agent.contract;
+  if (spec.cases.length === 0) throw new Error(`eval ${c.id}: no cases`);
+  if (!(spec.min > 0 && spec.min <= 1)) throw new Error(`eval ${c.id}: min must be in (0, 1]`);
   const pairs: { id: string; expected: unknown; actual: unknown }[] = [];
   for (const k of spec.cases) {
     let actual: unknown;
     const input = c.consumes.schema.safeParse(k.input);
     if (!input.success) {
       actual = { error: 'input does not match the consumed schema' };
+    } else if (!same(input.data, k.input)) {
+      actual = { error: 'input would be coerced by the consumed schema' };
     } else {
       try {
-        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers: env.providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal: AbortSignal.timeout(c.timeoutMs) });
-        const outs = await spec.agent.run(k.input, ctx);
-        const bad = outs.find((o) => !c.produces.schema.safeParse(o).success);
-        actual = bad === undefined ? spec.project(outs) : { error: 'output does not match the produced schema' };
+        const signal = AbortSignal.timeout(c.timeoutMs);
+        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers: env.providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal });
+        const outs = await raceAbort(spec.agent.run(k.input, ctx), signal);
+        const parsed = outs.map((o) => ({ o, r: c.produces.schema.safeParse(o) }));
+        if (parsed.some((p) => !p.r.success)) actual = { error: 'output does not match the produced schema' };
+        else if (parsed.some((p) => !same((p.r as { data: unknown }).data, p.o))) actual = { error: 'output would be coerced by the produced schema' };
+        else actual = spec.project(outs);
       } catch (e) {
-        actual = { error: (e as Error).message };
+        actual = { error: classify(e) === 'timeout' ? 'timeout' : (e as Error).message };
       }
     }
     pairs.push({ id: k.id, expected: k.expected, actual });
@@ -74,7 +106,7 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
     score,
     min: spec.min,
     pass: score >= spec.min,
-    failures: pairs.filter((p) => canonicalJson(p.expected) !== canonicalJson(p.actual)),
+    failures: pairs.filter((p) => !same(p.expected, p.actual)),
   };
 }
 
