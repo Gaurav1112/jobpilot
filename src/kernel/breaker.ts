@@ -1,4 +1,5 @@
-/** Consecutive-failure breakers, per run. Keys are `agent:<id>` or `team:<id>`. */
+/** Consecutive-failure breakers, per run. Keys are `agent:<id>` or `team:<id>`.
+ * An open breaker stays open for the rest of the run; `success` resets the failure count but never closes an open breaker. */
 export class Breakers {
   private readonly fails = new Map<string, number>();
   private readonly open = new Set<string>();

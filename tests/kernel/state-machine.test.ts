@@ -13,8 +13,33 @@ describe('job state machine', () => {
     expect(jobMachine.isTerminal(s)).toBe(true);
   });
 
-  it('allows one QA retry loop back to TAILORED', () => {
-    expect(jobMachine.next('RENDERED', 'qa_failed')).toBe('TAILORED');
+  it('QA retry: RENDERED -qa_failed-> TAILORED_RETRY -rendered-> RENDERED_RETRY -qa_passed-> QA_PASSED', () => {
+    let s: typeof jobMachine.def.initial = 'RENDERED';
+    s = jobMachine.next(s, 'qa_failed');
+    expect(s).toBe('TAILORED_RETRY');
+    s = jobMachine.next(s, 'rendered');
+    expect(s).toBe('RENDERED_RETRY');
+    s = jobMachine.next(s, 'qa_passed');
+    expect(s).toBe('QA_PASSED');
+  });
+
+  it('QA retry: RENDERED -qa_failed-> TAILORED_RETRY -rendered-> RENDERED_RETRY -qa_failed-> QUARANTINED', () => {
+    let s: typeof jobMachine.def.initial = 'RENDERED';
+    s = jobMachine.next(s, 'qa_failed');
+    expect(s).toBe('TAILORED_RETRY');
+    s = jobMachine.next(s, 'rendered');
+    expect(s).toBe('RENDERED_RETRY');
+    s = jobMachine.next(s, 'qa_failed');
+    expect(s).toBe('QUARANTINED');
+  });
+
+  it('QA retry is bounded: TAILORED_RETRY -qa_failed throws', () => {
+    expect(() => jobMachine.next('TAILORED_RETRY', 'qa_failed')).toThrow(InvalidTransition);
+  });
+
+  it('NEEDS_HUMAN exits to SUBMITTED or DECLINED', () => {
+    expect(jobMachine.next('NEEDS_HUMAN', 'submitted')).toBe('SUBMITTED');
+    expect(jobMachine.next('NEEDS_HUMAN', 'declined')).toBe('DECLINED');
   });
 
   it('quarantines from any non-terminal state on a trip', () => {
@@ -42,5 +67,13 @@ describe('breakers', () => {
     expect(b.failure('agent:x', 3)).toBe(true);
     expect(b.isOpen('agent:x')).toBe(true);
     expect(b.failure('agent:x', 3)).toBe(false);
+  });
+
+  it('once open, success does not close the breaker (isOpen stays true)', () => {
+    const b = new Breakers();
+    b.failure('agent:x', 1);
+    expect(b.isOpen('agent:x')).toBe(true);
+    b.success('agent:x');
+    expect(b.isOpen('agent:x')).toBe(true);
   });
 });

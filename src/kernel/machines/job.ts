@@ -2,7 +2,7 @@ import { StateMachine } from '../state-machine.js';
 
 export type JobState =
   | 'NEW' | 'DISCOVERED' | 'NORMALIZED' | 'DEDUPED' | 'PREFILTER_REJECTED' | 'PREFILTERED' | 'SCORED' | 'RANKED' | 'PARKED'
-  | 'SHORTLISTED' | 'TAILORED' | 'RENDERED' | 'QA_PASSED' | 'AWAITING_APPROVAL' | 'APPROVED' | 'DECLINED' | 'EXPIRED'
+  | 'SHORTLISTED' | 'TAILORED' | 'TAILORED_RETRY' | 'RENDERED' | 'RENDERED_RETRY' | 'QA_PASSED' | 'AWAITING_APPROVAL' | 'APPROVED' | 'DECLINED' | 'EXPIRED'
   | 'SUBMITTING' | 'SUBMITTED' | 'NEEDS_HUMAN' | 'SUBMIT_FAILED' | 'TRACKING' | 'QUARANTINED';
 
 export type JobEvent =
@@ -10,7 +10,9 @@ export type JobEvent =
   | 'shortlisted' | 'tailored' | 'rendered' | 'qa_passed' | 'qa_failed' | 'awaiting_approval' | 'approved' | 'declined'
   | 'expired' | 'submitting' | 'submitted' | 'needs_human' | 'submit_failed' | 'tracking' | 'trip';
 
-/** Spec §6.3. A transition not in this table throws. */
+/** Spec §6.3. A transition not in this table throws.
+ * QUARANTINED is terminal for the machine; manual release happens outside it (a new run after the user fixes the cause).
+ */
 export const jobMachine = new StateMachine<JobState, JobEvent>({
   id: 'job',
   initial: 'NEW',
@@ -28,7 +30,10 @@ export const jobMachine = new StateMachine<JobState, JobEvent>({
     { from: 'SHORTLISTED', on: 'tailored', to: 'TAILORED' },
     { from: 'TAILORED', on: 'rendered', to: 'RENDERED' },
     { from: 'RENDERED', on: 'qa_passed', to: 'QA_PASSED' },
-    { from: 'RENDERED', on: 'qa_failed', to: 'TAILORED' },
+    { from: 'RENDERED', on: 'qa_failed', to: 'TAILORED_RETRY' },
+    { from: 'TAILORED_RETRY', on: 'rendered', to: 'RENDERED_RETRY' },
+    { from: 'RENDERED_RETRY', on: 'qa_passed', to: 'QA_PASSED' },
+    { from: 'RENDERED_RETRY', on: 'qa_failed', to: 'QUARANTINED' },
     { from: 'QA_PASSED', on: 'awaiting_approval', to: 'AWAITING_APPROVAL' },
     { from: 'AWAITING_APPROVAL', on: 'approved', to: 'APPROVED' },
     { from: 'AWAITING_APPROVAL', on: 'declined', to: 'DECLINED' },
@@ -37,6 +42,8 @@ export const jobMachine = new StateMachine<JobState, JobEvent>({
     { from: 'SUBMITTING', on: 'submitted', to: 'SUBMITTED' },
     { from: 'SUBMITTING', on: 'needs_human', to: 'NEEDS_HUMAN' },
     { from: 'SUBMITTING', on: 'submit_failed', to: 'SUBMIT_FAILED' },
+    { from: 'NEEDS_HUMAN', on: 'submitted', to: 'SUBMITTED' },
+    { from: 'NEEDS_HUMAN', on: 'declined', to: 'DECLINED' },
     { from: 'SUBMITTED', on: 'tracking', to: 'TRACKING' },
     { from: '*', on: 'trip', to: 'QUARANTINED' },
   ],
