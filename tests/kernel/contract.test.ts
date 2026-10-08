@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { contractHash, contractMajor, contractShape, defineContract, type ContractSpec } from '../../src/kernel/contract.js';
@@ -177,6 +179,17 @@ describe('emits (minimum output data class)', () => {
     expect(contractShape(plain)).not.toHaveProperty('emits');
     expect(contractShape(emitting)).toMatchObject({ emits: 'P1' });
     expect(contractHash(emitting)).not.toBe(contractHash(plain));
+  });
+});
+
+describe('contractShape ordering is locale independent', () => {
+  it('sorts obligations by code unit, and no source file uses localeCompare', () => {
+    const c = defineContract({ ...base, obligations: { adds: [{ id: 'a.b', dischargedBy: 'x' }, { id: 'a-b', dischargedBy: 'x' }, { id: 'a0', dischargedBy: 'x' }], discharges: [] } });
+    const ids = (contractShape(c).obligations as { adds: { id: string }[] }).adds.map((a) => a.id);
+    expect(ids).toEqual(['a-b', 'a.b', 'a0']);
+    const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
+    const users = walk(join(import.meta.dirname, '../../src')).filter((f) => /\blocaleCompare\b/.test(readFileSync(f, 'utf8')));
+    expect(users).toEqual([]);
   });
 });
 

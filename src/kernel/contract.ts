@@ -183,7 +183,7 @@ export function contractShape(c: AnyContract): Record<string, unknown> {
     // Only present when declared, so contracts without it keep their hash.
     ...(c.emits !== undefined ? { emits: c.emits } : {}),
     obligations: {
-      adds: [...c.obligations.adds].sort((a, b) => a.id.localeCompare(b.id)).map((a) => ({ id: a.id, dischargedBy: a.dischargedBy })),
+      adds: [...c.obligations.adds].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((a) => ({ id: a.id, dischargedBy: a.dischargedBy })),
       discharges: [...c.obligations.discharges].sort(),
     },
     budget: c.budget,
