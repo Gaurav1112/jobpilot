@@ -239,7 +239,7 @@ export class Store {
     ) as EventRow[];
   }
 
-  // entities: idempotent per (entity, step, event), so a replayed step never double-applies
+  // entities: one namespace per tracker kind; idempotent per (kind, entity, step, event), so a replayed step never double-applies
   applyTransition(
     entityId: string,
     kind: string,
@@ -249,29 +249,35 @@ export class Store {
     outcome: 'done' | 'quarantined',
   ): string | undefined {
     return this.tx(() => {
-      const done = this.db
-        .prepare(`SELECT 1 FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`)
-        .get(entityId, stepKey, event);
-      if (done) return undefined;
-      const cur = this.db.prepare(`SELECT state FROM entities WHERE entity_id = ?`).get(entityId) as { state: string } | undefined;
+      if (this.hasTransition(entityId, kind, stepKey, event)) return undefined;
+      const cur = this.db.prepare(`SELECT state FROM entities WHERE kind = ? AND entity_id = ?`).get(kind, entityId) as { state: string } | undefined;
       const from = cur?.state ?? machine.def.initial;
       const to = machine.next(from, event);
       this.db
-        .prepare(`INSERT INTO entities (entity_id, kind, state) VALUES (?, ?, ?) ON CONFLICT (entity_id) DO UPDATE SET state = excluded.state`)
-        .run(entityId, kind, to);
+        .prepare(`INSERT INTO entities (kind, entity_id, state) VALUES (?, ?, ?) ON CONFLICT (kind, entity_id) DO UPDATE SET state = excluded.state`)
+        .run(kind, entityId, to);
       this.db
-        .prepare(`INSERT INTO entity_transitions (entity_id, step_key, event, from_state, to_state, outcome) VALUES (?, ?, ?, ?, ?, ?)`)
-        .run(entityId, stepKey, event, from, to, outcome);
+        .prepare(`INSERT INTO entity_transitions (kind, entity_id, step_key, event, from_state, to_state, outcome) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(kind, entityId, stepKey, event, from, to, outcome);
       return to;
     });
   }
 
-  hasTransition(entityId: string, stepKey: string, event: string): boolean {
-    return this.db.prepare(`SELECT 1 FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`).get(entityId, stepKey, event) !== undefined;
+  hasTransition(entityId: string, kind: string, stepKey: string, event: string): boolean {
+    return (
+      this.db.prepare(`SELECT 1 FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`).get(kind, entityId, stepKey, event) !==
+      undefined
+    );
   }
 
-  entityState(entityId: string): string | undefined {
-    return (this.db.prepare(`SELECT state FROM entities WHERE entity_id = ?`).get(entityId) as { state: string } | undefined)?.state;
+  /** The entity's state under `kind`; without a kind, the id must belong to at most one kind. */
+  entityState(entityId: string, kind?: string): string | undefined {
+    if (kind !== undefined) {
+      return (this.db.prepare(`SELECT state FROM entities WHERE kind = ? AND entity_id = ?`).get(kind, entityId) as { state: string } | undefined)?.state;
+    }
+    const rows = this.db.prepare(`SELECT kind, state FROM entities WHERE entity_id = ? ORDER BY kind`).all(entityId) as { kind: string; state: string }[];
+    if (rows.length > 1) throw new Error(`entity ${entityId} is ambiguous: it exists under kinds ${rows.map((r) => r.kind).join(', ')}`);
+    return rows[0]?.state;
   }
 
   saveContract(agentId: string, version: string, hash: string, shape: unknown): void {
@@ -319,14 +325,16 @@ export class Store {
   releaseQuarantine(stepKey: string, runId: string, at: string, policyHash: string): { released: boolean; entities: string[] } {
     return this.tx(() => {
       const trips = this.db
-        .prepare(`SELECT entity_id, event, from_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, event`)
-        .all(stepKey) as { entity_id: string; event: string; from_state: string }[];
+        .prepare(`SELECT kind, entity_id, event, from_state FROM entity_transitions WHERE step_key = ? AND outcome = 'quarantined' ORDER BY entity_id, kind, event`)
+        .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string }[];
       const stepQuarantined = this.getStep(stepKey)?.status === 'quarantined';
       if (!stepQuarantined && trips.length === 0) return { released: false, entities: [] };
       if (stepQuarantined) this.db.prepare(`DELETE FROM steps WHERE step_key = ? AND status = 'quarantined'`).run(stepKey);
       for (const t of trips) {
-        this.db.prepare(`UPDATE entities SET state = ? WHERE entity_id = ?`).run(t.from_state, t.entity_id);
-        this.db.prepare(`DELETE FROM entity_transitions WHERE entity_id = ? AND step_key = ? AND event = ?`).run(t.entity_id, stepKey, t.event);
+        this.db.prepare(`UPDATE entities SET state = ? WHERE kind = ? AND entity_id = ?`).run(t.from_state, t.kind, t.entity_id);
+        this.db
+          .prepare(`DELETE FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`)
+          .run(t.kind, t.entity_id, stepKey, t.event);
       }
       const entities = [...new Set(trips.map((t) => t.entity_id))];
       this.appendEvent(runId, at, 'quarantine_released', { stepKey, entities }, policyHash);

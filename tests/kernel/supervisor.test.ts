@@ -357,6 +357,25 @@ describe('supervisor end to end', () => {
     }
   });
 
+  it('gives each tracker its own entity namespace, even when two key the same id', async () => {
+    const store = Store.open(':memory:');
+    const seen: Tracker = {
+      kind: 'seen-item',
+      machine: new StateMachine({ id: 'seen-item', initial: 'NEW', terminal: ['SEEN'], transitions: [{ from: 'NEW', on: 'seen', to: 'SEEN' }] }),
+      keyOf: (env) => (env.type === 'DemoItem@1' ? (env.payload as { id: string }).id : null),
+      eventFor: (agentId, outcome) => (outcome === 'done' && agentId === 'demo-source' ? 'seen' : null),
+    };
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, seen] }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ done: 6, failed: 0 });
+    expect(store.events('run-1').filter((e) => e.kind === 'transition_rejected' || e.kind === 'tracker_error')).toEqual([]);
+    for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) {
+      expect(store.entityState(id, 'demo-item')).toBe('SCORED');
+      expect(store.entityState(id, 'seen-item')).toBe('SEEN');
+    }
+    expect(() => store.entityState('demo-001')).toThrow(/ambiguous/);
+    expect(store.entityState('no-such-id')).toBeUndefined();
+  });
+
   it('a throwing tracker is audited and does not wedge the run or the other trackers', async () => {
     const store = Store.open(':memory:');
     const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: () => { throw new Error('keyOf exploded'); } };

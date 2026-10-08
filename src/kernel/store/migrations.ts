@@ -62,18 +62,20 @@ export const MIGRATIONS: readonly string[] = [
     count INTEGER NOT NULL
   );
   CREATE TABLE entities (
-    entity_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
-    state TEXT NOT NULL
+    entity_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    PRIMARY KEY (kind, entity_id)
   );
   CREATE TABLE entity_transitions (
+    kind TEXT NOT NULL,
     entity_id TEXT NOT NULL,
     step_key TEXT NOT NULL,
     event TEXT NOT NULL,
     from_state TEXT NOT NULL,
     to_state TEXT NOT NULL,
     outcome TEXT NOT NULL CHECK (outcome IN ('done', 'quarantined')),
-    PRIMARY KEY (entity_id, step_key, event)
+    PRIMARY KEY (kind, entity_id, step_key, event)
   );
   CREATE TABLE contracts (
     agent_id TEXT NOT NULL,

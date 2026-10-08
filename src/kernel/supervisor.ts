@@ -242,10 +242,10 @@ export class Supervisor {
     }
     if (key === null || ev === null) return;
     const { store } = this.d;
-    if (store.hasTransition(key, stepKey, ev)) return; // a replayed step never re-applies
+    if (store.hasTransition(key, t.kind, stepKey, ev)) return; // a replayed step never re-applies
     let to: string;
     try {
-      to = t.machine.next(store.entityState(key) ?? t.machine.def.initial, ev);
+      to = t.machine.next(store.entityState(key, t.kind) ?? t.machine.def.initial, ev);
     } catch (err) {
       // The same entity can legitimately arrive twice (two sources list the same job): it keeps its state and the duplicate is audited.
       if (!(err instanceof InvalidTransition)) throw err;
