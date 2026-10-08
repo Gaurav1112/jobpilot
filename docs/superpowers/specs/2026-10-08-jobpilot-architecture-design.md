@@ -123,11 +123,11 @@ Data findings (2026-10-08): only 10 of 93 rows were remote-India; 23 of 28 appro
         ┌───────────────────┴──────┐   ┌─────────────▼──────────────┐   ┌────────────┴─────────┐
         │ DISCOVERY (no LLM)       │   │ PROCESSING                 │   │ GUARDRAIL PIPELINE   │
         │ greenhouse lever ashby   │   │ normalize → dedupe →       │   │ in: schema,size,     │
-        │ workable smartrecruiters │   │ prefilter → score(claude)  │   │  inject,egress,budget│
-        │ recruitee himalayas      │   │            score(jev)      │   │ out: schema,post,    │
+        │ workable smartrecruiters │   │ prefilter → score(lexicon) │   │  inject,egress,budget│
+        │ recruitee himalayas      │   │  score(claude) score(jev)  │   │ out: schema,post,    │
         │ remotive remoteok hn     │   │ → fuse → rank → tailor-cv  │   │  pii,ground,ats-text │
-        │ adzuna-in       │   │ → cover-letter → render    │   └──────────────────────┘
-        │ company-finder gmail    │   │ → qa-gate                  │
+        │ adzuna-in gmail-alerts   │   │ → cover-letter → render    │   └──────────────────────┘
+        │ company-finder (weekly)  │   │ → qa-gate                  │
         └──────────────────────────┘   └─────────────┬──────────────┘
                                                      ▼
                          DASHBOARD (Hono+htmx) ── human Approve ──▶ ApprovalToken (HMAC)
