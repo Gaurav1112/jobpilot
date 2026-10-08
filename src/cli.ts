@@ -105,12 +105,31 @@ audit
   .command('verify')
   .description('Walk the hash-chained event log')
   .option('--db <path>', 'SQLite file', 'jobpilot.db')
-  .action((o: { db: string }) => {
+  .option('--expect-head <hash:count>', 'fail unless the chain head is exactly this (detects a truncated or rewritten tail)')
+  .action((o: { db: string; expectHead?: string }) => {
+    let expected: { hash: string; count: number } | undefined;
+    if (o.expectHead !== undefined) {
+      const m = /^([0-9a-f]+):(\d+)$/.exec(o.expectHead);
+      if (!m) {
+        console.error('--expect-head must look like <hash>:<count>');
+        process.exit(1);
+      }
+      expected = { hash: m[1] as string, count: Number(m[2]) };
+    }
     const store = Store.open(o.db);
-    const r = verifyChain(store);
-    console.log(r.ok ? `audit chain intact: ${r.events} events` : `audit chain BROKEN at event ${r.brokenAt}: ${r.reason}`);
-    store.close();
-    if (!r.ok) process.exitCode = 1;
+    try {
+      const r = verifyChain(store, expected);
+      if (r.ok) {
+        console.log(`audit chain intact: ${r.events} events`);
+        const head = store.chainHead();
+        if (head) console.log(`head ${head.hash} (${head.count} events)`);
+      } else {
+        console.log(`audit chain BROKEN at event ${r.brokenAt}: ${r.reason}`);
+        process.exitCode = 1;
+      }
+    } finally {
+      store.close();
+    }
   });
 
 const contracts = program.command('contracts').description('Agent contract tools');
