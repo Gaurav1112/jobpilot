@@ -199,6 +199,32 @@ describe('capability broker', () => {
       expect(llm.n).toBe(2);
     });
 
+    it('allows one model call in flight per step', async () => {
+      let n = 0;
+      const slow: LlmProvider = {
+        host: 'api.anthropic.com',
+        async complete() {
+          n++;
+          await new Promise((r) => setTimeout(r, 5));
+          return { text: 'x', inputTokens: 1, outputTokens: 1, usd: 0.001 };
+        },
+      };
+      const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}), llm: slow });
+      const rs = await Promise.allSettled([1, 2, 3].map(() => ctx.llm!.complete({ system: 's', prompt: 'p' })));
+      expect(n).toBe(1);
+      expect(rs.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+      const rejected = rs.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+      expect(rejected).toHaveLength(2);
+      for (const r of rejected) expect(r.reason).toMatchObject({ code: 'policy_denied', message: 'G-BUDGET: one model call at a time per step' });
+      await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).resolves.toBeDefined();
+    });
+
+    it('does not echo the raw URL in the port error', async () => {
+      const err = await thrown(issue(fetcher, 'P0', { fetch: fakeFetch({}) }).http!.getText('https://u:secret@boards-api.greenhouse.io:8443/x'));
+      expect((err as Error).message).toMatch(/port/);
+      expect((err as Error).message).not.toMatch(/secret/);
+    });
+
     it('fails with policy_denied when no LLM provider is configured', async () => {
       const ctx = issue(thinker, 'P0', { fetch: fakeFetch({}) });
       expect(ctx.llm).toBeDefined();

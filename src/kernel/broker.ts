@@ -78,7 +78,7 @@ export function issueContext(a: IssueArgs): AgentContext {
           throw new KernelError('policy_denied', 'G-EGRESS: invalid URL');
         }
         if (u.protocol !== 'https:') throw new KernelError('policy_denied', `G-EGRESS: only https is allowed (${url})`);
-        if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${url})`);
+        if (u.port !== '') throw new KernelError('policy_denied', `G-EGRESS: explicit ports are not allowed (${u.hostname})`);
         if (u.username !== '' || u.password !== '') throw new KernelError('policy_denied', 'G-EGRESS: credentials in URLs are not allowed');
         checkHost(u.hostname);
         let res;
@@ -103,29 +103,36 @@ export function issueContext(a: IssueArgs): AgentContext {
   const provider = a.providers.llm;
   if (llmCap) {
     let overCall = false;
+    let inFlight = false;
     ctx.llm = {
       async complete(req) {
         if (!provider) throw new KernelError('policy_denied', 'no LLM provider is configured');
         checkHost(provider.host);
-        if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
-        if (usd >= a.contract.budget.usdPerRun) {
-          throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
-        }
-        let res;
+        if (inFlight) throw new KernelError('policy_denied', 'G-BUDGET: one model call at a time per step');
+        inFlight = true;
         try {
-          res = await provider.complete({ ...req, model: llmCap.model, maxTokens: llmCap.maxTokens }, a.signal);
-        } catch (e) {
-          // A failed provider call reports no usage, so spend is left unchanged.
-          throw mapProviderError(e);
+          if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
+          if (usd >= a.contract.budget.usdPerRun) {
+            throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
+          }
+          let res;
+          try {
+            res = await provider.complete({ ...req, model: llmCap.model, maxTokens: llmCap.maxTokens }, a.signal);
+          } catch (e) {
+            // A failed provider call reports no usage, so spend is left unchanged.
+            throw mapProviderError(e);
+          }
+          usd += res.usd;
+          inputTokens += res.inputTokens;
+          outputTokens += res.outputTokens;
+          if (res.usd > a.contract.budget.usdPerCall) {
+            overCall = true;
+            throw new KernelError('budget_exceeded', `G-BUDGET: call cost ${res.usd} > usdPerCall ${a.contract.budget.usdPerCall}`);
+          }
+          return res;
+        } finally {
+          inFlight = false;
         }
-        usd += res.usd;
-        inputTokens += res.inputTokens;
-        outputTokens += res.outputTokens;
-        if (res.usd > a.contract.budget.usdPerCall) {
-          overCall = true;
-          throw new KernelError('budget_exceeded', `G-BUDGET: call cost ${res.usd} > usdPerCall ${a.contract.budget.usdPerCall}`);
-        }
-        return res;
       },
     };
   }
