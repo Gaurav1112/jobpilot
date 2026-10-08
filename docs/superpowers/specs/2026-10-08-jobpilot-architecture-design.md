@@ -172,12 +172,14 @@ applying happens on the ATS, where the drivers work, and never on the board.
 | Company ATS boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee) | global | fetch T1 | Public posting APIs |
 | Workday, iCIMS, SuccessFactors, Taleo career sites | global, Indian GCCs | fetch T2 (JSON-LD on job pages) | To verify per site by probe |
 | Company career pages (any) | global | fetch T2 / T3 | JSON-LD published for Google for Jobs |
-| LinkedIn | global | mailbox, capture, upstream | No public jobs API (partner-only); user agreement bans automated access; Proxycurl shut down July 2025 after LinkedIn's lawsuit |
-| Indeed | global, India | mailbox, capture, upstream | Publisher (search) API retired end of 2020; Job Sync API is for ATS partners posting jobs |
-| Naukri | India | mailbox, capture, upstream | ToS bans automated extraction; search needs a reCAPTCHA token |
-| Foundit (Monster India), Shine, TimesJobs | India | mailbox, capture, upstream; fetch only if probe allows | To probe |
-| Instahyre, Cutshort, Hirist, iimjobs | India (tech) | mailbox, capture, upstream; fetch only if probe allows | To probe |
-| Wellfound | global startups | mailbox, capture, upstream | DataDome anti-bot; logged-in filters |
+| LinkedIn | global | session-browse (opt-in), mailbox, capture, upstream | No public jobs API (partner-only); user agreement bans automated access; Proxycurl shut down July 2025 after LinkedIn's lawsuit |
+| Indeed | global, India | session-browse (opt-in), mailbox, capture, upstream | Publisher (search) API retired end of 2020; Job Sync API is for ATS partners posting jobs |
+| Naukri | India | session-browse (opt-in), mailbox, capture, upstream | ToS bans automated extraction; search needs a reCAPTCHA token |
+| Foundit (Monster India) | India | session-browse (opt-in), mailbox, capture, upstream; fetch if probe allows |
+| Shine, TimesJobs | India | mailbox, capture, upstream; fetch only if probe allows | To probe |
+| Instahyre, Cutshort, Hirist | India (tech) | session-browse (opt-in), mailbox, capture, upstream; fetch if probe allows |
+| iimjobs | India | mailbox, capture, upstream; fetch only if probe allows | To probe |
+| Wellfound | global startups | session-browse (opt-in), mailbox, capture, upstream | DataDome anti-bot; logged-in filters |
 | Glassdoor | global | capture, upstream | Same owner as Indeed |
 | Himalayas, Remotive, RemoteOK, We Work Remotely | global remote | fetch T1 | Public APIs / RSS, attribution required |
 | Working Nomads, Remote Rocketship, JustRemote, Jobspresso, Arc.dev | global remote | fetch T2/T3 if probe allows | To probe |
@@ -188,6 +190,52 @@ applying happens on the ATS, where the drivers work, and never on the board.
 
 New platforms enter through the source lifecycle (§0.4); the matrix is the
 `source_policy` table, not a hard-coded list.
+
+### 0.9 Big-board strategy ladders (failsafe access)
+
+Each big board has a **platform lead** (a deterministic sub-supervisor under
+`sourcing-lead`) that runs a fixed ladder of strategies. Every rung is a
+specialist agent with its own contract and breaker.
+
+```
+<platform>-lead
+  rung 1  fetch-public    src-jsonld / src-manifest-runner     only if source-probe allows
+  rung 2  session-browse  src-session-<platform>               opt-in; your browser profile
+  rung 3  mailbox         src-gmail-alerts (platform template)
+  rung 4  ats-mirror      ats-mirror-resolver on all leads
+  rung 5  capture-prompt  dashboard asks the user to open and Save
+```
+
+- **Fixed order, recorded outcome.** Each rung returns `StrategyResult@1`
+  (`ok | empty | unreachable | challenged | quota | disabled`). The lead's
+  playbook decides the next rung from that value alone, so a replayed day
+  makes the same decisions.
+- **Merge, don't replace.** Cheap rungs (mailbox, mirror) always run; the
+  deduper merges provenance. A failed rung reduces coverage, never empties it.
+- **Breakers per rung, with different reset rules.** `unreachable` resets at
+  the next run. `challenged` (CAPTCHA, "verify it's you", unusual-activity
+  notice, login wall) **disables the rung until the user re-enables it** in
+  the dashboard, and notifies the user.
+- **Fallback is across channels, never within one.** After a challenge the
+  ladder never retries the same channel with a new IP, fingerprint, account
+  or faster pace.
+
+**Session-browse rules (product policy; users can only tighten them):**
+
+| Rule | Value |
+|---|---|
+| Browser | Playwright `launchPersistentContext` on a **dedicated jobpilot profile** the user logs into by hand once; headed; never the user's main browser profile; never creates accounts |
+| Pace | ≥ 10 s between page loads with seeded jitter up to +10 s; ≤ 60 pages per platform per day; ≤ 1 platform session at a time; runs spread across the run window |
+| Actions | Allow-list: navigate to search/detail URLs, scroll, read DOM. **No clicks** on apply, easy-apply, connect, message, follow, save or any form submit (G-READONLY) |
+| On challenge | Stop immediately, screenshot for the user, rung → `challenged` (G-CHALLENGE) |
+| LinkedIn | Uses the user's existing `linkedin` MCP server (`search_jobs`, `get_job_details`) instead of a second automation stack; submit to LinkedIn stays denied |
+| Absent capabilities | The broker offers **no** proxy, user-agent or fingerprint control, and no CAPTCHA service. CI fails on imports of stealth or CAPTCHA-solving packages (G-NO-EVASION) |
+| Consent | Enabling a platform shows the risk (account restriction is possible and is the user's own decision) and records the consent in `channels.yaml` with a timestamp |
+
+Each `src-session-<platform>` agent is a specialist in one site: its search
+URL grammar, result-card and detail-page structure, and what its challenge
+pages look like. Its golden set is recorded pages, including recorded
+challenge pages, so G-CHALLENGE is tested.
 
 ---
 
@@ -213,6 +261,7 @@ New platforms enter through the source lifecycle (§0.4); the matrix is the
 | D17 | A user's current offer is **private user data** used as negotiation leverage and as an optional comp floor, never a product constant. | User correction |
 | D18 | **TypeScript on Node 24** (strict, pnpm workspaces). One codebase ships four surfaces: engine, CLI, local dashboard, MCP server. Chosen over Python (rewrite of career-ops/CareerFill code, harder install for non-developers, its guardrail libraries are LLM-based and unneeded) and Go (community Playwright, loses CareerFill's ATS drivers). | User |
 | D19 | **Big boards (LinkedIn, Indeed, Naukri and similar) are covered through four legitimate channels, never by crawling them**: (1) upstream ATS fetch, (2) the user's own job-alert emails, (3) user-initiated capture from the page the user is viewing, (4) ATS-mirror resolution of any lead. Plus T1–T3 fetch for every board whose terms allow it (§0.8). | User: "did we include naukri, indeed, linkedin and broader platforms" |
+| D20 | **Assisted browse is added for LinkedIn, Indeed, Naukri, Foundit, Instahyre, Wellfound, Cutshort and Hirist**, opt-in per platform per user. Each platform has a **platform lead running a fixed strategy ladder**, so an unreachable channel falls back to the next legitimate one (§0.9). Fallback is across channels, never evasion within one. | User |
 | D12 | **Evals are first-class.** Every agent has a golden set, metrics and a release gate; outcomes feed back as labels. | User: "no scope of scoring and evals" |
 
 ### Assumptions to confirm (defaults used in this spec)
@@ -576,6 +625,9 @@ releases (sub-projects 1–6); later = sub-projects 7–11.
 | src-capture | io | Receives "Save to jobpilot" captures from the browser extension (JSON-LD or visible JD) | RawPosting (lead) | later |
 | ats-mirror-resolver | det | Company→ATS map; matching a lead to its upstream ATS posting | ResolvedLead | v1 |
 | src-vendor-* | io | Optional user-keyed job-data vendor (plugin, off by default) | RawPosting | later |
+| linkedin-lead · indeed-lead · naukri-lead · foundit-lead · instahyre-lead · wellfound-lead · cutshort-lead · hirist-lead | det (lead) | One platform's strategy ladder (§0.9) | StrategyResult per rung | v1 |
+| src-session-linkedin | io-session | LinkedIn search and job pages via the user's linkedin MCP server | RawPosting | v1 |
+| src-session-indeed · src-session-naukri · src-session-foundit · src-session-instahyre · src-session-wellfound · src-session-cutshort · src-session-hirist | io-session | One site each: search URL grammar, result cards, detail pages, its challenge pages | RawPosting | v1 |
 | company-finder | io | Finding companies that hire in the user's eligible scopes | WatchlistProposal | later |
 | source-probe | det | robots.txt, ATS fingerprints, JSON-LD detection | SourceProbe | later |
 | source-scout | llm | Writing declarative manifests (build time only) | SourceManifest | later |
@@ -650,7 +702,7 @@ releases (sub-projects 1–6); later = sub-projects 7–11.
 | eval-runner · online-eval | det | Golden sets, gates, outcome labels | EvalReport | v1 / later |
 | mcp-gateway | io | Read and propose tools for Claude | — | later |
 
-**Totals:** 7 teams, about 63 specialists. 15 make an LLM call, each with
+**Totals:** 7 teams, 8 platform leads, about 71 specialists. 15 make an LLM call, each with
 one bounded task. Only the 3 v1 drivers (plus 2 later assistants) have an
 external side effect, and all of them require an ApprovalToken.
 
@@ -693,6 +745,11 @@ Every guardrail is a pure function `(envelope, contract, policy) → {verdict, d
 | G-GROUND-NUM | out (negotiation, interview) | Every number cites `offers.yaml`, a fact, or a `CompStat` record with n ≥ 5 |
 | G-POLICY-MONOTONIC | boot | User policy may only tighten product policy |
 | G-PLUGIN-CAPS | plugin add | A plugin's requested capabilities fit its kind; egress hosts declared |
+| G-CHALLENGE | session-browse | CAPTCHA, verification, unusual-activity or login-wall page detected → stop, screenshot, disable the rung until the user re-enables it |
+| G-PACE | session-browse | Minimum interval, daily page cap, one platform session at a time |
+| G-READONLY | session-browse | Only allow-listed actions; any click on apply/connect/message/follow/submit is refused by the broker |
+| G-NO-EVASION | CI + broker | No proxy, fingerprint, user-agent or CAPTCHA capability exists; stealth/CAPTCHA packages fail the build |
+| G-CONSENT | enable | A session rung runs only with a recorded, timestamped user consent for that platform |
 | G-SOURCE-POLICY | probe | robots.txt allows; host not on the T4 refusal list |
 | G-PII-OUT | out | No phone number or home address in LLM text; the email address only in the contact header |
 | G-ATS-TEXT | qa | `pdftotext -raw` keyword probe finds all planned JD terms; no line ends in a hyphen; page count ≤ 2; DOCX has no tables, text boxes or header contact |
@@ -900,16 +957,17 @@ test; the change is recorded with its eval report in `events`.
 | 1 | **Kernel** | Contracts, handoff protocol, registry + wiring compile, executor, memo, guardrail framework, two-tier policy, event log, state machine, eval runner, plugin loader skeleton. Replay test. | — |
 | 2 | **User pack + onboarding** | Pack schema, keychain secrets, resume-ingest, fact verification UI, pack-builder. The user's pack migrated from career-ops facts + the old handoff rules | 1 |
 | 3 | **Discovery T1 + T2** | ATS adapters, generic JSON-LD adapter, aggregators, normalizer, deduper, watchlist (26 seeded slugs), catalogue export/import | 1 |
-| 4 | **Scoring + ranking + dashboard** | prefilter, scorer-lexicon, scorer-claude, scorer-jev, fuser, ranker, Hono dashboard, Desk migration, golden sets | 2, 3 |
-| 5 | **Documents** | tailor, cover letter, renderer, QA gate | 2, 4 |
-| 6 | **Approval + submit** | token, Greenhouse / Lever / Ashby drivers, tracker | 5 |
-| 7 | **Source expansion** | source-probe, source-scout, manifests, source health, lifecycle | 3 |
-| 8 | **MCP gateway** | read and proposal tools | 4 |
-| 9 | **Interview + negotiation** | interview-prep, comp-intel, negotiation-coach | 4, 5 |
-| 10 | **Plugin SDK + distribution** | SDK, sandboxed plugins, `npx jobpilot init`, schedulers | 1–4 |
-| 11 | **Coverage + online evals** | Gmail alerts, company-finder, assisted Workday, weekly online evals | 3, 4 |
+| 4 | **Big boards** | Platform leads and ladders, session-browse agents for the 8 platforms, Gmail alert parsers, ats-mirror-resolver, capture endpoint, consent flow, G-CHALLENGE/PACE/READONLY/NO-EVASION | 1, 3 |
+| 5 | **Scoring + ranking + dashboard** | prefilter, scorer-lexicon, scorer-claude, scorer-jev, fuser, ranker, Hono dashboard, Desk migration, golden sets | 2, 3 |
+| 6 | **Documents** | writing team (evidence-matcher … qa-gate) | 2, 5 |
+| 7 | **Approval + submit** | token, Greenhouse / Lever / Ashby drivers, tracker | 6 |
+| 8 | **Source expansion** | source-probe, source-scout, manifests, source health, lifecycle | 3 |
+| 9 | **MCP gateway** | read and proposal tools | 5 |
+| 10 | **Interview + negotiation** | interview-prep, comp-intel, negotiation-coach | 5, 6 |
+| 11 | **Plugin SDK + distribution** | SDK, sandboxed plugins, `npx jobpilot init`, schedulers | 1–5 |
+| 12 | **Coverage + online evals** | company-finder, assisted Workday, weekly online evals | 3, 5 |
 
 ## 17. Out of scope (v1)
 
-Onsite, hybrid and Japan roles and contractor roles **for the user's pack** (other users configure their own eligibility); a hosted SaaS; scraping LinkedIn, Naukri, Wellfound or Instahyre; mass auto-apply without
+Onsite, hybrid and Japan roles and contractor roles **for the user's pack** (other users configure their own eligibility); a hosted SaaS; headless or high-volume crawling of LinkedIn, Indeed, Naukri and similar boards beyond the opt-in session-browse rung; **any anti-bot evasion** (CAPTCHA solving, proxy rotation, fingerprint spoofing, fake accounts); mass auto-apply without
 approval; shared multi-user servers holding personal data.
