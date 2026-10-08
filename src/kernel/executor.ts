@@ -3,7 +3,7 @@ import { issueContext } from './broker.js';
 import type { Clock } from './clock.js';
 import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
-import { type Envelope, type GuardrailVerdict, makeEnvelopeId, nextObligations, ZERO_COST } from './envelope.js';
+import { type Cost, type Envelope, type GuardrailVerdict, makeEnvelopeId, nextObligations, ZERO_COST } from './envelope.js';
 import { classify, type ErrorCode, KernelError } from './errors.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import { backoffDelay, computeStepKey } from './memo.js';
@@ -49,96 +49,154 @@ function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** Spec §6.1: the same thirteen steps for every agent. */
+const addCost = (a: Cost, b: Cost): Cost => ({
+  usd: a.usd + b.usd,
+  inputTokens: a.inputTokens + b.inputTokens,
+  outputTokens: a.outputTokens + b.outputTokens,
+});
+
+const messageOf = (err: unknown): string => (err instanceof Error ? err.message : String(err));
+
+/**
+ * Spec §6.1: the same thirteen steps for every agent. Never throws: anything
+ * unexpected becomes a failed step, so the supervisor always gets an outcome.
+ */
 export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope): Promise<StepOutcome> {
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
   const stepKey = computeStepKey(c, input, deps.policyHash); // 5
-  const event = (kind: string, data: Record<string, unknown>) => deps.store.appendEvent(runId, deps.clock.now(), kind, { agent: c.id, stepKey, ...data }, deps.policyHash);
+  /** Every cent paid in this step, summed over all attempts. */
+  let stepSpent: Cost = ZERO_COST;
+  const eventOf = (kind: string, data: Record<string, unknown>) => ({ at: deps.clock.now(), kind, data: { agent: c.id, stepKey, ...data }, policyHash: deps.policyHash });
+  /** A standalone event, for outcomes that write no step row. */
+  const event = (kind: string, data: Record<string, unknown>): void => {
+    const e = eventOf(kind, data);
+    deps.store.appendEvent(runId, e.at, e.kind, e.data, e.policyHash);
+  };
+  /** Step row, envelopes, cost and the hash-chained event in one transaction. */
+  const finish = (
+    status: 'done' | 'failed' | 'quarantined',
+    envelopes: readonly Envelope[],
+    ev: ReturnType<typeof eventOf>,
+    more: { errorCode?: ErrorCode; detail?: string } = {},
+  ): void => deps.store.finishStep({ runId, stepKey, agentId: c.id, status, envelopes, cost: stepSpent, ...more, event: ev });
+  const fail = (error: ErrorCode, detail: string): StepOutcome => {
+    finish('failed', [], eventOf('step_failed', { error, detail }), { errorCode: error, detail });
+    return { kind: 'failed', stepKey, error, detail };
+  };
 
-  // 6 replay: a finished step is never executed again
-  const prior = deps.store.getStep(stepKey);
-  if (prior?.status === 'done') return { kind: 'done', stepKey, outputs: deps.store.envelopesOfStep(stepKey), replayed: true };
-  if (prior?.status === 'quarantined') {
-    return { kind: 'quarantined', stepKey, verdicts: JSON.parse(prior.detail ?? '[]') as GuardrailVerdict[] };
-  }
+  try {
+    const gctx = { contract: c, policy: deps.policy, policyHash: deps.policyHash, contractHashOf: deps.contractHashOf, input };
+    const hash = contractHash(c);
+    const running = { stepKey, agentId: c.id, version: c.version, contractHash: hash, inputEnvelopeId: input.envelopeId };
 
-  const gctx = { contract: c, policy: deps.policy, policyHash: deps.policyHash, contractHashOf: deps.contractHashOf, input };
-  const hash = contractHash(c);
-  const running = { stepKey, agentId: c.id, version: c.version, contractHash: hash, inputEnvelopeId: input.envelopeId };
+    // 2-4 lineage, preconditions and input guardrails. A trip is a property of
+    // this envelope, not of the work, so it writes no step row and is never replayed.
+    const gin = deps.guardrails.run('in', { ...gctx, side: 'in' });
+    if (gin.tripped) {
+      event('step_quarantined', { side: 'in', verdict: gin.verdicts.at(-1) });
+      return { kind: 'quarantined', stepKey, verdicts: gin.verdicts };
+    }
 
-  // 2-4 lineage, preconditions and input guardrails
-  const gin = deps.guardrails.run('in', { ...gctx, side: 'in' });
-  if (gin.tripped) {
-    deps.store.markRunning(running);
-    deps.store.finishStep({ runId, stepKey, agentId: c.id, status: 'quarantined', envelopes: [], cost: ZERO_COST, detail: JSON.stringify(gin.verdicts) });
-    event('step_quarantined', { side: 'in', verdict: gin.verdicts.at(-1) });
-    return { kind: 'quarantined', stepKey, verdicts: gin.verdicts };
-  }
+    // 6 replay: a finished step is never executed again
+    const prior = deps.store.getStep(stepKey);
+    if (prior?.status === 'done') {
+      event('step_replayed', { status: 'done' });
+      return { kind: 'done', stepKey, outputs: deps.store.envelopesOfStep(stepKey), replayed: true };
+    }
+    if (prior?.status === 'quarantined') {
+      event('step_replayed', { status: 'quarantined' });
+      return { kind: 'quarantined', stepKey, verdicts: JSON.parse(prior.detail ?? '[]') as GuardrailVerdict[] };
+    }
 
-  // 7 run budget (per agent and per run)
-  if (c.budget.usdPerRun > 0 || c.kind === 'llm') {
-    if (deps.store.runCost(runId, c.id) >= c.budget.usdPerRun || deps.store.runCost(runId) >= deps.policy.maxUsdPerRun) {
+    // 7 run budget (per agent and per run), counting what this step has already paid
+    const overBudget = (): boolean =>
+      (c.budget.usdPerRun > 0 || c.kind === 'llm') &&
+      (deps.store.runCost(runId, c.id) + stepSpent.usd >= c.budget.usdPerRun ||
+        deps.store.runCost(runId) + stepSpent.usd >= deps.policy.maxUsdPerRun);
+    if (overBudget()) {
       event('step_skipped', { reason: 'budget' });
       return { kind: 'skipped', stepKey, reason: 'budget' };
     }
-  }
 
-  // 8-9 capability-scoped context, timeout, bounded retries
-  for (let attempt = 0; ; attempt++) {
-    deps.store.markRunning(running);
-    const signal = AbortSignal.timeout(c.timeoutMs);
-    const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal });
-    let items: readonly unknown[];
+    // 8-9 capability-scoped context, timeout, bounded retries
+    for (let attempt = 0; ; attempt++) {
+      if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
+      deps.store.markRunning(running);
+      const signal = AbortSignal.timeout(c.timeoutMs);
+      const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal });
+      let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
+      try {
+        deps.onInvoke?.(c.id, stepKey);
+        const items: unknown = await untilAborted(agent.run(input.payload, ctx), signal);
+        if (!Array.isArray(items)) throw new KernelError('invalid_output', 'agent.run must return an array');
+        result = { ok: true, items };
+      } catch (err) {
+        result = { ok: false, err };
+      }
+      stepSpent = addCost(stepSpent, ctx.spent());
+
+      if (!result.ok) {
+        const code = classify(result.err);
+        if (c.retry.on.includes(code) && attempt < c.retry.max) {
+          event('step_retry', { attempt: attempt + 1, error: code });
+          await deps.sleep(backoffDelay(stepKey, attempt, c.retry.backoffMs));
+          continue;
+        }
+        return fail(code, messageOf(result.err));
+      }
+
+      // 10-11 schema, data class, postconditions on every output
+      // Taint: outputs inherit the input's class. Only a declared redactor sets its own (G-DATACLASS checks it).
+      const dataClass = c.redactor ? maxClass(c.dataClasses.out) : input.handoff.dataClass;
+      const outputs: Envelope[] = [];
+      for (const [i, payload] of result.items.entries()) {
+        const gout = deps.guardrails.run('out', { ...gctx, side: 'out', output: { payload, dataClass } });
+        if (gout.tripped) {
+          finish('quarantined', [], eventOf('step_quarantined', { side: 'out', index: i, verdict: gout.verdicts.at(-1) }), { detail: JSON.stringify(gout.verdicts) });
+          return { kind: 'quarantined', stepKey, verdicts: gout.verdicts };
+        }
+        outputs.push({
+          envelopeId: makeEnvelopeId(stepKey, i),
+          stepKey,
+          index: i,
+          type: c.produces.id,
+          producer: { agentId: c.id, version: c.version, contractHash: hash },
+          parents: [input.envelopeId],
+          payload,
+          handoff: {
+            guarantees: c.guarantees.map((g) => g.id).sort(),
+            dataClass,
+            obligations: nextObligations(input.handoff.obligations, c),
+            pins: { policyHash: deps.policyHash },
+          },
+          guardrails: [...gin.verdicts, ...gout.verdicts],
+          cost: i === 0 ? stepSpent : ZERO_COST,
+        });
+      }
+
+      // 12-13 one transaction: envelopes, step status, cost and the hash-chained event
+      finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd }));
+      return { kind: 'done', stepKey, outputs, replayed: false };
+    }
+  } catch (err) {
+    // Unexpected: a store error, a rejecting sleep, a refused finish. Record what we can, then report.
+    const detail = messageOf(err);
+    let recorded = false;
     try {
-      deps.onInvoke?.(c.id, stepKey);
-      items = await untilAborted(agent.run(input.payload, ctx), signal);
-      if (!Array.isArray(items)) throw new KernelError('invalid_output', 'agent.run must return an array');
-    } catch (err) {
-      const code = classify(err);
-      const detail = err instanceof Error ? err.message : String(err);
-      if (c.retry.on.includes(code) && attempt < c.retry.max) {
-        event('step_retry', { attempt: attempt + 1, error: code });
-        await deps.sleep(backoffDelay(stepKey, attempt, c.retry.backoffMs));
-        continue;
+      if (deps.store.getStep(stepKey)?.status === 'running') {
+        fail('unknown', detail);
+        recorded = true;
       }
-      deps.store.finishStep({ runId, stepKey, agentId: c.id, status: 'failed', envelopes: [], cost: ctx.spent(), errorCode: code, detail });
-      event('step_failed', { error: code, detail });
-      return { kind: 'failed', stepKey, error: code, detail };
+    } catch {
+      // best effort: the store itself may be what failed
     }
-
-    // 10-11 schema, data class, postconditions on every output
-    // Taint: outputs inherit the input's class. Only a declared redactor sets its own (G-DATACLASS checks it).
-    const dataClass = c.redactor ? maxClass(c.dataClasses.out) : input.handoff.dataClass;
-    const outputs: Envelope[] = [];
-    for (const [i, payload] of items.entries()) {
-      const gout = deps.guardrails.run('out', { ...gctx, side: 'out', output: { payload, dataClass } });
-      if (gout.tripped) {
-        deps.store.finishStep({ runId, stepKey, agentId: c.id, status: 'quarantined', envelopes: [], cost: ctx.spent(), detail: JSON.stringify(gout.verdicts) });
-        event('step_quarantined', { side: 'out', index: i, verdict: gout.verdicts.at(-1) });
-        return { kind: 'quarantined', stepKey, verdicts: gout.verdicts };
+    if (!recorded) {
+      try {
+        event('step_failed', { error: 'unknown', detail });
+      } catch {
+        // best effort
       }
-      outputs.push({
-        envelopeId: makeEnvelopeId(stepKey, i),
-        stepKey,
-        index: i,
-        type: c.produces.id,
-        producer: { agentId: c.id, version: c.version, contractHash: hash },
-        parents: [input.envelopeId],
-        payload,
-        handoff: {
-          guarantees: c.guarantees.map((g) => g.id).sort(),
-          dataClass,
-          obligations: nextObligations(input.handoff.obligations, c),
-          pins: { policyHash: deps.policyHash },
-        },
-        guardrails: [...gin.verdicts, ...gout.verdicts],
-        cost: i === 0 ? ctx.spent() : ZERO_COST,
-      });
     }
-
-    // 12 one transaction: envelopes, step status, cost; then the hash-chained event
-    deps.store.finishStep({ runId, stepKey, agentId: c.id, status: 'done', envelopes: outputs, cost: ctx.spent() });
-    event('step_done', { outputs: outputs.length, usd: ctx.spent().usd });
-    return { kind: 'done', stepKey, outputs, replayed: false };
+    return { kind: 'failed', stepKey, error: 'unknown', detail };
   }
 }

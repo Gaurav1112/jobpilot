@@ -173,3 +173,28 @@ describe('step finishing', () => {
     expect(() => s.dump('events' as 'steps', 'step_key')).toThrow(/refused/);
   });
 });
+
+describe('finishStep with its event', () => {
+  const st = { stepKey: 'k', agentId: 'a', version: '1.0.0', contractHash: 'h', inputEnvelopeId: 'in' };
+  const ev = { at: '2026-10-08T00:00:00Z', kind: 'step_done', data: { stepKey: 'k' }, policyHash: 'p' };
+  const fin = (s: Store): void =>
+    s.finishStep({ runId: 'r', stepKey: 'k', agentId: 'a', status: 'done', envelopes: [], cost: ZERO_COST, event: ev });
+
+  it('appends exactly one event in the same transaction', () => {
+    const s = Store.open(':memory:');
+    s.markRunning(st);
+    fin(s);
+    const events = s.events('r');
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ kind: 'step_done', at: ev.at, policy_hash: 'p', data: '{"stepKey":"k"}' });
+    expect(s.chainHead()).toMatchObject({ count: 1 });
+    expect(verifyChain(s)).toEqual({ ok: true, events: 1 });
+  });
+
+  it('appends no event when the step is not running', () => {
+    const s = Store.open(':memory:');
+    expect(() => fin(s)).toThrow(/not running/);
+    expect(s.events()).toHaveLength(0);
+    expect(s.chainHead()).toBeUndefined();
+  });
+});

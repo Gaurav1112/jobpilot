@@ -116,7 +116,7 @@ export class Store {
       .run(s.stepKey, s.agentId, s.version, s.contractHash, s.inputEnvelopeId);
   }
 
-  /** Writes the step outcome, its envelopes and its cost atomically. */
+  /** Writes the step outcome, its envelopes, its cost and (when given) its hash-chained event atomically. */
   finishStep(a: {
     runId: string;
     stepKey: string;
@@ -126,6 +126,7 @@ export class Store {
     cost: Cost;
     errorCode?: ErrorCode;
     detail?: string;
+    event?: { at: string; kind: string; data: unknown; policyHash: string };
   }): void {
     this.tx(() => {
       const res = this.db
@@ -139,6 +140,7 @@ export class Store {
           .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)`)
           .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens);
       }
+      if (a.event) this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
     });
   }
 
