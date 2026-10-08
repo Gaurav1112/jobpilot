@@ -54,7 +54,7 @@ user-pack/
   lexicon.yaml              STRONG / MEDIUM / GAP skill groups with synonyms (e.g. Java…)
   filters.yaml              role, company and stage deny lists (e.g. services firms, staffing)
   targets.yaml              titles, seniority, minimum fit
-  naming-rules.yaml         employer/client naming (e.g. a display name for the employer, never "[client]")
+  naming-rules.yaml         employer/client naming (e.g. a display name for the employer; the client is never named)
   offers.yaml   (P2)        current offers: base, bonus, equity, vesting → floor + leverage
   answers.yaml              screening-question answer bank
   channels.yaml             platforms whose alert emails to ingest, capture on/off, vendor plugins
@@ -251,7 +251,7 @@ challenge pages, so G-CHALLENGE is tested.
 | D3 | Scoring: **dual scorer**. Claude and Jev (TypeSafe AI) sit behind one `Scorer` contract. The scores are fused and disagreement is flagged. The resume is PII-redacted before it goes to Jev. | User |
 | D4 | Sources: direct ATS boards, remote aggregators and India-specific feeds (Japan boards dropped by D9). India is covered by Adzuna India, a watchlist of India-remote employers' ATS boards, and a Gmail job-alert ingest. **There is no scraping of Naukri, Wellfound or Instahyre** (their ToS and anti-bot measures). | User ("all that works best") + research |
 | D5 | Ranking: **comp-first with a fit floor**. | User |
-| D6 | The user's pack holds their current offer (base + RSU) as the best offer; the comp floor is its annualised total comp (A1). Superseded in framing by D17. | User |
+| D6 | The user's pack holds their current offer as the best offer; the comp floor is its **base salary only** (equity is excluded from the floor, user decision 2026-10-08). Superseded in framing by D17. | User |
 | D7 | The current LLM-managed daily discovery is non-deterministic. **This is the problem the design exists to fix**, so routing and state never depend on an LLM. | User |
 | D8 | LinkedIn is never scraped and never a submit target. | Standing rule (job-os, linkedin-ops) |
 | D9 | **Remote from India only.** No onsite, no hybrid, no Japan. Eligible = remote roles open to India (Remote-India, APAC, or global-remote that hires in India incl. via EOR), **full-time only**. | User, 2026-10-08 |
@@ -271,7 +271,7 @@ challenge pages, so G-CHALLENGE is tested.
 
 | # | Assumption | Default |
 |---|---|---|
-| A1 | The user's RSU grant vests over 4 years | The pack's floor = base + RSU / 4 (**total comp**) |
+| A1 | The user's comp floor | Resolved: **base salary only**; equity is not counted |
 | A2 | Roles with undisclosed comp | Kept, put in a separate "comp unknown" band, and ranked by fit |
 | A3 | Target roles | Senior/Staff/Lead Backend, Platform, or AI/LLM Engineer (Go, Java, TypeScript) |
 | A4 | Global-remote roles with no country stated | Eligible only when the company is on the watchlist with `hiresInIndia: true`, else `needs-review` |
@@ -744,7 +744,7 @@ Every guardrail is a pure function `(envelope, contract, policy) → {verdict, d
 | G-POST | out | Contract postconditions |
 | G-GROUND | out (tailor, cover) | Every bullet has ≥ 1 `factId`; each fact exists and has status `verified` or `user-stated`; every number, employer, date and skill token in the text appears in the cited facts; unknown skill tokens fail |
 | G-GROUND-SCORE | out (scorers) | The evidence quotes are substrings of the JD; the factIds exist |
-| G-NAMING | out | The user's naming rules (e.g. the employer under its display name; "[client]" never appears) |
+| G-NAMING | out | The user's naming rules (e.g. the employer under its display name; the client is never named) |
 | G-GROUND-NUM | out (negotiation, interview) | Every number cites `offers.yaml`, a fact, or a `CompStat` record with n ≥ 5 |
 | G-POLICY-MONOTONIC | boot | User policy may only tighten product policy |
 | G-PLUGIN-CAPS | plugin add | A plugin's requested capabilities fit its kind; egress hosts declared |
@@ -793,7 +793,7 @@ lineage: sources → scores → documents → approval → submission.
 ```
 eligible   = prefilter.pass && lexicon.score >= 60 && fused.fit >= 7.0 && !needsReview
 compTC     = annualMax ?? annualMin                  // total comp in the user's currency, pinned FX
-floor      = userPack.offers.bestTotalComp ?? userPack.targets.compFloor   // the user's floor
+floor      = userPack.offers.bestBase ?? userPack.targets.compFloor   // base only; equity not counted
 band       = compTC == null ? 'comp-unknown' : floor == null || compTC >= floor ? 'above-floor' : 'below-floor'
 order      = band ASC (above-floor, comp-unknown, below-floor),
              compTC DESC NULLS LAST, fused.fit DESC, postedAt DESC, jobId ASC   // total order
