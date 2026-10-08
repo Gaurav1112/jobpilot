@@ -49,6 +49,8 @@ type Defaulted = 'capabilities' | 'egress' | 'redactor' | 'obligations' | 'retry
 export type ContractSpec<I, O> = Omit<Contract<I, O>, Defaulted> & Partial<Pick<Contract<I, O>, Defaulted>>;
 
 const kebab = /^[a-z][a-z0-9-]*$/;
+const dotted = /^[a-z][a-z0-9.-]*$/;
+const guardrailId = /^G-[A-Z0-9-]+$/;
 
 const Meta = z.object({
   id: z.string().regex(kebab, 'id must be kebab-case'),
@@ -60,9 +62,23 @@ const Meta = z.object({
   skills: z.array(z.string().min(1)).min(1),
   team: z.string().regex(kebab, 'team must be kebab-case'),
   kind: z.enum(AGENT_KINDS),
+  capabilities: z
+    .object({
+      http: z.literal(true).optional(),
+      llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
+    })
+    .strict(),
   egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
   dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
-  budget: z.object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() }),
+  redactor: z.boolean(),
+  obligations: z.object({
+    adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
+    discharges: z.array(z.string().regex(dotted)),
+  }),
+  guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }),
+  budget: z
+    .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
+    .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
   timeoutMs: z.number().int().positive().max(600_000),
   retry: z
     .object({
@@ -70,7 +86,8 @@ const Meta = z.object({
       on: z.array(z.enum(ERROR_CODES)),
       backoffMs: z.array(z.number().int().nonnegative()),
     })
-    .refine((r) => r.backoffMs.length >= r.max, 'retry.backoffMs needs one entry per retry')
+    .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
+    .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
     .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
   breaker: z.object({ consecutiveFailures: z.number().int().min(1) }),
 });
@@ -94,7 +111,37 @@ export function defineContract<I, O>(spec: ContractSpec<I, O>): Contract<I, O> {
     throw new TypeError(`contract ${spec.id}: ${msg}`);
   }
   checkKindCapabilities(c);
-  return Object.freeze(c);
+  return deepFreeze(snapshot(c));
+}
+
+function deepFreeze<T>(v: T): T {
+  if (v !== null && typeof v === 'object' && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const child of Object.values(v)) deepFreeze(child);
+  }
+  return v;
+}
+
+/** Copies every array and plain object the spec owns. consumes/produces/predicates are shared by reference. */
+function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
+  const { capabilities } = c;
+  return {
+    ...c,
+    skills: [...c.skills],
+    requires: [...c.requires],
+    guarantees: [...c.guarantees],
+    capabilities: {
+      ...(capabilities.http ? { http: capabilities.http } : {}),
+      ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
+    },
+    egress: [...c.egress],
+    dataClasses: { in: [...c.dataClasses.in], out: [...c.dataClasses.out] },
+    obligations: { adds: c.obligations.adds.map((a) => ({ ...a })), discharges: [...c.obligations.discharges] },
+    budget: { ...c.budget },
+    retry: { max: c.retry.max, on: [...c.retry.on], backoffMs: [...c.retry.backoffMs] },
+    breaker: { ...c.breaker },
+    guardrails: { in: [...c.guardrails.in], out: [...c.guardrails.out] },
+  };
 }
 
 function checkKindCapabilities(c: AnyContract): void {
@@ -103,6 +150,8 @@ function checkKindCapabilities(c: AnyContract): void {
   if (c.kind !== 'llm' && c.capabilities.llm) problems.push(`kind ${c.kind} may not request capabilities.llm`);
   const httpKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
   if (c.capabilities.http && !httpKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.http`);
+  if (c.capabilities.http && c.egress.length === 0) problems.push('capabilities.http requires at least one egress host');
+  if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm) problems.push('egress requires capabilities.http or capabilities.llm');
   if ((c.kind === 'deterministic' || c.kind === 'human') && c.egress.length > 0) problems.push(`kind ${c.kind} may not declare egress`);
   if (c.kind === 'deterministic' && c.budget.usdPerCall > 0) problems.push('kind deterministic has no spend, so budget must be 0');
   if (problems.length > 0) throw new TypeError(`contract ${c.id}: ${problems.join('; ')}`);
@@ -112,7 +161,7 @@ export function contractMajor(c: Pick<Contract, 'version'>): string {
   return c.version.split('.')[0] ?? '0';
 }
 
-/** Everything another agent or the policy relies on. Changing any of it without a version bump is drift. */
+/** The interface (types, predicates, capabilities, data classes) and the governance settings (budget, timeout, retry, breaker, guardrails, obligations). Changing any of it without a version bump is drift. */
 export function contractShape(c: AnyContract): Record<string, unknown> {
   return {
     id: c.id,
@@ -127,7 +176,15 @@ export function contractShape(c: AnyContract): Record<string, unknown> {
     egress: [...c.egress].sort(),
     dataClasses: { in: [...c.dataClasses.in].sort(), out: [...c.dataClasses.out].sort() },
     redactor: c.redactor,
-    obligations: c.obligations,
+    obligations: {
+      adds: [...c.obligations.adds].sort((a, b) => a.id.localeCompare(b.id)).map((a) => ({ id: a.id, dischargedBy: a.dischargedBy })),
+      discharges: [...c.obligations.discharges].sort(),
+    },
+    budget: c.budget,
+    timeoutMs: c.timeoutMs,
+    breaker: c.breaker,
+    retry: { max: c.retry.max, on: [...c.retry.on].sort(), backoffMs: c.retry.backoffMs },
+    guardrails: { in: c.guardrails.in, out: c.guardrails.out },
   };
 }
 
