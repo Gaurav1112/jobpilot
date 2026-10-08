@@ -297,7 +297,12 @@ consume and produce. Types are versioned (`JobPosting@1`).
 | `ScoreResult@1` | scorer-claude, scorer-jev | `jobId`, `provider`, `fit` (0–10), `dimensions` (`skills`, `seniority`, `domain`, `stack`), `evidence[]` (JD quote ↔ factId), `gaps[]`, `modelId`, `promptHash` |
 | `FusedScore@1` | fuser | `jobId`, `fit`, `providers[]`, `disagreement`, `singleScorer` |
 | `RankedJob@1` | ranker | `jobId`, `band` (`above-floor`, `comp-unknown`, `below-floor`), `rank`, `deltaVsBaselineInr`, `rankingVersion` |
-| `TailoredResume@1` | resume-tailor | `jobId`, `sections[]` → `bullets[]` (`{text, factIds[], jdTerms[]}`), `keywordPlan` |
+| `JobRequirements@1` | jd-analyst | `jobId`, `requirements[]` (`{text, kind:'must'|'nice', jdSpan:{start,end}, terms[]}`), `responsibilities[]` |
+| `EvidenceMap@1` | evidence-matcher | `jobId`, `matches[]` (`{requirementId, factIds[], strength}`), `unmatched[]` |
+| `ResumePlan@1` | resume-strategist | `jobId`, `headline`, `summaryAngle`, `sectionOrder[]`, `bulletSlots[]` (`{role, factIds[], targetTerms[]}`) |
+| `Bullet@1` | bullet-writer | `slotId`, `text`, `factIds[]`, `terms[]` |
+| `CritiqueReport@1` | recruiter-critic | `findings[]` (`{slotId?, issue, severity}`) |
+| `TailoredResume@1` | writing-lead (assembled) | `jobId`, `sections[]` → `bullets[]` (`{text, factIds[], jdTerms[]}`), `keywordPlan` |
 | `CoverLetter@1` | cover-letter | `jobId`, `paragraphs[]` (`{text, factIds[]}`) |
 | `RenderedArtifact@1` | renderer | `jobId`, `kind` (`resume`, `cover`), `format` (`pdf`, `docx`), `path`, `sha256`, `pages`, `textLayerProbe` |
 | `QaVerdict@1` | qa-gate | `jobId`, `pass`, `checks[]` |
@@ -477,36 +482,149 @@ Transitions are a static table. A transition not in the table throws.
 
 ---
 
-## 7. The agents
+## 7. The agents: specialist teams
 
-| Agent | Kind | Consumes → Produces | Notes |
-|---|---|---|---|
-| `src-greenhouse` | io | DiscoveryRequest → RawPosting | `boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true`, per watchlist company |
-| `src-lever` | io | same | `api.lever.co/v0/postings/{slug}?mode=json` (+ EU host) |
-| `src-ashby` | io | same | `api.ashbyhq.com/posting-api/job-board/{name}?includeCompensation=true` |
-| `src-workable`, `src-smartrecruiters`, `src-recruitee` | io | same | Public posting endpoints |
-| `src-himalayas`, `src-remotive`, `src-remoteok` | io | same | Attribution is stored and shown; Remotive's 24 h delay is noted |
-| `src-hn` | io | same | Algolia "Who is hiring" thread comments; header line parsed deterministically |
-| `src-adzuna-in` | io | same | Free key, 250 calls/day; queries tuned for remote, India and senior roles |
-| `company-finder` | io | DiscoveryRequest → WatchlistProposal | Weekly search for companies hiring remote in India; proposes new watchlist entries (ATS + slug + remotePolicy) for **your approval**; never emits jobs |
-| `src-gmail-alerts` | io | same | `gmail.readonly`; sender allowlist (Naukri, Instahyre, Wellfound, Cutshort, Hirist); parses the job cards in the email |
-| `normalizer` | deterministic | RawPosting → JobPosting | Remote classifier checks the watchlist `remotePolicy` first, then the location text; comp parser ported from career-ops (lakh/crore, LPA, `₹18,00,000`), FX at the run's pinned rate, remote classifier, ATS detection from apply-URL host, HTML → text through the sanitiser |
-| `deduper` | deterministic | JobPosting → DedupedJob | Key = `slug(company) + normTitle + remoteClass`; merges provenance; prefers the ATS-direct URL |
-| `prefilter` | deterministic | DedupedJob → PrefilterVerdict | Rule IDs ported from the handoff §3: `F-REMOTE-INDIA` (must be eligible remote), `F-FTE` (no contract/C2H/freelance/fixed-term/hourly), `F-ROLE-*` (frontend, mobile, QA/SDET, manager/director, sales, solutions/support, DevRel, recruiter, designer, data/ML scientist, intern, embedded/firmware/hardware, security analyst), `F-SERVICES-FIRM` (TCS … Ciklum list), `F-STAFFING` (Randstad … Hire Feed list), `F-STAGE` (below Series A), `F-CLOSED`, `F-COMP` (disclosed comp < floor × 0.85) |
-| `scorer-lexicon` | deterministic | DedupedJob → ScoreResult | The handoff §4 formula as code: start 30; +10 staff/lead/principal/SDE-3, else +8 senior; +10 backend/platform/Java/distributed in title; +4 per STRONG, +1.5 per MEDIUM, −4 per GAP (each synonym group counted once); −20 if > 14 years required. Fit = score/10. Never down, free, explainable. **Gate: ≥ 60 to reach the paid scorers.** |
-| `scorer-claude` | llm | DedupedJob → ScoreResult | The prompt holds the JD (fenced as data) and verified fact *summaries*; no contact PII |
-| `scorer-jev` | io | DedupedJob → ScoreResult | The resume is sent with P1 fields redacted; Jev output mapped to `ScoreResult@1` by a deterministic adapter |
-| `score-fuser` | deterministic | ScoreResult×n → FusedScore | Weighted mean of available providers (weights from eval calibration, §15; start equal); `disagreement = max−min > 2` → `needs-review` |
-| `ranker` | deterministic | FusedScore → RankedJob | See §9 |
-| `resume-tailor` | llm | RankedJob → TailoredResume | Picks facts, rewrites bullets using JD terms; every bullet cites `factIds` |
-| `cover-letter` | llm | RankedJob → CoverLetter | Three or four paragraphs, every claim cites `factIds` |
-| `renderer` | deterministic | Tailored* → RenderedArtifact | Template follows the v5 ATS rules; format chosen per ATS (§10) |
-| `qa-gate` | deterministic | RenderedArtifact → QaVerdict | Runs G-ATS-TEXT, G-GROUND, G-PII-OUT, G-NAMING |
-| `approval` | human | QaVerdict → ApprovalToken | Dashboard button; shows a diff against the master resume |
-| `submitter` | effect | ApprovalToken → SubmissionResult | Playwright drivers for Greenhouse, Lever and Ashby first; Workday, iCIMS and Taleo are "assisted" (prefill, then hand over) |
-| `tracker` | deterministic | SubmissionResult → (state) | Status log; follow-up reminders at day 7 and day 14 |
+### 7.1 Specialisation rule
 
----
+**One agent = one skill, one output type, one knowledge base, one eval set.** If an
+agent's description needs "and", it is split. The same agents serve every user;
+only the user pack they read differs. An agent specific to one person is a design
+bug.
+
+Small, bounded LLM tasks are also the main defence against hallucination:
+"rewrite this one bullet from facts F12 and F31 to include *event-driven*" leaves
+the model almost nothing to invent.
+
+### 7.2 Hierarchical supervision
+
+Agents are grouped into **seven teams**, each run by a **team lead**. A lead is a
+deterministic sub-supervisor. Its *skill* is a static playbook: a fixed sub-graph
+of its specialists, a team contract, and a team breaker. The top supervisor routes
+between teams; each lead runs its specialists through the same 13-step executor
+(§6.1). A team's contract states what the whole team guarantees, e.g. the writing
+team guarantees `claims.grounded` and `ats.parseable` on everything it emits.
+
+```
+                                SUPERVISOR
+   ┌─────────┬──────────────┬────────────┬───────────┬──────────┬─────────┬──────────┐
+ sourcing  understanding  evaluation    writing      ops        career    platform
+   lead       lead          lead         lead        lead        lead     (services)
+```
+
+### 7.3 Roster
+
+Kinds: **det** deterministic code · **llm** one bounded model call · **io**
+external read · **human** · **effect** external side effect. v1 = in the first
+releases (sub-projects 1–6); later = sub-projects 7–11.
+
+#### Team A: Sourcing (lead `sourcing-lead`: today's source plan, quotas, bulkheads)
+
+| Agent | Kind | Expertise (its knowledge base) | Output | When |
+|---|---|---|---|---|
+| src-greenhouse | io | Greenhouse board API, `content=true`, board tokens | RawPosting | v1 |
+| src-lever | io | Lever postings API, EU host, commitment fields | RawPosting | v1 |
+| src-ashby | io | Ashby posting API, `includeCompensation` | RawPosting | v1 |
+| src-workable · src-smartrecruiters · src-recruitee | io | Each vendor's public posting endpoint | RawPosting | v1 |
+| src-jsonld | io | schema.org `JobPosting`, sitemaps, RSS (T2, any site) | RawPosting | v1 |
+| src-himalayas · src-remotive · src-remoteok | io | Each aggregator's API, attribution terms | RawPosting | v1 |
+| src-hn | io | HN "Who is hiring" comment-header grammar | RawPosting | v1 |
+| src-adzuna | io | Adzuna query building, 250/day quota | RawPosting | v1 |
+| src-gmail-alerts | io | Alert-email templates per sender (Naukri, Instahyre, Wellfound…) | RawPosting | later |
+| src-manifest-runner | io | Executes approved T3 manifests | RawPosting | later |
+| company-finder | io | Finding companies that hire in the user's eligible scopes | WatchlistProposal | later |
+| source-probe | det | robots.txt, ATS fingerprints, JSON-LD detection | SourceProbe | later |
+| source-scout | llm | Writing declarative manifests (build time only) | SourceManifest | later |
+| source-health | det | Yield and field-completeness baselines | SourceHealth | v1 |
+
+#### Team B: Understanding (lead `understanding-lead`)
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| jd-sanitizer | det | Hidden text, zero-width characters, injection markers | SanitisedText | v1 |
+| jd-parser | det | Title normalisation, seniority ladders, years required, employment type | ParsedJob | v1 |
+| jd-analyst | llm | Separating must-have from nice-to-have; **every requirement quotes a JD span** | JobRequirements | v1 |
+| remote-classifier | det | Remote scopes, company `remotePolicy`, location strings | RemoteScope | v1 |
+| comp-normalizer | det | Lakh/crore/LPA, ranges, periods, pinned FX, disclosure source | Compensation | v1 |
+| company-profiler | det | Stage, size, services/staffing lists, catalogue company facts | CompanyProfile | v1 |
+| deduper | det | Cross-source identity, provenance merge | DedupedJob | v1 |
+
+#### Team C: Evaluation, a judge panel (lead `evaluation-lead`)
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| eligibility-judge | det | Product filters + the user's eligibility and filters (named rules) | EligibilityVerdict | v1 |
+| scorer-lexicon | det | The user's lexicon formula | ScoreResult | v1 |
+| scorer-claude | llm | Semantic fit of JobRequirements against fact summaries | ScoreResult | v1 |
+| scorer-jev | io | Jev match API (redacted) | ScoreResult | v1 |
+| score-fuser | det | Eval-calibrated weights, disagreement | FusedScore | v1 |
+| ranker | det | ranking version, bands, total order | RankedJob | v1 |
+
+#### Team D: Application writing (lead `writing-lead`; team guarantees `claims.grounded`, `ats.parseable`)
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| evidence-matcher | llm | Mapping each requirement to the user's verified facts; deterministic candidate retrieval, model only ranks and must cite | EvidenceMap | v1 |
+| resume-strategist | llm | Narrative plan: headline, summary angle, section order, which roles to expand | ResumePlan | v1 |
+| bullet-writer | llm | Rewriting **one bullet per call** from 1–3 cited facts with target terms | Bullet | v1 |
+| keyword-planner | det | Must-have term coverage; tells bullet-writer what is still missing | KeywordPlan | v1 |
+| recruiter-critic | llm | Reading the draft as a recruiter; typed findings; one revision round | CritiqueReport | v1 |
+| fact-checker | det | Per-claim grounding verdicts (G-GROUND, G-NAMING, G-PII-OUT) | FactCheckReport | v1 |
+| cover-letter-writer | llm | Three or four paragraphs, each citing facts and requirements | CoverLetter | v1 |
+| screening-answerer | det + llm | Answer bank lookup; model only for free-text questions, grounded | ScreeningAnswers | v1 |
+| ats-formatter | det | Per-ATS file rules (DOCX for Workday/Taleo, text-layer PDF elsewhere), the v5 template rules | RenderedArtifact | v1 |
+| qa-gate | det | Text-layer probe, pages, hyphen breaks; the team's final check | QaVerdict | v1 |
+
+#### Team E: Application ops (lead `ops-lead`)
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| approval-desk | human | Presents the diff, mints the token | ApprovalToken | v1 |
+| form-mapper | det | Widget classification by accessible name (ported from CareerFill) | FormPlan | v1 |
+| driver-greenhouse · driver-lever · driver-ashby | effect | Each ATS's form flow | SubmissionResult | v1 |
+| assist-workday · assist-icims | effect | Prefill, then hand over to the user | SubmissionResult | later |
+| confirmation-verifier | det | Confirmation page text and confirmation emails | Confirmation | v1 |
+| tracker | det | Application state and history | — | v1 |
+| follow-up-planner | llm | Drafting day-7 and day-14 follow-ups (never sends) | FollowUpDraft | later |
+
+#### Team F: Career (lead `career-lead`)
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| company-researcher | llm | Company brief from catalogue facts and cited public pages | CompanyBrief | later |
+| interview-prep | llm | Likely questions and fact-grounded answers per job | InterviewPack | later |
+| comp-intel | det | Market bands from disclosed comp (n ≥ 5) | CompBands | later |
+| negotiation-coach | llm | Negotiation plan using the user's offers as leverage; every number cited | NegotiationPlan | later |
+
+#### Team G: Platform services
+
+| Agent | Kind | Expertise | Output | When |
+|---|---|---|---|---|
+| resume-ingest | llm | Extracting candidate facts with source spans | CandidateFacts | v1 |
+| fact-verifier | human | User confirms or edits each fact | VerifiedFacts | v1 |
+| pack-builder | llm | Proposing lexicon, targets and filters from verified facts | PackProposal | v1 |
+| eval-runner · online-eval | det | Golden sets, gates, outcome labels | EvalReport | v1 / later |
+| mcp-gateway | io | Read and propose tools for Claude | — | later |
+
+**Totals:** 7 teams, about 60 specialists. 15 make an LLM call, each with
+one bounded task. Only the 3 v1 drivers (plus 2 later assistants) have an
+external side effect, and all of them require an ApprovalToken.
+
+### 7.4 One job's path through the specialists
+
+```
+sourcing-lead → src-greenhouse → RawPosting
+understanding-lead → jd-sanitizer → jd-parser → jd-analyst → remote-classifier
+                   → comp-normalizer → company-profiler → deduper → DedupedJob + JobRequirements
+evaluation-lead → eligibility-judge → scorer-lexicon (≥60?) → scorer-claude ∥ scorer-jev
+                → score-fuser → ranker → RankedJob (shortlisted)
+writing-lead → evidence-matcher → resume-strategist → bullet-writer ×N ⇄ keyword-planner
+             → recruiter-critic → bullet-writer (one revision) → fact-checker
+             → cover-letter-writer → screening-answerer → ats-formatter → qa-gate
+ops-lead → approval-desk (you) → form-mapper → driver-greenhouse → confirmation-verifier → tracker
+```
+
+About 25 specialists touch one shortlisted job. Each hands the next a typed
+envelope carrying its guarantees, labels, obligations and pins (§5.5).
 
 ## 8. Guardrails and governance
 
@@ -693,7 +811,7 @@ threshold. A release that drops any metric below its gate does not ship.
 | scorer-lexicon | the 93 rows' JDs, expected score computed by hand from §4 | exact score match | 1.00 (it is code: any miss is a bug) |
 | scorer-claude, scorer-jev | 60 jobs you rate 1–10 yourself | Spearman ρ vs your rating; MAE | ρ ≥ 0.6, MAE ≤ 1.5 |
 | score-fuser | same 60 | ρ of the fused score | ≥ best single provider |
-| resume-tailor | 20 JDs | **grounding rate** (claims passing G-GROUND), keyword coverage, judge rubric | grounding = 1.00 after QA; first-pass grounding tracked |
+| evidence-matcher · bullet-writer · resume-strategist · recruiter-critic | 20 JDs; bullet-writer also 200 single-slot cases | evidence precision; **grounding rate** per bullet (claims passing G-GROUND), keyword coverage, judge rubric | grounding = 1.00 after QA; first-pass grounding tracked |
 | cover-letter | 20 JDs | grounding rate, length, judge rubric | grounding = 1.00 after QA |
 | renderer / qa-gate | rendered files | `pdftotext` probe pass, pages ≤ 2, 0 hyphen-EOL | 1.00 |
 | submit drivers | local form copies | fields correct, no submit without token | 1.00 |
