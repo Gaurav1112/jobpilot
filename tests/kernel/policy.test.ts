@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PolicyViolation } from '../../src/kernel/errors.js';
-import { PRODUCT_POLICY_V1, egressAllowed, mergePolicy, policyHash } from '../../src/kernel/policy.js';
+import { PRODUCT_POLICY_V1, egressAllowed, hostMatches, mergePolicy, normalizeHost, policyHash } from '../../src/kernel/policy.js';
 
 describe('mergePolicy (G-POLICY-MONOTONIC)', () => {
   it('lets a user tighten caps and add denied hosts', () => {
@@ -21,12 +21,16 @@ describe('mergePolicy (G-POLICY-MONOTONIC)', () => {
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(PolicyViolation);
-      expect((e as PolicyViolation).violations).toHaveLength(4);
+      const v = (e as PolicyViolation).violations;
+      expect(v).toHaveLength(4);
+      for (const key of ['maxUsdPerRun', 'maxSubmitsPerDay', 'requireApprovalForEffects', 'egressClasses.api.anthropic.com']) {
+        expect(v.some((m) => m.includes(key))).toBe(true);
+      }
     }
   });
 
   it('rejects unknown keys in the user file', () => {
-    expect(() => mergePolicy(PRODUCT_POLICY_V1, { maxUsdPerDay: 1 })).toThrow();
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, { maxUsdPerDay: 1 })).toThrow(PolicyViolation);
   });
 
   it('hashes differently once a user tightens anything', () => {
@@ -48,5 +52,76 @@ describe('egressAllowed (G-PII-EGRESS)', () => {
   it('blocks denied hosts and their subdomains', () => {
     expect(egressAllowed(p, 'tracker.example', 'P0')).toBe(false);
     expect(egressAllowed(p, 'cdn.tracker.example', 'P0')).toBe(false);
+  });
+});
+
+describe('policy hardening', () => {
+  it('normalizeHost lower-cases and strips trailing dots', () => {
+    expect(normalizeHost('Tracker.Example.')).toBe('tracker.example');
+    expect(hostMatches('CDN.Tracker.Example.', 'tracker.example')).toBe(true);
+  });
+
+  it('matches the deny list regardless of case or trailing dot', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['tracker.example'] });
+    for (const h of ['Tracker.Example', 'tracker.example.', 'CDN.tracker.example']) {
+      expect(egressAllowed(p, h, 'P0')).toBe(false);
+    }
+  });
+
+  it('normalises user host entries before merging', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['Tracker.Example.'] });
+    expect(p.deniedEgressHosts).toEqual(['tracker.example']);
+  });
+
+  it('survives prototype-named hosts', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, {});
+    for (const h of ['constructor', 'toString', 'hasOwnProperty']) {
+      expect(egressAllowed(p, h, 'P1')).toBe(false);
+      expect(egressAllowed(p, h, 'P0')).toBe(true);
+    }
+  });
+
+  it('rejects __proto__ and malformed host keys', () => {
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, JSON.parse('{"egressClasses":{"__proto__":["P0"]}}'))).toThrow(PolicyViolation);
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['a b'] })).toThrow(PolicyViolation);
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, { deniedSubmitHosts: ['x/y'] })).toThrow(PolicyViolation);
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, { egressClasses: { 'a_b': ['P0'] } })).toThrow(PolicyViolation);
+  });
+
+  it('stores a user egress key named constructor as an own entry and uses it', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, { egressClasses: { constructor: [] } });
+    expect(Object.hasOwn(p.egressClasses, 'constructor')).toBe(true);
+    expect(egressAllowed(p, 'constructor', 'P0')).toBe(false);
+    expect(egressAllowed(p, 'toString', 'P0')).toBe(true);
+  });
+
+  it('reports schema failures as PolicyViolation with path: message', () => {
+    try {
+      mergePolicy(PRODUCT_POLICY_V1, { maxUsdPerRun: 'x' });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(PolicyViolation);
+      expect((e as PolicyViolation).violations[0]).toMatch(/^maxUsdPerRun: /);
+    }
+  });
+
+  it('is deeply frozen', () => {
+    const merged = mergePolicy(PRODUCT_POLICY_V1, { deniedSubmitHosts: ['foundit.in'] });
+    expect(() => (PRODUCT_POLICY_V1.deniedSubmitHosts as string[]).push('x.com')).toThrow(TypeError);
+    expect(() => (merged.egressClasses['api.anthropic.com'] as string[]).push('P1')).toThrow(TypeError);
+    expect(() => ((merged.egressClasses as Record<string, unknown>)['new.host'] = [])).toThrow(TypeError);
+    expect(merged.egressClasses['api.anthropic.com']).not.toBe(PRODUCT_POLICY_V1.egressClasses['api.anthropic.com']);
+    expect(merged.defaultEgressClasses).not.toBe(PRODUCT_POLICY_V1.defaultEgressClasses);
+  });
+
+  it('lets a user tighten a host to nothing', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, { egressClasses: { 'api.anthropic.com': [] } });
+    expect(egressAllowed(p, 'api.anthropic.com', 'P0')).toBe(false);
+  });
+
+  it('hashes identically for order, case and duplicate differences', () => {
+    const a = mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['a.example', 'b.example'] });
+    const b = mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['B.Example.', 'a.example', 'A.EXAMPLE', 'b.example'] });
+    expect(policyHash(a)).toBe(policyHash(b));
   });
 });
