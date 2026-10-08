@@ -60,6 +60,9 @@ const moduleRef = new RegExp(
 const bypassPatterns = [
   /\bfetch\s*\(/, /globalThis\.fetch/, /XMLHttpRequest/, /WebSocket\s*\(/, moduleRef, /process\.binding/, /globalThis\s*\[/,
   /\bimport\s*\(\s*(?!['"`])/,
+  // The runtime around the allow-list: globals, reflection, code from strings, computed or CommonJS imports.
+  /\bprocess\b/, /\bglobal\b/, /\bglobalThis\b/, /\bReflect\b/, /\beval\b/, /\bFunction\s*\(/, /new\s+Function/, /\bimport\s*\(\s*`/,
+  /require\s*\(/,
 ];
 const bypasses = (text: string) => bypassPatterns.some((p) => p.test(text));
 
@@ -74,6 +77,7 @@ const specifier = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+|\brequire\s*\(\s*)[
 const importProblems = (file: string, text: string): string[] =>
   [...text.matchAll(specifier)].flatMap((m) => {
     const spec = m[1] as string;
+    if (spec.includes('${')) return [`${file}: computed specifier ${spec}`];
     if (!spec.startsWith('.')) return PACKAGES_ALLOWED.includes(spec) ? [] : [`${file}: package ${spec}`];
     const target = posix.join(posix.dirname(file), spec).replace(/\.js$/, '.ts');
     return KERNEL_ALLOWED.includes(target) || isAgentCode(target) ? [] : [`${file}: ${spec}`];
@@ -110,6 +114,7 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
     expect(importProblems('src/agents/jobs/score.ts', "import { defineAgent } from '../../kernel/agent.js'")).toEqual([]);
     expect(importProblems('src/agents/jobs/score.ts', "import { x } from '../../kernel/providers.js'")).toHaveLength(1);
     // A call through an aliased fetch is caught where the alias comes from: its import.
+    expect(importProblems(at, 'await import(`./${x}`)')).toHaveLength(1);
     expect(importProblems(at, "import nodeFetch from 'node-fetch';\nawait nodeFetch('https://x');")).toEqual([`${at}: package node-fetch`]);
   });
 
@@ -128,11 +133,32 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
     const negatives = [
       'fetch: async () => ({ status: 404 })', 'prefetch(x)', "import { join } from 'node:path'", "import { z } from 'zod'",
       "import x from 'fs-extra'", "import { createHash } from 'node:crypto'", 'ctx.http.getText(url)', 'const httpsOnly = true',
-      'globalThis.structuredClone(x)', "import { x } from './module-helpers.js'", "await import('./types.js')",
+      "import { x } from './module-helpers.js'", 'processed', 'globalize(x)', 'Reflection', 'evaluate(x)', 'MyFunction', "requirement('x')", "await import('./types.js')",
     ];
     for (const s of negatives) expect(bypasses(s), s).toBe(false);
+    // The review's bypasses around the allow-list: each one is caught by a pattern or by the import check.
+    const reviewBypasses = [
+      "const h = process.getBuiltinModule('node:https'); h.get('https://x')",
+      "const { fetch: f } = globalThis; f('https://x')",
+      "const f = global.fetch; f('https://x')",
+      "const f = Reflect.get(globalThis, 'fetch'); f(u)",
+      "new Function('return fetch')()",
+      "(0, eval)('fetch')",
+      "process['binding']('fs')",
+      'await import(`./${x}`)',
+      "await import(`./${'../../kernel/providers.js'}`)",
+      'await import(`../../kernel/${m}.js`)',
+      "const r = require('./types.js')",
+      'process.dlopen(m, p)',
+    ];
+    for (const s of reviewBypasses) {
+      expect(bypasses(s) || importProblems('src/agents/jobs/score.ts', s).length > 0, s).toBe(true);
+    }
     // each pattern must pull its own weight
-    const own = ['fetch(u)', 'globalThis.fetch', 'XMLHttpRequest', 'WebSocket(u)', "from 'node:fs'", "process.binding('x')", 'globalThis[k]', 'import(x)'];
+    const own = [
+      'fetch(u)', 'globalThis.fetch', 'XMLHttpRequest', 'WebSocket(u)', "from 'node:fs'", "process.binding('x')", 'globalThis[k]', 'import(x)',
+      'process.env', 'global.x', 'globalThis', 'Reflect.get', 'eval(s)', 'Function(s)', 'new Function', 'import(`x`)', 'require(x)',
+    ];
     bypassPatterns.forEach((p, i) => expect(p.test(own[i] as string), String(p)).toBe(true));
   });
 });
