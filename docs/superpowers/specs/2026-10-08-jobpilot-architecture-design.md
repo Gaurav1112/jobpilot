@@ -3,7 +3,7 @@
 **Status:** draft, awaiting review · **Date:** 2026-10-08 · **Owner:** the maintainer
 
 jobpilot is a local-first, multi-agent system. It discovers the best-paying,
-best-fitting jobs (with priority on remote roles inside India), scores them
+best-fitting **full-time remote roles open to India-based candidates**, scores them
 with two independent scorers, generates an evidence-grounded resume and cover
 letter for each shortlisted job, presents everything in a local dashboard, and
 submits an application **only after a per-job human approval**.
@@ -24,11 +24,15 @@ checks.
 | D1 | New repository, from scratch (`~/PersonalProject/jobpilot`). Proven pure functions from `career-ops` (fact store, INR comp parser) are **ported with their tests**, not imported. | User |
 | D2 | End action: **auto-submit with per-job approval**. Approval is a signed, single-use token bound to the exact document hashes. | User |
 | D3 | Scoring: **dual scorer**. Claude and Jev (TypeSafe AI) sit behind one `Scorer` contract. The scores are fused and disagreement is flagged. The resume is PII-redacted before it goes to Jev. | User |
-| D4 | Sources: direct ATS boards, remote aggregators, Japan boards and India. India is covered by Adzuna India, a watchlist of India-remote employers' ATS boards, and a Gmail job-alert ingest. **There is no scraping of Naukri, Wellfound or Instahyre** (their ToS and anti-bot measures). | User ("all that works best") + research |
+| D4 | Sources: direct ATS boards, remote aggregators and India-specific feeds (Japan boards dropped by D9). India is covered by Adzuna India, a watchlist of India-remote employers' ATS boards, and a Gmail job-alert ingest. **There is no scraping of Naukri, Wellfound or Instahyre** (their ToS and anti-bot measures). | User ("all that works best") + research |
 | D5 | Ranking: **comp-first with a fit floor**. | User |
 | D6 | Comp baseline = **the user's current offer (base + RSU)**. The floor is the offer's annualised total comp (see A1). | User |
 | D7 | The current LLM-managed daily discovery is non-deterministic. **This is the problem the design exists to fix**, so routing and state never depend on an LLM. | User |
 | D8 | LinkedIn is never scraped and never a submit target. | Standing rule (job-os, linkedin-ops) |
+| D9 | **Remote from India only.** No onsite, no hybrid, no Japan. Eligible = remote roles open to India (Remote-India, APAC, or global-remote that hires in India incl. via EOR), **full-time only**. | User, 2026-10-08 |
+| D10 | **New local dashboard** (Hono + htmx). The 93 rows from the Application Desk artifact are migrated once; the Desk is retired. | User |
+| D11 | The existing Daily Job Discovery's scoring formula and hard filters are kept **as deterministic code** (`scorer-lexicon`, prefilter rules), not as prompt text. | Analysis of handoff doc |
+| D12 | **Evals are first-class.** Every agent has a golden set, metrics and a release gate; outcomes feed back as labels. | User: "no scope of scoring and evals" |
 
 ### Assumptions to confirm (defaults used in this spec)
 
@@ -37,11 +41,27 @@ checks.
 | A1 | The RSU grant vests over 4 years | Floor = base + RSU / 4 (**total comp**) |
 | A2 | Roles with undisclosed comp | Kept, put in a separate "comp unknown" band, and ranked by fit |
 | A3 | Target roles | Senior/Staff/Lead Backend, Platform, or AI/LLM Engineer (Go, Java, TypeScript) |
-| A4 | Japan | Japan-based roles with visa sponsorship are eligible, as are remote-from-India roles |
+| A4 | Global-remote roles with no country stated | Eligible only when the company is on the watchlist with `hiresInIndia: true`, else `needs-review` |
 | A5 | Daily submit cap | 10 submissions/day, 3 per company per 30 days |
 | A6 | Schedule | One daily run at 07:00 IST via macOS `launchd`, plus manual `jobpilot run` |
 | A7 | Jev API | A key is available; data retention terms must be read before enabling it (the provider is disabled until confirmed) |
 | A8 | LinkedIn job-alert *emails* | Excluded from Gmail ingest unless the user opts in (parsing your own mailbox is not scraping, but it stays off by default) |
+
+### 1.1 What the existing Daily Job Discovery taught us
+
+The current system (one LLM session per day, Firecrawl search, Artifact DB "Application Desk", 93 rows) has good rules but non-deterministic execution:
+
+| Step | Why it is non-deterministic | jobpilot replacement |
+|---|---|---|
+| Discovery via `firecrawl_search` `qdr:d` | Search-engine ranking changes by the hour | Direct ATS board APIs for a watchlist; search only proposes *companies* (`company-finder`) |
+| §4 score formula applied by the LLM | All 93 stored scores are integers although `+1.5`/medium skill must give `.5` values; rounding is unspecified and counting is by eye | `scorer-lexicon`: pure function, word-boundary regex, synonym groups, explicit rounding (half-up to integer after summing) |
+| §3 hard filters judged from title + snippet | Same posting can be judged differently | Named prefilter rules over normalised fields |
+| Soft caps ("~10 searches", "cap ~15") | Interpreted per run | Contract budgets |
+| Fresh LLM session is the orchestrator | Every run re-interprets the runbook | Deterministic supervisor |
+| Dedupe on raw `(company, title)` | "Sr. Staff SDE" vs "Senior Staff Software Development Engineer" | Normalised dedupe key |
+| No evals | Nobody knows if a score of 89 means anything | §15 |
+
+Data findings (2026-10-08): only 10 of 93 rows were remote-India; 23 of 28 approved rows were onsite (20 moved to `skipped`, notes kept). **GitLab postings say "Bangalore, India" but GitLab is all-remote** — text-only location classification is wrong for such companies, so the watchlist carries `remotePolicy`. The 93 URLs yield 26 ATS slugs (16 Greenhouse, 6 Lever, 4 Ashby) that seed the watchlist.
 
 ---
 
@@ -63,9 +83,13 @@ checks.
 6. **No single point of failure.** Sources are bulkheaded, scorers are
    redundant, each agent has its own circuit breaker, and supervisor state
    lives in SQLite, so a crash resumes instead of restarting.
-7. **Irreversible actions need a human.** Submit requires a valid approval
+7. **Grounded or rejected.** No architecture stops a model from writing a false
+   sentence. This one guarantees an unsupported sentence never leaves the system:
+   every claim cites a verified fact, a deterministic checker verifies it, and
+   failure is a rejection, not a warning.
+8. **Irreversible actions need a human.** Submit requires a valid approval
    token. No other agent can cause an external side effect.
-8. **Everything is auditable.** An append-only, hash-chained event log
+9. **Everything is auditable.** An append-only, hash-chained event log
    records every step, verdict, cost and policy version.
 
 ---
@@ -81,7 +105,7 @@ checks.
 | LLM | `@anthropic-ai/sdk`, temperature 0, structured output | Claude-only data boundary except for Jev scoring |
 | Second scorer | Jev API (TypeSafe AI) | Typed, explainable match scores (D3) |
 | Storage | `better-sqlite3`, WAL mode | Single file, transactional, synchronous, so ordering is deterministic |
-| Browser | Playwright (Chromium) | Japan boards (JSON-LD pages), rendering, submit drivers |
+| Browser | Playwright (Chromium) | Rendering, submit drivers |
 | Documents | `docx` + Playwright print-to-PDF, with a `pdftotext` probe | Follows the resume v5 ATS rules |
 | Email | Gmail API, `gmail.readonly` OAuth scope | Job-alert ingest (D4) |
 | Dashboard | **Hono + htmx**, server-rendered JSX, bound to 127.0.0.1 | About 47 KB versus 643 KB for Next.js; same process; reads SQLite directly |
@@ -102,8 +126,8 @@ checks.
         │ workable smartrecruiters │   │ prefilter → score(claude)  │   │  inject,egress,budget│
         │ recruitee himalayas      │   │            score(jev)      │   │ out: schema,post,    │
         │ remotive remoteok hn     │   │ → fuse → rank → tailor-cv  │   │  pii,ground,ats-text │
-        │ adzuna-in tokyodev       │   │ → cover-letter → render    │   └──────────────────────┘
-        │ japandev gmail-alerts    │   │ → qa-gate                  │
+        │ adzuna-in       │   │ → cover-letter → render    │   └──────────────────────┘
+        │ company-finder gmail    │   │ → qa-gate                  │
         └──────────────────────────┘   └─────────────┬──────────────┘
                                                      ▼
                          DASHBOARD (Hono+htmx) ── human Approve ──▶ ApprovalToken (HMAC)
@@ -170,7 +194,8 @@ export const ScorerClaudeContract = defineContract({
 2. **Wiring compile.** `pipeline.v1.ts` declares edges by type
    (`DedupedJob@1 → [scorer-claude, scorer-jev]`). The registry checks at boot
    that every edge connects a producer of type T to a consumer of exactly
-   T@major. It also checks that every consumed type has at least one producer,
+   T@major, and that **the producer's postconditions imply the consumer's
+   preconditions** (§5.5). It also checks that every consumed type has at least one producer,
    and that the graph is acyclic apart from declared retry loops. **A wiring
    error stops boot.** Nothing runs half-wired.
 3. **Envelope carries the contract.** Every message travels in an
@@ -179,7 +204,7 @@ export const ScorerClaudeContract = defineContract({
    changed its output without bumping its version, the hash mismatch
    quarantines the message.
 4. **Redundancy by declaration.** When several agents produce the same type
-   (14 discovery agents produce `RawPosting@1`; two scorers produce
+   (13 discovery agents produce `RawPosting@1`; three scorers produce
    `ScoreResult@1`), the supervisor treats them as interchangeable providers.
    If one fails or its breaker opens, the run continues with the rest, and the
    gap is recorded (`source_health`, `FusedScore.singleScorer`).
@@ -200,6 +225,44 @@ type Envelope<T> = {
   guardrails: { id: string; verdict: 'pass' | 'warn' | 'trip'; detail?: string }[];
   cost: { usd: number; inputTokens: number; outputTokens: number };
   policyVersion: string;
+};
+```
+
+### 5.5 Handoff protocol: what one agent passes to the next
+
+An agent never hands over a bare payload. The envelope carries four things the
+next agent inherits, and the supervisor enforces all four deterministically:
+
+1. **Guarantees (postconditions as named predicates).** Each contract lists
+   the predicates it guarantees, e.g. `remote.eligible`, `comp.normalised`,
+   `text.sanitised`, `claims.grounded`. A consumer lists the predicates it
+   requires. At boot the registry checks `consumer.requires ⊆ producer.guarantees
+   ∪ supervisor.guarantees` for every edge, so a consumer can never be wired
+   behind a producer that does not promise what it needs. At run time the
+   predicates are re-evaluated on the actual payload (G-POST on the producer,
+   preconditions on the consumer), so a promise is checked twice.
+2. **Data-class labels (taint).** Every field carries its class (P0–P3). The
+   output of an agent inherits the highest class of its inputs unless the
+   agent is a declared *redactor* (only `pii-redactor` and the renderer may
+   lower a class). The broker refuses any egress call whose payload class is
+   not allowed for that host. Personal data cannot leak by forgetting.
+3. **Obligations.** Policy obligations that travel downstream and must be
+   discharged by a named later agent, e.g. `must-cite-facts` (discharged by
+   G-GROUND in qa-gate), `needs-human-approval` (discharged only by an
+   ApprovalToken), `attribution-required` (Remotive, RemoteOK; discharged by
+   the dashboard showing the source). A job cannot reach a terminal success
+   state with an undischarged obligation.
+4. **Policy and contract pins.** `policyHash`, the producer's `contractHash`
+   and the `rankingVersion` are pinned on the envelope. A consumer running
+   under a different policy hash rejects the envelope (G-LINEAGE), so one run
+   never mixes two policies.
+
+```ts
+type Handoff = {
+  guarantees: Predicate[];              // e.g. ['remote.eligible','text.sanitised']
+  labels: Record<string, 'P0'|'P1'|'P2'|'P3'>;   // per JSON path
+  obligations: { id: string; dischargedBy: string; discharged: boolean }[];
+  pins: { policyHash: string; contractHash: string; rankingVersion: string };
 };
 ```
 
@@ -264,7 +327,7 @@ Transitions are a static table. A transition not in the table throws.
 |---|---|
 | Crash resume | `jobpilot run --resume <runId>` skips `done` steps and re-queues `running` steps whose lease expired |
 | Circuit breaker | Per agent, per run: N consecutive failures open the breaker; consumers proceed with the remaining providers |
-| Scorer fallback | Jev down → Claude alone (`singleScorer=true`, shown as a badge); Claude down → Jev alone; both down → stage halts, jobs stay `PREFILTERED` |
+| Scorer fallback | Three providers of `ScoreResult@1`. Any one down → fuse the rest and show a badge. Claude and Jev both down → `scorer-lexicon` alone (`lexiconOnly=true`), so ranking never stops |
 | Source isolation | A failing source never blocks the others; `source_health` shows the last success and error class |
 | Dead letter | `QUARANTINED` jobs keep the failing envelope and the guardrail detail |
 | Budget | A hard daily USD cap. Reaching it stops new LLM steps but lets deterministic steps finish |
@@ -282,14 +345,15 @@ Transitions are a static table. A transition not in the table throws.
 | `src-himalayas`, `src-remotive`, `src-remoteok` | io | same | Attribution is stored and shown; Remotive's 24 h delay is noted |
 | `src-hn` | io | same | Algolia "Who is hiring" thread comments; header line parsed deterministically |
 | `src-adzuna-in` | io | same | Free key, 250 calls/day; queries tuned for remote, India and senior roles |
-| `src-tokyodev`, `src-japandev` | io (Playwright) | same | Parses `JobPosting` JSON-LD; robots.txt checked; ≤1 req/2 s |
+| `company-finder` | io | DiscoveryRequest → WatchlistProposal | Weekly search for companies hiring remote in India; proposes new watchlist entries (ATS + slug + remotePolicy) for **your approval**; never emits jobs |
 | `src-gmail-alerts` | io | same | `gmail.readonly`; sender allowlist (Naukri, Instahyre, Wellfound, Cutshort, Hirist); parses the job cards in the email |
-| `normalizer` | deterministic | RawPosting → JobPosting | Comp parser ported from career-ops (lakh/crore, LPA, `₹18,00,000`), FX at the run's pinned rate, remote classifier, ATS detection from apply-URL host, HTML → text through the sanitiser |
+| `normalizer` | deterministic | RawPosting → JobPosting | Remote classifier checks the watchlist `remotePolicy` first, then the location text; comp parser ported from career-ops (lakh/crore, LPA, `₹18,00,000`), FX at the run's pinned rate, remote classifier, ATS detection from apply-URL host, HTML → text through the sanitiser |
 | `deduper` | deterministic | JobPosting → DedupedJob | Key = `slug(company) + normTitle + remoteClass`; merges provenance; prefers the ATS-direct URL |
-| `prefilter` | deterministic | DedupedJob → PrefilterVerdict | Rule IDs: location eligibility, seniority, stack overlap ≥ 2, deny keywords, disclosed comp ≥ floor × 0.85 |
+| `prefilter` | deterministic | DedupedJob → PrefilterVerdict | Rule IDs ported from the handoff §3: `F-REMOTE-INDIA` (must be eligible remote), `F-FTE` (no contract/C2H/freelance/fixed-term/hourly), `F-ROLE-*` (frontend, mobile, QA/SDET, manager/director, sales, solutions/support, DevRel, recruiter, designer, data/ML scientist, intern, embedded/firmware/hardware, security analyst), `F-SERVICES-FIRM` (TCS … Ciklum list), `F-STAFFING` (Randstad … Hire Feed list), `F-STAGE` (below Series A), `F-CLOSED`, `F-COMP` (disclosed comp < floor × 0.85) |
+| `scorer-lexicon` | deterministic | DedupedJob → ScoreResult | The handoff §4 formula as code: start 30; +10 staff/lead/principal/SDE-3, else +8 senior; +10 backend/platform/Java/distributed in title; +4 per STRONG, +1.5 per MEDIUM, −4 per GAP (each synonym group counted once); −20 if > 14 years required. Fit = score/10. Never down, free, explainable. **Gate: ≥ 60 to reach the paid scorers.** |
 | `scorer-claude` | llm | DedupedJob → ScoreResult | The prompt holds the JD (fenced as data) and verified fact *summaries*; no contact PII |
 | `scorer-jev` | io | DedupedJob → ScoreResult | The resume is sent with P1 fields redacted; Jev output mapped to `ScoreResult@1` by a deterministic adapter |
-| `score-fuser` | deterministic | ScoreResult×n → FusedScore | Mean of available providers; `disagreement = |a−b| > 2` → `needs-review` |
+| `score-fuser` | deterministic | ScoreResult×n → FusedScore | Weighted mean of available providers (weights from eval calibration, §15; start equal); `disagreement = max−min > 2` → `needs-review` |
 | `ranker` | deterministic | FusedScore → RankedJob | See §9 |
 | `resume-tailor` | llm | RankedJob → TailoredResume | Picks facts, rewrites bullets using JD terms; every bullet cites `factIds` |
 | `cover-letter` | llm | RankedJob → CoverLetter | Three or four paragraphs, every claim cites `factIds` |
@@ -357,7 +421,7 @@ lineage: sources → scores → documents → approval → submission.
 ## 9. Ranking formula (`ranking.v1`)
 
 ```
-eligible   = fused.fit >= 7.0 && !needsReview && prefilter.pass
+eligible   = prefilter.pass && lexicon.score >= 60 && fused.fit >= 7.0 && !needsReview
 compTC     = inrAnnualMax ?? inrAnnualMin            // total comp, INR/yr, pinned FX
 band       = compTC == null ? 'comp-unknown' : compTC >= floor ? 'above-floor' : 'below-floor'
 order      = band ASC (above-floor, comp-unknown, below-floor),
@@ -413,11 +477,16 @@ Hono + htmx on `127.0.0.1:4317`.
   resume diff against master, the cover letter, screening answers, lineage.
   Actions: **Approve**, **Decline**, **Regenerate**.
 - **Applications:** submitted, needs-human and follow-ups due.
+- **Evals:** per-agent scorecards (§15), trend per release, calibration curve.
 - **Contracts:** the live registry, the wiring graph and each agent's
   breaker state.
 - **Audit:** chain verification and the event stream.
 
 ---
+
+Migration: the 93 Application Desk rows are imported once (status, notes,
+applied dates kept) and re-scored by `scorer-lexicon` so old and new scores
+can be compared side by side.
 
 ## 13. Repository layout
 
@@ -434,6 +503,7 @@ jobpilot/
     providers/     anthropic.ts jev.ts gmail.ts http.ts browser.ts
     facts/         ported from career-ops (schema, store) + profile/facts.yaml
     store/         db.ts migrations/ repos/
+    evals/         runner.ts metrics.ts gates.ts judges/ datasets/<agent>/*.jsonl
     dashboard/     app.tsx views/*
     cli.ts
   contracts-out/   generated JSON Schemas (snapshot-tested)
@@ -457,20 +527,74 @@ jobpilot/
 
 ---
 
-## 15. Build phases (each gets its own plan)
+## 15. Evals and agent scoring
 
-1. **Kernel:** contracts, registry, wiring compile, executor, memo, guardrail
-   framework, policy, event log, state machine. Two stub agents end to end
-   and the replay test.
-2. **Discovery:** ATS boards, aggregators and Adzuna-IN, plus normalizer,
-   deduper and prefilter. All deterministic.
+Every agent is scored, not only every job. An eval is a dataset, a metric and a
+threshold. A release that drops any metric below its gate does not ship.
+
+### 15.1 Offline evals (golden sets, run in CI and on demand: `jobpilot eval`)
+
+| Agent | Golden set | Metric | Gate |
+|---|---|---|---|
+| normalizer · remote classifier | 93 migrated rows labelled by hand + GitLab/all-remote cases + 50 tricky strings ("Remote, Bangalore", "India; Berlin") | accuracy per class; **false-eligible rate** | acc ≥ 0.97, false-eligible ≤ 0.01 |
+| normalizer · comp parser | INR notations (lakh/crore/LPA/`₹18,00,000`), USD/EUR ranges, "competitive" | exact match | 1.00 |
+| prefilter | 200 postings with expected rule IDs | precision / recall per rule | recall of `F-REMOTE-INDIA`, `F-FTE` = 1.00; precision ≥ 0.95 |
+| deduper | known duplicate pairs + near-misses | pairwise F1 | ≥ 0.98 |
+| scorer-lexicon | the 93 rows' JDs, expected score computed by hand from §4 | exact score match | 1.00 (it is code: any miss is a bug) |
+| scorer-claude, scorer-jev | 60 jobs you rate 1–10 yourself | Spearman ρ vs your rating; MAE | ρ ≥ 0.6, MAE ≤ 1.5 |
+| score-fuser | same 60 | ρ of the fused score | ≥ best single provider |
+| resume-tailor | 20 JDs | **grounding rate** (claims passing G-GROUND), keyword coverage, judge rubric | grounding = 1.00 after QA; first-pass grounding tracked |
+| cover-letter | 20 JDs | grounding rate, length, judge rubric | grounding = 1.00 after QA |
+| renderer / qa-gate | rendered files | `pdftotext` probe pass, pages ≤ 2, 0 hyphen-EOL | 1.00 |
+| submit drivers | local form copies | fields correct, no submit without token | 1.00 |
+
+LLM-as-judge is used **only** for subjective quality (resume readability, cover
+letter tone). The judge returns a typed rubric (`relevance`, `specificity`,
+`tone`, 1–5 each), runs at temperature 0, and is itself checked against your
+ratings on 20 samples before it is trusted. A judge never gates grounding;
+grounding is always the deterministic check.
+
+### 15.2 Online evals (from real outcomes)
+
+Every action you take is a label. **Approve / Decline / Skip** label fit;
+**response / interview / offer** label outcome. Weekly, `eval-online` computes:
+
+- precision@k of the shortlist (share of shortlisted jobs you approved);
+- calibration: approval rate per fused-score band (a score of 8 should be approved more often than a 7);
+- scorer agreement with your decisions, per provider, which **re-fits the fuser weights** (a new `ranking` version, never a silent change);
+- funnel by source and ATS: discovered → eligible → shortlisted → approved → submitted → response.
+
+### 15.3 Agent scorecards (runtime health, per run)
+
+Per agent: success rate, guardrail trip rate by ID, p95 latency, cost per
+item, breaker opens, and, for LLM agents, first-pass grounding rate and QA
+regeneration rate. Shown on the dashboard's Evals page. A rising trip rate
+on one agent after a prompt or model change is the earliest signal of a
+regression.
+
+### 15.4 Eval-gated changes
+
+Prompts, models, lexicons and ranking weights are versioned artifacts.
+Changing any of them runs the affected agents' offline evals and the replay
+test; the change is recorded with its eval report in `events`.
+
+---
+
+## 16. Build phases (each gets its own plan)
+
+1. **Kernel:** contracts, handoff protocol, registry, wiring compile, executor,
+   memo, guardrail framework, policy, event log, state machine, **eval
+   runner**. Two stub agents end to end and the replay test.
+2. **Discovery:** watchlist (26 seeded slugs), ATS boards, aggregators,
+   Adzuna-IN, normalizer, deduper, prefilter, `scorer-lexicon`, migration of
+   the 93 rows and their golden sets. All deterministic.
 3. **Scoring:** scorer-claude, scorer-jev, fuser and ranker.
 4. **Dashboard:** read-only views (jobs, detail, health, quarantine, contracts).
 5. **Documents:** fact store port, tailor, cover letter, renderer and QA gate.
 6. **Approval and submit:** token, Greenhouse, Lever and Ashby drivers, tracker.
-7. **Coverage:** Gmail alerts, TokyoDev, Japan Dev, assisted Workday.
+7. **Coverage:** Gmail alerts, company-finder, assisted Workday, online evals.
 
-## 16. Out of scope (v1)
+## 17. Out of scope (v1)
 
-Scraping LinkedIn, Naukri, Wellfound or Instahyre; mass auto-apply without
+Onsite, hybrid and Japan roles; contractor roles; scraping LinkedIn, Naukri, Wellfound or Instahyre; mass auto-apply without
 approval; multi-user support; cloud hosting.
