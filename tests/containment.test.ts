@@ -78,8 +78,17 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
       "import { fakeLlm } from '../../kernel/fakes.js'", "import type { Providers } from '../../kernel/providers.js'",
       "import { join } from 'node:path'", "import nodeFetch from 'node-fetch'", 'Buffer.from(x)', 'Deno.exit()', 'Bun.file(x)',
       'module.exports = 1', "new XMLHttpRequest()", 'function f(process: unknown) {}',
+      'const { constructor: AF } = async () => {}', 'const { constructor } = x', "Object.getOwnPropertyDescriptor(p, 'constructor')",
+      'Reflect.get(p, `constructor`)',
     ];
     for (const s of bypasses) expect(scanAgentSource(AT, s), s).not.toEqual([]);
+  });
+
+  it('strips a ?/# suffix from a relative specifier before resolving it', () => {
+    const f = 'src/agents/x.ts';
+    expect(scanAgentSource(f, "import x from '../kernel/providers.js?/../../agents/x.js'")).toEqual([`${f}:1: import of ../kernel/providers.js?/../../agents/x.js`]);
+    expect(scanAgentSource(f, "import x from '../kernel/providers.js#/../../agents/x.js'")).not.toEqual([]);
+    expect(scanAgentSource(f, "import x from './y.js?v=1'")).toEqual([]);
   });
 
   it('reports offenders as file:line: reason', () => {

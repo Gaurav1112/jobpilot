@@ -27,7 +27,7 @@ const FORBIDDEN_GLOBALS = new Set([
 /** Whether agent code at `file` (repo-relative) may import `spec`. */
 export const allowedSpecifier = (file: string, spec: string): boolean => {
   if (!spec.startsWith('.')) return PACKAGES_ALLOWED.includes(spec);
-  const target = posix.join(posix.dirname(file), spec).replace(/\.js$/, '.ts');
+  const target = posix.join(posix.dirname(file), spec.replace(/[?#].*$/s, '')).replace(/\.js$/, '.ts');
   return KERNEL_ALLOWED.includes(target) || isAgentCode(target);
 };
 
@@ -91,6 +91,13 @@ export const scanAgentSource = (file: string, text: string): string[] => {
       node.argumentExpression.text === 'constructor'
     ) {
       at(node, 'access to [constructor]');
+    } else if (ts.isBindingElement(node) && [node.propertyName, node.name].some((n) => n && ts.isIdentifier(n) && n.text === 'constructor')) {
+      at(node, 'destructuring of constructor');
+    } else if (
+      ts.isCallExpression(node) &&
+      node.arguments.some((a) => (ts.isStringLiteral(a) || ts.isNoSubstitutionTemplateLiteral(a)) && a.text === 'constructor')
+    ) {
+      at(node, "'constructor' passed as an argument");
     } else if (ts.isIdentifier(node) && FORBIDDEN_GLOBALS.has(node.text) && !isMemberName(file, node)) {
       at(node, `reference to ${node.text}`);
     }
