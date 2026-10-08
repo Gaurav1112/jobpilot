@@ -189,8 +189,8 @@ export class Supervisor {
         } else if (outcome.kind === 'quarantined') {
           this.track(runId, input, outcome.stepKey, item.agent_id, 'quarantined');
         }
-        // The input never got past this step, so whatever it still owes stays open.
-        if (outcome.kind !== 'done') this.reportOpen(runId, input);
+        // The input never got past this step (or the step produced nothing to carry it), so whatever it still owes stays open.
+        if (outcome.kind !== 'done' || outcome.outputs.length === 0) this.reportOpen(runId, input);
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 

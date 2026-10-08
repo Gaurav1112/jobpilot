@@ -154,21 +154,45 @@ describe('supervisor end to end', () => {
     expect(k.store.entityState('demo-003')).toBe('SCORED');
   });
 
-  it('keeps open obligations across a resume, and blocks the success state while they are open', async () => {
+  it('keeps open obligations across a resume when the discharger finishes with no outputs', async () => {
     const store = Store.open(':memory:');
     const crashing = handBuilt({ store, afterStep: (n) => { if (n === 3) throw new Error('simulated crash'); } });
     await expect(crashing.start('run-1', [seed])).rejects.toThrow('simulated crash');
     const r = await handBuilt({ store }).resume('run-1');
+    expect(r.queue).toMatchObject({ done: 6, failed: 0, quarantined: 0 });
     for (const id of ['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']) expect(store.entityState(id)).toBe('DISCOVERED');
-    const blocked = store.events('run-1').filter((e) => e.kind === 'obligation_blocked').map((e) => JSON.parse(e.data) as { entity: string; event: string; ids: string[] });
-    expect(blocked.map((b) => b.entity).sort()).toEqual(['demo-001', 'demo-002', 'demo-003', 'demo-004', 'demo-005']);
-    expect(blocked.every((b) => b.event === 'scored' && b.ids.join() === 'demo.scored')).toBe(true);
     expect(r.openObligations).toHaveLength(5);
     for (const o of r.openObligations) {
       expect(o.ids).toEqual(['demo.scored']);
-      expect(store.getEnvelope(o.envelopeId).type).toBe('DemoScore@1');
+      expect(store.getEnvelope(o.envelopeId).type).toBe('DemoItem@1');
     }
     expect([...r.openObligations].map((o) => o.envelopeId)).toEqual([...r.openObligations].map((o) => o.envelopeId).sort());
+  });
+
+  it('reports the open obligations of inputs whose step is done with zero outputs', async () => {
+    const store = Store.open(':memory:');
+    const r = await handBuilt({ store }).start('run-1', [{ count: 3, prefix: 'demo' }]);
+    expect(r.queue).toMatchObject({ done: 4, failed: 0 });
+    expect(r.openObligations).toHaveLength(3);
+    for (const o of r.openObligations) {
+      expect(o.ids).toEqual(['demo.scored']);
+      expect(store.getEnvelope(o.envelopeId).type).toBe('DemoItem@1');
+    }
+    expect(store.entityState('demo-001')).toBe('DISCOVERED');
+  });
+
+  it('still blocks the success state while an obligation is open', async () => {
+    const store = Store.open(':memory:');
+    const early: Tracker = {
+      kind: 'demo-early',
+      machine: new StateMachine({ id: 'early', initial: 'NEW', terminal: ['SCORED'], success: ['SCORED'], transitions: [{ from: 'NEW', on: 'scored', to: 'SCORED' }] }),
+      keyOf: (env) => (env.type === 'DemoItem@1' ? `early-${(env.payload as { id: string }).id}` : null),
+      eventFor: (agentId, outcome) => (outcome === 'done' && agentId === 'demo-source' ? 'scored' : null),
+    };
+    await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, early] }).start('run-1', [{ count: 2, prefix: 'demo' }]);
+    const blocked = store.events('run-1').filter((e) => e.kind === 'obligation_blocked').map((e) => JSON.parse(e.data) as { entity: string; ids: string[] });
+    expect(blocked.map((b) => b.entity)).toEqual(['early-demo-001', 'early-demo-002']);
+    expect(blocked.every((b) => b.ids.join() === 'demo.scored')).toBe(true);
   });
 
   it('does not carry one run\'s obligations or replay count into the next run on the same instance', async () => {
@@ -307,7 +331,7 @@ describe('supervisor end to end', () => {
   });
 });
 
-/** The demoKernel wiring, by hand, with a scorer that by default leaves `demo.scored` open. */
+/** The demoKernel wiring, by hand, with a scorer that by default declares `demo.scored` but finishes with no outputs, leaving it open. */
 function handBuilt(o: {
   store: Store;
   llm?: LlmProvider;
@@ -318,10 +342,10 @@ function handBuilt(o: {
   trackers?: readonly Tracker[];
   afterStep?: SupervisorDeps['afterStep'];
 }): Supervisor {
-  const lazyScorer = defineAgent(defineContract({ ...demoScorerContract, obligations: { adds: [], discharges: [] } }), demoScorer.run);
+  const emptyScorer = defineAgent(demoScorerContract, async () => []);
   const registry = new Registry();
   registry.register(o.source ?? demoSource);
-  registry.register(o.scorer ?? lazyScorer);
+  registry.register(o.scorer ?? emptyScorer);
   const guardrails = builtinGuardrails();
   const compiled = compileWiring(registry, o.pipeline ?? demoPipeline, guardrails);
   const policy = mergePolicy(PRODUCT_POLICY_V1, {});

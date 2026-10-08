@@ -172,7 +172,7 @@ function downstreamOf(registry: Registry, from: string, routes: ReadonlyMap<stri
   return seen;
 }
 
-/** Whoever must discharge an obligation has to be a team member the item can actually reach after it is added. */
+/** Whoever must discharge an obligation has to be a team member the item can actually reach after it is added, and must declare the discharge. */
 function checkObligations(
   registry: Registry,
   members: readonly string[],
@@ -187,6 +187,8 @@ function checkObligations(
     for (const a of adds) {
       if (!registry.has(a.dischargedBy) || !teamOf.has(a.dischargedBy) || !reachable.has(a.dischargedBy)) {
         problems.push(`${m} adds obligation ${a.id} but ${a.dischargedBy} is not reachable downstream`);
+      } else if (!registry.get(a.dischargedBy).contract.obligations.discharges.includes(a.id)) {
+        problems.push(`${a.dischargedBy} is named to discharge ${a.id} but does not declare it`);
       }
     }
   }

@@ -193,4 +193,12 @@ describe('compileWiring', () => {
       'demo-source adds obligation demo.scored but demo-source is not reachable downstream',
     );
   });
+
+  it('refuses a discharger that does not declare the obligation it is named for', () => {
+    const [src, scorer] = demoAgents;
+    const silent = defineAgent(defineContract({ ...scorer.contract, obligations: { adds: [], discharges: [] } }), scorer.run);
+    expect(problems(() => compileWiring(registryWith(src, silent), demoPipeline, builtinGuardrails()))).toContain(
+      'demo-scorer is named to discharge demo.scored but does not declare it',
+    );
+  });
 });
