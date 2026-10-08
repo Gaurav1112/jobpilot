@@ -126,9 +126,9 @@ describe('supervisor end to end', () => {
   });
 
   it('stops paying once the run budget is spent, and lets the rest wait', async () => {
-    const r = await demoKernel({ userPolicy: { maxUsdPerRun: 0.003 } }).supervisor.start('run-1', [seed]);
+    const r = await demoKernel({ llm: demoLlm(0.01), userPolicy: { maxUsdPerRun: 0.03 } }).supervisor.start('run-1', [seed]);
     expect(r.queue).toMatchObject({ done: 4, skipped: 2 });
-    expect(r.costUsd).toBeCloseTo(0.003);
+    expect(r.costUsd).toBeCloseTo(0.03);
   });
 
   it('refuses an invalid seed before anything runs', async () => {

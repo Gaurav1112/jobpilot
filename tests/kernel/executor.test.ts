@@ -170,7 +170,8 @@ describe('executeStep: spec order, spend, events, never throws', () => {
     const out = await executeStep(depsFor(store, a, invoked), 'r', a, seedEnv());
     expect(out).toMatchObject({ kind: 'failed', error: 'budget_exceeded' });
     expect(invoked).toHaveLength(2);
-    expect(store.runCost('r')).toBeCloseTo(0.004, 10);
+    // The second attempt runs, but the broker refuses its call: 0.002 spent + 0.003 reserved > 0.003.
+    expect(store.runCost('r')).toBeCloseTo(0.002, 10);
     expect(store.getStep(out.stepKey)).toMatchObject({ status: 'failed', error_code: 'budget_exceeded' });
   });
 
@@ -205,14 +206,14 @@ describe('executeStep: spec order, spend, events, never throws', () => {
 });
 
 /** Calls the model ten times per step at 0.1 each and lets the first refusal propagate; records which call was refused. */
-const tenCaller = () => {
+const tenCaller = (usdPerCall = 0.1) => {
   const refusedAt: number[] = [];
   const agent = defineAgent(
     defineContract({
       id: 'ten-caller', version: '1.0.0', description: 'Writes one demo item with many model calls', skills: ['demo-writing'],
       team: 'sourcing', kind: 'llm', consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet],
       capabilities: { llm: { model: 'claude-sonnet-5-5', maxTokens: 50 } }, egress: ['api.anthropic.com'],
-      dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0.1, usdPerRun: 0.5 }, timeoutMs: 1_000,
+      dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall, usdPerRun: 0.5 }, timeoutMs: 1_000,
     }),
     async (req, ctx) => {
       for (let i = 1; i <= 10; i++) {
@@ -230,8 +231,8 @@ const tenCaller = () => {
 };
 
 describe('executeStep: run budgets hold inside a step (G-BUDGET)', () => {
-  const run = async (store: Store, t: ReturnType<typeof tenCaller>, extra: Partial<ExecutorDeps> = {}) =>
-    executeStep({ ...depsFor(store, t.agent, [], extra), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: pricedLlm(0.1) } }, 'r', t.agent, seedEnv());
+  const run = async (store: Store, t: ReturnType<typeof tenCaller>, extra: Partial<ExecutorDeps> = {}, price = 0.1) =>
+    executeStep({ ...depsFor(store, t.agent, [], extra), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: pricedLlm(price) } }, 'r', t.agent, seedEnv());
 
   it('refuses the 6th call of a fresh step at usdPerRun 0.5', async () => {
     const store = Store.open(':memory:');
@@ -258,6 +259,23 @@ describe('executeStep: run budgets hold inside a step (G-BUDGET)', () => {
     await run(store, t, { policy: { ...PRODUCT_POLICY_V1, maxUsdPerRun: 0.3 } });
     expect(t.refusedAt).toEqual([4]);
     expect(store.runCost('r')).toBeLessThanOrEqual(0.3 + 1e-9);
+  });
+
+  it('reserves usdPerCall: 0.15 calls under usdPerRun 0.5 never exceed 0.5', async () => {
+    const store = Store.open(':memory:');
+    const t = tenCaller(0.15);
+    const out = await run(store, t, {}, 0.15);
+    expect(out).toMatchObject({ kind: 'failed', error: 'budget_exceeded' });
+    expect(t.refusedAt).toEqual([4]);
+    expect(store.runCost('r')).toBeLessThanOrEqual(0.5 + 1e-9);
+  });
+
+  it('reserves usdPerCall against the policy cap: 0.15 calls under maxUsdPerRun 0.2 never exceed 0.2', async () => {
+    const store = Store.open(':memory:');
+    const t = tenCaller(0.15);
+    await run(store, t, { policy: { ...PRODUCT_POLICY_V1, maxUsdPerRun: 0.2 } }, 0.15);
+    expect(t.refusedAt).toEqual([2]);
+    expect(store.runCost('r')).toBeLessThanOrEqual(0.2 + 1e-9);
   });
 });
 

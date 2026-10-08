@@ -189,14 +189,13 @@ describe('capability broker', () => {
       expect(llm.n).toBe(1);
     });
 
-    it('refuses a call once cumulative usd has reached usdPerRun', async () => {
+    it('refuses a call once cumulative usd plus a reserved usdPerCall would pass usdPerRun', async () => {
       const llm = stubLlm(undefined, 0.002);
       const ctx = issue(capped, 'P0', { fetch: fakeFetch({}), llm });
       await ctx.llm!.complete({ system: 's', prompt: 'p' });
-      await ctx.llm!.complete({ system: 's', prompt: 'p' });
-      expect(ctx.spent().usd).toBeCloseTo(0.004);
+      expect(ctx.spent().usd).toBeCloseTo(0.002);
       await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toThrow(/usdPerRun reached/);
-      expect(llm.n).toBe(2);
+      expect(llm.n).toBe(1);
     });
 
     it('allows one model call in flight per step', async () => {
@@ -272,6 +271,24 @@ describe('capability broker: prior run spend (G-BUDGET)', () => {
     const { ctx, llm } = issueWith({ agentUsd: 0, runUsd: PRODUCT_POLICY_V1.maxUsdPerRun });
     await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded' });
     expect(llm.calls).toHaveLength(0);
+  });
+
+  it('reserves usdPerCall: refuses a call that could carry the agent past usdPerRun', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 1 - 0.005, runUsd: 0 });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded', message: 'G-BUDGET: run budget reached' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('reserves usdPerCall: refuses a call that could carry the run past the policy cap', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 0, runUsd: PRODUCT_POLICY_V1.maxUsdPerRun - 0.005 });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('allows a call whose reservation fits exactly', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 1 - 0.01, runUsd: 0 });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).resolves.toBeDefined();
+    expect(llm.calls).toHaveLength(1);
   });
 });
 

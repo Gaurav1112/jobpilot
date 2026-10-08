@@ -52,6 +52,9 @@ function mapProviderError(e: unknown): unknown {
   return new KernelError('network', typeof o.message === 'string' ? o.message : 'provider call failed');
 }
 
+/** Sums of decimal dollar amounts drift (0.1 + 0.2 > 0.3); a cap is only exceeded beyond that noise. */
+const exceeds = (total: number, cap: number): boolean => total > cap + 1e-9;
+
 export function issueContext(a: IssueArgs): AgentContext {
   let usd = 0;
   let inputTokens = 0;
@@ -126,10 +129,13 @@ export function issueContext(a: IssueArgs): AgentContext {
         inFlight = true;
         try {
           if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
-          if (usd >= a.contract.budget.usdPerRun) {
+          // Every call reserves a full usdPerCall before it is made, so the caps are hard:
+          // a call that costs more than usdPerCall is latched above, everything else fits.
+          const reserve = a.contract.budget.usdPerCall;
+          if (exceeds(usd + reserve, a.contract.budget.usdPerRun)) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
           }
-          if (prior.agentUsd + usd >= a.contract.budget.usdPerRun || prior.runUsd + usd >= a.policy.maxUsdPerRun) {
+          if (exceeds(prior.agentUsd + usd + reserve, a.contract.budget.usdPerRun) || exceeds(prior.runUsd + usd + reserve, a.policy.maxUsdPerRun)) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: run budget reached');
           }
           let res;
