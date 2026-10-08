@@ -135,7 +135,10 @@ an eval dataset. `jobpilot plugin add <pkg>`:
 2. runs the wiring compile (types, guarantees ⊆ requirements);
 3. checks the plugin asks only for capabilities its `kind` allows (an `io`
    agent cannot request `submit`; only the core submitter is `effect`);
-4. runs the plugin's evals and the containment scan;
+4. runs the plugin's evals and the containment scan (a guard against accidental
+   or naive bypass, not a sandbox: deliberate obfuscation can defeat any static
+   scan, so untrusted code is contained by the worker-thread sandbox below, with
+   the scan as an extra check only);
 5. registers it in the user's registry, disabled until the user enables it.
 
 Plugins run in a **worker thread with no ambient authority**: the capability

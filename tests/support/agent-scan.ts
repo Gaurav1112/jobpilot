@@ -4,6 +4,10 @@ import ts from 'typescript';
 /**
  * Containment scan for agent code, done on the syntax tree rather than with regexes, so spacing, comments,
  * parentheses, optional calls, tagged templates and unicode escapes cannot hide a reference.
+ *
+ * Scope: this is a guard against accidental or naive bypass in first-party agent code (it catches every form in
+ * its self-tests), not a sandbox. Deliberate obfuscation can defeat any static scan. Untrusted plugin code is
+ * isolated by the worker-thread sandbox planned for the plugin SDK (sub-project 11); the scan is only an extra check.
  */
 
 /** Agent code: everything an agent's run() can execute. The kernel, evals, CLI and demo wiring are the trusted side. */
