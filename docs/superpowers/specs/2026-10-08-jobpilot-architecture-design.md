@@ -57,6 +57,7 @@ user-pack/
   naming-rules.yaml         employer/client naming (e.g. a display name for the employer, never "[client]")
   offers.yaml   (P2)        current offers: base, bonus, equity, vesting → floor + leverage
   answers.yaml              screening-question answer bank
+  channels.yaml             platforms whose alert emails to ingest, capture on/off, vendor plugins
   policy.user.yaml          user policy overrides (see below)
   secrets (OS keychain)     Anthropic key, Jev key, Gmail OAuth token
 ```
@@ -148,6 +149,46 @@ stores secrets in the OS keychain, runs onboarding, and installs the daily
 schedule (`launchd` on macOS, systemd timer on Linux, Task Scheduler on
 Windows). A desktop wrapper is a later option.
 
+### 0.8 Platform coverage and access channels
+
+Automated access is what the policy refuses, not platforms. Every platform is
+reached through the most direct channel its terms allow:
+
+| Channel | Agent | How it works | Why it is allowed |
+|---|---|---|---|
+| **Fetch** (T1–T3) | `src-*`, `src-jsonld`, `src-manifest-runner` | APIs, JSON-LD, approved manifests | Public APIs or robots-permitted public pages |
+| **Upstream** | `ats-mirror-resolver` (det) | Given any lead (company + title + location), find the same role on the company's ATS through the catalogue's company→ATS map, then fetch it there. Match by normalised title + location + posted window. Unresolved leads stay `lead-only` | Same job from its origin, with the full JD and a form our drivers can fill |
+| **Mailbox** | `src-gmail-alerts` | The user creates saved-search alerts on each platform; the platform emails them; one parser per sender template | The platform sends the data to the user |
+| **Capture** | `src-capture` + browser extension | A "Save to jobpilot" button in the browser (the CareerFill MV3 extension, `activeTab` only). On click it reads JSON-LD or the visible JD of the page the user is viewing and posts it to `127.0.0.1` | User-initiated, one page, no automated navigation |
+| **Data vendor** (optional plugin, off) | `src-vendor-*` | A user-supplied key for a job-data vendor | The user's own decision; the provenance chain is the vendor's risk, so it is off by default |
+
+Every captured or emailed lead goes through `ats-mirror-resolver` first, so
+applying happens on the ATS, where the drivers work, and never on the board.
+
+**Coverage matrix (initial; `source-probe` re-verifies before activation):**
+
+| Platform | Market | Channels | Notes (verified 2026-10-08 where stated) |
+|---|---|---|---|
+| Company ATS boards (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee) | global | fetch T1 | Public posting APIs |
+| Workday, iCIMS, SuccessFactors, Taleo career sites | global, Indian GCCs | fetch T2 (JSON-LD on job pages) | To verify per site by probe |
+| Company career pages (any) | global | fetch T2 / T3 | JSON-LD published for Google for Jobs |
+| LinkedIn | global | mailbox, capture, upstream | No public jobs API (partner-only); user agreement bans automated access; Proxycurl shut down July 2025 after LinkedIn's lawsuit |
+| Indeed | global, India | mailbox, capture, upstream | Publisher (search) API retired end of 2020; Job Sync API is for ATS partners posting jobs |
+| Naukri | India | mailbox, capture, upstream | ToS bans automated extraction; search needs a reCAPTCHA token |
+| Foundit (Monster India), Shine, TimesJobs | India | mailbox, capture, upstream; fetch only if probe allows | To probe |
+| Instahyre, Cutshort, Hirist, iimjobs | India (tech) | mailbox, capture, upstream; fetch only if probe allows | To probe |
+| Wellfound | global startups | mailbox, capture, upstream | DataDome anti-bot; logged-in filters |
+| Glassdoor | global | capture, upstream | Same owner as Indeed |
+| Himalayas, Remotive, RemoteOK, We Work Remotely | global remote | fetch T1 | Public APIs / RSS, attribution required |
+| Working Nomads, Remote Rocketship, JustRemote, Jobspresso, Arc.dev | global remote | fetch T2/T3 if probe allows | To probe |
+| HN "Who is hiring" | global | fetch T1 | Algolia API |
+| Adzuna | India + 15 countries | fetch T1 | Free key, 250 calls/day |
+| YC Work at a Startup | startups | capture, upstream | Login required |
+| Google for Jobs | aggregate | not a source | No API; its JobPosting schema (`jobLocationType: TELECOMMUTE`, `applicantLocationRequirements`) is the remote-eligibility signal `src-jsonld` reads |
+
+New platforms enter through the source lifecycle (§0.4); the matrix is the
+`source_policy` table, not a hard-coded list.
+
 ---
 
 ## 1. Decisions made so far
@@ -171,6 +212,7 @@ Windows). A desktop wrapper is a later option.
 | D16 | **Coverage must grow without a fixed platform list:** tiered sources plus a source lifecycle with LLM-synthesised manifests that are evaluated and approved before they run (§0.4). | User |
 | D17 | A user's current offer is **private user data** used as negotiation leverage and as an optional comp floor, never a product constant. | User correction |
 | D18 | **TypeScript on Node 24** (strict, pnpm workspaces). One codebase ships four surfaces: engine, CLI, local dashboard, MCP server. Chosen over Python (rewrite of career-ops/CareerFill code, harder install for non-developers, its guardrail libraries are LLM-based and unneeded) and Go (community Playwright, loses CareerFill's ATS drivers). | User |
+| D19 | **Big boards (LinkedIn, Indeed, Naukri and similar) are covered through four legitimate channels, never by crawling them**: (1) upstream ATS fetch, (2) the user's own job-alert emails, (3) user-initiated capture from the page the user is viewing, (4) ATS-mirror resolution of any lead. Plus T1–T3 fetch for every board whose terms allow it (§0.8). | User: "did we include naukri, indeed, linkedin and broader platforms" |
 | D12 | **Evals are first-class.** Every agent has a golden set, metrics and a release gate; outcomes feed back as labels. | User: "no scope of scoring and evals" |
 
 ### Assumptions to confirm (defaults used in this spec)
@@ -184,7 +226,7 @@ Windows). A desktop wrapper is a later option.
 | A5 | Daily submit cap | 10 submissions/day, 3 per company per 30 days |
 | A6 | Schedule | One daily run at 07:00 IST via macOS `launchd`, plus manual `jobpilot run` |
 | A7 | Jev API | A key is available; data retention terms must be read before enabling it (the provider is disabled until confirmed) |
-| A8 | LinkedIn job-alert *emails* | Excluded from Gmail ingest unless the user opts in (parsing your own mailbox is not scraping, but it stays off by default) |
+| A8 | Alert emails from LinkedIn, Indeed, Naukri and others | **On** for platforms the user lists in `channels.yaml` (superseded by D19); onboarding walks the user through creating saved-search alerts |
 | Q1 | Who pays for LLM calls for other users | Each user brings their own Anthropic (and optionally Jev) key |
 | Q2 | Who approves T3 manifests for the shared catalogue | The maintainer; users approve for their own machine |
 | Q3 | Where the shared catalogue lives later | v1: export/import file bundle, no server |
@@ -529,8 +571,11 @@ releases (sub-projects 1–6); later = sub-projects 7–11.
 | src-himalayas · src-remotive · src-remoteok | io | Each aggregator's API, attribution terms | RawPosting | v1 |
 | src-hn | io | HN "Who is hiring" comment-header grammar | RawPosting | v1 |
 | src-adzuna | io | Adzuna query building, 250/day quota | RawPosting | v1 |
-| src-gmail-alerts | io | Alert-email templates per sender (Naukri, Instahyre, Wellfound…) | RawPosting | later |
+| src-gmail-alerts | io | Alert-email templates per sender (LinkedIn, Indeed, Naukri, Foundit, Instahyre, Wellfound, Cutshort, Hirist…) | RawPosting (lead) | later |
 | src-manifest-runner | io | Executes approved T3 manifests | RawPosting | later |
+| src-capture | io | Receives "Save to jobpilot" captures from the browser extension (JSON-LD or visible JD) | RawPosting (lead) | later |
+| ats-mirror-resolver | det | Company→ATS map; matching a lead to its upstream ATS posting | ResolvedLead | v1 |
+| src-vendor-* | io | Optional user-keyed job-data vendor (plugin, off by default) | RawPosting | later |
 | company-finder | io | Finding companies that hire in the user's eligible scopes | WatchlistProposal | later |
 | source-probe | det | robots.txt, ATS fingerprints, JSON-LD detection | SourceProbe | later |
 | source-scout | llm | Writing declarative manifests (build time only) | SourceManifest | later |
@@ -605,7 +650,7 @@ releases (sub-projects 1–6); later = sub-projects 7–11.
 | eval-runner · online-eval | det | Golden sets, gates, outcome labels | EvalReport | v1 / later |
 | mcp-gateway | io | Read and propose tools for Claude | — | later |
 
-**Totals:** 7 teams, about 60 specialists. 15 make an LLM call, each with
+**Totals:** 7 teams, about 63 specialists. 15 make an LLM call, each with
 one bounded task. Only the 3 v1 drivers (plus 2 later assistants) have an
 external side effect, and all of them require an ApprovalToken.
 
