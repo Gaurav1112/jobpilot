@@ -159,6 +159,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       } catch (err) {
         result = { ok: false, err };
       }
+      // Read after the abort too: a model call in flight at the timeout has already been charged its reservation.
       stepSpent = addCost(stepSpent, ctx.spent());
       stepMaxCall = Math.max(stepMaxCall, ctx.maxCall());
 

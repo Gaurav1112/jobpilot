@@ -380,3 +380,63 @@ describe('executeStep: broker denials cannot be swallowed', () => {
   });
 });
 
+
+describe('executeStep: a timed-out model call is charged its reservation (G-BUDGET)', () => {
+  /** Answers `delayMs` after the call, ignoring the abort signal, and charges `usd`. */
+  const lateLlm = (usd: number, delayMs: number) => {
+    const state = { calls: 0, answered: 0 };
+    const llm: LlmProvider = {
+      host: 'api.anthropic.com',
+      complete: async () => {
+        state.calls += 1;
+        await new Promise((r) => setTimeout(r, delayMs));
+        state.answered += 1;
+        return { text: 'ok', inputTokens: 1, outputTokens: 1, usd };
+      },
+    };
+    return { llm, state };
+  };
+  const slowWriter = defineAgent(
+    defineContract({
+      id: 'slow-writer', version: '1.0.0', description: 'Writes one demo item with the model', skills: ['demo-writing'], team: 'sourcing', kind: 'llm',
+      consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet],
+      capabilities: { llm: { model: 'claude-sonnet-5-5', maxTokens: 50 } }, egress: ['api.anthropic.com'],
+      dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0.15, usdPerRun: 1.0 }, timeoutMs: 20,
+      retry: { max: 2, on: ['timeout'], backoffMs: [1, 1] },
+    }),
+    async (req, ctx) => {
+      await ctx.llm!.complete({ system: 's', prompt: 'p' });
+      return [{ id: `${req.prefix}-001`, text: 'written' }];
+    },
+  );
+  const policy = { ...PRODUCT_POLICY_V1, maxUsdPerRun: 1.0 };
+  const item = (prefix: string): Envelope => {
+    const e = seedEnv();
+    return { ...e, envelopeId: `seed-${prefix}`, payload: { count: 1, prefix }, handoff: { ...e.handoff, pins: { policyHash: policyHash(policy) } } };
+  };
+  const settle = () => new Promise((r) => setTimeout(r, 120));
+
+  it('records usdPerCall for every attempt that timed out and ignores the late 0.4 answers', async () => {
+    const store = Store.open(':memory:');
+    const { llm, state } = lateLlm(0.4, 50);
+    const out = await executeStep({ ...depsFor(store, slowWriter, []), policy, policyHash: policyHash(policy), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm } }, 'r', slowWriter, item('demo'));
+    expect(out).toMatchObject({ kind: 'failed', error: 'timeout' });
+    expect(state.calls).toBe(3);
+    await settle();
+    expect(state.answered).toBe(3);
+    expect(store.runCost('r')).toBeCloseTo(0.45, 10);
+    expect(store.maxCallCost('r', 'slow-writer')).toBeCloseTo(0.15, 10);
+  });
+
+  it('never records more than the 1.0 cap over four items', async () => {
+    const store = Store.open(':memory:');
+    const { llm } = lateLlm(0.4, 50);
+    const d = { ...depsFor(store, slowWriter, []), policy, policyHash: policyHash(policy), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm } };
+    for (const p of ['aa', 'bb', 'cc', 'dd']) {
+      await executeStep(d, 'r', slowWriter, item(p));
+      await settle();
+      expect(store.runCost('r')).toBeLessThanOrEqual(1.0 + 1e-9);
+    }
+    expect(store.runCost('r')).toBeCloseTo(0.9, 10);
+  });
+});

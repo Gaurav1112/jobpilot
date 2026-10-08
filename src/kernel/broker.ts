@@ -143,13 +143,27 @@ export function issueContext(a: IssueArgs): AgentContext {
           if (exceeds(prior.agentUsd + usd + reserve, a.contract.budget.usdPerRun) || exceeds(prior.runUsd + usd + reserve, a.policy.maxUsdPerRun)) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: run budget reached');
           }
+          // A call still in flight when the step times out is charged its reservation at once, so the
+          // executor (which reads spent() right after the abort) records it. Whatever the provider answers
+          // later is discarded, never added a second time. Bound: accounting for a timed-out call is the
+          // reservation, never zero, even though the provider may bill more for it.
+          let chargedOnAbort = false;
+          const chargeOnAbort = (): void => {
+            chargedOnAbort = true;
+            usd += reserve;
+            maxCallUsd = Math.max(maxCallUsd, reserve);
+          };
+          a.signal.addEventListener('abort', chargeOnAbort, { once: true });
           let res;
           try {
             res = await provider.complete({ ...req, model: llmCap.model, maxTokens: llmCap.maxTokens }, a.signal);
           } catch (e) {
-            // A failed provider call reports no usage, so spend is left unchanged.
+            // A failed provider call reports no usage, so spend is left unchanged (unless it was charged on abort).
             throw mapProviderError(e);
+          } finally {
+            a.signal.removeEventListener('abort', chargeOnAbort);
           }
+          if (chargedOnAbort) throw new KernelError('timeout', 'step timed out; the late model answer is discarded');
           usd += res.usd;
           inputTokens += res.inputTokens;
           outputTokens += res.outputTokens;
