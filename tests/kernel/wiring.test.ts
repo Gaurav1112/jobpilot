@@ -34,6 +34,27 @@ describe('compileWiring', () => {
     expect(c.teamOf.get('demo-scorer')?.id).toBe('evaluation');
   });
 
+  it('refuses an effect agent as a team member until G-APPROVAL exists', () => {
+    const fx = defineAgent(
+      defineContract({
+        id: 'demo-effect', version: '1.0.0', description: 'Would act on the world', skills: ['x'], team: 'evaluation', kind: 'effect',
+        consumes: defineType('DemoItem', 1, z.object({ id: z.string(), text: z.string() }).strict()),
+        produces: defineType('FxOut', 1, z.object({ ok: z.boolean() }).strict()),
+        capabilities: { http: true }, egress: ['example.com'],
+        dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 1 }, timeoutMs: 100,
+      }),
+      async () => [],
+    );
+    const p: Pipeline = {
+      ...demoPipeline,
+      teams: demoPipeline.teams.map((t) => (t.id === 'evaluation' ? { ...t, members: [...t.members, 'demo-effect'], exitGuarantees: [] } : t)),
+      edges: [...demoPipeline.edges, { type: 'DemoItem@1', to: 'demo-effect' }],
+    };
+    expect(problems(() => compileWiring(registryWith(...demoAgents, fx), p, builtinGuardrails()))).toContain(
+      'demo-effect is an effect agent; effects are disabled until G-APPROVAL exists',
+    );
+  });
+
   it('refuses a consumer whose requirement no producer guarantees', () => {
     const Req = defineType('Q', 1, z.object({ s: z.string() }).strict());
     const needs = definePredicate<{ s: string }>('q.checked', 'checked', () => true);

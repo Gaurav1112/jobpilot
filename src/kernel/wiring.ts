@@ -65,6 +65,7 @@ export function compileWiring(registry: Registry, pipeline: Pipeline, guardrails
         continue;
       }
       const c = registry.get(m).contract;
+      if (c.kind === 'effect') problems.push(`${m} is an effect agent; effects are disabled until G-APPROVAL exists`);
       if (c.team !== t.id) problems.push(`agent ${m} declares team ${c.team} but is listed in ${t.id}`);
       for (const g of [...c.guardrails.in, ...c.guardrails.out]) {
         if (!guardrails.has(g)) problems.push(`agent ${m} lists unknown guardrail ${g}`);
