@@ -252,7 +252,7 @@ describe('capability broker', () => {
 });
 
 describe('capability broker: prior run spend (G-BUDGET)', () => {
-  const issueWith = (priorSpend: { agentUsd: number; runUsd: number }) => {
+  const issueWith = (priorSpend: { agentUsd: number; runUsd: number; maxCallUsd?: number }) => {
     const llm = fakeLlm(() => 'yes', { usdPerCall: 0.001 });
     const ctx = issueContext({
       contract: thinker, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: fakeFetch({}), llm },
@@ -289,6 +289,19 @@ describe('capability broker: prior run spend (G-BUDGET)', () => {
     const { ctx, llm } = issueWith({ agentUsd: 1 - 0.01, runUsd: 0 });
     await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).resolves.toBeDefined();
     expect(llm.calls).toHaveLength(1);
+  });
+
+  it('reserves the largest call already charged in the run when it is above usdPerCall', async () => {
+    const { ctx, llm } = issueWith({ agentUsd: 0.7, runUsd: 0, maxCallUsd: 0.4 });
+    await expect(ctx.llm!.complete({ system: 's', prompt: 'p' })).rejects.toMatchObject({ code: 'budget_exceeded', message: 'G-BUDGET: run budget reached' });
+    expect(llm.calls).toHaveLength(0);
+  });
+
+  it('reports the largest single call it paid', async () => {
+    const { ctx } = issueWith({ agentUsd: 0, runUsd: 0 });
+    expect(ctx.maxCall()).toBe(0);
+    await ctx.llm!.complete({ system: 's', prompt: 'p' });
+    expect(ctx.maxCall()).toBeCloseTo(0.001, 10);
   });
 });
 

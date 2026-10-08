@@ -25,6 +25,8 @@ export interface AgentContext {
   readonly http?: HttpTool;
   readonly llm?: LlmTool;
   spent(): Cost;
+  /** The largest single model call paid in this context. */
+  maxCall(): number;
   /** Every policy denial the broker raised in this context, in order, whether or not the agent caught it. */
   denials(): readonly string[];
 }
@@ -37,7 +39,7 @@ export interface IssueArgs {
   readonly clock: Clock;
   readonly signal: AbortSignal;
   /** What the run had already paid before this context was issued: by this agent, and in total. */
-  readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number };
+  readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number; readonly maxCallUsd?: number };
 }
 
 function mapProviderError(e: unknown): unknown {
@@ -59,6 +61,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   let usd = 0;
   let inputTokens = 0;
   let outputTokens = 0;
+  let maxCallUsd = 0;
   const prior = a.priorSpend ?? { agentUsd: 0, runUsd: 0 };
   const denied: string[] = [];
   /** A policy denial is recorded before it is thrown, so an agent cannot hide it by catching. */
@@ -80,6 +83,7 @@ export function issueContext(a: IssueArgs): AgentContext {
     clock: a.clock,
     signal: a.signal,
     spent: () => ({ usd, inputTokens, outputTokens }),
+    maxCall: () => maxCallUsd,
     denials: () => [...denied],
   };
 
@@ -129,9 +133,10 @@ export function issueContext(a: IssueArgs): AgentContext {
         inFlight = true;
         try {
           if (overCall) throw new KernelError('budget_exceeded', 'G-BUDGET: a previous call exceeded usdPerCall');
-          // Every call reserves a full usdPerCall before it is made, so the caps are hard:
+          // Every call reserves a full usdPerCall (or the largest call this agent has already
+          // been charged in the run, if that was more) before it is made, so the caps are hard:
           // a call that costs more than usdPerCall is latched above, everything else fits.
-          const reserve = a.contract.budget.usdPerCall;
+          const reserve = Math.max(a.contract.budget.usdPerCall, prior.maxCallUsd ?? 0);
           if (exceeds(usd + reserve, a.contract.budget.usdPerRun)) {
             throw new KernelError('budget_exceeded', 'G-BUDGET: usdPerRun reached in this step');
           }
@@ -148,6 +153,7 @@ export function issueContext(a: IssueArgs): AgentContext {
           usd += res.usd;
           inputTokens += res.inputTokens;
           outputTokens += res.outputTokens;
+          maxCallUsd = Math.max(maxCallUsd, res.usd);
           if (res.usd > a.contract.budget.usdPerCall) {
             overCall = true;
             throw new KernelError('budget_exceeded', `G-BUDGET: call cost ${res.usd} > usdPerCall ${a.contract.budget.usdPerCall}`);

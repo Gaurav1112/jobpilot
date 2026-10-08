@@ -29,6 +29,17 @@ describe('Store', () => {
     expect(s.runCost('r', 'other')).toBe(0);
   });
 
+  it('records the largest single call per step and reports the per-agent maximum for a run', () => {
+    const s = Store.open(':memory:');
+    for (const [k, max] of [['k1', 0.1], ['k2', 0.4], ['k3', 0.2]] as const) {
+      s.markRunning({ stepKey: k, agentId: 'a', version: '1.0.0', contractHash: 'h', inputEnvelopeId: 'in' });
+      s.finishStep({ runId: 'r', stepKey: k, agentId: 'a', status: 'done', envelopes: [], cost: { usd: max, inputTokens: 0, outputTokens: 0 }, maxCallUsd: max });
+    }
+    expect(s.maxCallCost('r', 'a')).toBeCloseTo(0.4, 10);
+    expect(s.maxCallCost('r', 'other')).toBe(0);
+    expect(s.maxCallCost('other-run', 'a')).toBe(0);
+  });
+
   it('counts attempts across re-runs of the same step', () => {
     const s = Store.open(':memory:');
     const st = { stepKey: 'k', agentId: 'a', version: '1.0.0', contractHash: 'h', inputEnvelopeId: 'in' };

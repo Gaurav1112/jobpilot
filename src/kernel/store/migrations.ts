@@ -43,7 +43,8 @@ export const MIGRATIONS: readonly string[] = [
     agent_id TEXT NOT NULL,
     usd REAL NOT NULL,
     input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL
+    output_tokens INTEGER NOT NULL,
+    max_call_usd REAL NOT NULL DEFAULT 0
   );
   CREATE TABLE events (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,

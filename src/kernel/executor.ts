@@ -55,6 +55,9 @@ const addCost = (a: Cost, b: Cost): Cost => ({
   outputTokens: a.outputTokens + b.outputTokens,
 });
 
+/** Decimal dollar amounts carry float noise; a cap is only exceeded beyond it (same rule as the broker). */
+const exceedsCap = (value: number, cap: number): boolean => value > cap + 1e-9;
+
 const messageOf = (err: unknown): string => {
   try {
     return err instanceof Error ? err.message : String(err);
@@ -72,6 +75,8 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
   const stepKey = computeStepKey(c, input, deps.policyHash); // 5
   /** Every cent paid in this step, summed over all attempts. */
   let stepSpent: Cost = ZERO_COST;
+  /** The largest single model call paid in this step, over all attempts. */
+  let stepMaxCall = 0;
   const eventOf = (kind: string, data: Record<string, unknown>) => ({ at: deps.clock.now(), kind, data: { agent: c.id, stepKey, ...data }, policyHash: deps.policyHash });
   /** A standalone event, for outcomes that write no step row. */
   const event = (kind: string, data: Record<string, unknown>): void => {
@@ -84,7 +89,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
     envelopes: readonly Envelope[],
     ev: ReturnType<typeof eventOf>,
     more: { errorCode?: ErrorCode; detail?: string } = {},
-  ): void => deps.store.finishStep({ runId, stepKey, agentId: c.id, status, envelopes, cost: stepSpent, ...more, event: ev });
+  ): void => deps.store.finishStep({ runId, stepKey, agentId: c.id, status, envelopes, cost: stepSpent, maxCallUsd: stepMaxCall, ...more, event: ev });
   const fail = (error: ErrorCode, detail: string): StepOutcome => {
     finish('failed', [], eventOf('step_failed', { error, detail }), { errorCode: error, detail });
     return { kind: 'failed', stepKey, error, detail };
@@ -119,6 +124,15 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       (c.budget.usdPerRun > 0 || c.kind === 'llm') &&
       (deps.store.runCost(runId, c.id) + stepSpent.usd >= c.budget.usdPerRun ||
         deps.store.runCost(runId) + stepSpent.usd >= deps.policy.maxUsdPerRun);
+    /** The largest call this agent has been charged in the run, this step included. */
+    const maxCallSoFar = (): number => Math.max(deps.store.maxCallCost(runId, c.id), stepMaxCall);
+    /** An earlier over-priced call means the agent's per-call price cannot be trusted for the rest of the run. */
+    const overCall = (): boolean => exceedsCap(maxCallSoFar(), c.budget.usdPerCall);
+    const overCallDetail = `G-BUDGET: ${c.id} made a call above usdPerCall earlier in this run`;
+    if (overCall()) {
+      event('step_skipped', { reason: 'budget', detail: overCallDetail });
+      return { kind: 'skipped', stepKey, reason: 'budget' };
+    }
     if (overBudget()) {
       event('step_skipped', { reason: 'budget' });
       return { kind: 'skipped', stepKey, reason: 'budget' };
@@ -126,10 +140,15 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
 
     // 8-9 capability-scoped context, timeout, bounded retries
     for (let attempt = 0; ; attempt++) {
+      if (attempt > 0 && overCall()) return fail('budget_exceeded', overCallDetail);
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
       const signal = AbortSignal.timeout(c.timeoutMs);
-      const priorSpend = { agentUsd: deps.store.runCost(runId, c.id) + stepSpent.usd, runUsd: deps.store.runCost(runId) + stepSpent.usd };
+      const priorSpend = {
+        agentUsd: deps.store.runCost(runId, c.id) + stepSpent.usd,
+        runUsd: deps.store.runCost(runId) + stepSpent.usd,
+        maxCallUsd: maxCallSoFar(),
+      };
       const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal, priorSpend });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {
@@ -141,6 +160,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         result = { ok: false, err };
       }
       stepSpent = addCost(stepSpent, ctx.spent());
+      stepMaxCall = Math.max(stepMaxCall, ctx.maxCall());
 
       // A denial is final even if the agent caught it and carried on: the attempt tried to break policy.
       const denials = ctx.denials();

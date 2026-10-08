@@ -279,6 +279,32 @@ describe('executeStep: run budgets hold inside a step (G-BUDGET)', () => {
   });
 });
 
+describe('executeStep: an over-priced call blocks the retry too (G-BUDGET)', () => {
+  it('does not retry after a call above usdPerCall, even when the agent swallows it and fails retryably', async () => {
+    const store = Store.open(':memory:');
+    let calls = 0;
+    const a = defineAgent(
+      defineContract({
+        id: 'swallower', version: '1.0.0', description: 'Writes one demo item with the model', skills: ['demo-writing'], team: 'sourcing', kind: 'llm',
+        consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet],
+        capabilities: { llm: { model: 'claude-sonnet-5-5', maxTokens: 50 } }, egress: ['api.anthropic.com'],
+        dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0.15, usdPerRun: 1.0 }, timeoutMs: 1_000,
+        retry: { max: 2, on: ['rate_limit'], backoffMs: [10, 10] },
+      }),
+      async (req, ctx) => {
+        calls += 1;
+        await ctx.llm!.complete({ system: 's', prompt: 'p' }).catch(() => undefined);
+        throw new KernelError('rate_limit', 'pretend');
+      },
+    );
+    const out = await executeStep({ ...depsFor(store, a, []), providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: pricedLlm(0.4) } }, 'r', a, seedEnv());
+    expect(out).toMatchObject({ kind: 'failed', error: 'budget_exceeded', detail: 'G-BUDGET: swallower made a call above usdPerCall earlier in this run' });
+    expect(calls).toBe(1);
+    expect(store.runCost('r')).toBeCloseTo(0.4, 10);
+    expect(store.maxCallCost('r', 'swallower')).toBeCloseTo(0.4, 10);
+  });
+});
+
 describe('executeStep: data-class taint (G-DATACLASS)', () => {
   const det = { version: '1.0.0', skills: ['demo-tainting'], team: 'sourcing', kind: 'deterministic' as const, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000 };
   const emitter = defineAgent(

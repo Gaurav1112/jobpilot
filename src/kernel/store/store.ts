@@ -124,6 +124,8 @@ export class Store {
     status: Exclude<StepStatus, 'running'>;
     envelopes: readonly Envelope[];
     cost: Cost;
+    /** The largest single model call paid in this step. */
+    maxCallUsd?: number;
     errorCode?: ErrorCode;
     detail?: string;
     event?: { at: string; kind: string; data: unknown; policyHash: string };
@@ -137,8 +139,8 @@ export class Store {
       for (const e of a.envelopes) ins.run(e.envelopeId, e.stepKey, e.index, e.type, canonicalJson(e));
       if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
         this.db
-          .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)`)
-          .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens);
+          .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens, max_call_usd) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens, a.maxCallUsd ?? 0);
       }
       if (a.event) this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
     });
@@ -177,6 +179,14 @@ export class Store {
         ? this.db.prepare(`SELECT COALESCE(SUM(usd), 0) AS usd FROM cost_ledger WHERE run_id = ?`).get(runId)
         : this.db.prepare(`SELECT COALESCE(SUM(usd), 0) AS usd FROM cost_ledger WHERE run_id = ? AND agent_id = ?`).get(runId, agentId)
     ) as { usd: number };
+    return row.usd;
+  }
+
+  /** The largest single model call this agent was charged in this run. */
+  maxCallCost(runId: string, agentId: string): number {
+    const row = this.db.prepare(`SELECT COALESCE(MAX(max_call_usd), 0) AS usd FROM cost_ledger WHERE run_id = ? AND agent_id = ?`).get(runId, agentId) as {
+      usd: number;
+    };
     return row.usd;
   }
 

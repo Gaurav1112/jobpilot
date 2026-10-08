@@ -423,3 +423,25 @@ function handBuilt(o: {
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });
 }
+
+describe('G-BUDGET: an over-priced model call stops that agent for the rest of the run', () => {
+  it('pays for exactly one 0.4 call when usdPerCall is 0.15, and skips the other four items', async () => {
+    const store = Store.open(':memory:');
+    const pricey = defineAgent(
+      defineContract({ ...demoScorerContract, budget: { usdPerCall: 0.15, usdPerRun: 1.0 }, breaker: { consecutiveFailures: 10 } }),
+      demoScorer.run,
+    );
+    const r = await handBuilt({ store, scorer: pricey, llm: fakeLlm(() => JSON.stringify({ score: 5, reason: 'ok' }), { usdPerCall: 0.4 }) }).start('r', [
+      { count: 5, prefix: 'demo' },
+    ]);
+    expect(store.runCost('r')).toBeCloseTo(0.4, 10);
+    expect(r.queue).toMatchObject({ failed: 1, skipped: 4 });
+    const failed = store.events('r').filter((e) => e.kind === 'step_failed').map((e) => JSON.parse(e.data) as { error: string });
+    expect(failed).toEqual([expect.objectContaining({ error: 'budget_exceeded' })]);
+    const skipped = store.events('r').filter((e) => e.kind === 'step_skipped').map((e) => JSON.parse(e.data) as { reason: string; detail?: string });
+    expect(skipped).toHaveLength(4);
+    for (const s of skipped) {
+      expect(s).toMatchObject({ reason: 'budget', detail: 'G-BUDGET: demo-scorer made a call above usdPerCall earlier in this run' });
+    }
+  });
+});
