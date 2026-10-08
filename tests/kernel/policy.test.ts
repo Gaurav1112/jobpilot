@@ -139,4 +139,3 @@ describe('redactors (agents allowed to lower a data class)', () => {
     expect(mergePolicy(product, {}).redactors).toEqual(['a-scrubber', 'b-scrubber']);
   });
 });
-

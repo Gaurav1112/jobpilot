@@ -192,4 +192,3 @@ describe('contractShape ordering is locale independent', () => {
     expect(users).toEqual([]);
   });
 });
-
