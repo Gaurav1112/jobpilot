@@ -16,6 +16,8 @@ export interface Policy {
   readonly maxPayloadBytes: number;
   readonly maxSubmitsPerDay: number;
   readonly requireApprovalForEffects: boolean;
+  /** Agent ids allowed to lower a data class (declared `redactor: true`). */
+  readonly redactors: readonly string[];
 }
 
 /** Lower-case and strip trailing dots, so `Tracker.Example.` and `tracker.example` are one host. */
@@ -42,6 +44,7 @@ export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   maxPayloadBytes: 262_144,
   maxSubmitsPerDay: 10,
   requireApprovalForEffects: true,
+  redactors: [],
 });
 
 const HostName = z.string().regex(/^[A-Za-z0-9.-]+$/);
@@ -54,6 +57,7 @@ const UserPolicy = z
     maxUsdPerRun: z.number().nonnegative().optional(),
     maxSubmitsPerDay: z.number().int().nonnegative().optional(),
     requireApprovalForEffects: z.boolean().optional(),
+    redactors: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).optional(),
   })
   .strict();
 export type UserPolicy = z.infer<typeof UserPolicy>;
@@ -88,6 +92,9 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
   if (user.requireApprovalForEffects === false && product.requireApprovalForEffects) {
     violations.push('requireApprovalForEffects cannot be turned off');
   }
+  for (const id of user.redactors ?? []) {
+    if (!product.redactors.includes(id)) violations.push(`redactors may not add ${id}`);
+  }
   const entries = new Map<string, readonly DataClass[]>(
     Object.entries(product.egressClasses).map(([h, c]) => [normalizeHost(h), [...c]]),
   );
@@ -108,6 +115,7 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
     defaultEgressClasses: [...product.defaultEgressClasses],
     maxUsdPerRun: user.maxUsdPerRun ?? product.maxUsdPerRun,
     maxSubmitsPerDay: user.maxSubmitsPerDay ?? product.maxSubmitsPerDay,
+    redactors: [...new Set(user.redactors ?? product.redactors)].sort(),
   });
 }
 

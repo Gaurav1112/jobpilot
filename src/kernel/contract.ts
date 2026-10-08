@@ -34,6 +34,8 @@ export interface Contract<I = unknown, O = unknown> {
   readonly egress: readonly string[];
   readonly dataClasses: { readonly in: readonly DataClass[]; readonly out: readonly DataClass[] };
   readonly redactor: boolean;
+  /** The least sensitive class this agent's outputs carry, whatever its input (e.g. P1 for an agent that attaches contact details). */
+  readonly emits?: DataClass;
   readonly obligations: { readonly adds: readonly ObligationSpec[]; readonly discharges: readonly string[] };
   readonly budget: { readonly usdPerCall: number; readonly usdPerRun: number };
   readonly timeoutMs: number;
@@ -71,6 +73,7 @@ const Meta = z.object({
   egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
   dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
   redactor: z.boolean(),
+  emits: z.enum(DATA_CLASSES).optional(),
   obligations: z.object({
     adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
     discharges: z.array(z.string().regex(dotted)),
@@ -154,6 +157,7 @@ function checkKindCapabilities(c: AnyContract): void {
   if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm) problems.push('egress requires capabilities.http or capabilities.llm');
   if ((c.kind === 'deterministic' || c.kind === 'human') && c.egress.length > 0) problems.push(`kind ${c.kind} may not declare egress`);
   if (c.kind === 'deterministic' && c.budget.usdPerCall > 0) problems.push('kind deterministic has no spend, so budget must be 0');
+  if (c.emits !== undefined && !c.dataClasses.out.includes(c.emits)) problems.push(`emits ${c.emits} is not in dataClasses.out`);
   if (problems.length > 0) throw new TypeError(`contract ${c.id}: ${problems.join('; ')}`);
 }
 
@@ -176,6 +180,8 @@ export function contractShape(c: AnyContract): Record<string, unknown> {
     egress: [...c.egress].sort(),
     dataClasses: { in: [...c.dataClasses.in].sort(), out: [...c.dataClasses.out].sort() },
     redactor: c.redactor,
+    // Only present when declared, so contracts without it keep their hash.
+    ...(c.emits !== undefined ? { emits: c.emits } : {}),
     obligations: {
       adds: [...c.obligations.adds].sort((a, b) => a.id.localeCompare(b.id)).map((a) => ({ id: a.id, dischargedBy: a.dischargedBy })),
       discharges: [...c.obligations.discharges].sort(),

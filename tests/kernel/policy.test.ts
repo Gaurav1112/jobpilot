@@ -125,3 +125,18 @@ describe('policy hardening', () => {
     expect(policyHash(a)).toBe(policyHash(b));
   });
 });
+
+describe('redactors (agents allowed to lower a data class)', () => {
+  it('the product policy allows none, and a user policy may not add one', () => {
+    expect(PRODUCT_POLICY_V1.redactors).toEqual([]);
+    expect(mergePolicy(PRODUCT_POLICY_V1, { redactors: [] }).redactors).toEqual([]);
+    expect(() => mergePolicy(PRODUCT_POLICY_V1, { redactors: ['pii-scrubber'] })).toThrow(/redactors may not add pii-scrubber/);
+  });
+
+  it('a user policy may keep a subset of what the product allows', () => {
+    const product = { ...PRODUCT_POLICY_V1, redactors: ['a-scrubber', 'b-scrubber'] };
+    expect(mergePolicy(product, { redactors: ['b-scrubber'] }).redactors).toEqual(['b-scrubber']);
+    expect(mergePolicy(product, {}).redactors).toEqual(['a-scrubber', 'b-scrubber']);
+  });
+});
+

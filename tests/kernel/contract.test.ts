@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { contractHash, contractMajor, defineContract, type ContractSpec } from '../../src/kernel/contract.js';
+import { contractHash, contractMajor, contractShape, defineContract, type ContractSpec } from '../../src/kernel/contract.js';
 import { definePredicate } from '../../src/kernel/predicates.js';
 import { defineType } from '../../src/kernel/types.js';
 
@@ -164,3 +164,19 @@ describe('defineContract', () => {
     expect(() => defineContract({ ...base, retry: { max: 1, on: ['timeout'], backoffMs: [10, 20] } })).toThrow(/exactly one entry per retry/);
   });
 });
+
+describe('emits (minimum output data class)', () => {
+  it('must be one of the classes the contract may emit', () => {
+    expect(() => defineContract({ ...base, emits: 'P1' })).toThrow(/emits P1 is not in dataClasses.out/);
+    expect(defineContract({ ...base, dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }).emits).toBe('P1');
+  });
+
+  it('is part of the shape when set, and leaves existing hashes alone when not', () => {
+    const plain = defineContract({ ...base, dataClasses: { in: ['P0'], out: ['P0', 'P1'] } });
+    const emitting = defineContract({ ...plain, emits: 'P1' });
+    expect(contractShape(plain)).not.toHaveProperty('emits');
+    expect(contractShape(emitting)).toMatchObject({ emits: 'P1' });
+    expect(contractHash(emitting)).not.toBe(contractHash(plain));
+  });
+});
+

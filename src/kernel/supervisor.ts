@@ -11,7 +11,7 @@ import type { Providers } from './providers.js';
 import type { Registry } from './registry.js';
 import type { StateMachine } from './state-machine.js';
 import type { EventRow, Store } from './store/store.js';
-import { type CompiledPipeline, SUPERVISOR_ID } from './wiring.js';
+import { type CompiledPipeline, SUPERVISOR_ID, seedClass } from './wiring.js';
 
 /** Maps envelopes and outcomes onto an entity state machine (e.g. one row per job). */
 export interface Tracker {
@@ -95,7 +95,8 @@ export class Supervisor {
       const r = seedType.schema.safeParse(payload);
       if (!r.success || canonicalJson(r.data) !== canonicalJson(payload)) throw new TypeError(`seed is not a valid ${seedType.id}`);
       for (const g of compiled.pipeline.seed.guarantees) if (!g.test(payload)) throw new TypeError(`seed fails ${g.id}`);
-      const stepKey = hashOf({ seed: compiled.pipeline.id, version: compiled.pipeline.version, payload, policyHash });
+      const dataClass = seedClass(compiled.pipeline);
+      const stepKey = hashOf({ seed: compiled.pipeline.id, version: compiled.pipeline.version, payload, dataClass, policyHash });
       return {
         envelopeId: makeEnvelopeId(stepKey, 0),
         stepKey,
@@ -104,7 +105,7 @@ export class Supervisor {
         producer: { agentId: SUPERVISOR_ID, version: compiled.pipeline.version, contractHash: compiled.seedHash },
         parents: [],
         payload,
-        handoff: { guarantees: compiled.pipeline.seed.guarantees.map((g) => g.id).sort(), dataClass: 'P0', obligations: [], pins: { policyHash } },
+        handoff: { guarantees: compiled.pipeline.seed.guarantees.map((g) => g.id).sort(), dataClass, obligations: [], pins: { policyHash } },
         guardrails: [],
         cost: ZERO_COST,
       };

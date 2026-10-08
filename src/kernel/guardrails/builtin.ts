@@ -46,6 +46,9 @@ export const G_DATACLASS: Guardrail = {
       return ctx.contract.dataClasses.in.includes(c) ? pass('G-DATACLASS') : trip('G-DATACLASS', `${ctx.contract.id} may not receive ${c} data`);
     }
     if (!ctx.output) return trip('G-DATACLASS', 'no output to check');
+    if (ctx.contract.redactor && !ctx.policy.redactors.includes(ctx.contract.id)) {
+      return trip('G-DATACLASS', `redactor ${ctx.contract.id} is not allowed by policy`);
+    }
     const c = ctx.output.dataClass;
     return ctx.contract.dataClasses.out.includes(c) ? pass('G-DATACLASS') : trip('G-DATACLASS', `output would carry ${c}, contract emits ${ctx.contract.dataClasses.out.join('/')}`);
   },

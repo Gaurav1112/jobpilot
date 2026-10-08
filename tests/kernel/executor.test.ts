@@ -260,3 +260,50 @@ describe('executeStep: run budgets hold inside a step (G-BUDGET)', () => {
     expect(store.runCost('r')).toBeLessThanOrEqual(0.3 + 1e-9);
   });
 });
+
+describe('executeStep: data-class taint (G-DATACLASS)', () => {
+  const det = { version: '1.0.0', skills: ['demo-tainting'], team: 'sourcing', kind: 'deterministic' as const, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000 };
+  const emitter = defineAgent(
+    defineContract({ ...det, id: 'contact-finder', description: 'Attaches a contact to a demo item', consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet], dataClasses: { in: ['P0'], out: ['P0', 'P1'] }, emits: 'P1' }),
+    async (req) => [{ id: `${req.prefix}-001`, text: 'call Ada on 555-0100' }],
+  );
+  const publicOnly = defineAgent(
+    defineContract({ ...det, id: 'public-reader', description: 'Reads public demo items only', consumes: DemoItem, produces: DemoItem, requires: [itemIdSet], guarantees: [itemIdSet], dataClasses: { in: ['P0'], out: ['P0'] } }),
+    async (item) => [item],
+  );
+
+  it('an agent that emits P1 turns P0 input into P1 output, and a P0-only consumer refuses it at the door', async () => {
+    const store = Store.open(':memory:');
+    const invoked: string[] = [];
+    const out = await executeStep(depsFor(store, emitter, invoked), 'r', emitter, seedEnv());
+    expect(out.kind).toBe('done');
+    const env = out.kind === 'done' ? out.outputs[0]! : seedEnv();
+    expect(env.handoff.dataClass).toBe('P1');
+    const next = await executeStep(depsFor(store, emitter, invoked), 'r', publicOnly, env);
+    expect(next).toMatchObject({ kind: 'quarantined' });
+    expect(next.kind === 'quarantined' && next.verdicts.at(-1)).toMatchObject({ id: 'G-DATACLASS', verdict: 'trip' });
+    expect(invoked).toEqual(['contact-finder']);
+  });
+
+  const scrubber = defineAgent(
+    defineContract({ ...det, id: 'pii-scrubber', description: 'Removes contact details from a demo item', consumes: DemoRequest, produces: DemoItem, requires: [countPositive], guarantees: [itemIdSet], dataClasses: { in: ['P0', 'P1'], out: ['P0'] }, redactor: true }),
+    async (req) => [{ id: `${req.prefix}-001`, text: 'scrubbed' }],
+  );
+
+  it('a self-declared redactor that the policy does not allow trips', async () => {
+    const store = Store.open(':memory:');
+    const out = await executeStep(depsFor(store, scrubber, []), 'r', scrubber, seedEnv());
+    expect(out.kind).toBe('quarantined');
+    expect(out.kind === 'quarantined' && out.verdicts.at(-1)).toMatchObject({ id: 'G-DATACLASS', verdict: 'trip', detail: 'redactor pii-scrubber is not allowed by policy' });
+  });
+
+  it('a redactor the policy allows sets its own class', async () => {
+    const store = Store.open(':memory:');
+    const policy = { ...PRODUCT_POLICY_V1, redactors: ['pii-scrubber'] };
+    const p1 = { ...seedEnv(), handoff: { ...seedEnv().handoff, dataClass: 'P1' as const, pins: { policyHash: policyHash(policy) } } };
+    const out = await executeStep(depsFor(store, scrubber, [], { policy, policyHash: policyHash(policy) }), 'r', scrubber, p1);
+    expect(out.kind).toBe('done');
+    expect(out.kind === 'done' && out.outputs[0]!.handoff.dataClass).toBe('P0');
+  });
+});
+

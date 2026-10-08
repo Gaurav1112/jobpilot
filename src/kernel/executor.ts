@@ -153,8 +153,9 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       }
 
       // 10-11 schema, data class, postconditions on every output
-      // Taint: outputs inherit the input's class. Only a declared redactor sets its own (G-DATACLASS checks it).
-      const dataClass = c.redactor ? maxClass(c.dataClasses.out) : input.handoff.dataClass;
+      // Taint only rises: outputs carry the input's class or the contract's `emits`, whichever is higher.
+      // Only a redactor the policy allows may set its own (G-DATACLASS checks it).
+      const dataClass = c.redactor ? maxClass(c.dataClasses.out) : maxClass([input.handoff.dataClass, c.emits ?? 'P0']);
       const outputs: Envelope[] = [];
       for (const [i, payload] of result.items.entries()) {
         const gout = deps.guardrails.run('out', { ...gctx, side: 'out', output: { payload, dataClass } });

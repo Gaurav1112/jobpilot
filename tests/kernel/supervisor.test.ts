@@ -106,6 +106,17 @@ describe('supervisor end to end', () => {
     expect(r.openObligations).toHaveLength(5);
   });
 
+  it('gives seed envelopes the class the pipeline declares, so a P0-only source refuses a P1 seed at the door', async () => {
+    const store = Store.open(':memory:');
+    const inv = invocations();
+    const p1: Pipeline = { ...demoPipeline, seed: { ...demoPipeline.seed, dataClass: 'P1' } };
+    const r = await handBuilt({ store, pipeline: p1, scorer: demoScorer, onInvoke: inv.onInvoke }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ done: 0, quarantined: 1 });
+    expect(inv.calls).toEqual([]);
+    const trip = store.events('run-1').find((e) => e.kind === 'step_quarantined');
+    expect(JSON.parse(trip!.data).verdict).toMatchObject({ id: 'G-DATACLASS', verdict: 'trip' });
+  });
+
   it('does not retry invalid model output', async () => {
     const llm = fakeLlm(() => 'not json');
     const r = await demoKernel({ llm }).supervisor.start('run-1', [{ count: 2, prefix: 'demo' }]);

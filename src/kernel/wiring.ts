@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { hashOf } from './canonical.js';
+import type { DataClass } from './data-class.js';
 import { WiringError } from './errors.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import type { Predicate } from './predicates.js';
@@ -27,8 +28,11 @@ export interface Edge {
 export interface Pipeline {
   readonly id: string;
   readonly version: string;
-  /** Seed payload type and the guarantees the supervisor checks on it (any: predicates are contravariant). */
-  readonly seed: { readonly type: MessageType<any>; readonly guarantees: readonly Predicate<any>[] };
+  /**
+   * Seed payload type, the guarantees the supervisor checks on it (any: predicates are contravariant)
+   * and the data class seed envelopes carry (default P0).
+   */
+  readonly seed: { readonly type: MessageType<any>; readonly guarantees: readonly Predicate<any>[]; readonly dataClass?: DataClass };
   readonly teams: readonly Team[];
   readonly edges: readonly Edge[];
 }
@@ -118,8 +122,18 @@ export function compileWiring(registry: Registry, pipeline: Pipeline, guardrails
     routes,
     stage,
     teamOf,
-    seedHash: hashOf({ pipeline: pipeline.id, version: pipeline.version, seed: pipeline.seed.type.id, guarantees: pipeline.seed.guarantees.map((g) => g.id).sort() }),
+    seedHash: hashOf({
+      pipeline: pipeline.id,
+      version: pipeline.version,
+      seed: pipeline.seed.type.id,
+      guarantees: pipeline.seed.guarantees.map((g) => g.id).sort(),
+      dataClass: seedClass(pipeline),
+    }),
   };
+}
+
+export function seedClass(pipeline: Pipeline): DataClass {
+  return pipeline.seed.dataClass ?? 'P0';
 }
 
 /** Longest path from the seed; a cycle is a wiring error. */
