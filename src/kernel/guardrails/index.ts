@@ -57,12 +57,24 @@ export class GuardrailRegistry {
         verdicts.push({ id, verdict: 'trip', detail: 'unknown guardrail' });
         return { verdicts, tripped: true };
       }
-      if (!g.sides.includes(side)) continue;
+      if (!g.sides.includes(side)) {
+        if (MANDATORY[side].includes(id)) {
+          verdicts.push({ id, verdict: 'trip', detail: `mandatory guardrail does not run on the ${side} side` });
+          return { verdicts, tripped: true };
+        }
+        continue;
+      }
       let v: GuardrailVerdict;
       try {
         v = g.check({ ...ctx, side });
       } catch (e) {
-        v = { id, verdict: 'trip', detail: `guardrail threw: ${(e as Error).message}` };
+        v = { id, verdict: 'trip', detail: `guardrail threw: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      const kind: unknown = (v as { verdict?: unknown } | null | undefined)?.verdict;
+      const validId = (v as { id?: unknown } | null | undefined)?.id === id;
+      if (!validId || (kind !== 'pass' && kind !== 'warn' && kind !== 'trip')) {
+        verdicts.push({ id, verdict: 'trip', detail: 'guardrail returned an invalid verdict' });
+        return { verdicts, tripped: true };
       }
       verdicts.push(v);
       if (v.verdict === 'trip') return { verdicts, tripped: true };

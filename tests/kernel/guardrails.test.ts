@@ -3,8 +3,9 @@ import { z } from 'zod';
 import { contractHash, defineContract } from '../../src/kernel/contract.js';
 import type { Envelope } from '../../src/kernel/envelope.js';
 import { ZERO_COST } from '../../src/kernel/envelope.js';
-import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
-import type { GuardrailContext } from '../../src/kernel/guardrails/index.js';
+import { BUILTIN_GUARDRAILS, builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
+import type { Guardrail, GuardrailContext } from '../../src/kernel/guardrails/index.js';
+import { GuardrailRegistry, MANDATORY } from '../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import { definePredicate } from '../../src/kernel/predicates.js';
 import { defineType } from '../../src/kernel/types.js';
@@ -91,5 +92,78 @@ describe('output guardrails', () => {
     const c = defineContract({ ...consumer, guarantees: [boom] });
     const r = reg.run('out', { ...ctx(env(), { payload: { id: 'a', n: 1 }, dataClass: 'P0' }), side: 'out', contract: c });
     expect(r.verdicts.at(-1)?.detail).toMatch(/guardrail threw/);
+  });
+});
+
+describe('fail-closed hardening', () => {
+  const outCtx = (c = consumer, output: GuardrailContext['output'] = { payload: { id: 'a', n: 1 }, dataClass: 'P0' }): GuardrailContext => ({
+    ...ctx(env(), output), side: 'out', contract: c,
+  });
+
+  it('G-SCHEMA trips when the schema would add a default', () => {
+    const Dflt = defineType('Dflt', 1, z.object({ id: z.string(), n: z.number().int().default(0) }).strict());
+    const c = defineContract({ ...consumer, consumes: Dflt, requires: [], guarantees: [] });
+    const r = reg.run('in', { ...ctx(env({ type: 'Dflt@1', payload: { id: 'a' } })), contract: c });
+    expect(r.verdicts.at(-1)).toMatchObject({ id: 'G-SCHEMA', verdict: 'trip' });
+    expect(r.verdicts.at(-1)?.detail).toMatch(/would coerce/);
+  });
+
+  it('G-SIZE trips when the payload exceeds policy.maxPayloadBytes', () => {
+    const policy = { ...PRODUCT_POLICY_V1, maxPayloadBytes: 10 };
+    const r = reg.run('in', { ...ctx(env()), policy });
+    expect(r.verdicts.at(-1)).toMatchObject({ id: 'G-SIZE', verdict: 'trip' });
+  });
+
+  it('an unknown declared guardrail id trips', () => {
+    const c = defineContract({ ...consumer, guardrails: { in: ['G-NOPE'], out: [] } });
+    const r = reg.run('in', { ...ctx(env()), contract: c });
+    expect(r.verdicts.at(-1)).toMatchObject({ id: 'G-NOPE', verdict: 'trip', detail: 'unknown guardrail' });
+  });
+
+  it('mandatory guardrails run even when the contract lists none', () => {
+    expect(consumer.guardrails.in).toEqual([]);
+    const r = reg.run('in', ctx(env()));
+    for (const id of MANDATORY.in) expect(r.verdicts.map((v) => v.id)).toContain(id);
+  });
+
+  it('a predicate throwing null or a string trips and run does not throw', () => {
+    for (const thrown of [null, 'oops']) {
+      const boom = definePredicate<unknown>('item.boom', 'throws', () => { throw thrown; });
+      const c = defineContract({ ...consumer, guarantees: [boom] });
+      let r: ReturnType<typeof reg.run> | undefined;
+      expect(() => { r = reg.run('out', outCtx(c)); }).not.toThrow();
+      expect(r?.tripped).toBe(true);
+      expect(r?.verdicts.at(-1)?.detail).toMatch(/guardrail threw/);
+    }
+  });
+
+  it('a mandatory guardrail misregistered for the wrong side trips', () => {
+    const fake: Guardrail = { id: 'G-SCHEMA', sides: ['in'], check: () => ({ id: 'G-SCHEMA', verdict: 'pass' }) };
+    const r2 = new GuardrailRegistry([...BUILTIN_GUARDRAILS.filter((g) => g.id !== 'G-SCHEMA'), fake]);
+    const r = r2.run('out', outCtx());
+    expect(r.tripped).toBe(true);
+    expect(r.verdicts.at(-1)?.detail).toMatch(/does not run on the out side/);
+  });
+
+  it('a verdict with a foreign id or an unknown verdict value trips as invalid', () => {
+    const bad: Guardrail[] = [
+      { id: 'G-X1', sides: ['in'], check: () => ({ id: 'G-OTHER', verdict: 'pass' }) },
+      { id: 'G-X2', sides: ['in'], check: () => ({ id: 'G-X2', verdict: 'maybe' } as never) },
+    ];
+    for (const g of bad) {
+      const r2 = new GuardrailRegistry([...BUILTIN_GUARDRAILS, g]);
+      const c = defineContract({ ...consumer, guardrails: { in: [g.id], out: [] } });
+      const r = r2.run('in', { ...ctx(env()), contract: c });
+      expect(r.tripped).toBe(true);
+      expect(r.verdicts.at(-1)).toMatchObject({ id: g.id, verdict: 'trip' });
+      expect(r.verdicts.at(-1)?.detail).toMatch(/invalid verdict/);
+    }
+  });
+
+  it('the out side with no output trips', () => {
+    const r = reg.run('out', { ...ctx(env()), side: 'out' });
+    expect(r.tripped).toBe(true);
+    expect(r.verdicts.at(-1)).toMatchObject({ id: 'G-SCHEMA', verdict: 'trip' });
+    expect(r.verdicts.at(-1)?.detail).toMatch(/no output to check/);
   });
 });

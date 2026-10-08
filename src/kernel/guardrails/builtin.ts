@@ -10,6 +10,7 @@ export const G_SCHEMA: Guardrail = {
   id: 'G-SCHEMA',
   sides: ['in', 'out'],
   check(ctx) {
+    if (ctx.side === 'out' && !ctx.output) return trip('G-SCHEMA', 'no output to check');
     const type = ctx.side === 'in' ? ctx.contract.consumes : ctx.contract.produces;
     const payload = ctx.side === 'in' ? ctx.input.payload : ctx.output?.payload;
     if (ctx.side === 'in' && ctx.input.type !== type.id) return trip('G-SCHEMA', `envelope type ${ctx.input.type}, contract consumes ${type.id}`);
@@ -44,7 +45,8 @@ export const G_DATACLASS: Guardrail = {
       const c = ctx.input.handoff.dataClass;
       return ctx.contract.dataClasses.in.includes(c) ? pass('G-DATACLASS') : trip('G-DATACLASS', `${ctx.contract.id} may not receive ${c} data`);
     }
-    const c = ctx.output?.dataClass ?? 'P0';
+    if (!ctx.output) return trip('G-DATACLASS', 'no output to check');
+    const c = ctx.output.dataClass;
     return ctx.contract.dataClasses.out.includes(c) ? pass('G-DATACLASS') : trip('G-DATACLASS', `output would carry ${c}, contract emits ${ctx.contract.dataClasses.out.join('/')}`);
   },
 };
@@ -75,8 +77,9 @@ export const G_POST: Guardrail = {
   id: 'G-POST',
   sides: ['out'],
   check(ctx) {
+    if (!ctx.output) return trip('G-POST', 'no output to check');
     for (const p of ctx.contract.guarantees) {
-      if (!p.test(ctx.output?.payload)) return trip('G-POST', `${p.id} does not hold on the output`);
+      if (!p.test(ctx.output.payload)) return trip('G-POST', `${p.id} does not hold on the output`);
     }
     return pass('G-POST');
   },
