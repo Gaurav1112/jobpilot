@@ -170,6 +170,7 @@ Windows). A desktop wrapper is a later option.
 | D15 | Scope adds **guided onboarding, interview prep, offer negotiation, an MCP interface and an agent plugin SDK**. | User |
 | D16 | **Coverage must grow without a fixed platform list:** tiered sources plus a source lifecycle with LLM-synthesised manifests that are evaluated and approved before they run (§0.4). | User |
 | D17 | A user's current offer is **private user data** used as negotiation leverage and as an optional comp floor, never a product constant. | User correction |
+| D18 | **TypeScript on Node 24** (strict, pnpm workspaces). One codebase ships four surfaces: engine, CLI, local dashboard, MCP server. Chosen over Python (rewrite of career-ops/CareerFill code, harder install for non-developers, its guardrail libraries are LLM-based and unneeded) and Go (community Playwright, loses CareerFill's ATS drivers). | User |
 | D12 | **Evals are first-class.** Every agent has a golden set, metrics and a release gate; outcomes feed back as labels. | User: "no scope of scoring and evals" |
 
 ### Assumptions to confirm (defaults used in this spec)
