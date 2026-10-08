@@ -55,6 +55,12 @@ export const MIGRATIONS: readonly string[] = [
     prev_hash TEXT NOT NULL,
     hash TEXT NOT NULL
   );
+  CREATE TABLE chain_head (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    seq INTEGER NOT NULL,
+    hash TEXT NOT NULL,
+    count INTEGER NOT NULL
+  );
   CREATE TABLE entities (
     entity_id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,

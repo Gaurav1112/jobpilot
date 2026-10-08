@@ -56,10 +56,20 @@ export class Store {
     const db = new Database(path);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
-    const version = db.pragma('user_version', { simple: true }) as number;
-    for (let v = version; v < MIGRATIONS.length; v++) {
-      db.exec(MIGRATIONS[v] ?? '');
-      db.pragma(`user_version = ${v + 1}`);
+    try {
+      const version = db.pragma('user_version', { simple: true }) as number;
+      if (version > MIGRATIONS.length) {
+        throw new Error(`database schema version ${version} is newer than this jobpilot (${MIGRATIONS.length})`);
+      }
+      for (let v = version; v < MIGRATIONS.length; v++) {
+        db.transaction(() => {
+          db.exec(MIGRATIONS[v] ?? '');
+          db.pragma(`user_version = ${v + 1}`);
+        })();
+      }
+    } catch (err) {
+      db.close();
+      throw err;
     }
     return new Store(db);
   }
@@ -99,7 +109,9 @@ export class Store {
       .prepare(
         `INSERT INTO steps (step_key, agent_id, contract_version, contract_hash, input_envelope_id, status, attempts)
          VALUES (?, ?, ?, ?, ?, 'running', 1)
-         ON CONFLICT (step_key) DO UPDATE SET status = 'running', attempts = attempts + 1, error_code = NULL, detail = NULL`,
+         ON CONFLICT (step_key) DO UPDATE SET agent_id = excluded.agent_id, contract_version = excluded.contract_version,
+           contract_hash = excluded.contract_hash, input_envelope_id = excluded.input_envelope_id,
+           status = 'running', attempts = attempts + 1, error_code = NULL, detail = NULL`,
       )
       .run(s.stepKey, s.agentId, s.version, s.contractHash, s.inputEnvelopeId);
   }
@@ -116,11 +128,12 @@ export class Store {
     detail?: string;
   }): void {
     this.tx(() => {
-      const ins = this.db.prepare(`INSERT OR IGNORE INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`);
-      for (const e of a.envelopes) ins.run(e.envelopeId, e.stepKey, e.index, e.type, canonicalJson(e));
-      this.db
-        .prepare(`UPDATE steps SET status = ?, error_code = ?, detail = ? WHERE step_key = ?`)
+      const res = this.db
+        .prepare(`UPDATE steps SET status = ?, error_code = ?, detail = ? WHERE step_key = ? AND status = 'running'`)
         .run(a.status, a.errorCode ?? null, a.detail ?? null, a.stepKey);
+      if (res.changes !== 1) throw new Error(`finishStep: step ${a.stepKey} is not running`);
+      const ins = this.db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`);
+      for (const e of a.envelopes) ins.run(e.envelopeId, e.stepKey, e.index, e.type, canonicalJson(e));
       if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
         this.db
           .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens) VALUES (?, ?, ?, ?, ?, ?)`)
@@ -192,12 +205,28 @@ export class Store {
 
   // events: append-only, hash-chained
   appendEvent(runId: string, at: string, kind: string, data: unknown, policyHash: string): void {
-    const last = this.db.prepare(`SELECT hash FROM events ORDER BY seq DESC LIMIT 1`).get() as { hash: string } | undefined;
-    const prev = last?.hash ?? GENESIS_HASH;
-    const row = { run_id: runId, at, kind, data: canonicalJson(data), policy_hash: policyHash };
-    this.db
-      .prepare(`INSERT INTO events (run_id, at, kind, data, policy_hash, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-      .run(row.run_id, row.at, row.kind, row.data, row.policy_hash, prev, eventHash(prev, row));
+    this.tx(() => {
+      const head = this.chainHead();
+      const prev = head?.hash ?? GENESIS_HASH;
+      const row = { run_id: runId, at, kind, data: canonicalJson(data), policy_hash: policyHash };
+      const hash = eventHash(prev, row);
+      const res = this.db
+        .prepare(`INSERT INTO events (run_id, at, kind, data, policy_hash, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(row.run_id, row.at, row.kind, row.data, row.policy_hash, prev, hash);
+      this.db
+        .prepare(
+          `INSERT INTO chain_head (id, seq, hash, count) VALUES (1, ?, ?, 1)
+           ON CONFLICT (id) DO UPDATE SET seq = excluded.seq, hash = excluded.hash, count = count + 1`,
+        )
+        .run(Number(res.lastInsertRowid), hash);
+    });
+  }
+
+  /** The stored anchor of the audit chain: last seq, last hash and number of events appended. */
+  chainHead(): { seq: number; hash: string; count: number } | undefined {
+    return this.db.prepare(`SELECT seq, hash, count FROM chain_head WHERE id = 1`).get() as
+      | { seq: number; hash: string; count: number }
+      | undefined;
   }
 
   events(runId?: string): EventRow[] {
@@ -240,6 +269,9 @@ export class Store {
 
   /** Test and audit helper: a whole table as canonical text, in a fixed order. */
   dump(table: 'envelopes' | 'entities' | 'steps', orderBy: string): string {
+    if (!['envelopes', 'entities', 'steps'].includes(table) || !/^[a-z_]+(, ?[a-z_]+)*$/.test(orderBy)) {
+      throw new Error('dump: refused');
+    }
     const rows = this.db.prepare(`SELECT * FROM ${table} ORDER BY ${orderBy}`).all();
     return canonicalJson(rows);
   }
