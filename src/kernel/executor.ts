@@ -1,3 +1,9 @@
+/**
+ * Known bounds of the budget accounting (inherent, not bugs):
+ * - A run can exceed `policy.maxUsdPerRun` by at most (actual - usdPerCall) once per LLM agent per run:
+ *   a call's price is only known after it returns, and the first over-priced call stops that agent for the rest of the run.
+ * - Spend of a call in flight when the process itself dies is not recorded; the step re-runs on resume.
+ */
 import type { AnyAgent } from './agent.js';
 import { issueContext } from './broker.js';
 import type { Clock } from './clock.js';
@@ -119,7 +125,9 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       return { kind: 'quarantined', stepKey, verdicts: JSON.parse(prior.detail ?? '[]') as GuardrailVerdict[] };
     }
 
-    // 7 run budget (per agent and per run), counting what this step has already paid
+    // 7 run budget (per agent and per run), counting what this step has already paid.
+    // Bounds (see the top of this file): one over-priced call per LLM agent per run can pass the cap by
+    // (actual - usdPerCall); a call in flight when the process dies is not recorded and the step re-runs on resume.
     const overBudget = (): boolean =>
       (c.budget.usdPerRun > 0 || c.kind === 'llm') &&
       (deps.store.runCost(runId, c.id) + stepSpent.usd >= c.budget.usdPerRun ||
