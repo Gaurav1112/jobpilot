@@ -128,9 +128,8 @@ describe('G-NO-EVASION: anti-bot evasion tooling cannot be installed', () => {
     );
 
     const lock = join(root, 'pnpm-lock.yaml');
-    const locked = existsSync(lock)
-      ? [...readFileSync(lock, 'utf8').matchAll(/^\s*'?\/?(@?[^\s@'/]+(?:\/[^\s@'/]+)?)@/gm)].map((m) => m[1] as string).filter(isDenied)
-      : [];
+    expect(existsSync(lock), 'pnpm-lock.yaml is missing: the lockfile scan cannot vouch for transitive dependencies').toBe(true);
+    const locked = [...readFileSync(lock, 'utf8').matchAll(/^\s*'?\/?(@?[^\s@'/]+(?:\/[^\s@'/]+)?)@/gm)].map((m) => m[1] as string).filter(isDenied);
 
     expect({ manifest, imports, locked }).toEqual({ manifest: [], imports: [], locked: [] });
   });
