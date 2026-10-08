@@ -1,8 +1,10 @@
 # jobpilot: architecture design
 
-**Status:** draft, awaiting review · **Date:** 2026-10-08 · **Owner:** the maintainer
+**Status:** draft rev 3, awaiting review · **Date:** 2026-10-08 · **Owner:** the maintainer
 
-jobpilot is a local-first, multi-agent system. It discovers the best-paying,
+jobpilot is a local-first, multi-agent **product** that helps its user land the
+best job available to them. The author is the first user; anyone they share it with
+runs their own copy. For its first user it discovers the best-paying,
 best-fitting **full-time remote roles open to India-based candidates**, scores them
 with two independent scorers, generates an evidence-grounded resume and cover
 letter for each shortlisted job, presents everything in a local dashboard, and
@@ -17,6 +19,137 @@ checks.
 
 ---
 
+## 0. Product architecture
+
+### 0.1 Two planes
+
+| | Public plane (shared) | Private plane (per user, local) |
+|---|---|---|
+| Data | Job postings, company facts (ATS, remotePolicy, stage), source manifests, disclosed-comp statistics (all P0) | Profile, fact store, user pack, scores, documents, approvals, offers, Gmail, outcomes (P1–P3) |
+| Agents | Discovery, normalizer, deduper, source-scout, source health | Prefilter, scorers, ranker, tailoring, QA, approval, submit, tracker, interview, negotiation |
+| Runs | On each user's machine; optionally publishes to and pulls from the shared catalogue | Only on the user's machine |
+| Determinism | Catalogue snapshots are content-addressed; a run pins the snapshot it used | Same as before: memoised steps, pinned policy |
+
+The boundary between the planes **is** the data-class rule from §8.3: only P0
+may cross. The taint labels of §5.5 enforce it, so there is no separate
+mechanism to get wrong.
+
+### 0.2 Shared catalogue
+
+A signed, versioned, append-only store of P0 records: `JobPosting@1`,
+`Company@1`, `SourceManifest@1`, `CompStat@1`. In v1 it is a file bundle that
+can be exported and imported (`jobpilot catalogue export|import`), so sharing
+works with no server. A hosted catalogue is a later deployment choice (open
+question Q3). Every record carries `contributor`, `signature` and
+`contentHash`. Imports are validated by the same guardrails as fetched data,
+so the catalogue is never trusted more than the open web.
+
+### 0.3 User pack: everything personal is configuration
+
+```
+user-pack/
+  profile/facts.yaml        fact store with provenance (only verified/user-stated is citeable)
+  eligibility.yaml          residence country, work authorisation, acceptable remote scopes,
+                            onsite cities (empty for the user), employment types (FTE)
+  lexicon.yaml              STRONG / MEDIUM / GAP skill groups with synonyms (e.g. Java…)
+  filters.yaml              role, company and stage deny lists (e.g. services firms, staffing)
+  targets.yaml              titles, seniority, minimum fit
+  naming-rules.yaml         employer/client naming (e.g. a display name for the employer, never "[client]")
+  offers.yaml   (P2)        current offers: base, bonus, equity, vesting → floor + leverage
+  answers.yaml              screening-question answer bank
+  policy.user.yaml          user policy overrides (see below)
+  secrets (OS keychain)     Anthropic key, Jev key, Gmail OAuth token
+```
+
+**Two-tier policy.** `policy.product.vN` is immutable and holds the safety
+floor: LinkedIn and ToS-banned hosts denied, approval token required for any
+submit, grounding required for any claim, P1 never sent to an LLM, the daily
+submit cap's maximum. `policy.user.yaml` may **tighten but never loosen** it
+(for example, a lower submit cap, more deny-listed companies, a higher
+fit floor). The policy engine computes `effective = product ∧ user`, and
+boot fails if a user override tries to relax a product rule.
+
+Every guardrail that mentioned the user now reads its values from the user pack:
+G-EMPLOYER becomes **G-NAMING** (the user's naming rules), and the comp floor
+and "Δ vs best offer" come from `offers.yaml` and are omitted when it is empty.
+
+### 0.4 Source expansion: coverage without a fixed platform list
+
+| Tier | Method | Adapter |
+|---|---|---|
+| T1 | Public ATS APIs (Greenhouse, Lever, Ashby, Workable, SmartRecruiters, Recruitee, …) | One code adapter per ATS vendor |
+| T2 | `schema.org/JobPosting` JSON-LD, sitemaps, RSS/Atom | One generic adapter for all sites |
+| T3 | Sites with neither | A declarative `SourceManifest@1` written by `source-scout` |
+| T4 | Login walls, ToS bans, CAPTCHA | Refused by the source policy registry |
+
+**Source lifecycle** (a state machine of its own, like a job's):
+
+```
+PROPOSED → PROBED → (T1 | T2 detected → ACTIVE)
+                  → T3: SYNTHESISED → EVALUATED → APPROVED → ACTIVE
+ACTIVE → DEGRADED (health drop) → QUARANTINED → re-synthesise → EVALUATED → …
+PROBED → REFUSED (T4: robots.txt disallow, ToS ban, auth wall)
+```
+
+- **Proposal.** `company-finder` (search for companies hiring in the user's
+  eligible scopes), user input ("add this careers page"), or the catalogue.
+- **Probe (deterministic).** Fetches robots.txt and the careers page, then
+  fingerprints the ATS (e.g. `boards.greenhouse.io` links, `jobs.lever.co`
+  iframes, `myworkdayjobs.com` hosts) and looks for JobPosting JSON-LD. An ATS
+  fingerprint means the existing T1 adapter is reused and only a watchlist
+  entry is created.
+- **Synthesis (LLM, build time only).** `source-scout` writes a manifest:
+  list-page URL pattern, pagination rule, detail-page URL pattern, field
+  mappings (CSS/JSON paths) to `RawPosting@1`. It never runs at fetch time.
+- **Evaluation.** The manifest is executed on recorded pages (≥ 5 list pages,
+  ≥ 20 detail pages). Gates: required fields present ≥ 0.98, title/company
+  exact on hand-checked samples, no P1 captured. A failing manifest never
+  becomes active.
+- **Approval.** By the user for their own machine; by the catalogue
+  maintainer for publishing to the shared catalogue.
+- **Health.** Each run records yield and per-field null rates for every
+  source. A drop beyond the threshold (yield −60 % vs the 14-day median, or a
+  required field's null rate > 5 %) moves the source to DEGRADED, then
+  QUARANTINED, and queues a re-synthesis. A broken source is loud.
+
+Plugin authors can also ship a code adapter through the SDK (§0.6); it goes
+through the same evaluation and approval.
+
+### 0.5 New agent families
+
+| Family | Agents | Notes |
+|---|---|---|
+| Onboarding | `resume-ingest` (llm), `fact-verifier` (human), `pack-builder` (llm → proposal) | Resume → candidate facts with status `extracted` and source spans; the user verifies each one before it can be cited; `pack-builder` proposes lexicon, targets and filters from verified facts, and the user edits and approves |
+| Interview | `interview-prep` (llm) | Per approved job: likely questions from the JD, answers grounded in facts (G-GROUND), company research from catalogue facts only |
+| Negotiation | `comp-intel` (deterministic), `negotiation-coach` (llm) | `comp-intel` builds market bands from disclosed comp in the catalogue (`CompStat@1`: role, level, scope, currency, n). The coach drafts a negotiation plan using the user's offers as leverage; numbers must come from `offers.yaml` or `CompStat` (G-GROUND-NUM); it drafts and never sends |
+| Sources | `source-probe` (deterministic), `source-scout` (llm, build time), `source-health` (deterministic) | §0.4 |
+| Interface | `mcp-gateway` | Exposes read tools (`top_jobs`, `explain_job`, `why_rejected`, `run_status`, `eval_report`) and proposal tools (`propose_source`, `propose_fact`). **No approve or submit tool exists**: approval stays in the dashboard. Tool schemas are the contracts' JSON Schemas |
+
+### 0.6 Agent plugin SDK
+
+A plugin is an npm package exporting `{ contract, run }`, plus fixtures and
+an eval dataset. `jobpilot plugin add <pkg>`:
+
+1. validates the contract against the meta-schema;
+2. runs the wiring compile (types, guarantees ⊆ requirements);
+3. checks the plugin asks only for capabilities its `kind` allows (an `io`
+   agent cannot request `submit`; only the core submitter is `effect`);
+4. runs the plugin's evals and the containment scan;
+5. registers it in the user's registry, disabled until the user enables it.
+
+Plugins run in a **worker thread with no ambient authority**: the capability
+broker passes in the only tools it may use, and egress is limited to the
+hosts its contract lists.
+
+### 0.7 Distribution
+
+One command install (`npx jobpilot init`), which creates the user pack,
+stores secrets in the OS keychain, runs onboarding, and installs the daily
+schedule (`launchd` on macOS, systemd timer on Linux, Task Scheduler on
+Windows). A desktop wrapper is a later option.
+
+---
+
 ## 1. Decisions made so far
 
 | # | Decision | Source |
@@ -26,19 +159,24 @@ checks.
 | D3 | Scoring: **dual scorer**. Claude and Jev (TypeSafe AI) sit behind one `Scorer` contract. The scores are fused and disagreement is flagged. The resume is PII-redacted before it goes to Jev. | User |
 | D4 | Sources: direct ATS boards, remote aggregators and India-specific feeds (Japan boards dropped by D9). India is covered by Adzuna India, a watchlist of India-remote employers' ATS boards, and a Gmail job-alert ingest. **There is no scraping of Naukri, Wellfound or Instahyre** (their ToS and anti-bot measures). | User ("all that works best") + research |
 | D5 | Ranking: **comp-first with a fit floor**. | User |
-| D6 | Comp baseline = **the user's current offer (base + RSU)**. The floor is the offer's annualised total comp (see A1). | User |
+| D6 | The user's pack holds their current offer (base + RSU) as the best offer; the comp floor is its annualised total comp (A1). Superseded in framing by D17. | User |
 | D7 | The current LLM-managed daily discovery is non-deterministic. **This is the problem the design exists to fix**, so routing and state never depend on an LLM. | User |
 | D8 | LinkedIn is never scraped and never a submit target. | Standing rule (job-os, linkedin-ops) |
 | D9 | **Remote from India only.** No onsite, no hybrid, no Japan. Eligible = remote roles open to India (Remote-India, APAC, or global-remote that hires in India incl. via EOR), **full-time only**. | User, 2026-10-08 |
 | D10 | **New local dashboard** (Hono + htmx). The 93 rows from the Application Desk artifact are migrated once; the Desk is retired. | User |
 | D11 | The existing Daily Job Discovery's scoring formula and hard filters are kept **as deterministic code** (`scorer-lexicon`, prefilter rules), not as prompt text. | Analysis of handoff doc |
+| D13 | **A product, not a personal tool.** Used by the author and anyone they share it with. The engine contains no user-specific data; every personal rule lives in a per-user *user pack* (§0.3). | User |
+| D14 | **Deployment: local app per user + optional shared public catalogue.** Personal data (P1–P3) never leaves a user's machine; only public postings and source manifests are shared. | User |
+| D15 | Scope adds **guided onboarding, interview prep, offer negotiation, an MCP interface and an agent plugin SDK**. | User |
+| D16 | **Coverage must grow without a fixed platform list:** tiered sources plus a source lifecycle with LLM-synthesised manifests that are evaluated and approved before they run (§0.4). | User |
+| D17 | A user's current offer is **private user data** used as negotiation leverage and as an optional comp floor, never a product constant. | User correction |
 | D12 | **Evals are first-class.** Every agent has a golden set, metrics and a release gate; outcomes feed back as labels. | User: "no scope of scoring and evals" |
 
 ### Assumptions to confirm (defaults used in this spec)
 
 | # | Assumption | Default |
 |---|---|---|
-| A1 | The RSU grant vests over 4 years | Floor = base + RSU / 4 (**total comp**) |
+| A1 | The user's RSU grant vests over 4 years | The pack's floor = base + RSU / 4 (**total comp**) |
 | A2 | Roles with undisclosed comp | Kept, put in a separate "comp unknown" band, and ranked by fit |
 | A3 | Target roles | Senior/Staff/Lead Backend, Platform, or AI/LLM Engineer (Go, Java, TypeScript) |
 | A4 | Global-remote roles with no country stated | Eligible only when the company is on the watchlist with `hiresInIndia: true`, else `needs-review` |
@@ -46,6 +184,10 @@ checks.
 | A6 | Schedule | One daily run at 07:00 IST via macOS `launchd`, plus manual `jobpilot run` |
 | A7 | Jev API | A key is available; data retention terms must be read before enabling it (the provider is disabled until confirmed) |
 | A8 | LinkedIn job-alert *emails* | Excluded from Gmail ingest unless the user opts in (parsing your own mailbox is not scraping, but it stays off by default) |
+| Q1 | Who pays for LLM calls for other users | Each user brings their own Anthropic (and optionally Jev) key |
+| Q2 | Who approves T3 manifests for the shared catalogue | The maintainer; users approve for their own machine |
+| Q3 | Where the shared catalogue lives later | v1: export/import file bundle, no server |
+| Q4 | Market comp data beyond disclosed comp in postings | v1: disclosed comp only (Ashby, Adzuna, prose); no scraping of salary sites |
 
 ### 1.1 What the existing Daily Job Discovery taught us
 
@@ -358,7 +500,7 @@ Transitions are a static table. A transition not in the table throws.
 | `resume-tailor` | llm | RankedJob → TailoredResume | Picks facts, rewrites bullets using JD terms; every bullet cites `factIds` |
 | `cover-letter` | llm | RankedJob → CoverLetter | Three or four paragraphs, every claim cites `factIds` |
 | `renderer` | deterministic | Tailored* → RenderedArtifact | Template follows the v5 ATS rules; format chosen per ATS (§10) |
-| `qa-gate` | deterministic | RenderedArtifact → QaVerdict | Runs G-ATS-TEXT, G-GROUND, G-PII-OUT, G-EMPLOYER |
+| `qa-gate` | deterministic | RenderedArtifact → QaVerdict | Runs G-ATS-TEXT, G-GROUND, G-PII-OUT, G-NAMING |
 | `approval` | human | QaVerdict → ApprovalToken | Dashboard button; shows a diff against the master resume |
 | `submitter` | effect | ApprovalToken → SubmissionResult | Playwright drivers for Greenhouse, Lever and Ashby first; Workday, iCIMS and Taleo are "assisted" (prefill, then hand over) |
 | `tracker` | deterministic | SubmissionResult → (state) | Status log; follow-up reminders at day 7 and day 14 |
@@ -383,7 +525,11 @@ Every guardrail is a pure function `(envelope, contract, policy) → {verdict, d
 | G-POST | out | Contract postconditions |
 | G-GROUND | out (tailor, cover) | Every bullet has ≥ 1 `factId`; each fact exists and has status `verified` or `user-stated`; every number, employer, date and skill token in the text appears in the cited facts; unknown skill tokens fail |
 | G-GROUND-SCORE | out (scorers) | The evidence quotes are substrings of the JD; the factIds exist |
-| G-EMPLOYER | out | The employer is written under its display name; the string "[client]" never appears; client described generically |
+| G-NAMING | out | The user's naming rules (e.g. the employer under its display name; "[client]" never appears) |
+| G-GROUND-NUM | out (negotiation, interview) | Every number cites `offers.yaml`, a fact, or a `CompStat` record with n ≥ 5 |
+| G-POLICY-MONOTONIC | boot | User policy may only tighten product policy |
+| G-PLUGIN-CAPS | plugin add | A plugin's requested capabilities fit its kind; egress hosts declared |
+| G-SOURCE-POLICY | probe | robots.txt allows; host not on the T4 refusal list |
 | G-PII-OUT | out | No phone number or home address in LLM text; the email address only in the contact header |
 | G-ATS-TEXT | qa | `pdftotext -raw` keyword probe finds all planned JD terms; no line ends in a hyphen; page count ≤ 2; DOCX has no tables, text boxes or header contact |
 | G-DISAGREE | fuser | Provider disagreement > 2 points → `needs-review` badge, no auto-shortlist |
@@ -407,7 +553,7 @@ policy.
 |---|---|---|
 | P0 | Public job data, skills, project descriptions | Claude, Jev, local |
 | P1 | Phone, personal email, address, date of birth | Local renderer, and the target ATS during an approved submit. **Never an LLM or Jev.** |
-| P2 | Offer details (the user's current offer), current salary | Local ranker only |
+| P2 | Offer details (e.g. a current offer), current salary | Local ranker and negotiation coach (the coach sees offers only as placeholders the renderer fills locally) |
 | P3 | Gmail message bodies | Local parser; only the extracted JD text (P0) moves on |
 
 ### 8.4 Audit
@@ -422,12 +568,13 @@ lineage: sources → scores → documents → approval → submission.
 
 ```
 eligible   = prefilter.pass && lexicon.score >= 60 && fused.fit >= 7.0 && !needsReview
-compTC     = inrAnnualMax ?? inrAnnualMin            // total comp, INR/yr, pinned FX
-band       = compTC == null ? 'comp-unknown' : compTC >= floor ? 'above-floor' : 'below-floor'
+compTC     = annualMax ?? annualMin                  // total comp in the user's currency, pinned FX
+floor      = userPack.offers.bestTotalComp ?? userPack.targets.compFloor   // the user's floor
+band       = compTC == null ? 'comp-unknown' : floor == null || compTC >= floor ? 'above-floor' : 'below-floor'
 order      = band ASC (above-floor, comp-unknown, below-floor),
              compTC DESC NULLS LAST, fused.fit DESC, postedAt DESC, jobId ASC   // total order
 shortlist  = first 8 per day from above-floor + top 4 comp-unknown with fit >= 8
-deltaVsOffer = compTC - floor
+deltaVsBestOffer = floor ? compTC - floor : null   // shown only if the user has an offer
 ```
 
 ---
@@ -462,7 +609,9 @@ the screening questions. Therefore:
 `events(seq PK, runId, kind, data JSON, policyHash, prevHash, hash)` ·
 `jobs(jobId PK, state, band, rank, updatedAt)` · `contracts(agentId, version, hash, schema JSON)` ·
 `artifacts(sha256 PK, jobId, kind, format, path)` · `approvals(nonce PK, jobId, hashes, expiresAt, usedAt)` ·
-`submissions` · `fx_rates(date, ccy, inr)` · `cost_ledger` · `source_health` · `watchlist(company, ats, slug)`
+`submissions` · `fx_rates(date, ccy, rate)` · `cost_ledger` · `outcomes(jobId, label, at)`
+
+Public plane (separate SQLite file, exportable): `catalogue_postings` · `companies(slug, ats, remotePolicy, hiresIn[], stage)` · `source_manifests(id, version, tier, status, signature)` · `source_health(sourceId, runId, yield, nullRates)` · `comp_stats` · `catalogue_snapshots(hash, createdAt)`
 
 ---
 
@@ -471,7 +620,7 @@ the screening questions. Therefore:
 Hono + htmx on `127.0.0.1:4317`.
 
 - **Today:** run summary, source health, spend, quarantine count.
-- **Jobs:** table sorted by rank, with chips for band, Δ vs the offer, fit,
+- **Jobs:** table sorted by rank, with chips for band, Δ vs best offer (when the user has one), fit,
   disagreement, ATS and sources. Filters for remote class and band.
 - **Job detail:** JD (sanitised), both scores with evidence, the tailored
   resume diff against master, the cover letter, screening answers, lineage.
@@ -580,21 +729,23 @@ test; the change is recorded with its eval report in `events`.
 
 ---
 
-## 16. Build phases (each gets its own plan)
+## 16. Roadmap (each sub-project gets its own spec → plan → build)
 
-1. **Kernel:** contracts, handoff protocol, registry, wiring compile, executor,
-   memo, guardrail framework, policy, event log, state machine, **eval
-   runner**. Two stub agents end to end and the replay test.
-2. **Discovery:** watchlist (26 seeded slugs), ATS boards, aggregators,
-   Adzuna-IN, normalizer, deduper, prefilter, `scorer-lexicon`, migration of
-   the 93 rows and their golden sets. All deterministic.
-3. **Scoring:** scorer-claude, scorer-jev, fuser and ranker.
-4. **Dashboard:** read-only views (jobs, detail, health, quarantine, contracts).
-5. **Documents:** fact store port, tailor, cover letter, renderer and QA gate.
-6. **Approval and submit:** token, Greenhouse, Lever and Ashby drivers, tracker.
-7. **Coverage:** Gmail alerts, company-finder, assisted Workday, online evals.
+| # | Sub-project | Delivers | Depends on |
+|---|---|---|---|
+| 1 | **Kernel** | Contracts, handoff protocol, registry + wiring compile, executor, memo, guardrail framework, two-tier policy, event log, state machine, eval runner, plugin loader skeleton. Replay test. | — |
+| 2 | **User pack + onboarding** | Pack schema, keychain secrets, resume-ingest, fact verification UI, pack-builder. The user's pack migrated from career-ops facts + the old handoff rules | 1 |
+| 3 | **Discovery T1 + T2** | ATS adapters, generic JSON-LD adapter, aggregators, normalizer, deduper, watchlist (26 seeded slugs), catalogue export/import | 1 |
+| 4 | **Scoring + ranking + dashboard** | prefilter, scorer-lexicon, scorer-claude, scorer-jev, fuser, ranker, Hono dashboard, Desk migration, golden sets | 2, 3 |
+| 5 | **Documents** | tailor, cover letter, renderer, QA gate | 2, 4 |
+| 6 | **Approval + submit** | token, Greenhouse / Lever / Ashby drivers, tracker | 5 |
+| 7 | **Source expansion** | source-probe, source-scout, manifests, source health, lifecycle | 3 |
+| 8 | **MCP gateway** | read and proposal tools | 4 |
+| 9 | **Interview + negotiation** | interview-prep, comp-intel, negotiation-coach | 4, 5 |
+| 10 | **Plugin SDK + distribution** | SDK, sandboxed plugins, `npx jobpilot init`, schedulers | 1–4 |
+| 11 | **Coverage + online evals** | Gmail alerts, company-finder, assisted Workday, weekly online evals | 3, 4 |
 
 ## 17. Out of scope (v1)
 
-Onsite, hybrid and Japan roles; contractor roles; scraping LinkedIn, Naukri, Wellfound or Instahyre; mass auto-apply without
-approval; multi-user support; cloud hosting.
+Onsite, hybrid and Japan roles and contractor roles **for the user's pack** (other users configure their own eligibility); a hosted SaaS; scraping LinkedIn, Naukri, Wellfound or Instahyre; mass auto-apply without
+approval; shared multi-user servers holding personal data.
