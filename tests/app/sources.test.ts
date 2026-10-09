@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { ashbyParse, srcAshby } from '../../src/app/agents/sources/ashby.js';
 import { greenhouseParse, srcGreenhouse } from '../../src/app/agents/sources/greenhouse.js';
 import { HIMALAYAS_MAX_PAGES, himalayasParse, indiaEligible, srcHimalayas } from '../../src/app/agents/sources/himalayas.js';
-import { jobicyParse, srcJobicy } from '../../src/app/agents/sources/jobicy.js';
+import { JOBICY_MAX_REQUESTS, jobicyParse, srcJobicy } from '../../src/app/agents/sources/jobicy.js';
 import { LEVER_MAX_PAGES, leverParse, srcLever } from '../../src/app/agents/sources/lever.js';
 import type { DiscoveryRequest, RawPosting } from '../../src/app/types.js';
 import { RawPosting as RawPostingType } from '../../src/app/types.js';
@@ -56,17 +56,18 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort((a, b) => (a < 
 const GH = 'https://boards-api.greenhouse.io/v1/boards/gitlab/jobs?content=true&pay_transparency=true';
 const LV = (skip: number) => `https://api.lever.co/v0/postings/veeva?mode=json&skip=${skip}&limit=100`;
 const AB = 'https://api.ashbyhq.com/posting-api/job-board/confluent?includeCompensation=true';
-const HM = (page: number) => `https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=${page}`;
-const JB = (geo: string) => `https://jobicy.com/api/v2/remote-jobs?count=50&geo=${geo}&tag=backend`;
+const HM = (page: number) => `https://himalayas.app/jobs/api/search?q=backend&country=IN&employment_type=Full%20Time&sort=recent&page=${page}`;
+const JB = (geo: string, cursor?: string) =>
+  `https://jobicy.com/api/v2/remote-jobs?count=50&geo=${geo}&tag=backend${cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
 const EMPTY_HM = JSON.stringify({ jobs: [] });
 
 describe('source contracts', () => {
   it.each([
     [srcGreenhouse, 'src-greenhouse', 'boards-api.greenhouse.io', 30_000],
-    [srcLever, 'src-lever', 'api.lever.co', 180_000],
+    [srcLever, 'src-lever', 'api.lever.co', 900_000],
     [srcAshby, 'src-ashby', 'api.ashbyhq.com', 30_000],
-    [srcHimalayas, 'src-himalayas', 'himalayas.app', 60_000],
-    [srcJobicy, 'src-jobicy', 'jobicy.com', 30_000],
+    [srcHimalayas, 'src-himalayas', 'himalayas.app', 450_000],
+    [srcJobicy, 'src-jobicy', 'jobicy.com', 180_000],
   ])('%#: id, team, kind, egress, timeout, retry', (agent, id, host, timeoutMs) => {
     const c = agent.contract;
     expect(c.id).toBe(id);
@@ -82,11 +83,6 @@ describe('source contracts', () => {
 });
 
 describe('fix round 1', () => {
-  it('src-lever timeout leaves at least 9 s per page at the page cap', () => {
-    expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
-    expect(srcHimalayas.contract.timeoutMs / HIMALAYAS_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
-  });
-
   it('a non-empty response where every job fails to parse → invalid_output, not []', async () => {
     const bad = JSON.stringify({ jobs: [{ nope: 1 }, { nope: 2 }] });
     const cases: [Agent<DiscoveryRequest, RawPosting>, DiscoveryRequest, Record<string, { body: string }>, string][] = [
@@ -115,22 +111,6 @@ describe('fix round 1', () => {
     const parsed = greenhouseParse({ jobs: [{ id: ' 3 ', title: 't' }, { id: '   ', title: 'u' }, { id: 4, title: 'v' }] }, req('greenhouse', 'g'));
     expect(parsed.postings.map((p) => p.sourceId)).toEqual(['3', '4']);
     expect(parsed.skipped).toHaveLength(1);
-  });
-
-  it('lever: a full page followed by an empty page stops after two requests', async () => {
-    const full = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `id-${String(i).padStart(3, '0')}`, text: 't' })));
-    const rec = serve({ [LV(0)]: { body: full }, [LV(100)]: { body: '[]' } });
-    await expect(run(srcLever, req('lever', 'veeva'), rec)).resolves.toHaveLength(100);
-    expect(rec.urls).toEqual([LV(0), LV(100)]);
-  });
-
-  it('lever: an API that ignores skip stays bounded at the page cap', async () => {
-    const full = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `id-${i}`, text: 't' })));
-    const fetch: FetchLike = async () => ({ status: 200, text: async () => full });
-    const urls: string[] = [];
-    const rec: Recorder = { fetch: async (u, init) => (urls.push(u), fetch(u, init)), urls, headers: [] };
-    await expect(run(srcLever, req('lever', 'veeva'), rec)).resolves.toHaveLength(100);
-    expect(urls).toHaveLength(LEVER_MAX_PAGES);
   });
 
   it('himalayas: an error on page 2 fails the whole step (idempotent GETs, retried as a unit)', async () => {
@@ -207,25 +187,6 @@ describe('src-lever', () => {
     expect(new URL(rec.urls[0]!).hostname).toBe('api.lever.co');
     expect(rec.headers[0]).toEqual(HTTP_HEADERS);
     for (const p of out) expect(p).toMatchObject({ source: 'lever', company: 'Veeva', slug: 'veeva' });
-  });
-
-  it('pages with skip and limit until a short page', async () => {
-    const page = (from: number, n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: `id-${String(from + i).padStart(4, '0')}`, text: 'Engineer' })));
-    const rec = serve({ [LV(0)]: { body: page(0, 100) }, [LV(100)]: { body: page(100, 100) }, [LV(200)]: { body: page(200, 3) } });
-    const out = await run(srcLever, req('lever', 'veeva'), rec);
-    expect(rec.urls).toEqual([LV(0), LV(100), LV(200)]);
-    expect(out).toHaveLength(203);
-    expect(ids(out)).toEqual(sorted(ids(out)));
-  });
-
-  it('stops after the page bound even when every page is full', async () => {
-    const routes: Record<string, { body: string }> = {};
-    for (let p = 0; p < 30; p++) {
-      routes[LV(p * 100)] = { body: JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `p${p}-${i}`, text: 't' }))) };
-    }
-    const rec = serve(routes);
-    await run(srcLever, req('lever', 'veeva'), rec);
-    expect(rec.urls).toHaveLength(20);
   });
 
   it('drops a salaryRange whose min and max are 0, keeps a real one', () => {
@@ -310,14 +271,6 @@ describe('src-himalayas', () => {
     }
   });
 
-  it('fetches at most three pages', async () => {
-    const page = fixture('himalayas');
-    const rec = serve({ [HM(1)]: { body: page }, [HM(2)]: { body: page }, [HM(3)]: { body: page }, [HM(4)]: { body: page } });
-    const out = await run(srcHimalayas, req('feed', 'himalayas'), rec);
-    expect(rec.urls).toEqual([HM(1), HM(2), HM(3)]);
-    expect(out).toHaveLength(4);
-  });
-
   it('accepts India, Asia or APAC restrictions as strings or {alpha2, name} objects', () => {
     expect(indiaEligible([])).toBe(true);
     expect(indiaEligible(['India'])).toBe(true);
@@ -384,5 +337,162 @@ describe('src-jobicy', () => {
     const parsed = jobicyParse(json);
     expect(parsed.postings).toHaveLength(5);
     expect(parsed.skipped).toHaveLength(1);
+  });
+});
+
+describe('paging: no silent truncation', () => {
+  const pad = (n: number) => String(n).padStart(6, '0');
+  const leverPage = (from: number, n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ id: `id-${pad(from + i)}`, text: 'Backend Engineer' })));
+  const hmJob = (n: number) => ({ guid: `https://himalayas.app/j/${pad(n)}`, title: 'Backend Engineer', companyName: 'Acme', locationRestrictions: [] });
+  const hmPage = (from: number, n: number) => JSON.stringify({ jobs: Array.from({ length: n }, (_, i) => hmJob(from + i)) });
+  const jbPage = (ids: number[], hasMore: boolean, nextCursor: string | null) =>
+    JSON.stringify({ hasMore, nextCursor, jobs: ids.map((id) => ({ id, jobTitle: 'Backend Engineer', companyName: 'Acme' })) });
+  const range = (from: number, n: number) => Array.from({ length: n }, (_, i) => from + i);
+
+  /** A fake fetch computing each answer from the URL. */
+  function dyn(answer: (url: URL) => { status?: number; body: string }): Recorder {
+    const urls: string[] = [];
+    const headers: Readonly<Record<string, string>>[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      urls.push(url);
+      headers.push(init.headers);
+      const a = answer(new URL(url));
+      return { status: a.status ?? 200, text: async () => a.body };
+    };
+    return { fetch, urls, headers };
+  }
+
+  it('every paged source has at least 9 s of step time per request at its cap', () => {
+    expect(LEVER_MAX_PAGES).toBe(100);
+    expect(HIMALAYAS_MAX_PAGES).toBe(50);
+    expect(JOBICY_MAX_REQUESTS).toBe(20);
+    expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
+    expect(srcHimalayas.contract.timeoutMs / HIMALAYAS_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
+    expect(srcJobicy.contract.timeoutMs / JOBICY_MAX_REQUESTS).toBeGreaterThanOrEqual(9_000);
+  });
+
+  describe('lever', () => {
+    it('natural end: pages with skip/limit until a short page', async () => {
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: leverPage(100, 100) }, [LV(200)]: { body: leverPage(200, 3) } });
+      const out = await run(srcLever, req('lever', 'veeva'), rec);
+      expect(rec.urls).toEqual([LV(0), LV(100), LV(200)]);
+      expect(out).toHaveLength(203);
+      expect(ids(out)).toEqual(sorted(ids(out)));
+    });
+
+    it('exact page boundary: a full page then an empty page ends cleanly', async () => {
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: '[]' } });
+      await expect(run(srcLever, req('lever', 'veeva'), rec)).resolves.toHaveLength(100);
+      expect(rec.urls).toEqual([LV(0), LV(100)]);
+    });
+
+    it('cap hit before a natural end → invalid_output, never a partial', async () => {
+      const rec = dyn((u) => ({ body: leverPage(Number(u.searchParams.get('skip')), 100) }));
+      await expect(run(srcLever, req('lever', 'veeva'), rec)).rejects.toMatchObject({
+        code: 'invalid_output',
+        message: 'lever veeva: page cap reached at 10000 postings',
+      });
+      expect(rec.urls).toHaveLength(LEVER_MAX_PAGES);
+    });
+
+    it('a repeated page (the API ignores skip) → invalid_output after two requests', async () => {
+      const rec = dyn(() => ({ body: leverPage(0, 100) }));
+      await expect(run(srcLever, req('lever', 'veeva'), rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'lever veeva: page 2 repeats page 1' });
+      expect(rec.urls).toHaveLength(2);
+    });
+
+    it('a posting on two pages (the board shifted) is kept once, first copy wins', async () => {
+      const second = JSON.parse(leverPage(100, 3)) as { id: string; text: string }[];
+      second.splice(1, 0, { id: 'id-000050', text: 'moved' });
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: JSON.stringify(second) } });
+      const out = await run(srcLever, req('lever', 'veeva'), rec);
+      expect(out).toHaveLength(103);
+      expect((out.find((p) => p.sourceId === 'id-000050')!.raw as { text: string }).text).toBe('Backend Engineer');
+    });
+  });
+
+  describe('himalayas', () => {
+    it('natural end: a short page is not the end, an empty page is', async () => {
+      const rec = serve({ [HM(1)]: { body: hmPage(0, 20) }, [HM(2)]: { body: hmPage(20, 19) }, [HM(3)]: { body: EMPTY_HM } });
+      const out = await run(srcHimalayas, req('feed', 'himalayas'), rec);
+      expect(rec.urls).toEqual([HM(1), HM(2), HM(3)]);
+      expect(out).toHaveLength(39);
+      expect(ids(out)).toEqual(sorted(ids(out)));
+    });
+
+    it('exact page boundary: full pages then an empty page end cleanly', async () => {
+      const rec = serve({ [HM(1)]: { body: hmPage(0, 20) }, [HM(2)]: { body: hmPage(20, 20) }, [HM(3)]: { body: EMPTY_HM } });
+      await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).resolves.toHaveLength(40);
+      expect(rec.urls).toHaveLength(3);
+    });
+
+    it('cap hit before a natural end → invalid_output', async () => {
+      const rec = dyn((u) => ({ body: hmPage((Number(u.searchParams.get('page')) - 1) * 20, 20) }));
+      await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).rejects.toMatchObject({
+        code: 'invalid_output',
+        message: 'himalayas himalayas: page cap reached at 1000 postings',
+      });
+      expect(rec.urls).toHaveLength(HIMALAYAS_MAX_PAGES);
+    });
+
+    it('a repeated page → invalid_output after two requests', async () => {
+      const rec = dyn(() => ({ body: hmPage(0, 20) }));
+      await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 repeats page 1' });
+      expect(rec.urls).toHaveLength(2);
+    });
+
+    it('a repeated page is judged on every job, not only the India-eligible ones', async () => {
+      const elsewhere = (from: number) => JSON.stringify({ jobs: range(from, 20).map((n) => ({ ...hmJob(n), locationRestrictions: ['United States'] })) });
+      const rec = serve({ [HM(1)]: { body: elsewhere(0) }, [HM(2)]: { body: elsewhere(20) }, [HM(3)]: { body: EMPTY_HM } });
+      await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).resolves.toEqual([]);
+      expect(rec.urls).toHaveLength(3);
+    });
+  });
+
+  describe('jobicy', () => {
+    it('natural end: follows nextCursor while hasMore, then the next geo', async () => {
+      const rec = serve({
+        [JB('apac')]: { body: jbPage([1, 2], true, 'c1') },
+        [JB('apac', 'c1')]: { body: jbPage([3], false, null) },
+        [JB('anywhere')]: { body: jbPage([2, 4], false, null) },
+      });
+      const out = await run(srcJobicy, req('feed', 'jobicy'), rec);
+      expect(rec.urls).toEqual([JB('apac'), JB('apac', 'c1'), JB('anywhere')]);
+      expect(ids(out)).toEqual(['1', '2', '3', '4']);
+    });
+
+    it('exact page boundary: hasMore then an empty last page ends cleanly', async () => {
+      const rec = serve({
+        [JB('apac')]: { body: jbPage([1, 2], true, 'c1') },
+        [JB('apac', 'c1')]: { body: jbPage([], false, null) },
+        [JB('anywhere')]: { body: jbPage([], false, null) },
+      });
+      await expect(run(srcJobicy, req('feed', 'jobicy'), rec)).resolves.toHaveLength(2);
+      expect(rec.urls).toHaveLength(3);
+    });
+
+    it('cap hit before a natural end → invalid_output', async () => {
+      const rec = dyn((u) => {
+        const n = Number(u.searchParams.get('cursor')?.slice(1) ?? '0');
+        return { body: jbPage(range(n * 10, 10), true, `c${n + 1}`) };
+      });
+      await expect(run(srcJobicy, req('feed', 'jobicy'), rec)).rejects.toMatchObject({
+        code: 'invalid_output',
+        message: 'jobicy jobicy: request cap reached at 200 postings',
+      });
+      expect(rec.urls).toHaveLength(JOBICY_MAX_REQUESTS);
+    });
+
+    it('a repeated page → invalid_output after two requests', async () => {
+      let n = 0;
+      const rec = dyn(() => ({ body: jbPage([1, 2, 3], true, `c${++n}`) }));
+      await expect(run(srcJobicy, req('feed', 'jobicy'), rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'jobicy jobicy: apac page 2 repeats page 1' });
+      expect(rec.urls).toHaveLength(2);
+    });
+
+    it('hasMore without a nextCursor → invalid_output (the rest cannot be fetched)', async () => {
+      const rec = serve({ [JB('apac')]: { body: jbPage([1], true, null) } });
+      await expect(run(srcJobicy, req('feed', 'jobicy'), rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'jobicy jobicy: apac page 1 says hasMore but gives no nextCursor' });
+    });
   });
 });

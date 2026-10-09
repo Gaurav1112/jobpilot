@@ -1,14 +1,23 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { checkParsed, finish, getBoard, idOf, isRecord, omit, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSignature, repeatedPage, sourceContract, type Parsed } from './common.js';
 
 /**
- * Himalayas search API, narrowed server-side to backend roles open to India
- * (`q=backend&country=IN&sort=recent`), pages 1 to HIMALAYAS_MAX_PAGES (20 jobs a page),
- * stopping at the first empty page. An error on any page fails the whole step (idempotent GETs,
- * retried as a unit). `country=IN` also returns jobs restricted elsewhere, so a
- * job is kept only when `locationRestrictions` is empty (worldwide) or names India, Asia, APAC, Worldwide or Anywhere.
+ * Himalayas search API, narrowed server-side to full-time backend roles open to India:
+ * `q=backend&country=IN&employment_type=Full Time&sort=recent`. Full-time only matches the
+ * spec (eligibility rejects contract, intern and temporary roles), and it cut the live result set
+ * from 843 to 711 on 2026-10-09. Pages (20 jobs each) are fetched from 1 until the natural end:
+ * the first EMPTY page (a short page is not the end: live pages hold 16 to 20 jobs mid-list).
+ * Nothing is truncated quietly:
+ * - HIMALAYAS_MAX_PAGES (1,000 jobs) is a safety cap; reaching it before the natural end is
+ *   `invalid_output` ('himalayas himalayas: page cap reached at N postings');
+ * - a page with the same length, first guid and last guid as the one before is `invalid_output`.
+ * A failed page fails the whole step; a retry starts again at page 1. Pages are processed in
+ * request order and deduped by guid (first copy wins). The step timeout allows 9 s per page.
+ *
+ * `country=IN` also returns jobs restricted elsewhere, so a job is kept only when
+ * `locationRestrictions` is empty (worldwide) or names India, Asia, APAC, Worldwide or Anywhere.
  *
  * There is no job id; `guid` (the job's himalayas.app URL) is the sourceId.
  * `raw` drops `expiryDate`: it moved between two fetches of the same job on 2026-10-09, so it is
@@ -17,13 +26,13 @@ import { checkParsed, finish, getBoard, idOf, isRecord, omit, sourceContract, ty
  */
 export const HIMALAYAS_HOST = 'himalayas.app';
 export const HIMALAYAS_FEED = 'himalayas';
-/** 3 pages = at most 60 jobs, far below `totalCount` (842 for this query live); with `sort=recent` and a daily run that is enough. */
-export const HIMALAYAS_MAX_PAGES = 3;
-export const HIMALAYAS_TIMEOUT_MS = 60_000;
+/** The live natural end on 2026-10-09 was page 37 (711 jobs); 50 pages allow 1,000. */
+export const HIMALAYAS_MAX_PAGES = 50;
+export const HIMALAYAS_TIMEOUT_MS = 450_000;
 const DROPPED = ['expiryDate'] as const;
 
 export const himalayasUrl = (page: number): string =>
-  `https://${HIMALAYAS_HOST}/jobs/api/search?q=backend&country=IN&sort=recent&page=${page}`;
+  `https://${HIMALAYAS_HOST}/jobs/api/search?q=backend&country=IN&employment_type=Full%20Time&sort=recent&page=${page}`;
 
 const ELIGIBLE = /^(india|asia|apac|asia[- ]pacific|worldwide|anywhere)$/i;
 
@@ -57,11 +66,19 @@ export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HO
 
 export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) => {
   if (req.ats !== 'feed' || req.slug !== HIMALAYAS_FEED) return [];
+  const what = `himalayas ${HIMALAYAS_FEED}`;
   const all: RawPosting[] = [];
-  for (let page = 1; page <= HIMALAYAS_MAX_PAGES; page++) {
+  let previous: string | undefined;
+  for (let page = 1; ; page++) {
+    if (page > HIMALAYAS_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
     const json = await getBoard(ctx, himalayasUrl(page), HIMALAYAS_FEED);
-    if (isRecord(json) && Array.isArray(json.jobs) && json.jobs.length === 0) break;
-    all.push(...himalayasParse(json).postings);
+    const parsed = himalayasParse(json);
+    const jobs = (json as { jobs: unknown[] }).jobs;
+    if (jobs.length === 0) break;
+    const signature = pageSignature(jobs, 'guid');
+    if (signature === previous) throw repeatedPage(what, page);
+    previous = signature;
+    all.push(...parsed.postings);
   }
   return finish(all);
 });
