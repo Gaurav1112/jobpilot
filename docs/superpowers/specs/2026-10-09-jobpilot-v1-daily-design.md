@@ -78,8 +78,8 @@ validates every file against its schema, exits non-zero on error, and prints the
    `user-agent: jobpilot/0.1 (+local)`), a response size cap (`policy.maxResponseBytes`,
    default 5 MiB), and a per-host minimum interval (`policy.minHostIntervalMs`, default
    1000 ms, enforced by the broker across agents within a run).
-5. **Egress host patterns** validated by policy (`*.greenhouse.io` style patterns are allowed
-   only in the product policy).
+5. **Egress host patterns: not needed in v1.** Every v1 source has one fixed API host, so
+   contracts list bare hosts. Patterns move to sub-project 8 (source expansion).
 6. **Evals forced offline:** the eval runner gets a fetch provider that throws.
 7. **Tracker `keyOf`:** errors are documented and a throw quarantines the step.
 
