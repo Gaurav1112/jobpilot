@@ -97,7 +97,7 @@ const Meta = z
       .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
       .strict()
       .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
-    timeoutMs: z.number().int().positive().max(600_000),
+    timeoutMs: z.number().int().positive().max(900_000),
     retry: z
       .object({
         max: z.number().int().min(0).max(5),
