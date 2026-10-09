@@ -66,7 +66,7 @@ describe('source contracts', () => {
     [srcGreenhouse, 'src-greenhouse', 'boards-api.greenhouse.io', 30_000],
     [srcLever, 'src-lever', 'api.lever.co', 900_000],
     [srcAshby, 'src-ashby', 'api.ashbyhq.com', 30_000],
-    [srcHimalayas, 'src-himalayas', 'himalayas.app', 450_000],
+    [srcHimalayas, 'src-himalayas', 'himalayas.app', 720_000],
     [srcJobicy, 'src-jobicy', 'jobicy.com', 180_000],
   ])('%#: id, team, kind, egress, timeout, retry', (agent, id, host, timeoutMs) => {
     const c = agent.contract;
@@ -364,7 +364,7 @@ describe('paging: no silent truncation', () => {
 
   it('every paged source has at least 9 s of step time per request at its cap', () => {
     expect(LEVER_MAX_PAGES).toBe(100);
-    expect(HIMALAYAS_MAX_PAGES).toBe(50);
+    expect(HIMALAYAS_MAX_PAGES).toBe(80);
     expect(JOBICY_MAX_REQUESTS).toBe(20);
     expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
     expect(srcHimalayas.contract.timeoutMs / HIMALAYAS_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
@@ -430,7 +430,7 @@ describe('paging: no silent truncation', () => {
       const rec = dyn((u) => ({ body: hmPage((Number(u.searchParams.get('page')) - 1) * 20, 20) }));
       await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).rejects.toMatchObject({
         code: 'invalid_output',
-        message: 'himalayas himalayas: page cap reached at 1000 postings',
+        message: 'himalayas himalayas: page cap reached at 1600 postings',
       });
       expect(rec.urls).toHaveLength(HIMALAYAS_MAX_PAGES);
     });

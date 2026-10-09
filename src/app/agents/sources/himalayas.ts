@@ -10,7 +10,7 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSi
  * from 843 to 711 on 2026-10-09. Pages (20 jobs each) are fetched from 1 until the natural end:
  * the first EMPTY page (a short page is not the end: live pages hold 16 to 20 jobs mid-list).
  * Nothing is truncated quietly:
- * - HIMALAYAS_MAX_PAGES (1,000 jobs) is a safety cap; reaching it before the natural end is
+ * - HIMALAYAS_MAX_PAGES (1,600 jobs) is a safety cap; reaching it before the natural end is
  *   `invalid_output` ('himalayas himalayas: page cap reached at N postings');
  * - a page with the same length, first guid and last guid as the one before is `invalid_output`.
  * A failed page fails the whole step; a retry starts again at page 1. Pages are processed in
@@ -26,9 +26,9 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSi
  */
 export const HIMALAYAS_HOST = 'himalayas.app';
 export const HIMALAYAS_FEED = 'himalayas';
-/** The live natural end on 2026-10-09 was page 37 (711 jobs); 50 pages allow 1,000. */
-export const HIMALAYAS_MAX_PAGES = 50;
-export const HIMALAYAS_TIMEOUT_MS = 450_000;
+/** The live natural end on 2026-10-09 was page 37 (711 jobs); 80 pages (1,600 jobs) give 2x headroom. */
+export const HIMALAYAS_MAX_PAGES = 80;
+export const HIMALAYAS_TIMEOUT_MS = 720_000;
 const DROPPED = ['expiryDate'] as const;
 
 export const himalayasUrl = (page: number): string =>
