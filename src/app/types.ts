@@ -114,6 +114,7 @@ export const Posting = defineType(
         .refine((c) => c.min !== null || c.max !== null, 'comp needs at least one bound')
         .refine((c) => c.min === null || c.max === null || c.min <= c.max, 'comp min must not exceed max')
         .nullable(),
+      /** The highest stated years-of-experience requirement (the upper bound of a range: "3-5 years" is 5); null when none is stated. */
       yearsRequired: z.number().nullable(),
     })
     .strict(),

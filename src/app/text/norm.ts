@@ -144,13 +144,13 @@ const SEGMENT_SPLIT = /[;|\n/&]|\bor\b|\band\b/gi;
 
 interface PlaceScan {
   places: string[];
-  excluded: boolean;
+  excluded: string[];
 }
 
 function scanPlaces(text: string): PlaceScan {
   const t = text.normalize('NFKC');
   const out: string[] = [];
-  let excluded = false;
+  const excluded: string[] = [];
   const bounds = [0, ...[...t.matchAll(SEGMENT_SPLIT)].flatMap((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]), t.length];
   for (let k = 0; k + 1 < bounds.length; k += 2) {
     const segStart = bounds[k] ?? 0;
@@ -164,7 +164,7 @@ function scanPlaces(text: string): PlaceScan {
       const before = t.slice(0, at);
       const clauseStart = Math.max(-1, ...[...before.matchAll(CLAUSE_END)].map((c) => c.index ?? -1)) + 1;
       if (EXCLUDING.test(before.slice(clauseStart))) {
-        excluded = true;
+        excluded.push(name);
         continue;
       }
       found.push({ name, byCity: name === 'india' && !INDIA_BY_NAME.has(alias) });
@@ -174,7 +174,18 @@ function scanPlaces(text: string): PlaceScan {
     const cityOnlyIndia = found.some((f) => f.name === 'india') && found.every((f) => f.name !== 'india' || f.byCity);
     for (const f of found) if (!(f.name === 'india' && cityOnlyIndia && lastCountry !== undefined && lastCountry.name !== 'india')) out.push(f.name);
   }
-  return { places: sortedUnique(out), excluded };
+  const ex = sortedUnique(excluded);
+  return { places: withoutExcluded(out, ex), excluded: ex };
+}
+
+/**
+ * `places` minus the excluded ones. When India is excluded, `worldwide` goes too: "Anywhere except India" is not a
+ * worldwide posting for someone in India.
+ */
+export function withoutExcluded(places: Iterable<string>, excluded: readonly string[]): string[] {
+  const drop = new Set(excluded);
+  if (drop.has('india')) drop.add('worldwide');
+  return sortedUnique([...places].filter((p) => !drop.has(p)));
 }
 
 /**
@@ -184,8 +195,8 @@ function scanPlaces(text: string): PlaceScan {
  */
 export const countriesIn = (text: string): string[] => scanPlaces(text).places;
 
-/** Whether the text excludes a place ("Remote (except India)"), which `countriesIn` then leaves out. */
-export const hasPlaceExclusion = (text: string): boolean => scanPlaces(text).excluded;
+/** The places the text excludes ("Remote (except India)" gives ['india']), sorted; `countriesIn` leaves them out. */
+export const excludedPlaces = (text: string): string[] => scanPlaces(text).excluded;
 
 /**
  * One entry of a structured place list (a Himalayas restriction, a JSON-LD country, an Ashby address country): its
@@ -291,7 +302,7 @@ export function remoteTextSignals(origin: string, text: string): string[] {
  * A figure of years: not part of a longer number or a decimal, not "after/every/within/next/first N years", and not a
  * company's age or a person's.
  */
-const YEARS = /(?<![\d.])(?<!\b(?:after|every|within|next|first|for the)\s+)(\d{1,2})\s*(\+?)\s*(?:years?|yrs?)\b(?!\s+(?:old|ago|young)\b|\s+of\s+age\b)/gi;
+const YEARS = /(?<![\d.])(?<!\b(?:after|every|within|next|first|for the|up to)\s+)(\d{1,2})\s*(\+?)\s*(?:years?|yrs?)\b(?!\s+(?:old|ago|young)\b|\s+of\s+age\b)/gi;
 /** Sentences: lines, then sentence ends followed by a space. */
 const SENTENCE_SPLIT = /(?<=[.!?;])\s+/;
 const EXPERIENCE = /experience|\bexp\b/i;
@@ -308,8 +319,8 @@ const ASKING = /\b(?:looking for|seeking|need|needs|require[sd]?|requirements?|m
  * The largest years requirement in the text, or null. A figure (`N years`, `N+ yrs`, `N year`; "3-5 years" counts 5)
  * counts when its sentence mentions experience ("experience", "exp"), when it sits on a bullet line, or when it is
  * "N+ years of|in|as|with ...". Sentences about the company itself (history, founding, combined experience, "we
- * have ..." without asking for anything), vesting and benefits are skipped. Above 14 years a "N+ years of ..." match
- * also needs requirement wording or a bullet. Figures above 30 are ignored.
+ * have ..." without asking for anything), vesting and benefits are skipped. Above 14 years a figure also needs
+ * experience or requirement wording in its sentence (a bullet alone is not enough). Figures above 30 are ignored.
  */
 export function yearsRequired(text: string): number | null {
   let max: number | null = null;
@@ -324,7 +335,8 @@ export function yearsRequired(text: string): number | null {
         const n = Number(m[1]);
         const spentOn = m[2] === '+' && SPENT_ON.test(sentence.slice((m.index ?? 0) + m[0].length));
         if (!experience && !bullet && !spentOn) continue;
-        if (n > 30 || (n > 14 && !experience && !bullet && !asking)) continue;
+        // A bullet alone is not requirement wording: company highlights ("- 20 years in the market") are bullets too.
+        if (n > 30 || (n > 14 && !experience && !asking)) continue;
         if (max === null || n > max) max = n;
       }
     }

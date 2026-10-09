@@ -3,7 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
 import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
-import { countriesIn, hasPlaceExclusion, jobKey, placeOf, postedAtOf, remoteTextSignals, yearsRequired } from '../text/norm.js';
+import { countriesIn, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
 import { Posting, RawPosting } from '../types.js';
 
 /**
@@ -38,7 +38,6 @@ const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !=
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && /^\s*\d+(?:\.\d+)?\s*$/.test(v) ? Number(v) : null);
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
 const oneLine = (s: string): string => decodeEntities(s).replace(/\s+/g, ' ').trim();
-const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();
 /** A list of strings (or one string) as one display string; null when there is nothing. */
 const listText = (v: unknown, sep = ', '): string | null => {
   const parts = (Array.isArray(v) ? v : [v]).flatMap((x) => (typeof x === 'string' && x.trim() !== '' ? [oneLine(x)] : []));
@@ -141,7 +140,8 @@ const PAY_WORD =
 const NOT_PAY =
   /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
 /** Pay that is not salary; a sentence that names only these (no base, salary, fixed or CTC) states no salary. */
-const OTHER_PAY = /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commission|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?)\b/i;
+const OTHER_PAY =
+  /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|variable|incentives?|ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
 const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
@@ -150,25 +150,28 @@ const FOREIGN_MONEY =
 const DOLLAR_COUNTRY = /\b(?:canada|canadian|australia|australian|singapore|hong kong|new zealand|mexico|taiwan)\b/i;
 const US_DOLLAR = /\bUSD\b|US\$/;
 /** Sentence ends; "Rs.", "No.", "e.g." and the like are not ends. */
-const PAY_SENTENCE_SPLIT = /\n+|(?<=[.!?;])(?<!\b(?:rs|no|approx|e\.g|i\.e|incl|min|max|vs|etc|mr|ms|dr|p\.a)\.)\s+/i;
+const PAY_SENTENCE_SPLIT = /\n+|;\s*|(?<=[.!?])(?<!\b(?:rs|no|approx|e\.g|i\.e|incl|min|max|vs|etc|mr|ms|dr|p\.a)\.)\s+/i;
 /** Where a money figure starts: a currency sign or code before digits, or digits with a magnitude word. */
 const FIGURE = /(?:[₹$€£]|\b(?:rs\.?|inr|usd|eur|gbp)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr|k|m|l)?\b|\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr)\b/i;
-const UP_TO = /\b(?:up ?to|upto|max(?:imum)?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
-const FROM = /\b(?:from|starting(?: at| from)?|starts at|at least|min(?:imum)?(?: of)?|no less than)\s*:?\s*$/i;
+const UP_TO = /\b(?:up ?to|upto|max(?:imum)?\.?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
+const FROM = /\b(?:from|starting(?: at| from)?|starts at|at least|min(?:imum)?\.?(?: of)?|no less than)\s*:?\s*$/i;
 const OR_MORE = /^\s*(?:\+|or more\b|and above\b|or higher\b|onwards\b)/i;
 
 /**
- * Comp stated in the description, read one sentence at a time with `parseComp`. A sentence counts only when it has a
+ * Comp stated in the description, read one sentence (and `;` clause) at a time with `parseComp`. A sentence counts only when it has a
  * pay word (salary, base, pay, compensation, CTC, LPA, per annum, /yr, per year, a year) and no funding or revenue
  * word (raised, funding, valuation, revenue, ARR, series, saved, budget, customers, users ...). It is skipped when it
  * names only non-salary pay (equity, bonus ...), a currency the Posting cannot carry, a bare `$` beside Canada or
  * another dollar country, or cannot be parsed with confidence. A single figure after "up to" keeps only the max; after
  * "from", "starting at", "at least" or before "+" / "or more" only the min. Implausible figures are dropped. The
- * basis is `base` only when every contributing sentence says base, fixed or CTC and names no other kind of pay.
+ * basis is `base` only when every contributing sentence says base, fixed or CTC and names no other kind of pay; when
+ * any sentence states base explicitly, only those base figures are used. A clause whose only pay words are
+ * variable, incentive, OTE, commission, bonus or equity is skipped.
  */
 export function compFromText(text: string): Comp | null {
   const ranges: Range[] = [];
   for (const sentence of text.split(PAY_SENTENCE_SPLIT)) {
+    // A clause whose only pay words are variable, incentive, OTE, commission, bonus or equity states no salary.
     if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
     if (OTHER_PAY.test(sentence) && !SALARY_WORD.test(sentence)) continue;
     if (FOREIGN_MONEY.test(sentence) || (sentence.includes('$') && DOLLAR_COUNTRY.test(sentence) && !US_DOLLAR.test(sentence))) continue;
@@ -187,7 +190,9 @@ export function compFromText(text: string): Comp | null {
     }
     ranges.push({ min, max, currency: r.range.currency, base: basisIsBase(sentence) });
   }
-  return compOf(ranges);
+  // Explicit base figures are the salary; other salary mentions next to them are not unioned in.
+  const base = ranges.filter((r) => r.base);
+  return compOf(base.length > 0 ? base : ranges);
 }
 
 /** Structured comp when the source states some, else comp from the text. `undefined` means the source states none. */
@@ -237,6 +242,7 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
   const url = httpUrl(m.url);
   if (url === null) throw fail(raw, `no http(s) url (${String(m.url).slice(0, 80)})`);
   const locationText = m.locationText.replace(/\s+/g, ' ').trim();
+  const excluded = excludedPlaces(locationText);
   return {
     jobKey: jobKey(raw.company, title, locationText),
     source: raw.source,
@@ -249,12 +255,13 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
     locationText,
     remote: {
       structured: m.structured,
-      countries: sortedUnique(m.countries),
+      // A place the location text excludes is never a country, whichever field named it.
+      countries: withoutExcluded(m.countries, excluded),
       signals: [
         ...new Set([
           ...m.signals,
           ...remoteTextSignals('location', locationText),
-          ...(hasPlaceExclusion(locationText) ? ['location:exclusion'] : []),
+          ...excluded.map((p) => `location:excludes:${p}`),
           ...remoteTextSignals('title', title),
         ]),
       ],
@@ -335,7 +342,8 @@ function lever(raw: RawPosting, r: Rec): Posting {
   let structuredComp: Comp | null | undefined;
   if (isRec(r.salaryRange)) {
     const s = r.salaryRange;
-    const range = rangeOf(s.min, s.max, s.currency, perYearOf(s.interval), true);
+    // Lever's 0 is "not stated" (the adapter already drops a 0/0 placeholder).
+    const range = rangeOf(s.min === 0 ? null : s.min, s.max === 0 ? null : s.max, s.currency, perYearOf(s.interval), true);
     structuredComp = compOf(range === null ? [] : [range]);
   }
   return assemble(raw, 'lever', {

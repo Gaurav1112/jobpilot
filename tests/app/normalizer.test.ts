@@ -952,7 +952,9 @@ describe('fix round 1: yearsRequired (I7, widened)', () => {
     expect(yearsRequired('Experience: 20 years in finance.')).toBe(20);
     expect(yearsRequired('With 18+ years in the industry, the team ships.')).toBeNull();
     expect(yearsRequired('6+ years in the industry, the team ships.')).toBe(6);
-    expect(yearsRequired('- 16+ years building payments')).toBe(16);
+    // A bullet alone is not requirement wording above 14 (fix round 2, N2).
+    expect(yearsRequired('- 16+ years building payments')).toBeNull();
+    expect(yearsRequired('- 16+ years building payments is a must')).toBe(16);
   });
 
   it('reads the three recorded postings that were null', () => {
@@ -996,7 +998,7 @@ describe('fix round 1: places (M2, M4)', () => {
     expect(countriesIn('Anywhere but US')).toEqual(['worldwide']);
     expect(countriesIn('Remote, excluding India, Pakistan; Canada')).toEqual(['canada']);
     const p = one(raw('greenhouse', { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote (except India)' } }));
-    expect(p.remote).toEqual({ structured: null, countries: [], signals: ['location:remote', 'location:exclusion'] });
+    expect(p.remote).toEqual({ structured: null, countries: [], signals: ['location:remote', 'location:excludes:india'] });
   });
 
   it('decodes a Jobicy geo, and splits an entry naming two places', () => {
@@ -1010,5 +1012,83 @@ describe('fix round 1: Ashby empty summary falls back to tiers (M5)', () => {
   it('reads tier components when summaryComponents is empty', () => {
     const p = one(raw('ashby', { id: '1', title: 'Eng', jobUrl: 'https://jobs.ashbyhq.com/x/1', location: 'Remote', compensation: { summaryComponents: [], compensationTiers: [{ components: [{ compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'USD', minValue: 100000, maxValue: 120000 }] }] } }));
     expect(p.comp).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 2 (re-review N1-N3, M11-M13)
+// ---------------------------------------------------------------------------
+
+describe('fix round 2: variable pay never joins the salary (N1)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('skips variable, incentive, OTE, commission, bonus and equity clauses, and keeps only explicit base', () => {
+    expect(text('<p>Fixed: ₹25 LPA; variable ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Fixed: ₹25 LPA;variable ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base: ₹25 LPA.</p><p>Variable: ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base: ₹20-25 LPA. Incentive compensation: ₹5 LPA. On-target pay: ₹35 LPA. Commission: ₹4 LPA.</p>')).toEqual({ min: 2000000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Variable pay: ₹4 LPA</p>')).toBeNull();
+    expect(text('<p>OTE: $250,000</p>')).toBeNull();
+  });
+
+  it('uses only the base figures when base is stated, not a union with unknown ones', () => {
+    expect(text('<p>Base salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 200000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+
+  it('does not split after p.a., approx., incl. or e.g.', () => {
+    expect(text('<p>CTC ₹20 LPA p.a. Paid monthly.</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Salary approx. ₹20 LPA</p>')?.max).toBe(2000000);
+    expect(text('<p>Base salary incl. allowances ₹20 LPA</p>')?.max).toBe(2000000);
+    expect(text('<p>Pay e.g. ₹20 LPA</p>')?.max).toBe(2000000);
+  });
+});
+
+describe('fix round 2: company bullets above 14 years (N2)', () => {
+  it('ignores company-highlight bullets', () => {
+    for (const s of ['- 20 years in the market', '- Trusted by 500 companies for 20 years', '- 16+ years of innovation', '- 25 years of excellence in fintech', '- Over 20 years of industry leadership']) {
+      expect(yearsRequired(s), s).toBeNull();
+    }
+    expect(yearsRequired('- Paid parental leave for up to 2 years')).toBeNull();
+  });
+
+  it('keeps a bullet that states experience or asks for it', () => {
+    expect(yearsRequired('- 20+ years of experience in banking')).toBe(20);
+    expect(yearsRequired('- Minimum 15 years in banking')).toBe(15);
+    expect(yearsRequired('- 6+ years building distributed systems')).toBe(6);
+  });
+});
+
+describe('fix round 2: exclusions name the place (N3)', () => {
+  const remote = (location: string) => one(raw('greenhouse', { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: location } })).remote;
+
+  it('emits location:excludes:<place> and never keeps worldwide when India is excluded', () => {
+    expect(remote('Remote - Anywhere except India')).toEqual({ structured: null, countries: [], signals: ['location:remote', 'location:excludes:india'] });
+    expect(remote('Remote, excluding India, Pakistan; Canada')).toEqual({ structured: null, countries: ['canada'], signals: ['location:remote', 'location:excludes:india', 'location:excludes:pakistan'] });
+    expect(remote('Anywhere but US')).toEqual({ structured: null, countries: ['worldwide'], signals: ['location:excludes:united states'] });
+  });
+
+  it('removes an excluded place even when another field names it', () => {
+    const p = one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', country: 'IN', categories: { location: 'Remote (except India)' } }));
+    expect(p.remote.countries).toEqual([]);
+    expect(p.remote.signals).toContain('location:excludes:india');
+  });
+});
+
+describe('fix round 2: minors (M11, M13)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('reads min., minimum, max. and maximum as one-sided', () => {
+    expect(text('<p>Salary: min. ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: minimum ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: max. ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: maximum ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+  });
+
+  it('reads a Lever salaryRange min of 0 as not stated', () => {
+    const p = one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', salaryRange: { min: 0, max: 4500000, currency: 'INR', interval: 'per-year-salary' } }));
+    expect(p.comp).toEqual({ min: null, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });
