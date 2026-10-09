@@ -422,16 +422,26 @@ describe('executor: transactional writes (staged, committed only after the out g
       throw new Error('boom');
     });
     expect((await exec(Store.open(':memory:'), out, failing)).kind).toBe('failed');
-    let late: Promise<unknown> | undefined;
+
+    // Gates, not sleeps: the agent is held until the executor has returned its timeout, and the test awaits the late
+    // write itself, so the outcome never depends on how long a write takes.
+    let release!: () => void;
+    const timedOut = new Promise<void>((r) => (release = r));
+    let lateWrite!: (p: Promise<unknown>) => void;
+    const late = new Promise<Promise<unknown>>((r) => (lateWrite = r));
     const slow = make({ id: 'sleeper', timeoutMs: 50 }, async (ctx) => {
-      await ctx.files!.write!('k/b.txt', bytes('B'));
-      await new Promise((r) => setTimeout(r, 120));
-      late = ctx.files!.write!('k/c.txt', bytes('C')).catch((e: unknown) => e);
+      try {
+        await ctx.files!.write!('k/b.txt', bytes('B'));
+      } catch {
+        // refused because the timeout already fired: fine, nothing may commit either way
+      }
+      await timedOut; // held until the executor has returned its timeout
+      lateWrite(ctx.files!.write!('k/c.txt', bytes('C')).catch((e: unknown) => e));
       return [{ n: 2 }];
     });
     expect(await exec(Store.open(':memory:'), out, slow)).toMatchObject({ kind: 'failed', error: 'timeout' });
-    await new Promise((r) => setTimeout(r, 150));
-    expect(await late).toBeInstanceOf(KernelError);
+    release();
+    expect(await (await late)).toBeInstanceOf(KernelError);
     expect(existsSync(join(out, 'k'))).toBe(false);
     expect(readdirSync(join(out, '.pending'))).toEqual([]);
   });
