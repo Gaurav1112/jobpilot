@@ -1,0 +1,114 @@
+import { describe, expect, it } from 'vitest';
+import {
+  CoverPlan,
+  DiscoveryRequest,
+  EligibilityVerdict,
+  Evidence,
+  hasTitleUrl,
+  knownAts,
+  notRejected,
+  planHasBullets,
+  Posting,
+  QaReport,
+  qaRan,
+  RawPosting,
+  Rendered,
+  ResumePlan,
+  Scored,
+} from '../../src/app/types.js';
+
+const posting: Posting = {
+  jobKey: 'greenhouse:acme:1', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
+  title: 'Backend Engineer', url: 'https://example.com/jobs/1', locationText: 'Remote - India',
+  remote: { structured: 'remote', countries: ['india'] }, employmentType: null, descriptionText: 'Build things.',
+  postedAt: '2026-10-01', comp: { min: 1, max: 2, currency: 'INR', period: 'year', basis: 'base' }, yearsRequired: 5,
+};
+const verdict: EligibilityVerdict = { posting, verdict: 'eligible', reasons: [], notes: [] };
+const scored: Scored = {
+  posting, verdict: 'eligible', notes: [], score: 7, breakdown: [{ label: 'title', points: 3 }],
+  jdTerms: { strong: ['go'], medium: [], gap: [] },
+};
+const evidence: Evidence = {
+  scored, ranked: [{ factId: 'f1', employer: 'Acme', rank: 1, matched: ['go'] }], covered: ['go'], missing: [],
+};
+const resume: ResumePlan = {
+  jobKey: posting.jobKey, headline: 'Engineer', summary: { text: 'Hi {n}', slots: { n: 3, s: 'x' } }, skills: ['Go'],
+  roles: [{ employer: 'Acme', title: 'Eng', location: 'Pune', start: '2020-01', end: 'Present', bullets: [{ factId: 'f1', text: 'Did.' }] }],
+  certs: [{ factId: 'c1', text: 'Cert' }], covered: ['go'], missing: [], ats: 'greenhouse', firstSeen: '2026-10-09',
+};
+const cover: CoverPlan = { jobKey: posting.jobKey, resume, paragraphs: [{ text: 'Dear', factIds: ['f1'] }] };
+const files = [{ kind: 'resume' as const, format: 'pdf' as const, path: '/o/r.pdf', sha256: 'ab', pages: 1 }];
+const rendered: Rendered = { jobKey: posting.jobKey, files, recommended: 'pdf', plan: cover };
+const qa: QaReport = { jobKey: posting.jobKey, ok: true, checks: [{ id: 'pages', ok: true, detail: '1' }], files };
+
+const cases: [string, { schema: { safeParse(v: unknown): { success: boolean } } }, unknown][] = [
+  ['DiscoveryRequest', DiscoveryRequest, { ats: 'lever', slug: 's', company: 'C', runDate: '2026-10-09' }],
+  ['RawPosting', RawPosting, { source: 's', sourceId: '1', company: 'C', slug: 's', raw: { any: ['thing'] } }],
+  ['Posting', Posting, posting],
+  ['EligibilityVerdict', EligibilityVerdict, verdict],
+  ['Scored', Scored, scored],
+  ['Evidence', Evidence, evidence],
+  ['ResumePlan', ResumePlan, resume],
+  ['CoverPlan', CoverPlan, cover],
+  ['Rendered', Rendered, rendered],
+  ['QaReport', QaReport, qa],
+];
+
+describe('message types', () => {
+  for (const [name, type, value] of cases) {
+    it(`${name} round-trips`, () => {
+      expect(type.schema.safeParse(JSON.parse(JSON.stringify(value))).success).toBe(true);
+    });
+    it(`${name} rejects unknown top-level keys`, () => {
+      expect(type.schema.safeParse({ ...(value as object), extra: 1 }).success).toBe(false);
+    });
+  }
+
+  it('rejects unknown keys in nested objects', () => {
+    expect(Posting.schema.safeParse({ ...posting, remote: { ...posting.remote, x: 1 } }).success).toBe(false);
+    expect(Posting.schema.safeParse({ ...posting, comp: { ...posting.comp, x: 1 } }).success).toBe(false);
+    expect(Scored.schema.safeParse({ ...scored, posting: { ...posting, x: 1 } }).success).toBe(false);
+    expect(Scored.schema.safeParse({ ...scored, jdTerms: { ...scored.jdTerms, x: [] } }).success).toBe(false);
+    expect(Rendered.schema.safeParse({ ...rendered, files: [{ ...files[0], x: 1 }] }).success).toBe(false);
+  });
+
+  it('validates dates and enums', () => {
+    expect(DiscoveryRequest.schema.safeParse({ ats: 'lever', slug: 's', company: 'C', runDate: '09/10/2026' }).success).toBe(false);
+    expect(DiscoveryRequest.schema.safeParse({ ats: 'workday', slug: 's', company: 'C', runDate: '2026-10-09' }).success).toBe(false);
+    expect(Posting.schema.safeParse({ ...posting, postedAt: 'yesterday' }).success).toBe(false);
+    expect(Posting.schema.safeParse({ ...posting, postedAt: '2026-10-01T10:00:00Z' }).success).toBe(true);
+    expect(Scored.schema.safeParse({ ...scored, verdict: 'rejected' }).success).toBe(false);
+  });
+
+  it('carries ids', () => {
+    expect(Posting.id).toBe('Posting@1');
+    expect(QaReport.id).toBe('QaReport@1');
+  });
+});
+
+describe('predicates', () => {
+  it('req.known-ats', () => {
+    expect(knownAts.id).toBe('req.known-ats');
+    expect(knownAts.test({ ats: 'feed', slug: 's', company: 'C', runDate: '2026-10-09' })).toBe(true);
+    expect(knownAts.test({ ats: 'nope' as never, slug: 's', company: 'C', runDate: '2026-10-09' })).toBe(false);
+  });
+  it('posting.has-title-url', () => {
+    expect(hasTitleUrl.test(posting)).toBe(true);
+    expect(hasTitleUrl.test({ ...posting, title: '  ' })).toBe(false);
+    expect(hasTitleUrl.test({ ...posting, url: '' })).toBe(false);
+  });
+  it('verdict.not-rejected', () => {
+    expect(notRejected.test(verdict)).toBe(true);
+    expect(notRejected.test({ ...verdict, verdict: 'review' })).toBe(true);
+    expect(notRejected.test({ ...verdict, verdict: 'rejected' })).toBe(false);
+  });
+  it('plan.has-bullets', () => {
+    expect(planHasBullets.test(resume)).toBe(true);
+    expect(planHasBullets.test({ ...resume, roles: [{ ...resume.roles[0]!, bullets: [] }] })).toBe(false);
+    expect(planHasBullets.test({ ...resume, roles: [] })).toBe(false);
+  });
+  it('qa.ran', () => {
+    expect(qaRan.test(qa)).toBe(true);
+    expect(qaRan.test({ ...qa, checks: [] })).toBe(false);
+  });
+});

@@ -1,0 +1,213 @@
+import { z } from 'zod';
+import { definePredicate } from '../kernel/predicates.js';
+import { defineType } from '../kernel/types.js';
+
+const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed']);
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
+const Verdict = z.enum(['eligible', 'rejected', 'review']);
+
+export const DiscoveryRequest = defineType(
+  'DiscoveryRequest',
+  1,
+  z.object({ ats: Ats, slug: z.string(), company: z.string(), runDate: IsoDate }).strict(),
+);
+export type DiscoveryRequest = z.infer<typeof DiscoveryRequest.schema>;
+
+export const RawPosting = defineType(
+  'RawPosting',
+  1,
+  z.object({ source: z.string(), sourceId: z.string(), company: z.string(), slug: z.string(), raw: z.unknown() }).strict(),
+);
+export type RawPosting = z.infer<typeof RawPosting.schema>;
+
+export const Posting = defineType(
+  'Posting',
+  1,
+  z
+    .object({
+      jobKey: z.string(),
+      source: z.string(),
+      sourceId: z.string(),
+      company: z.string(),
+      slug: z.string(),
+      ats: Ats,
+      title: z.string(),
+      url: z.string(),
+      locationText: z.string(),
+      remote: z
+        .object({
+          structured: z.enum(['remote', 'hybrid', 'onsite']).nullable(),
+          countries: z.array(z.string()),
+        })
+        .strict(),
+      employmentType: z.string().nullable(),
+      descriptionText: z.string(),
+      postedAt: IsoDateOrDateTime.nullable(),
+      comp: z
+        .object({
+          min: z.number(),
+          max: z.number(),
+          currency: z.enum(['INR', 'USD', 'EUR', 'GBP']),
+          period: z.literal('year'),
+          basis: z.enum(['base', 'unknown']),
+        })
+        .strict()
+        .nullable(),
+      yearsRequired: z.number().nullable(),
+    })
+    .strict(),
+);
+export type Posting = z.infer<typeof Posting.schema>;
+
+export const EligibilityVerdict = defineType(
+  'EligibilityVerdict',
+  1,
+  z.object({ posting: Posting.schema, verdict: Verdict, reasons: z.array(z.string()), notes: z.array(z.string()) }).strict(),
+);
+export type EligibilityVerdict = z.infer<typeof EligibilityVerdict.schema>;
+
+export const Scored = defineType(
+  'Scored',
+  1,
+  z
+    .object({
+      posting: Posting.schema,
+      verdict: z.enum(['eligible', 'review']),
+      notes: z.array(z.string()),
+      score: z.number(),
+      breakdown: z.array(z.object({ label: z.string(), points: z.number() }).strict()),
+      jdTerms: z
+        .object({ strong: z.array(z.string()), medium: z.array(z.string()), gap: z.array(z.string()) })
+        .strict(),
+    })
+    .strict(),
+);
+export type Scored = z.infer<typeof Scored.schema>;
+
+export const Evidence = defineType(
+  'Evidence',
+  1,
+  z
+    .object({
+      scored: Scored.schema,
+      ranked: z
+        .array(
+          z.object({ factId: z.string(), employer: z.string(), rank: z.number(), matched: z.array(z.string()) }).strict(),
+        ),
+      covered: z.array(z.string()),
+      missing: z.array(z.string()),
+    })
+    .strict(),
+);
+export type Evidence = z.infer<typeof Evidence.schema>;
+
+const FactText = z.object({ factId: z.string(), text: z.string() }).strict();
+
+export const ResumePlan = defineType(
+  'ResumePlan',
+  1,
+  z
+    .object({
+      jobKey: z.string(),
+      headline: z.string(),
+      summary: z
+        .object({ text: z.string(), slots: z.record(z.string(), z.union([z.string(), z.number()])) })
+        .strict(),
+      skills: z.array(z.string()),
+      roles: z.array(
+        z
+          .object({
+            employer: z.string(),
+            title: z.string(),
+            location: z.string(),
+            start: z.string(),
+            end: z.string(),
+            bullets: z.array(FactText),
+          })
+          .strict(),
+      ),
+      certs: z.array(FactText),
+      covered: z.array(z.string()),
+      missing: z.array(z.string()),
+      ats: Ats,
+      firstSeen: IsoDate,
+    })
+    .strict(),
+);
+export type ResumePlan = z.infer<typeof ResumePlan.schema>;
+
+export const CoverPlan = defineType(
+  'CoverPlan',
+  1,
+  z
+    .object({
+      jobKey: z.string(),
+      resume: ResumePlan.schema,
+      paragraphs: z.array(z.object({ text: z.string(), factIds: z.array(z.string()) }).strict()),
+    })
+    .strict(),
+);
+export type CoverPlan = z.infer<typeof CoverPlan.schema>;
+
+const RenderedFile = z
+  .object({
+    kind: z.enum(['resume', 'cover']),
+    format: z.enum(['pdf', 'docx', 'html']),
+    path: z.string(),
+    sha256: z.string(),
+    pages: z.number().nullable(),
+  })
+  .strict();
+
+export const Rendered = defineType(
+  'Rendered',
+  1,
+  z
+    .object({
+      jobKey: z.string(),
+      files: z.array(RenderedFile),
+      recommended: z.enum(['pdf', 'docx']),
+      plan: CoverPlan.schema,
+    })
+    .strict(),
+);
+export type Rendered = z.infer<typeof Rendered.schema>;
+
+export const QaReport = defineType(
+  'QaReport',
+  1,
+  z
+    .object({
+      jobKey: z.string(),
+      ok: z.boolean(),
+      checks: z.array(z.object({ id: z.string(), ok: z.boolean(), detail: z.string() }).strict()),
+      files: z.array(RenderedFile),
+    })
+    .strict(),
+);
+export type QaReport = z.infer<typeof QaReport.schema>;
+
+// `score.at-least-floor` is deliberately not a predicate: it needs the pack's
+// score floor, so the scoring agent checks it directly (see Task 7).
+export const knownAts = definePredicate<DiscoveryRequest>(
+  'req.known-ats',
+  'ats is one of greenhouse, lever, ashby, feed',
+  (r) => Ats.safeParse(r.ats).success,
+);
+export const hasTitleUrl = definePredicate<Posting>(
+  'posting.has-title-url',
+  'posting has a non-empty title and url',
+  (p) => p.title.trim().length > 0 && p.url.trim().length > 0,
+);
+export const notRejected = definePredicate<EligibilityVerdict>(
+  'verdict.not-rejected',
+  'verdict is not rejected',
+  (v) => v.verdict !== 'rejected',
+);
+export const planHasBullets = definePredicate<ResumePlan>(
+  'plan.has-bullets',
+  'at least one role carries a bullet',
+  (p) => p.roles.some((r) => r.bullets.length > 0),
+);
+export const qaRan = definePredicate<QaReport>('qa.ran', 'at least one QA check ran', (q) => q.checks.length > 0);
