@@ -1,4 +1,5 @@
 import type { FxRates } from './comp/floor.js';
+import type { DocCheck } from './docs-check.js';
 import type { Doc, DocsState, JobUpsert } from './store/app-store.js';
 import type { AppStore } from './store/app-store.js';
 import { JOB_TRACKER_KIND, jobKeyOf } from './tracker.js';
@@ -13,6 +14,11 @@ export interface ProjectOptions {
   readonly fx: FxRates;
   /** When the jobs were seen; default the run's `run_started` event time. */
   readonly at?: string;
+  /**
+   * Checks a QA-passed document is on disk with its recorded sha256 (`diskDocCheck(outDir())` in production). A job
+   * is `ready` only when every listed file checks `ok`; otherwise its documents are `missing`.
+   */
+  readonly docOnDisk: DocCheck;
 }
 
 export interface ProjectResult {
@@ -45,7 +51,7 @@ interface Quarantine {
 interface JobGroup {
   readonly envs: Envelope[];
   readonly quarantines: Quarantine[];
-  readonly failures: { agent: string; error: string; inputRank: number }[];
+  readonly failures: { agent: string; error: string; inputRank: number; reason?: string }[];
 }
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -101,6 +107,9 @@ const inr = (v: number | null, p: Posting['comp'], fx: FxRates): number | null =
  * never overwrites newer data or docs. Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
  * note are never written. Projecting a run twice is a no-op.
  */
+/** Named reasons a failed writing step's detail may carry; only these (never the free text, which may quote data) are shown. */
+const NAMED_REASON = /\b(?:unrenderable-glyph:U\+[0-9A-F]{4,6}|unsafe-posting-text)\b/;
+
 export function projectRun(kernel: Store, app: AppStore, runId: string, opts: ProjectOptions): ProjectResult {
   const run = kernel.getRun(runId);
   if (!run) throw new Error(`unknown run ${runId}`);
@@ -118,7 +127,7 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   // 1. the run's step outcomes, from its events (the event log is per run; the step table is not)
   const done = new Set<string>();
   const quarantined = new Map<string, { agent: string; verdict: unknown }>();
-  const failed = new Map<string, { agent: string; error: string }>();
+  const failed = new Map<string, { agent: string; error: string; reason?: string }>();
   for (const e of events) {
     const d = dataOf(e);
     const stepKey = str(d['stepKey']);
@@ -130,7 +139,10 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
       const row = kernel.getStep(stepKey);
       const verdicts = JSON.parse(row?.detail ?? '[]') as unknown[];
       quarantined.set(stepKey, { agent, verdict: verdicts.at(-1) });
-    } else if (e.kind === 'step_failed') failed.set(stepKey, { agent, error: str(d['error']) ?? 'unknown' });
+    } else if (e.kind === 'step_failed') {
+      const reason = NAMED_REASON.exec(str(d['detail']) ?? '')?.[0];
+      failed.set(stepKey, { agent, error: str(d['error']) ?? 'unknown', ...(reason !== undefined ? { reason } : {}) });
+    }
   }
   for (const k of quarantined.keys()) done.delete(k);
 
@@ -170,11 +182,11 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
     if (key === null || !input) continue;
     const g = group(key);
     g.envs.push(input);
-    g.failures.push({ agent: f.agent, error: f.error, inputRank: RANK[input.type] ?? 0 });
+    g.failures.push({ agent: f.agent, error: f.error, inputRank: RANK[input.type] ?? 0, ...(f.reason !== undefined ? { reason: f.reason } : {}) });
   }
 
   // 4. one row per job
-  const docs: Record<DocsState, number> = { ready: 0, blocked: 0, 'below-floor': 0, none: 0 };
+  const docs: Record<DocsState, number> = { ready: 0, blocked: 0, 'below-floor': 0, none: 0, missing: 0 };
   let jobs = 0;
   let inserted = 0;
   let stale = 0;
@@ -233,6 +245,16 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
     docsState = qa.ok ? 'ready' : 'blocked';
     docsDetail = qa.ok ? null : `qa failed: ${qa.checks.filter((c) => !c.ok).map((c) => `${c.id}: ${c.detail}`).join('; ')}`;
     docs = qa.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path, sha256: f.sha256, pages: f.pages, qaOk: qa.ok }));
+    if (qa.ok) {
+      const gone = qa.files.flatMap((f) => {
+        const s = opts.docOnDisk(f.path, f.sha256);
+        return s === 'ok' ? [] : [`${f.path} ${s === 'absent' ? 'is not on disk' : 'changed on disk'}`];
+      });
+      if (gone.length > 0) {
+        docsState = 'missing';
+        docsDetail = `documents missing: ${gone.join('; ')}`;
+      }
+    }
   } else if (writingQuarantine) {
     docsState = 'blocked';
     docsDetail = writingQuarantine.detail;
@@ -241,7 +263,11 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
   } else {
     const q = g.quarantines[0];
     if (q) docsDetail = q.detail;
-    else if (writingFailure) docsDetail = `${writingFailure.agent} failed: ${writingFailure.error}`;
+    else if (writingFailure) {
+      // A named, deterministic reason (an unrenderable glyph, unsafe posting text) blocks the documents; it is shown.
+      docsDetail = `${writingFailure.agent} failed: ${writingFailure.error}${writingFailure.reason ? ` (${writingFailure.reason})` : ''}`;
+      if (writingFailure.reason) docsState = 'blocked';
+    }
   }
 
   const comp = posting.comp;

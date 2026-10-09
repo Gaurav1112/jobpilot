@@ -1,5 +1,7 @@
 import { COVER_P4, COVER_P4_AVAILABILITY, COVER_P4_THANKS, RENDER_PLACEHOLDERS, sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
+import { z } from 'zod';
 import type { CoverPlan } from '../types.js';
+import { coverModel, type DocModel, resumeModel } from './model.js';
 
 /**
  * The cover letter's p4 fill (spec §3 answers.yaml, §5.4 cover-writer). Only the renderer calls it, and only on the
@@ -11,11 +13,14 @@ import type { CoverPlan } from '../types.js';
 /** The answer keys the fill reads; no other answer may reach a document. */
 export const FILL_KEYS = { availableFrom: 'available_from', notice: 'notice_period' } as const;
 
-/** An answer as fill text: a non-empty string or a number, trimmed; anything else counts as missing. */
+/**
+ * An answer as fill text: a non-empty string or a number, trimmed, with one trailing "." or "," removed (the template
+ * supplies its own punctuation, so "Immediately." does not become "Immediately.,"); anything else counts as missing.
+ */
 function answerText(answers: Readonly<Record<string, unknown>>, key: string): string | undefined {
   if (!Object.hasOwn(answers, key)) return undefined;
   const v = answers[key];
-  const s = typeof v === 'string' ? v.trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : undefined;
+  const s = typeof v === 'string' ? v.trim().replace(/[.,]$/, '').trim() : typeof v === 'number' && Number.isFinite(v) ? String(v) : undefined;
   return s === undefined || s === '' ? undefined : s;
 }
 
@@ -49,3 +54,20 @@ export function fillCover(cover: CoverPlan, answers: Readonly<Record<string, unk
 
 /** Whether a text still holds a placeholder brace. */
 export const hasBrace = (s: string): boolean => /[{}]/.test(s);
+
+/** What the renderer (and G-FILL) read from the full pack. */
+export const RenderPack = z.object({
+  contact: z.object({ name: z.string().min(1), email: z.string(), phone: z.string(), city: z.string(), links: z.array(z.string()) }),
+  answers: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  naming: z.object({ forbiddenTerms: z.array(z.string()) }),
+});
+export type RenderPack = z.infer<typeof RenderPack>;
+
+/**
+ * The filled plan and both document models: what the renderer draws, and what G-FILL re-derives. Pure (no render
+ * library), so the guardrail module never loads pdfkit or docx.
+ */
+export function renderModels(cover: CoverPlan, pack: RenderPack): { plan: CoverPlan; resume: DocModel; cover: DocModel } {
+  const plan = fillCover(cover, pack.answers);
+  return { plan, resume: resumeModel(plan.resume, pack.contact), cover: coverModel(plan, pack.contact) };
+}

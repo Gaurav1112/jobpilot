@@ -5,6 +5,7 @@ import { createHostPacer, freezePack, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
 import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
+import { recoverPending } from './files.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import type { Policy } from './policy.js';
@@ -161,7 +162,20 @@ export class Supervisor {
       this.event(runId, 'run_started', { pipeline: compiled.pipeline.id, seeds: envs.length });
     });
     this.rememberContracts();
+    await this.recoverFiles(runId);
     return this.drain(runId);
+  }
+
+  /**
+   * Staged writes left by a crashed process (files.ts): a done step's stage is committed (the crash came between
+   * recording the step and committing its files), every other stage is deleted. Runs before any step of this run.
+   */
+  private async recoverFiles(runId: string): Promise<void> {
+    for (const [name, root] of Object.entries(this.d.providers.fileRoots ?? {})) {
+      if (root === undefined) continue;
+      const r = await recoverPending(root, (k) => this.d.store.getStep(k)?.status === 'done', this.d.policy.maxResponseBytes);
+      if (r.committed.length + r.discarded.length + r.failed.length > 0) this.event(runId, 'files_recovered', { root: name, ...r });
+    }
   }
 
   /** Continues a crashed run. Finished steps replay from the store; nothing finished runs again. */
@@ -172,6 +186,7 @@ export class Supervisor {
     if (run.policy_hash !== this.d.policyHash) throw new Error(`run ${runId} used a different policy; start a new run instead`);
     this.event(runId, 'run_resumed', {});
     this.rememberContracts();
+    await this.recoverFiles(runId);
     return this.drain(runId);
   }
 

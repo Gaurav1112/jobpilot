@@ -1,14 +1,13 @@
-import { z } from 'zod';
 import { defineAgent } from '../../../kernel/agent.js';
 import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { profileFor } from '../../ats-profiles.js';
 import { assertNoForbidden, ForbiddenTermError } from '../../pack/rules.js';
 import { docxText, renderDocx } from '../../render/docx.js';
-import { fillCover } from '../../render/fill.js';
+import { RenderPack, renderModels } from '../../render/fill.js';
 import { renderHtml } from '../../render/html.js';
-import { coverModel, type DocModel, modelText, normText, RENDER_FILES, renderedPath, resumeModel, unencodable } from '../../render/model.js';
-import { renderPdf } from '../../render/pdf.js';
+import { coverModel, type DocModel, modelText, normText, RENDER_FILES, renderedPath, resumeModel } from '../../render/model.js';
+import { renderPdf, uncoveredGlyph } from '../../render/pdf.js';
 import { CoverPlan, Rendered } from '../../types.js';
 
 /**
@@ -19,7 +18,8 @@ import { CoverPlan, Rendered } from '../../types.js';
  * outputs are P1 (`emits`, and the kernel floors a 'full' pack agent's outputs at P1 whatever it returns).
  *
  * Every line is already grounded; the renderer adds only the contact block, section headings, role dates, the date
- * line, the salutation and the sign-off (`render/model.ts`). Before writing it refuses text the PDF fonts cannot set
+ * line, the salutation and the sign-off (`render/model.ts`). Before writing it refuses any character the embedded font
+ * has no glyph for (`unrenderable-glyph:U+XXXX`, a named reason the projector shows)
  * and any forbidden term in the documents' text, contact block included, and after rendering it checks that the DOCX
  * text layer equals the document text. G-FILL then re-derives the fill and the document text from the plan and the full
  * pack; G-NAMING checks the payload.
@@ -41,13 +41,7 @@ export const rendererContract = defineContract({
   guardrails: { in: [], out: ['G-FILL', 'G-NAMING'] },
 });
 
-/** What the renderer reads from the full pack. */
-export const RenderPack = z.object({
-  contact: z.object({ name: z.string().min(1), email: z.string(), phone: z.string(), city: z.string(), links: z.array(z.string()) }),
-  answers: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
-  naming: z.object({ forbiddenTerms: z.array(z.string()) }),
-});
-export type RenderPack = z.infer<typeof RenderPack>;
+export { RenderPack, renderModels } from '../../render/fill.js';
 
 export function renderPackOf(pack: unknown): RenderPack {
   const r = RenderPack.safeParse(pack);
@@ -55,19 +49,13 @@ export function renderPackOf(pack: unknown): RenderPack {
   return r.data;
 }
 
-/** The filled plan, both document models and their texts: what the renderer draws, and what G-FILL re-derives. */
-export function renderModels(cover: CoverPlan, pack: RenderPack): { plan: CoverPlan; resume: DocModel; cover: DocModel } {
-  const plan = fillCover(cover, pack.answers);
-  return { plan, resume: resumeModel(plan.resume, pack.contact), cover: coverModel(plan, pack.contact) };
-}
-
 const fail = (message: string): KernelError => new KernelError('invalid_output', `renderer: ${message}`);
 
 /** The text checks every document passes before any byte is written. */
 function checkText(m: DocModel, pack: RenderPack): void {
   const text = modelText(m);
-  const bad = unencodable(text);
-  if (bad !== null) throw fail(`the ${m.kind} has a character the PDF fonts cannot set (${bad})`);
+  const bad = uncoveredGlyph([text, m.title, m.author]);
+  if (bad !== null) throw fail(`unrenderable-glyph:${bad} (the ${m.kind} has a character the embedded font cannot draw)`);
   try {
     assertNoForbidden(text, pack.naming);
     assertNoForbidden(m.title, pack.naming);

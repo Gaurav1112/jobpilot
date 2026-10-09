@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CAPABILITY_ALLOW_LIST, capabilityProblems } from '../../src/app/allow-list.js';
@@ -13,8 +13,8 @@ import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
 import { renderHtml } from '../../src/app/render/html.js';
-import { contactLine, coverModel, longDate, modelText, monthYear, normText, resumeModel, unencodable } from '../../src/app/render/model.js';
-import { pdfIdOf, renderPdf } from '../../src/app/render/pdf.js';
+import { cleanText, contactLine, coverModel, longDate, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
+import { pdfIdOf, renderPdf, uncoveredGlyph } from '../../src/app/render/pdf.js';
 import type { Pack } from '../../src/app/pack/schema.js';
 import { CoverPlan, QaReport, Rendered } from '../../src/app/types.js';
 import { defineAgent, type AnyAgent } from '../../src/kernel/agent.js';
@@ -28,6 +28,9 @@ import type { GuardrailContext } from '../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import { pdftotextProvider, type PdfTextProvider, type Providers } from '../../src/kernel/providers.js';
 import { Store } from '../../src/kernel/store/store.js';
+import { commitPending, openPending } from '../../src/kernel/files.js';
+import { BUILTIN_GUARDRAILS } from '../../src/kernel/guardrails/builtin.js';
+import { GuardrailRegistry } from '../../src/kernel/guardrails/index.js';
 import { coverPlanOf, fullPack, posting, publicPackOf, tempOut } from '../support/render-fixtures.js';
 
 const PDFTOTEXT = ['/opt/homebrew/bin/pdftotext', '/usr/local/bin/pdftotext', '/usr/bin/pdftotext'].find((p) => existsSync(p));
@@ -42,8 +45,11 @@ const providersFor = (out: string, extra: Partial<Providers> = {}): Providers =>
   ...(realPdfText ? { pdfText: realPdfText } : {}),
   ...extra,
 });
+/** The step key direct renderer runs stage under; `render` commits it the way the executor does after the out guardrails. */
+const KEY = 'b'.repeat(64);
 const ctxFor = (agent: AnyAgent, out: string, pack: unknown, extra: Partial<Providers> = {}, inputClass: 'P0' | 'P1' = 'P0') =>
   issueContext({
+    ...(agent.contract.capabilities.files?.access === 'read-write' ? { pendingFiles: openPending(out, KEY) } : {}),
     contract: agent.contract,
     policy: PRODUCT_POLICY_V1,
     inputClass,
@@ -55,6 +61,7 @@ const ctxFor = (agent: AnyAgent, out: string, pack: unknown, extra: Partial<Prov
 
 async function render(cover: CoverPlan = coverPlanOf(), pack: Pack = fullPack(), out = tempOut()): Promise<{ rendered: Rendered; out: string }> {
   const [rendered] = await renderer.run(cover, ctxFor(renderer, out, pack));
+  await commitPending(out, KEY, PRODUCT_POLICY_V1.maxResponseBytes);
   return { rendered: Rendered.schema.parse(rendered), out };
 }
 const fileOf = (out: string, r: Rendered, kind: 'resume' | 'cover', format: 'pdf' | 'docx' | 'html') =>
@@ -101,10 +108,21 @@ describe('render model', () => {
     expect(normText('a -\nb')).toBe('a - b');
   });
 
-  it('flags characters the PDF fonts cannot set', () => {
-    expect(unencodable('Café – “quoted” • €5 ™')).toBeNull();
-    expect(unencodable('A → B')).toBe('U+2192');
-    expect(unencodable('पुणे')).toBe('U+092A');
+  it('names the first character the embedded font cannot draw: Latin Extended, Greek, Cyrillic and ₹ are covered; CJK and Devanagari are not', () => {
+    expect(uncoveredGlyph(['Łódź Systems', '₹ 12 LPA', 'Αθηνά Ράο', 'Café – “quoted” • €5 ™ Ж', 'line\nbreak'])).toBeNull();
+    expect(uncoveredGlyph(['A → B'])).toBe('U+2192');
+    expect(uncoveredGlyph(['ok', '山田 太郎'])).toBe('U+5C71');
+    expect(uncoveredGlyph(['पुणे'])).toBe('U+092A');
+  });
+
+  it('removes soft hyphens and other format characters from the plan text before rendering', () => {
+    expect(cleanText('read\u00ADthrough cache\u200B')).toBe('readthrough cache');
+    const cover = coverPlanOf();
+    const shy = { ...cover.resume, roles: cover.resume.roles.map((r, i) => (i === 0 ? { ...r, bullets: r.bullets.map((b, j) => (j === 0 ? { ...b, text: b.text.replace('event-driven', 'event\u00ADdriven') } : b)) } : r)) };
+    const text = modelText(resumeModel(shy, fullPack().contact));
+    expect(text).not.toContain('\u00AD');
+    expect(text).toContain('eventdriven');
+    expect(normText('a\u00ADb')).toBe('ab');
   });
 });
 
@@ -276,9 +294,36 @@ describe('renderer', () => {
     expect(rendered.text.cover).not.toMatch(/[{}]/);
   });
 
-  it('refuses text the PDF fonts cannot set', async () => {
-    const pack = fullPack({ contact: { ...fullPack().contact, city: 'पुणे' } });
-    await expect(render(coverPlanOf(), pack)).rejects.toThrow(/cannot set \(U\+092A\)/);
+  it('blocks a character the embedded font cannot draw with the named reason unrenderable-glyph, before any write', async () => {
+    const out = tempOut();
+    const pack = fullPack({ contact: { ...fullPack().contact, name: '山田 太郎' } });
+    const err = await render(coverPlanOf(), pack, out).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KernelError);
+    expect((err as Error).message).toMatch(/^renderer: unrenderable-glyph:U\+5C71 /);
+    expect(existsSync(join(out, '0123456789abcdef'))).toBe(false);
+    expect(existsSync(join(out, '.pending', KEY))).toBe(false);
+  });
+
+  withPdftotext('renders Łódź Systems, ₹ 12 LPA and a Greek name through the embedded font, with a text layer that passes QA', async () => {
+    const pack = fullPack({ contact: { ...fullPack().contact, name: 'Αθηνά Ράο', city: 'Pune ₹ 12 LPA' } });
+    const { rendered, out } = await render(coverPlanOf(posting({ company: 'Łódź Systems' })), pack);
+    const resume = pdftotext(join(out, '0123456789abcdef/resume.pdf'));
+    const cover = pdftotext(join(out, '0123456789abcdef/cover.pdf'));
+    expect(resume.split('\n')[0]).toBe('Αθηνά Ράο');
+    expect(resume).toContain('₹ 12 LPA');
+    expect(cover).toContain('role at Łódź Systems');
+    const pdf = fileOf(out, rendered, 'cover', 'pdf').toString('latin1');
+    expect(pdf).toMatch(/\/BaseFont \/[A-Z]{6}\+NotoSans/);
+    expect(pdf).toContain('/FontFile2');
+    expect(pdf).toContain('/ToUnicode');
+    expect(pdf).not.toMatch(/\/BaseFont \/Helvetica/);
+    const [report] = await qaGate.run(rendered, ctxFor(qaGate, out, publicPackOf(fullPack()), {}, 'P1'));
+    expect(report!.checks.filter((c) => !c.ok)).toEqual([]);
+  });
+
+  it('strips one trailing "." or "," from a filled answer', () => {
+    expect(fillP4(COVER_P4, { available_from: 'Immediately.', notice_period: '30 days,' })).toBe('I am available from Immediately, with a notice period of 30 days. Thank you for your time.');
+    expect(fillP4(COVER_P4, { available_from: '.', notice_period: '30 days' })).toBe(COVER_P4_THANKS);
   });
 
   it('refuses a forbidden term anywhere in the documents, contact block included, without naming it', async () => {
@@ -391,6 +436,34 @@ describe('M7: the kernel labels the renderer outputs P1', () => {
     expect(res.outputs).toHaveLength(1);
     expect(res.outputs[0]!.handoff.dataClass).toBe('P1');
     expect(res.outputs[0]!.guardrails.map((g) => `${g.id}:${g.verdict}`)).toEqual(expect.arrayContaining(['G-FILL:pass', 'G-NAMING:pass', 'G-DATACLASS:pass']));
+    // committed after the guardrails: every listed file is at its final path with its recorded sha256
+    const rendered = res.outputs[0]!.payload as Rendered;
+    for (const f of rendered.files) expect(sha(readFileSync(join(out, f.path))), f.path).toBe(f.sha256);
+    expect(readdirSync(join(out, '.pending'))).toEqual([]);
+  });
+
+  it('writes nothing under <jobKey>/ when an out guardrail trips', async () => {
+    const out = tempOut();
+    const store = Store.open(':memory:');
+    const pHash = policyHash(PRODUCT_POLICY_V1);
+    const input: Envelope = {
+      envelopeId: 'cover-env', stepKey: 'cover-step', index: 0, type: 'CoverPlan@1',
+      producer: { agentId: 'cover-writer', version: '1.0.0', contractHash: 'cw' }, parents: [], payload: coverPlanOf(),
+      handoff: { guarantees: [], dataClass: 'P0', obligations: [], pins: { policyHash: pHash } }, guardrails: [], cost: ZERO_COST,
+    };
+    const guardrails = new GuardrailRegistry([...BUILTIN_GUARDRAILS, G_NAMING, { id: 'G-FILL', sides: ['out'], check: () => ({ id: 'G-FILL', verdict: 'trip', detail: 'refused for the test' }) }]);
+    const full = fullPack();
+    const res = await executeStep(
+      {
+        store, policy: PRODUCT_POLICY_V1, policyHash: pHash, providers: providersFor(out), clock: fixedClock('2026-10-09T00:00:00Z'), guardrails,
+        contractHashOf: (id) => (id === 'cover-writer' ? 'cw' : contractHash(rendererContract)), sleep: async () => {},
+        pack: freezePack(publicPackOf(full)), packHash: 'pub', fullPack: freezePack(full), fullPackHash: 'full',
+      },
+      'run', renderer, input,
+    );
+    expect(res.kind).toBe('quarantined');
+    expect(existsSync(join(out, '0123456789abcdef'))).toBe(false);
+    expect(readdirSync(join(out, '.pending'))).toEqual([]);
   });
 });
 
@@ -472,11 +545,30 @@ describe('qa-gate', () => {
     expect(again.checks.find((c) => c.id === 'qa.files')!.detail).toMatch(/cover\.html cannot be read \(file 0123456789abcdef\/cover\.html does not exist\)/);
   });
 
-  it('judges a line-end hyphen by the source text', () => {
+  it('judges a line-end hyphen by the source text at that wrap point', () => {
     expect(hyphenProblems('built event-\ndriven systems\n', 'built event-driven systems')).toEqual([]);
     expect(hyphenProblems('built event-\ndriven systems\n', 'built event driven systems')).toEqual(['line 1 ends in "-"']);
-    expect(hyphenProblems('a -\nb\n', 'a - b')).toEqual(['line 1 ends in "-"']);
+    expect(hyphenProblems('  • Architect -\n    Associate.\n', '• Architect - Associate.')).toEqual([]);
+    expect(hyphenProblems('Archi-\ntect - Associate.\n', 'Architect - Associate.')).toEqual(['line 1 ends in "-"']);
     expect(hyphenProblems('no hyphen\n', 'no hyphen')).toEqual([]);
+    // the same words earlier in the text do not excuse an inserted hyphen later
+    expect(hyphenProblems('a - b\nc d-\ne\n', 'a - b c d e')).toEqual(['line 2 ends in "-"']);
+  });
+
+  withPdftotext('passes a spaced hyphen from the source wherever the PDF wraps it ("Architect - Associate" at several widths)', async () => {
+    const claim = 'AWS Certified Solutions Architect - Associate.';
+    let wrappedAtHyphen = 0;
+    for (let n = 0; n < 40; n++) {
+      const text = `${'word '.repeat(n)}${'x'.repeat(n % 7)} ${claim}`.trim();
+      const m = { kind: 'resume' as const, title: 't', author: 'a', date: '2026-10-01', blocks: [{ kind: 'bullet' as const, text, factId: 'f' }] };
+      const pdf = await renderPdf(m);
+      const out = tempOut();
+      writeFileSync(join(out, 'h.pdf'), pdf.bytes);
+      const layer = pdftotext(join(out, 'h.pdf'));
+      if (layer.split('\n').some((l) => l.trimEnd().endsWith(' -'))) wrappedAtHyphen += 1;
+      expect(hyphenProblems(layer, modelText(m)), text).toEqual([]);
+    }
+    expect(wrappedAtHyphen).toBeGreaterThan(0);
   });
 
   it('qaChecks is the AND of its checks and never names a forbidden term', async () => {
@@ -515,5 +607,38 @@ describe('render libraries', () => {
       writeFileSync(join(out, 'long.pdf'), pdf.bytes);
       expect((pdftotext(join(out, 'long.pdf')).match(/\f/g) ?? []).length).toBe(pdf.pages);
     }
+  });
+});
+
+describe('determinism across processes and module boundaries', () => {
+  it('renders byte-identical files in two separate processes (different TZ and locale)', () => {
+    const script = join(import.meta.dirname, '../support/render-sample.ts');
+    const run = (env: Record<string, string>) =>
+      execFileSync(process.execPath, ['--import', 'tsx', script], { encoding: 'utf8', env: { ...process.env, ...env }, cwd: join(import.meta.dirname, '../..') }).trim();
+    const a = run({ TZ: 'UTC', LANG: 'en_US.UTF-8' });
+    const b = run({ TZ: 'America/Los_Angeles', LANG: 'ja_JP.UTF-8' });
+    expect(JSON.parse(a)).toHaveLength(6);
+    expect(b).toBe(a);
+  }, 60_000);
+
+  it('keeps the guardrail module free of render libraries (no pdfkit or docx behind G-FILL)', () => {
+    const src = join(import.meta.dirname, '../../src');
+    const seen = new Set<string>();
+    const visit = (file: string): void => {
+      if (seen.has(file)) return;
+      seen.add(file);
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(/^(?:import|export)[^'"]*from\s+'([^']+)'/gm)) {
+        const spec = m[1] as string;
+        if (spec.startsWith('.')) visit(join(file, '..', spec.replace(/\.js$/, '.ts')));
+        else seen.add(spec);
+      }
+    };
+    visit(join(src, 'app/guardrails.ts'));
+    const reached = [...seen].map((f) => f.replace(src, 'src'));
+    expect(reached).not.toContain('pdfkit');
+    expect(reached).not.toContain('docx');
+    expect(reached.filter((f) => /render\/(pdf|docx|fonts)\.ts$/.test(f))).toEqual([]);
+    expect(reached).toContain('src/app/render/fill.ts');
   });
 });

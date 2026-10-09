@@ -8,7 +8,8 @@
  * points at the preferred row through `duplicate_of`.
  */
 export const JOB_STATUSES = ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped'] as const;
-export const DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none'] as const;
+/** `missing`: QA passed, but a listed file is no longer on disk with its recorded sha256 (Task 10 fix round 1). */
+export const DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing'] as const;
 
 const list = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
 

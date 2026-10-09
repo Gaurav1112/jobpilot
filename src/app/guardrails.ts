@@ -26,9 +26,8 @@ import {
   type WritingPack,
 } from './agents/writing/grounded.js';
 import { renderSummary, RENDER_PLACEHOLDERS, unsafePostingText } from './agents/writing/templates.js';
-import { RenderPack, renderModels } from './agents/writing/renderer.js';
 import { profileFor } from './ats-profiles.js';
-import { hasBrace } from './render/fill.js';
+import { hasBrace, RenderPack, renderModels } from './render/fill.js';
 import { modelText, RENDER_FILES, renderedPath } from './render/model.js';
 import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, citeable, ForbiddenTermError } from './pack/rules.js';

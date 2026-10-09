@@ -1,4 +1,9 @@
+import { createHash } from 'node:crypto';
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { diskDocCheck } from '../../src/app/docs-check.js';
 import { projectRun, runCounts } from '../../src/app/project.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 import { dedupeKey, jobKey } from '../../src/app/text/norm.js';
@@ -11,7 +16,7 @@ import { Store } from '../../src/kernel/store/store.js';
 const RUN = 'daily-2026-10-09';
 const AT = '2026-10-09T01:30:00.000Z';
 const FX = { toINR: { INR: 1, USD: 83.5, EUR: 90.2, GBP: 106.4 } };
-const OPTS = { minFit: 60, fx: FX };
+const OPTS = { minFit: 60, fx: FX, docOnDisk: () => 'ok' as const };
 
 /** A fictional posting; its keys are computed as the normalizer does unless `over` sets them. */
 function posting(n: number, over: Partial<Posting> = {}): Posting {
@@ -103,13 +108,13 @@ class RunBuilder {
     this.store.applyTransition(jobKey, t.kind, stepKey, 'blocked', t.machine, 'quarantined');
     this.store.markQueue(this.runId, agent, input.envelopeId, 'quarantined');
   }
-  failed(agent: string, input: Envelope, error: string): void {
+  failed(agent: string, input: Envelope, error: string, detail = 'x'): void {
     const stepKey = `step-${(this.n += 1)}`;
     this.store.enqueue(this.runId, 0, agent, input.envelopeId);
     this.store.markRunning({ stepKey, agentId: agent, version: '1.0.0', contractHash: 'h', inputEnvelopeId: input.envelopeId });
     this.store.finishStep({
-      runId: this.runId, stepKey, agentId: agent, status: 'failed', envelopes: [], cost: ZERO_COST, errorCode: error as 'gone', detail: 'x',
-      event: { at: AT, kind: 'step_failed', data: { agent, stepKey, error, detail: 'x' }, policyHash: 'policy-hash' },
+      runId: this.runId, stepKey, agentId: agent, status: 'failed', envelopes: [], cost: ZERO_COST, errorCode: error as 'gone', detail,
+      event: { at: AT, kind: 'step_failed', data: { agent, stepKey, error, detail }, policyHash: 'policy-hash' },
     });
     this.store.markQueue(this.runId, agent, input.envelopeId, 'failed');
   }
@@ -353,5 +358,57 @@ describe('runCounts', () => {
     expect(c.byAgent['normalizer']).toMatchObject({ done: 1, replayed: 1 });
     expect(c.totals).toEqual({ done: 3, failed: 2, gone: 1, quarantined: 1, skipped: 1, pending: 0, replayed: 1 });
     expect(Object.keys(c.byAgent)).toEqual([...Object.keys(c.byAgent)].sort());
+  });
+});
+
+describe('projector: documents on disk (Task 10 fix round 1, replay safety)', () => {
+  it('marks a QA-passed job missing unless every listed file is on disk with its recorded sha256', () => {
+    const run = (check: (p: string, sha: string) => 'ok' | 'absent' | 'changed') => {
+      const b = new RunBuilder();
+      b.write(b.chain(posting(3), 'eligible', 80), true);
+      const app = AppStore.on(b.store);
+      const r = projectRun(b.store, app, RUN, { ...OPTS, docOnDisk: check });
+      return { r, job: app.getJob(posting(3).jobKey) };
+    };
+    expect(run(() => 'ok').job).toMatchObject({ docsState: 'ready', docsDetail: null });
+    const gone = run((p) => (p.endsWith('resume.pdf') ? 'absent' : p.endsWith('cover.pdf') ? 'changed' : 'ok'));
+    expect(gone.r.docs).toMatchObject({ missing: 1, ready: 0 });
+    expect(gone.job).toMatchObject({ docsState: 'missing' });
+    expect(gone.job?.docsDetail).toBe(`documents missing: ${posting(3).jobKey}/resume.pdf is not on disk; ${posting(3).jobKey}/cover.pdf changed on disk`);
+    expect(gone.job?.docs).toHaveLength(3);
+  });
+
+  it('does not check a QA-failed job (it is blocked whatever is on disk)', () => {
+    const b = new RunBuilder();
+    b.write(b.chain(posting(4), 'eligible', 80), false);
+    const app = AppStore.on(b.store);
+    projectRun(b.store, app, RUN, { ...OPTS, docOnDisk: () => 'absent' });
+    expect(app.getJob(posting(4).jobKey)).toMatchObject({ docsState: 'blocked' });
+  });
+
+  it('diskDocCheck: present with the sha, changed, absent, outside the root or a symlink', () => {
+    const out = mkdtempSync(join(tmpdir(), 'jobpilot-docs-'));
+    mkdirSync(join(out, 'k'));
+    writeFileSync(join(out, 'k', 'resume.pdf'), 'PDF');
+    const sha = createHash('sha256').update('PDF').digest('hex');
+    const check = diskDocCheck(out);
+    expect(check('k/resume.pdf', sha)).toBe('ok');
+    expect(check('k/resume.pdf', 'f'.repeat(64))).toBe('changed');
+    expect(check('k/cover.pdf', sha)).toBe('absent');
+    expect(check('../x.pdf', sha)).toBe('absent');
+    symlinkSync(join(out, 'k', 'resume.pdf'), join(out, 'k', 'link.pdf'));
+    expect(check('k/link.pdf', sha)).toBe('absent');
+  });
+
+  it('shows a named reason of a failed writing step and blocks the documents; free text is never shown', () => {
+    const b = new RunBuilder();
+    const sc = b.chain(posting(8), 'eligible', 80);
+    b.failed('renderer', sc, 'invalid_output', 'renderer: unrenderable-glyph:U+30A2 (the resume has a character the embedded font cannot draw)');
+    const sc2 = b.chain(posting(9), 'eligible', 80);
+    b.failed('renderer', sc2, 'invalid_output', 'renderer: something private happened');
+    const app = AppStore.on(b.store);
+    projectRun(b.store, app, RUN, OPTS);
+    expect(app.getJob(posting(8).jobKey)).toMatchObject({ docsState: 'blocked', docsDetail: 'renderer failed: invalid_output (unrenderable-glyph:U+30A2)' });
+    expect(app.getJob(posting(9).jobKey)).toMatchObject({ docsState: 'none', docsDetail: 'renderer failed: invalid_output' });
   });
 });

@@ -1,25 +1,65 @@
 import { createHash } from 'node:crypto';
 import PDFDocument from 'pdfkit';
+import { fontBytes } from './fonts.js';
 import { BULLET, modelText, type Block, type DocModel } from './model.js';
 
 /**
  * PDF rendering with pdfkit (Task 10). Trusted render library: agent code may call it (G-CONTAINMENT allow-list), it
- * touches no file, network or clock, and it returns bytes. The renderer writes them through `ctx.files`.
+ * touches no network or clock and reads only the vendored fonts (`fonts.ts`); it returns bytes. The renderer writes
+ * them through `ctx.files`.
  *
- * Layout: A4, 54 pt margins, one column, built-in Helvetica (a real text layer, no embedded or subset font), 10.5 pt
- * body, bold name and headings, headings in capitals, a literal "•" bullet with a hanging indent. No header or footer:
- * contact details are the first lines of the body.
+ * Layout: A4, 54 pt margins, one column, embedded Noto Sans (fix round 1; a subset, CID TrueType with a ToUnicode map,
+ * so the text layer extracts), 10.5 pt body, bold name and headings, headings in capitals, a literal "•" bullet with a
+ * hanging indent. No header or footer: contact details are the first lines of the body.
  *
- * Determinism (identical model → identical bytes):
+ * Determinism (identical model → identical bytes, across processes):
  * - `info.CreationDate` is the plan's firstSeen at 00:00 UTC, never now; no ModDate is written;
  * - the trailer `/ID` is derived from the content (the first 16 bytes of sha256 over the document text and metadata),
  *   replacing pdfkit's ID, which hashes the info dictionary only (two plans with the same title and date would share it);
  * - compression is off, so the bytes do not depend on the zlib build, and content streams are plain text;
- * - standard fonts only, so no font subset tags (which are random in some libraries).
+ * - the font subset tag comes from pdfkit's font id ("F1", "F2"), not from randomness, and the subset is built from
+ *   the glyphs used, in order.
+ *
+ * Coverage: `uncoveredGlyph` names the first character the fonts have no glyph for; the renderer refuses such a
+ * document (`unrenderable-glyph:U+XXXX`) before writing anything, since a missing glyph would print as a blank.
  */
 
 export const PAGE = { size: 'A4', margin: 54 } as const;
-export const FONT = { regular: 'Helvetica', bold: 'Helvetica-Bold', body: 10.5, name: 16, heading: 11 } as const;
+export const FONT = { regular: 'Body', bold: 'Body-Bold', body: 10.5, name: 16, heading: 11 } as const;
+
+/** The embedded fonts' glyph tables, opened once through pdfkit's fontkit. */
+interface GlyphFont {
+  hasGlyphForCodePoint(cp: number): boolean;
+}
+let glyphFonts: readonly GlyphFont[] | undefined;
+function fontsForCoverage(): readonly GlyphFont[] {
+  if (glyphFonts === undefined) {
+    const doc = new PDFDocument({ autoFirstPage: false });
+    const fonts = fontBytes();
+    const out: GlyphFont[] = [];
+    for (const [name, bytes] of [[FONT.regular, fonts.regular], [FONT.bold, fonts.bold]] as const) {
+      doc.registerFont(name, Buffer.from(bytes));
+      doc.font(name);
+      // pdfkit keeps the fontkit font on its private `_font`; its glyph table is the coverage truth.
+      out.push((doc as unknown as { _font: { font: GlyphFont } })._font.font);
+    }
+    glyphFonts = out;
+  }
+  return glyphFonts;
+}
+
+/** The first character of `texts` some embedded font has no glyph for, as "U+XXXX", or null. Newlines are not drawn. */
+export function uncoveredGlyph(texts: readonly string[]): string | null {
+  const fonts = fontsForCoverage();
+  for (const t of texts) {
+    for (const ch of t) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp === 0x0a) continue;
+      if (!fonts.every((f) => f.hasGlyphForCodePoint(cp))) return `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
+    }
+  }
+  return null;
+}
 const BULLET_INDENT = 14;
 
 export interface RenderedPdf {
@@ -43,6 +83,9 @@ export async function renderPdf(m: DocModel): Promise<RenderedPdf> {
     bufferPages: false,
     info: { Title: m.title, Author: m.author, Creator: 'jobpilot', Producer: 'jobpilot', CreationDate: new Date(`${m.date}T00:00:00.000Z`) },
   });
+  const fonts = fontBytes();
+  doc.registerFont(FONT.regular, Buffer.from(fonts.regular));
+  doc.registerFont(FONT.bold, Buffer.from(fonts.bold));
   // pdfkit's own ID hashes only the info dictionary; this one hashes the content. Written into the trailer at end().
   (doc as unknown as { _id: Uint8Array })._id = pdfIdOf(m);
   let pages = 1;

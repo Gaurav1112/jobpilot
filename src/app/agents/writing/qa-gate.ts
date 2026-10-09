@@ -17,13 +17,15 @@ import { QaReport, qaRan, Rendered } from '../../types.js';
  * | qa.files | exactly the six expected files, each readable, each sha256 equal to the one recorded |
  * | qa.pages | from the pdftotext page breaks: resume ≤ 2 pages, cover ≤ 1, and equal to the recorded counts |
  * | qa.terms | every planned covered term, by its lexicon display name (as documents show it), is in the resume PDF text |
- * | qa.hyphen | no PDF line ends in "-" unless the source text has a hyphenated word at that point |
+ * | qa.hyphen | no PDF line ends in "-" unless the source text has that hyphen (" -" or "-") at that wrap point |
  * | qa.docx-text | each DOCX `word/document.xml` text equals the document text (`Rendered.text`) |
  * | qa.pdf-text | each PDF text layer equals the document text |
  * | qa.naming | no forbidden term in any PDF or DOCX text layer |
  *
- * Every text comparison uses `normText` (render/model.ts): NFC, a line break after a word's hyphen joined, whitespace
- * runs collapsed, ends trimmed. Details name files, ids and lexicon display names only, never a forbidden term.
+ * Every text comparison uses `normText` (render/model.ts): NFC, format characters (soft hyphens U+00AD, zero-width
+ * characters) removed, a line break after a word's hyphen joined, whitespace runs collapsed, ends trimmed. The renderer
+ * removes format characters from the plan text before rendering (`cleanText`), so a soft hyphen in a fact can never
+ * surface as a visible "-" at a wrap. Details name files, ids and lexicon display names only, never a forbidden term.
  */
 export const qaGateContract = defineContract({
   id: 'qa-gate',
@@ -62,19 +64,26 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 /** The display name stands alone: not inside a longer word ("Java" is not in "JavaScript"). */
 const hasTerm = (text: string, display: string): boolean => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(display)}(?![\\p{L}\\p{N}])`, 'u').test(text);
 
-/** Lines of a pdftotext page that end in "-" where the source text has no hyphenated word, as "line N". */
+/**
+ * Lines of the PDF text layer that end in "-" where the source text has no hyphen at that point, as "line N".
+ * pdfkit never hyphenates (it breaks only at spaces and after hyphens already in the text), so each PDF line is
+ * matched, in reading order, against the normalised document text: a line found there carries the source's own
+ * hyphen ("event-" before "driven", or "Architect -" before "Associate"), and a line-end "-" on a line the source
+ * does not contain was inserted, which is the problem this check exists for.
+ */
 export function hyphenProblems(pdf: string, source: string): string[] {
   const src = normText(source);
-  const lines = pdf.split(/\n|\f/);
   const problems: string[] = [];
-  lines.forEach((raw, i) => {
-    const line = raw.trimEnd();
-    if (!line.endsWith('-')) return;
-    const last = line.trim().split(/\s+/).pop() ?? '';
-    const next = lines.slice(i + 1).find((l) => l.trim() !== '');
-    const first = next?.trim().split(/\s+/)[0] ?? '';
-    const ok = /[\p{L}\p{N}]-$/u.test(last) && first !== '' && src.includes(`${last}${first}`);
-    if (!ok) problems.push(`line ${i + 1} ends in "-"`);
+  let at = 0;
+  pdf.split(/\n|\f/).forEach((raw, i) => {
+    const line = raw.replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' ').trim();
+    if (line === '') return;
+    const pos = src.startsWith(line, at) ? at : src.indexOf(line, at);
+    if (pos < 0) {
+      if (line.endsWith('-')) problems.push(`line ${i + 1} ends in "-"`);
+      return;
+    }
+    at = pos + line.length;
   });
   return problems;
 }

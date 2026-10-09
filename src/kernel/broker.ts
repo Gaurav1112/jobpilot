@@ -6,7 +6,7 @@ import { KernelError } from './errors.js';
 import { egressAllowed, normalizeHost, type Policy } from './policy.js';
 import { challengeReason } from './challenge.js';
 import type { BrowserPage, FetchResponse, LlmResponse, Providers } from './providers.js';
-import { createFiles, type FilesTool, type WritableFilesTool } from './files.js';
+import { createFiles, type FilesTool, type PendingFiles, type WritableFilesTool } from './files.js';
 
 export type { FilesTool, WritableFilesTool } from './files.js';
 
@@ -123,6 +123,8 @@ export interface IssueArgs {
   readonly pack?: unknown;
   /** Shared per-host pacing; without one, requests are not paced (unit tests, evals). */
   readonly hostPacer?: HostPacer;
+  /** This attempt's staged-write transaction (the executor opens one per step); without it, `files.write` is denied. */
+  readonly pendingFiles?: PendingFiles;
   /** Shared per-host pacing of browser renders (`policy.minBrowserIntervalMs`), applied before `hostPacer`. */
   readonly browserPacer?: HostPacer;
 }
@@ -194,7 +196,7 @@ export function issueContext(a: IssueArgs): AgentContext {
 
   const filesCap = a.contract.capabilities.files;
   if (filesCap) {
-    const files = createFiles({ root: a.providers.fileRoots?.[filesCap.root], rootName: filesCap.root, maxBytes: a.policy.maxResponseBytes, deny }, filesCap.access);
+    const files = createFiles({ root: a.providers.fileRoots?.[filesCap.root], rootName: filesCap.root, maxBytes: a.policy.maxResponseBytes, deny, ...(a.pendingFiles ? { pending: a.pendingFiles } : {}) }, filesCap.access);
     ctx.files = files.tool;
     if (a.contract.capabilities.pdfText) {
       ctx.pdfText = async (relPath) => {

@@ -15,6 +15,7 @@ import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
 import { type Cost, type Envelope, type GuardrailVerdict, makeEnvelopeId, nextObligations, ZERO_COST } from './envelope.js';
 import { classify, type ErrorCode, KernelError } from './errors.js';
+import { commitPending, discardPending, hasPending, openPending } from './files.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import { backoffDelay, computeStepKey } from './memo.js';
 import type { Policy } from './policy.js';
@@ -44,6 +45,17 @@ export interface ExecutorDeps {
   readonly hostPacer?: HostPacer;
   /** Per-host browser render pacing (policy.minBrowserIntervalMs) shared by every step of one supervisor. */
   readonly browserPacer?: HostPacer;
+  /**
+   * Test hook: runs after a writing step is recorded done, before its staged files are committed. Throwing here
+   * simulates a crash at that point: the step stays done and its files stay staged until a replay or a recovery.
+   */
+  readonly beforeCommit?: (agentId: string, stepKey: string) => void;
+}
+
+/** Where a writing contract's files are staged and committed; undefined for an agent that writes nothing. */
+interface Staging {
+  readonly root: string;
+  readonly maxBytes: number;
 }
 
 export type StepOutcome =
@@ -93,6 +105,34 @@ const messageOf = (err: unknown): string => {
  * unexpected becomes a failed step, so the supervisor always gets an outcome.
  */
 export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope): Promise<StepOutcome> {
+  const c = agent.contract;
+  const files = c.capabilities.files;
+  const root = files?.access === 'read-write' ? deps.providers.fileRoots?.[files.root] : undefined;
+  const staging: Staging | undefined = root === undefined ? undefined : { root, maxBytes: deps.policy.maxResponseBytes };
+  const outcome = await runStep(deps, runId, agent, input, staging);
+  if (staging === undefined) return outcome;
+  const event = (kind: string, data: Record<string, unknown>): void =>
+    deps.store.appendEvent(runId, deps.clock.now(), kind, { agent: c.id, stepKey: outcome.stepKey, ...data }, deps.policyHash);
+  if (outcome.kind === 'done') {
+    // A fresh step, or a replayed one whose commit a crash interrupted: the stage is committed only now, after the
+    // out guardrails passed and the step was recorded done. Throwing from the hook (tests) leaves it staged.
+    if (await hasPending(staging.root, outcome.stepKey)) {
+      deps.beforeCommit?.(c.id, outcome.stepKey);
+      try {
+        const committed = await commitPending(staging.root, outcome.stepKey, staging.maxBytes);
+        event('files_committed', { files: committed });
+      } catch (e) {
+        event('files_commit_failed', { message: e instanceof Error ? e.message : String(e) });
+        await discardPending(staging.root, outcome.stepKey).catch(() => undefined);
+      }
+    }
+  } else if (outcome.kind === 'failed' || outcome.kind === 'quarantined') {
+    await discardPending(staging.root, outcome.stepKey).catch(() => undefined);
+  }
+  return outcome;
+}
+
+async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope, staging: Staging | undefined): Promise<StepOutcome> {
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
   const full = c.capabilities.pack === 'full';
   const agentPack = full ? deps.fullPack : deps.pack;
@@ -180,6 +220,9 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
       const signal = AbortSignal.timeout(c.timeoutMs);
+      // Each attempt stages into a clean transaction, sealed when the attempt ends.
+      if (staging !== undefined && attempt > 0) await discardPending(staging.root, stepKey);
+      const pendingFiles = staging === undefined ? undefined : openPending(staging.root, stepKey);
       const priorSpend = {
         agentUsd: deps.store.runCost(runId, c.id) + unrecorded.usd,
         runUsd: deps.store.runCost(runId) + unrecorded.usd,
@@ -196,6 +239,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         ...(agentPack !== undefined ? { pack: agentPack } : {}),
         ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
         ...(deps.browserPacer ? { browserPacer: deps.browserPacer } : {}),
+        ...(pendingFiles ? { pendingFiles } : {}),
       });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {
@@ -206,6 +250,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       } catch (err) {
         result = { ok: false, err };
       }
+      pendingFiles?.seal();
       // Read after the abort too: a model call in flight at the timeout has already been charged its reservation.
       const attemptSpent = ctx.spent();
       stepSpent = addCost(stepSpent, attemptSpent);

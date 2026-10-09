@@ -75,6 +75,14 @@ export function contactLine(c: ContactDetails): string {
   return [c.email, c.phone, c.city, ...c.links].map((s) => s.trim()).filter((s) => s !== '').join(' | ');
 }
 
+/**
+ * Invisible format characters (soft hyphen U+00AD, zero-width spaces and joiners, bidi marks: Unicode category Cf)
+ * are removed from every block before rendering: a soft hyphen would otherwise surface as a visible "-" wherever the
+ * PDF wraps, and the qa-gate compares the text layers with this cleaned text.
+ */
+export const cleanText = (s: string): string => s.replace(/\p{Cf}/gu, '');
+const cleanBlock = (b: Block): Block => ({ ...b, text: cleanText(b.text) });
+
 const head = (c: ContactDetails): Block[] => [
   { kind: 'name', text: c.name.trim() },
   { kind: 'contact', text: contactLine(c) },
@@ -102,7 +110,7 @@ export function resumeModel(plan: ResumePlan, c: ContactDetails): DocModel {
     blocks.push({ kind: 'heading', text: HEADINGS.education });
     for (const b of plan.education) blocks.push({ kind: 'bullet', text: b.text, factId: b.factId });
   }
-  return { kind: 'resume', title: `${c.name.trim()} - Resume`, author: c.name.trim(), date: plan.firstSeen, blocks };
+  return { kind: 'resume', title: cleanText(`${c.name.trim()} - Resume`), author: cleanText(c.name.trim()), date: plan.firstSeen, blocks: blocks.map(cleanBlock) };
 }
 
 /** The cover letter: header, date line, "Dear Hiring Team,", the paragraphs, "Sincerely," and the name. */
@@ -115,7 +123,7 @@ export function coverModel(cover: CoverPlan, c: ContactDetails): DocModel {
     { kind: 'line', text: SIGN_OFF },
     { kind: 'line', text: c.name.trim() },
   ];
-  return { kind: 'cover', title: `${c.name.trim()} - Cover Letter`, author: c.name.trim(), date: cover.resume.firstSeen, blocks };
+  return { kind: 'cover', title: cleanText(`${c.name.trim()} - Cover Letter`), author: cleanText(c.name.trim()), date: cover.resume.firstSeen, blocks: blocks.map(cleanBlock) };
 }
 
 /** One block's text as a line of the document text: a bullet is "• claim", every other block its text. */
@@ -126,7 +134,8 @@ export const modelText = (m: DocModel): string => m.blocks.map(blockLine).join('
 
 /**
  * The normalisation every text comparison uses (qa-gate, renderer self-check). Documented rule:
- * 1. NFC; form feeds (pdftotext page breaks) and CR become newlines;
+ * 1. NFC; format characters (Cf: soft hyphens, zero-width characters) removed; form feeds (pdftotext page breaks)
+ *    and CR become newlines;
  * 2. a line break right after a hyphen that follows a letter or digit is removed ("event-\n driven" → "event-driven"),
  *    since a PDF line may break after a hyphen of the source text;
  * 3. every run of whitespace (spaces, tabs, newlines, NBSP) becomes one space, and the ends are trimmed.
@@ -135,26 +144,11 @@ export const modelText = (m: DocModel): string => m.blocks.map(blockLine).join('
 export function normText(s: string): string {
   return s
     .normalize('NFC')
+    .replace(/\p{Cf}/gu, '')
     .replace(/[\f\r]/g, '\n')
     .replace(/(?<=[\p{L}\p{N}]-)[ \t]*\n\s*/gu, '')
     .replace(/[\s ]+/gu, ' ')
     .trim();
-}
-
-/** Characters Helvetica (WinAnsi) can set beyond Latin-1: the 0x80-0x9F row of Windows-1252. */
-const WIN_ANSI_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
-
-/**
- * The first character the standard PDF fonts cannot set (anything outside Windows-1252), as "U+XXXX", or null. The
- * renderer refuses such text rather than ship a garbled glyph in a verbatim claim.
- */
-export function unencodable(text: string): string | null {
-  for (const ch of text) {
-    const cp = ch.codePointAt(0) ?? 0;
-    const ok = cp === 0x0a || (cp >= 0x20 && cp <= 0x7e) || (cp >= 0xa0 && cp <= 0xff) || WIN_ANSI_EXTRA.includes(ch);
-    if (!ok) return `U+${cp.toString(16).toUpperCase().padStart(4, '0')}`;
-  }
-  return null;
 }
 
 /** The six files of one job, in the order the renderer writes and lists them. */

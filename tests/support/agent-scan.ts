@@ -43,8 +43,10 @@ export const APP_ALLOWED = [
  * own rule (`scanRenderLib`): imports only from `RENDER_LIB_IMPORTS`, no file, network, process, clock or randomness.
  * They return bytes; only the broker's files capability writes them.
  */
-export const RENDER_LIBS = ['src/app/render/pdf.ts', 'src/app/render/docx.ts'];
-export const RENDER_LIB_IMPORTS = ['pdfkit', 'docx', 'node:crypto', 'node:zlib', './model.js'];
+export const RENDER_LIBS = ['src/app/render/pdf.ts', 'src/app/render/docx.ts', 'src/app/render/fonts.ts'];
+export const RENDER_LIB_IMPORTS = ['pdfkit', 'docx', 'node:crypto', 'node:zlib', './model.js', './fonts.js'];
+/** The font loader alone may read files, and only through `readFileSync` of the vendored fonts. */
+const FONT_LOADER = 'src/app/render/fonts.ts';
 const RENDER_LIB_FORBIDDEN = /\b(fetch|process|globalThis|require|eval|Function|XMLHttpRequest|WebSocket|Date\.now|Math\.random|performance|setTimeout|setInterval)\b|new Date\(\s*\)/;
 
 /** Problems in a render library's source: a disallowed import, or a forbidden global, clock or randomness. */
@@ -53,7 +55,8 @@ export const scanRenderLib = (file: string, text: string): string[] => {
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   sf.forEachChild((node) => {
     const spec = declarationSpecifier(node);
-    if (spec !== undefined && !RENDER_LIB_IMPORTS.includes(spec)) problems.push(`${file}: import of ${spec}`);
+    const fsRead = file === FONT_LOADER && spec === 'node:fs' && /^import \{ readFileSync \} from 'node:fs';$/.test(node.getText(sf));
+    if (spec !== undefined && !RENDER_LIB_IMPORTS.includes(spec) && !fsRead) problems.push(`${file}: import of ${spec}`);
     if (ts.isImportEqualsDeclaration(node)) problems.push(`${file}: import-equals`);
   });
   const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
