@@ -139,3 +139,29 @@ describe('redactors (agents allowed to lower a data class)', () => {
     expect(mergePolicy(product, {}).redactors).toEqual(['a-scrubber', 'b-scrubber']);
   });
 });
+
+describe('v1 kernel extensions: HTTP policy caps', () => {
+  it('ships maxResponseBytes 5 MiB and minHostIntervalMs 1000 in the product policy', () => {
+    expect(PRODUCT_POLICY_V1.maxResponseBytes).toBe(5_242_880);
+    expect(PRODUCT_POLICY_V1.minHostIntervalMs).toBe(1000);
+  });
+
+  it('lets a user lower maxResponseBytes and raise minHostIntervalMs', () => {
+    const p = mergePolicy(PRODUCT_POLICY_V1, { maxResponseBytes: 1_000_000, minHostIntervalMs: 2500 });
+    expect(p.maxResponseBytes).toBe(1_000_000);
+    expect(p.minHostIntervalMs).toBe(2500);
+  });
+
+  it('refuses a user policy that raises maxResponseBytes or lowers minHostIntervalMs', () => {
+    try {
+      mergePolicy(PRODUCT_POLICY_V1, { maxResponseBytes: 10_000_000, minHostIntervalMs: 10 });
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(PolicyViolation);
+      const v = (e as PolicyViolation).violations;
+      expect(v).toHaveLength(2);
+      expect(v.some((m) => m.includes('maxResponseBytes'))).toBe(true);
+      expect(v.some((m) => m.includes('minHostIntervalMs'))).toBe(true);
+    }
+  });
+});

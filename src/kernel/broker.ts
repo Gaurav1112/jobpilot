@@ -3,11 +3,67 @@ import type { AnyContract } from './contract.js';
 import type { DataClass } from './data-class.js';
 import type { Cost } from './envelope.js';
 import { KernelError } from './errors.js';
-import { egressAllowed, type Policy } from './policy.js';
-import type { LlmResponse, Providers } from './providers.js';
+import { egressAllowed, normalizeHost, type Policy } from './policy.js';
+import type { FetchResponse, LlmResponse, Providers } from './providers.js';
 
 export interface HttpTool {
   getText(url: string): Promise<{ status: number; body: string }>;
+  /** Like getText, then parses the body; a body that is not JSON is `invalid_output`. */
+  getJson(url: string): Promise<{ status: number; json: unknown }>;
+}
+
+/** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
+export const HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({
+  accept: 'application/json, text/plain;q=0.8, */*;q=0.1',
+  'user-agent': 'jobpilot/0.1 (+local)',
+});
+
+/** Spaces requests to one host by at least `minIntervalMs`; one instance is shared by every context of a supervisor. */
+export interface HostPacer {
+  wait(host: string): Promise<void>;
+}
+
+/**
+ * Each request to a host is scheduled at max(now, previous slot + interval) and waits until its slot.
+ * The slot is claimed before sleeping, so concurrent waits on one host are spaced, never collapsed.
+ * Time comes from the injected clock and sleep, so tests are deterministic.
+ */
+export function createHostPacer(minIntervalMs: number, clock: Clock, sleep: (ms: number) => Promise<void>): HostPacer {
+  const lastRequestAt = new Map<string, number>();
+  return {
+    async wait(host) {
+      const h = normalizeHost(host);
+      const now = Date.parse(clock.now());
+      const last = lastRequestAt.get(h);
+      const slot = last === undefined ? now : Math.max(now, last + minIntervalMs);
+      lastRequestAt.set(h, slot);
+      if (slot > now) await sleep(slot - now);
+    },
+  };
+}
+
+/** Reads a response body, refusing it once it passes `maxBytes`. A stream is cancelled at the cap, not read to the end. */
+async function readCapped(res: FetchResponse, maxBytes: number): Promise<string> {
+  const tooBig = (): KernelError => new KernelError('invalid_output', `response exceeds ${maxBytes} bytes`);
+  if (res.body) {
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw tooBig();
+      }
+      chunks.push(value);
+    }
+    return new TextDecoder().decode(Buffer.concat(chunks));
+  }
+  const text = await res.text();
+  if (Buffer.byteLength(text, 'utf8') > maxBytes) throw tooBig();
+  return text;
 }
 
 export interface LlmTool {
@@ -24,6 +80,8 @@ export interface AgentContext {
   readonly signal: AbortSignal;
   readonly http?: HttpTool;
   readonly llm?: LlmTool;
+  /** The user's pack, deep-frozen; present only when the contract declares `capabilities.pack`. */
+  readonly pack?: Readonly<unknown>;
   spent(): Cost;
   /** The largest single model call paid in this context. */
   maxCall(): number;
@@ -40,6 +98,20 @@ export interface IssueArgs {
   readonly signal: AbortSignal;
   /** What the run had already paid before this context was issued: by this agent, and in total. */
   readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number; readonly maxCallUsd?: number };
+  /** The pack this contract may read (public or full, as the caller chose); ignored unless the contract declares capabilities.pack. */
+  readonly pack?: unknown;
+  /** Shared per-host pacing; without one, requests are not paced (unit tests, evals). */
+  readonly hostPacer?: HostPacer;
+}
+
+/** Freezes every object reachable from `v`, in place. Cycles are safe. */
+export function deepFreeze<T>(v: T, seen = new WeakSet<object>()): T {
+  if (v !== null && typeof v === 'object' && !seen.has(v)) {
+    seen.add(v);
+    Object.freeze(v);
+    for (const child of Object.values(v)) deepFreeze(child, seen);
+  }
+  return v;
 }
 
 function mapProviderError(e: unknown): unknown {
@@ -87,34 +159,49 @@ export function issueContext(a: IssueArgs): AgentContext {
     denials: () => [...denied],
   };
 
+  if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = deepFreeze(a.pack);
+
   if (a.contract.capabilities.http) {
+    const getText = async (url: string): Promise<{ status: number; body: string }> => {
+      let u: URL;
+      try {
+        u = new URL(url);
+      } catch {
+        throw deny('G-EGRESS: invalid URL');
+      }
+      if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${u.protocol}//${u.hostname})`);
+      if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
+      if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
+      checkHost(u.hostname);
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      await a.hostPacer?.wait(u.hostname);
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      let res;
+      let body;
+      try {
+        res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        if (res.status >= 300 && res.status < 400) {
+          throw deny(`G-EGRESS: redirect from ${u.hostname} refused`);
+        }
+        if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
+        if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
+        body = await readCapped(res, a.policy.maxResponseBytes);
+      } catch (e) {
+        throw mapProviderError(e);
+      }
+      return { status: res.status, body };
+    };
     ctx.http = {
-      async getText(url) {
-        let u: URL;
+      getText,
+      async getJson(url) {
+        const { status, body } = await getText(url);
+        let json: unknown;
         try {
-          u = new URL(url);
+          json = JSON.parse(body);
         } catch {
-          throw deny('G-EGRESS: invalid URL');
+          throw new KernelError('invalid_output', `response from ${new URL(url).hostname} is not valid JSON`);
         }
-        if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${u.protocol}//${u.hostname})`);
-        if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
-        if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
-        checkHost(u.hostname);
-        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
-        let res;
-        let body;
-        try {
-          res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual' });
-          if (res.status >= 300 && res.status < 400) {
-            throw deny(`G-EGRESS: redirect from ${u.hostname} refused`);
-          }
-          if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
-          if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
-          body = await res.text();
-        } catch (e) {
-          throw mapProviderError(e);
-        }
-        return { status: res.status, body };
+        return { status, json };
       },
     };
   }

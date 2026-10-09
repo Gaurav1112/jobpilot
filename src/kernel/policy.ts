@@ -14,6 +14,10 @@ export interface Policy {
   readonly defaultEgressClasses: readonly DataClass[];
   readonly maxUsdPerRun: number;
   readonly maxPayloadBytes: number;
+  /** Largest HTTP response body the broker will read, in bytes. A user may only lower it. */
+  readonly maxResponseBytes: number;
+  /** Minimum gap between two requests to the same host within one supervisor, in ms. A user may only raise it. */
+  readonly minHostIntervalMs: number;
   readonly maxSubmitsPerDay: number;
   readonly requireApprovalForEffects: boolean;
   /** Agent ids allowed to lower a data class (declared `redactor: true`). */
@@ -42,6 +46,8 @@ export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   defaultEgressClasses: ['P0'],
   maxUsdPerRun: 5,
   maxPayloadBytes: 262_144,
+  maxResponseBytes: 5_242_880,
+  minHostIntervalMs: 1000,
   maxSubmitsPerDay: 10,
   requireApprovalForEffects: true,
   redactors: [],
@@ -56,6 +62,8 @@ const UserPolicy = z
     egressClasses: z.record(HostName, z.array(z.enum(DATA_CLASSES))).optional(),
     maxUsdPerRun: z.number().nonnegative().optional(),
     maxSubmitsPerDay: z.number().int().nonnegative().optional(),
+    maxResponseBytes: z.number().int().positive().optional(),
+    minHostIntervalMs: z.number().int().nonnegative().optional(),
     requireApprovalForEffects: z.boolean().optional(),
     redactors: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).optional(),
   })
@@ -89,6 +97,12 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
   if (user.maxSubmitsPerDay !== undefined && user.maxSubmitsPerDay > product.maxSubmitsPerDay) {
     violations.push(`maxSubmitsPerDay may only be lowered (product ${product.maxSubmitsPerDay}, user ${user.maxSubmitsPerDay})`);
   }
+  if (user.maxResponseBytes !== undefined && user.maxResponseBytes > product.maxResponseBytes) {
+    violations.push(`maxResponseBytes may only be lowered (product ${product.maxResponseBytes}, user ${user.maxResponseBytes})`);
+  }
+  if (user.minHostIntervalMs !== undefined && user.minHostIntervalMs < product.minHostIntervalMs) {
+    violations.push(`minHostIntervalMs may only be raised (product ${product.minHostIntervalMs}, user ${user.minHostIntervalMs})`);
+  }
   if (user.requireApprovalForEffects === false && product.requireApprovalForEffects) {
     violations.push('requireApprovalForEffects cannot be turned off');
   }
@@ -115,6 +129,8 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
     defaultEgressClasses: [...product.defaultEgressClasses],
     maxUsdPerRun: user.maxUsdPerRun ?? product.maxUsdPerRun,
     maxSubmitsPerDay: user.maxSubmitsPerDay ?? product.maxSubmitsPerDay,
+    maxResponseBytes: user.maxResponseBytes ?? product.maxResponseBytes,
+    minHostIntervalMs: user.minHostIntervalMs ?? product.minHostIntervalMs,
     redactors: [...new Set(user.redactors ?? product.redactors)].sort(),
   });
 }

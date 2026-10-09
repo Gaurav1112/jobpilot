@@ -8,6 +8,7 @@ import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import { exactMatch, precisionRecall, spearman } from '../../src/evals/metrics.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { defineType } from '../../src/kernel/types.js';
+import { KernelError } from '../../src/kernel/errors.js';
 import { failedGates, loadJsonl, runEval } from '../../src/evals/runner.js';
 import { demoSource } from '../../src/demo/agents.js';
 import { demoEvalSpecs } from '../../src/demo/evals.js';
@@ -81,6 +82,29 @@ describe('runEval', () => {
     const spec = { ...miniSpec(agent), cases: [{ id: 'c', input: { id: 'a' }, expected: 1 }] };
     const r = await runEval(spec, env);
     expect(r.failures[0]?.actual).toEqual({ error: 'input would be coerced by the consumed schema' });
+  });
+
+  it('forces evals offline: an agent attempting HTTP gets policy_denied, whatever fetch is passed in', async () => {
+    const calls: string[] = [];
+    const liveEnv = { ...env, providers: { fetch: async (url: string) => (calls.push(url), { status: 200, text: async () => '{}' }) } };
+    const fetcher = defineAgent(
+      defineContract({
+        id: 'mini-fetcher', version: '1.0.0', description: 'Fetches one page for the item', skills: ['x'], team: 'sourcing', kind: 'io',
+        consumes: Padded, produces: Padded, capabilities: { http: true }, egress: ['boards-api.greenhouse.io'],
+        dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000,
+      }),
+      async (_item, ctx) => {
+        try {
+          await ctx.http!.getJson('https://boards-api.greenhouse.io/v1/boards/x/jobs');
+          return [{ id: 'reached', tag: 'x' }];
+        } catch (e) {
+          return [{ id: e instanceof KernelError ? e.code : 'other', tag: (e as Error).message }];
+        }
+      },
+    );
+    const r = await runEval({ ...miniSpec(fetcher), project: (outs) => outs, cases: [{ id: 'c', input: { id: 'a', tag: 'x' }, expected: [{ id: 'policy_denied', tag: 'evals are offline' }] }] }, liveEnv);
+    expect(r.failures).toEqual([]);
+    expect(calls).toEqual([]);
   });
 
   it('enforces the timeout even when the agent ignores its signal', async () => {

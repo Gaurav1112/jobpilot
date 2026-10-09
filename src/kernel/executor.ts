@@ -6,9 +6,10 @@
  *   largest call seen). What the provider actually bills for it is not visible to the kernel and is bounded only
  *   per call, by the provider's pricing for maxTokens.
  * - Spend of a call in flight when the process itself dies is not recorded; the step re-runs on resume.
+ *   Spend of a finished attempt is recorded before the retry sleep, so a crash between attempts loses none.
  */
 import type { AnyAgent } from './agent.js';
-import { issueContext } from './broker.js';
+import { deepFreeze, type HostPacer, issueContext } from './broker.js';
 import type { Clock } from './clock.js';
 import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
@@ -31,6 +32,16 @@ export interface ExecutorDeps {
   readonly sleep: (ms: number) => Promise<void>;
   /** Called right before agent.run; tests count real invocations with it. */
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
+  /** The public pack, for contracts with `capabilities.pack: true` (and for guardrails). */
+  readonly pack?: unknown;
+  /** Hash of `pack`; part of the step key of pack agents only. Default 'none'. */
+  readonly packHash?: string;
+  /** The full pack (with P1 contact details), for contracts with `capabilities.pack: 'full'`. */
+  readonly fullPack?: unknown;
+  /** Hash of `fullPack`; part of the step key of 'full' pack agents only. Default 'none'. */
+  readonly fullPackHash?: string;
+  /** Per-host request pacing shared by every step of one supervisor. */
+  readonly hostPacer?: HostPacer;
 }
 
 export type StepOutcome =
@@ -81,9 +92,13 @@ const messageOf = (err: unknown): string => {
  */
 export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope): Promise<StepOutcome> {
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
-  const stepKey = computeStepKey(c, input, deps.policyHash); // 5
+  const full = c.capabilities.pack === 'full';
+  const agentPack = full ? deps.fullPack : deps.pack;
+  const stepKey = computeStepKey(c, input, deps.policyHash, (full ? deps.fullPackHash : deps.packHash) ?? 'none'); // 5
   /** Every cent paid in this step, summed over all attempts. */
   let stepSpent: Cost = ZERO_COST;
+  /** The part of stepSpent not yet in the cost ledger: earlier attempts are recorded before their retry sleep. */
+  let unrecorded: Cost = ZERO_COST;
   /** The largest single model call paid in this step, over all attempts. */
   let stepMaxCall = 0;
   const eventOf = (kind: string, data: Record<string, unknown>) => ({ at: deps.clock.now(), kind, data: { agent: c.id, stepKey, ...data }, policyHash: deps.policyHash });
@@ -98,14 +113,21 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
     envelopes: readonly Envelope[],
     ev: ReturnType<typeof eventOf>,
     more: { errorCode?: ErrorCode; detail?: string } = {},
-  ): void => deps.store.finishStep({ runId, stepKey, agentId: c.id, status, envelopes, cost: stepSpent, maxCallUsd: stepMaxCall, ...more, event: ev });
+  ): void => deps.store.finishStep({ runId, stepKey, agentId: c.id, status, envelopes, cost: unrecorded, maxCallUsd: stepMaxCall, ...more, event: ev });
   const fail = (error: ErrorCode, detail: string): StepOutcome => {
     finish('failed', [], eventOf('step_failed', { error, detail }), { errorCode: error, detail });
     return { kind: 'failed', stepKey, error, detail };
   };
 
   try {
-    const gctx = { contract: c, policy: deps.policy, policyHash: deps.policyHash, contractHashOf: deps.contractHashOf, input };
+    const gctx = {
+      contract: c,
+      policy: deps.policy,
+      policyHash: deps.policyHash,
+      contractHashOf: deps.contractHashOf,
+      input,
+      ...(deps.pack !== undefined && deps.pack !== null ? { pack: deepFreeze(deps.pack) } : {}),
+    };
     const hash = contractHash(c);
     const running = { stepKey, agentId: c.id, version: c.version, contractHash: hash, inputEnvelopeId: input.envelopeId };
 
@@ -133,8 +155,8 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
     // (actual - usdPerCall); a call in flight when the process dies is not recorded and the step re-runs on resume.
     const overBudget = (): boolean =>
       (c.budget.usdPerRun > 0 || c.kind === 'llm') &&
-      (deps.store.runCost(runId, c.id) + stepSpent.usd >= c.budget.usdPerRun ||
-        deps.store.runCost(runId) + stepSpent.usd >= deps.policy.maxUsdPerRun);
+      (deps.store.runCost(runId, c.id) + unrecorded.usd >= c.budget.usdPerRun ||
+        deps.store.runCost(runId) + unrecorded.usd >= deps.policy.maxUsdPerRun);
     /** The largest call this agent has been charged in the run, this step included. */
     const maxCallSoFar = (): number => Math.max(deps.store.maxCallCost(runId, c.id), stepMaxCall);
     /** An earlier over-priced call means the agent's per-call price cannot be trusted for the rest of the run. */
@@ -156,11 +178,21 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       deps.store.markRunning(running);
       const signal = AbortSignal.timeout(c.timeoutMs);
       const priorSpend = {
-        agentUsd: deps.store.runCost(runId, c.id) + stepSpent.usd,
-        runUsd: deps.store.runCost(runId) + stepSpent.usd,
+        agentUsd: deps.store.runCost(runId, c.id) + unrecorded.usd,
+        runUsd: deps.store.runCost(runId) + unrecorded.usd,
         maxCallUsd: maxCallSoFar(),
       };
-      const ctx = issueContext({ contract: c, policy: deps.policy, inputClass: input.handoff.dataClass, providers: deps.providers, clock: deps.clock, signal, priorSpend });
+      const ctx = issueContext({
+        contract: c,
+        policy: deps.policy,
+        inputClass: input.handoff.dataClass,
+        providers: deps.providers,
+        clock: deps.clock,
+        signal,
+        priorSpend,
+        ...(agentPack !== undefined ? { pack: agentPack } : {}),
+        ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
+      });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {
         deps.onInvoke?.(c.id, stepKey);
@@ -171,7 +203,9 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         result = { ok: false, err };
       }
       // Read after the abort too: a model call in flight at the timeout has already been charged its reservation.
-      stepSpent = addCost(stepSpent, ctx.spent());
+      const attemptSpent = ctx.spent();
+      stepSpent = addCost(stepSpent, attemptSpent);
+      unrecorded = addCost(unrecorded, attemptSpent);
       stepMaxCall = Math.max(stepMaxCall, ctx.maxCall());
 
       // A denial is final even if the agent caught it and carried on: the attempt tried to break policy.
@@ -185,7 +219,10 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       if (!result.ok) {
         const code = classify(result.err);
         if (c.retry.on.includes(code) && attempt < c.retry.max) {
-          event('step_retry', { attempt: attempt + 1, error: code });
+          // Record what this attempt paid before sleeping: a crash during the backoff must not lose it.
+          const ev = eventOf('step_retry', { attempt: attempt + 1, error: code, usd: attemptSpent.usd });
+          deps.store.recordAttemptSpend({ runId, stepKey, agentId: c.id, cost: unrecorded, maxCallUsd: stepMaxCall, event: ev });
+          unrecorded = ZERO_COST;
           await deps.sleep(backoffDelay(stepKey, attempt, c.retry.backoffMs));
           continue;
         }

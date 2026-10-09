@@ -3,7 +3,7 @@ import { defineAgent } from '../../src/kernel/agent.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
-import { fakeLlm } from '../../src/kernel/fakes.js';
+import { fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import type { LlmProvider } from '../../src/kernel/providers.js';
@@ -13,6 +13,8 @@ import { Store } from '../../src/kernel/store/store.js';
 import { StateMachine } from '../../src/kernel/state-machine.js';
 import { Supervisor, type SupervisorDeps, type Tracker } from '../../src/kernel/supervisor.js';
 import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
+import { defineType } from '../../src/kernel/types.js';
+import { z } from 'zod';
 import { demoScorer, demoScorerContract, demoSource, demoSourceContract } from '../../src/demo/agents.js';
 import { demoKernel } from '../../src/demo/kernel.js';
 import { demoLlm, demoPipeline, demoTracker } from '../../src/demo/pipeline.js';
@@ -407,17 +409,37 @@ describe('supervisor end to end', () => {
     expect(store.entityState('no-such-id')).toBeUndefined();
   });
 
-  it('a throwing tracker is audited and does not wedge the run or the other trackers', async () => {
+  it('a throwing eventFor is audited and does not wedge the run or the other trackers', async () => {
     const store = Store.open(':memory:');
-    const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: () => { throw new Error('keyOf exploded'); } };
     const badEvent: Tracker = { ...scoreTracker, kind: 'bad-event', eventFor: () => { throw new Error('eventFor exploded'); } };
-    const r = await handBuilt({ store, scorer: demoScorer, trackers: [broken, demoTracker, badEvent] }).start('run-1', [seed]);
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, badEvent] }).start('run-1', [seed]);
     expect(r.queue).toMatchObject({ pending: 0, done: 6, failed: 0 });
     const errors = store.events('run-1').filter((e) => e.kind === 'tracker_error').map((e) => JSON.parse(e.data) as { tracker: string; agent: string; stepKey: string; message: string });
-    expect(errors.filter((e) => e.tracker === 'broken')).toHaveLength(10);
-    expect(errors.filter((e) => e.tracker === 'bad-event')).toHaveLength(5);
-    expect(errors[0]).toMatchObject({ tracker: 'broken', agent: 'demo-source', message: 'keyOf exploded', stepKey: expect.any(String) });
+    expect(errors).toHaveLength(5);
+    expect(errors[0]).toMatchObject({ tracker: 'bad-event', agent: 'demo-scorer', message: 'eventFor exploded', stepKey: expect.any(String) });
     expect(store.entityState('demo-003')).toBe('SCORED');
+  });
+
+  it('a throwing keyOf quarantines the step with verdict G-TRACKER: nothing is routed or kept', async () => {
+    const store = Store.open(':memory:');
+    const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: (env) => { if (env.type === 'DemoScore@1') throw new Error('keyOf exploded'); return null; } };
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken] }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ pending: 0, done: 1, quarantined: 5, failed: 0 });
+    const trips = store.events('run-1').filter((e) => e.kind === 'step_quarantined').map((e) => JSON.parse(e.data) as { agent: string; stepKey: string; verdict: { id: string; verdict: string; detail: string } });
+    expect(trips).toHaveLength(5);
+    for (const t of trips) {
+      expect(t).toMatchObject({ agent: 'demo-scorer', verdict: { id: 'G-TRACKER', verdict: 'trip', detail: expect.stringContaining('keyOf exploded') } });
+      expect(store.getStep(t.stepKey)).toMatchObject({ status: 'quarantined' });
+      expect(JSON.parse(store.getStep(t.stepKey)!.detail!)).toEqual([t.verdict]);
+      expect(store.envelopesOfStep(t.stepKey)).toEqual([]);
+    }
+    expect(store.entityState('demo-003', 'demo-item')).toBe('QUARANTINED');
+    expect(store.quarantinedSteps().map((q) => q.step_key).sort()).toEqual(trips.map((t) => t.stepKey).sort());
+    // A second run replays the quarantine instead of running the scorer again.
+    const inv = invocations();
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken], onInvoke: inv.onInvoke }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ done: 1, quarantined: 5 });
+    expect(inv.calls).toEqual([]);
   });
 });
 
@@ -474,5 +496,97 @@ describe('G-BUDGET: an over-priced model call stops that agent for the rest of t
     for (const s of skipped) {
       expect(s).toMatchObject({ reason: 'budget', detail: 'G-BUDGET: demo-scorer made a call above usdPerCall earlier in this run' });
     }
+  });
+});
+
+describe('v1 kernel extensions: supervisor', () => {
+  const Req = defineType('PaceReq', 1, z.object({ n: z.number().int().positive() }).strict());
+  const Ref = defineType('PaceRef', 1, z.object({ id: z.string() }).strict());
+  const Detail = defineType('PaceDetail', 1, z.object({ id: z.string(), title: z.string(), owner: z.string() }).strict());
+  const HOST = 'jobs.example.test';
+  const common = { version: '1.0.0', dataClasses: { in: ['P0' as const], out: ['P0' as const] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000 };
+  const lister = defineAgent(
+    defineContract({ ...common, id: 'pace-lister', description: 'Lists job refs from one board', skills: ['listing'], team: 'pace-src', kind: 'io', consumes: Req, produces: Ref, capabilities: { http: true }, egress: [HOST] }),
+    async (req: { n: number }, ctx) => {
+      const { json } = await ctx.http!.getJson(`https://${HOST}/list?n=${req.n}`);
+      return (json as string[]).map((id) => ({ id }));
+    },
+  );
+  const packSeen: unknown[] = [];
+  const detailer = defineAgent(
+    defineContract({ ...common, id: 'pace-detailer', description: 'Fetches one job detail', skills: ['detailing'], team: 'pace-det', kind: 'io', consumes: Ref, produces: Detail, capabilities: { http: true, pack: true }, egress: [HOST] }),
+    async (ref: { id: string }, ctx) => {
+      packSeen.push(ctx.pack);
+      const { json } = await ctx.http!.getJson(`https://${HOST}/job/${ref.id}`);
+      return [{ id: ref.id, title: (json as { title: string }).title, owner: (ctx.pack as { name: string }).name }];
+    },
+  );
+  const pipeline: Pipeline = {
+    id: 'pace',
+    version: '1.0.0',
+    seed: { type: Req, guarantees: [] },
+    teams: [
+      { id: 'pace-src', lead: 'pace-src-lead', members: ['pace-lister'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } },
+      { id: 'pace-det', lead: 'pace-det-lead', members: ['pace-detailer'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } },
+    ],
+    edges: [
+      { type: 'PaceReq@1', to: 'pace-lister' },
+      { type: 'PaceRef@1', to: 'pace-detailer' },
+    ],
+  };
+  const build = (store: Store, slept: number[], pack: unknown, packHash: string, inv?: ReturnType<typeof invocations>) => {
+    const registry = new Registry();
+    registry.register(lister);
+    registry.register(detailer);
+    const guardrails = builtinGuardrails();
+    const policy = mergePolicy(PRODUCT_POLICY_V1, {});
+    const fetch = fakeFetch({
+      [`https://${HOST}/list?n=2`]: { body: '["a","b"]' },
+      [`https://${HOST}/job/a`]: { body: '{"title":"A"}' },
+      [`https://${HOST}/job/b`]: { body: '{"title":"B"}' },
+    });
+    const sup = new Supervisor({
+      store,
+      registry,
+      compiled: compileWiring(registry, pipeline, guardrails),
+      guardrails,
+      policy,
+      policyHash: policyHash(policy),
+      providers: { fetch },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+      pack,
+      packHash,
+      ...(inv ? { onInvoke: inv.onInvoke } : {}),
+    });
+    return { sup, fetch };
+  };
+
+  it('paces requests to one host across agents: every request after the first waits at least minHostIntervalMs', async () => {
+    const slept: number[] = [];
+    const { sup, fetch } = build(Store.open(':memory:'), slept, { name: 'Asha Rao' }, 'pack-1');
+    const r = await sup.start('run-1', [{ n: 2 }]);
+    expect(r.queue).toMatchObject({ done: 3, failed: 0 });
+    expect(fetch.calls).toHaveLength(3);
+    expect(slept).toHaveLength(2);
+    for (const ms of slept) expect(ms).toBeGreaterThanOrEqual(PRODUCT_POLICY_V1.minHostIntervalMs);
+  });
+
+  it('passes the pack to pack agents, and a pack edit re-runs only the agents that read it', async () => {
+    packSeen.length = 0;
+    const store = Store.open(':memory:');
+    const r1 = await build(store, [], { name: 'Asha Rao' }, 'pack-1').sup.start('run-1', [{ n: 2 }]);
+    expect(r1.queue).toMatchObject({ done: 3 });
+    expect(packSeen).toEqual([{ name: 'Asha Rao' }, { name: 'Asha Rao' }]);
+    const inv = invocations();
+    const same = await build(store, [], { name: 'Asha Rao' }, 'pack-1', inv).sup.start('run-2', [{ n: 2 }]);
+    expect(same.replayed).toBe(3);
+    expect(inv.calls).toEqual([]);
+    const edited = await build(store, [], { name: 'Asha R.' }, 'pack-2', inv).sup.start('run-3', [{ n: 2 }]);
+    expect(inv.calls.map((c) => c.split(':')[0])).toEqual(['pace-detailer', 'pace-detailer']);
+    expect(edited.replayed).toBe(1);
+    expect(packSeen.slice(2)).toEqual([{ name: 'Asha R.' }, { name: 'Asha R.' }]);
   });
 });

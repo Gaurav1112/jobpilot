@@ -143,12 +143,47 @@ export class Store {
       if (res.changes !== 1) throw new Error(`finishStep: step ${a.stepKey} is not running`);
       const ins = this.db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`);
       for (const e of a.envelopes) ins.run(e.envelopeId, e.stepKey, e.index, e.type, canonicalJson(e));
-      if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
-        this.db
-          .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens, max_call_usd) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-          .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens, a.maxCallUsd ?? 0);
-      }
+      this.addCost(a);
       if (a.event) this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
+    });
+  }
+
+  /**
+   * Records the spend of a finished attempt of a still-running step (before its retry sleep),
+   * with its hash-chained event, in one transaction. finishStep later records only what came after.
+   */
+  recordAttemptSpend(a: {
+    runId: string;
+    stepKey: string;
+    agentId: string;
+    cost: Cost;
+    maxCallUsd?: number;
+    event: { at: string; kind: string; data: unknown; policyHash: string };
+  }): void {
+    this.tx(() => {
+      this.addCost(a);
+      this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
+    });
+  }
+
+  private addCost(a: { runId: string; stepKey: string; agentId: string; cost: Cost; maxCallUsd?: number }): void {
+    if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
+      this.db
+        .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens, max_call_usd) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens, a.maxCallUsd ?? 0);
+    }
+  }
+
+  /**
+   * Turns a done step into a quarantined one (e.g. a tracker could not key its outputs): its
+   * envelopes are dropped, so nothing downstream can use them and a released step can run again.
+   * Spend already recorded stays recorded.
+   */
+  quarantineDoneStep(stepKey: string, detail: string): void {
+    this.tx(() => {
+      const res = this.db.prepare(`UPDATE steps SET status = 'quarantined', detail = ? WHERE step_key = ? AND status = 'done'`).run(detail, stepKey);
+      if (res.changes !== 1) throw new Error(`quarantineDoneStep: step ${stepKey} is not done`);
+      this.db.prepare(`DELETE FROM envelopes WHERE step_key = ?`).run(stepKey);
     });
   }
 

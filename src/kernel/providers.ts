@@ -1,9 +1,14 @@
 export interface FetchResponse {
   readonly status: number;
+  /** When present the broker reads this stream and stops at the size cap; otherwise it measures text(). */
+  readonly body?: ReadableStream<Uint8Array> | null;
   text(): Promise<string>;
 }
 
-export type FetchLike = (url: string, init: { signal: AbortSignal; redirect: 'manual' }) => Promise<FetchResponse>;
+export type FetchLike = (
+  url: string,
+  init: { signal: AbortSignal; redirect: 'manual'; headers: Readonly<Record<string, string>> },
+) => Promise<FetchResponse>;
 
 export interface LlmRequest {
   readonly model: string;
@@ -31,4 +36,4 @@ export interface Providers {
   readonly llm?: LlmProvider;
 }
 
-export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal, redirect: init.redirect });
+export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers } });

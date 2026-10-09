@@ -192,3 +192,19 @@ describe('contractShape ordering is locale independent', () => {
     expect(users).toEqual([]);
   });
 });
+
+describe('v1 kernel extensions: contract', () => {
+  it('rejects unknown top-level keys (strict meta-schema)', () => {
+    expect(() => defineContract({ ...base, bogus: 1 } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/bogus|unrecognized/i);
+  });
+
+  it('rejects unknown capability keys', () => {
+    expect(() => defineContract({ ...base, capabilities: { files: true } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities/);
+  });
+
+  it('accepts capabilities.pack as true or full, and keeps it in the frozen contract', () => {
+    expect(defineContract({ ...base, capabilities: { pack: true } }).capabilities).toEqual({ pack: true });
+    expect(defineContract({ ...base, capabilities: { pack: 'full' } }).capabilities).toEqual({ pack: 'full' });
+    expect(() => defineContract({ ...base, capabilities: { pack: 'some' } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities\.pack/);
+  });
+});

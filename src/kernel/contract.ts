@@ -11,6 +11,12 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 export interface Capabilities {
   readonly http?: true;
   readonly llm?: { readonly model: string; readonly maxTokens: number };
+  /**
+   * Read-only access to the user's pack as `ctx.pack` (deep-frozen). `true` is the public pack;
+   * `'full'` also carries P1 contact details. The step key includes the matching pack hash, so a
+   * pack edit re-runs only the agents that read it.
+   */
+  readonly pack?: true | 'full';
 }
 
 export interface ObligationSpec {
@@ -54,46 +60,54 @@ const kebab = /^[a-z][a-z0-9-]*$/;
 const dotted = /^[a-z][a-z0-9.-]*$/;
 const guardrailId = /^G-[A-Z0-9-]+$/;
 
-const Meta = z.object({
-  id: z.string().regex(kebab, 'id must be kebab-case'),
-  version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be semver x.y.z'),
-  description: z
-    .string()
-    .min(10, 'description must say what the agent does')
-    .refine((d) => !/\band\b/i.test(d), 'description contains "and": one agent does one skill, so split it'),
-  skills: z.array(z.string().min(1)).min(1),
-  team: z.string().regex(kebab, 'team must be kebab-case'),
-  kind: z.enum(AGENT_KINDS),
-  capabilities: z
-    .object({
-      http: z.literal(true).optional(),
-      llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
-    })
-    .strict(),
-  egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
-  dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
-  redactor: z.boolean(),
-  emits: z.enum(DATA_CLASSES).optional(),
-  obligations: z.object({
-    adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
-    discharges: z.array(z.string().regex(dotted)),
-  }),
-  guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }),
-  budget: z
-    .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
-    .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
-  timeoutMs: z.number().int().positive().max(600_000),
-  retry: z
-    .object({
-      max: z.number().int().min(0).max(5),
-      on: z.array(z.enum(ERROR_CODES)),
-      backoffMs: z.array(z.number().int().nonnegative()),
-    })
-    .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
-    .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
-    .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
-  breaker: z.object({ consecutiveFailures: z.number().int().min(1) }),
-});
+/** Strict: an unknown key in a contract spec is a typo or a smuggled field, so it is rejected. */
+const Meta = z
+  .object({
+    consumes: z.custom<MessageType<unknown>>((v) => typeof v === 'object' && v !== null, 'consumes must be a message type'),
+    produces: z.custom<MessageType<unknown>>((v) => typeof v === 'object' && v !== null, 'produces must be a message type'),
+    requires: z.array(z.custom<Predicate<unknown>>((v) => typeof v === 'object' && v !== null)),
+    guarantees: z.array(z.custom<Predicate<unknown>>((v) => typeof v === 'object' && v !== null)),
+    id: z.string().regex(kebab, 'id must be kebab-case'),
+    version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be semver x.y.z'),
+    description: z
+      .string()
+      .min(10, 'description must say what the agent does')
+      .refine((d) => !/\band\b/i.test(d), 'description contains "and": one agent does one skill, so split it'),
+    skills: z.array(z.string().min(1)).min(1),
+    team: z.string().regex(kebab, 'team must be kebab-case'),
+    kind: z.enum(AGENT_KINDS),
+    capabilities: z
+      .object({
+        http: z.literal(true).optional(),
+        llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
+        pack: z.union([z.literal(true), z.literal('full')]).optional(),
+      })
+      .strict(),
+    egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
+    dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
+    redactor: z.boolean(),
+    emits: z.enum(DATA_CLASSES).optional(),
+    obligations: z.object({
+      adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
+      discharges: z.array(z.string().regex(dotted)),
+    }),
+    guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }),
+    budget: z
+      .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
+      .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
+    timeoutMs: z.number().int().positive().max(600_000),
+    retry: z
+      .object({
+        max: z.number().int().min(0).max(5),
+        on: z.array(z.enum(ERROR_CODES)),
+        backoffMs: z.array(z.number().int().nonnegative()),
+      })
+      .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
+      .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
+      .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
+    breaker: z.object({ consecutiveFailures: z.number().int().min(1) }),
+  })
+  .strict();
 
 export function defineContract<I, O>(spec: ContractSpec<I, O>): Contract<I, O> {
   const c: Contract<I, O> = {
@@ -136,6 +150,7 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
     capabilities: {
       ...(capabilities.http ? { http: capabilities.http } : {}),
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
+      ...(capabilities.pack ? { pack: capabilities.pack } : {}),
     },
     egress: [...c.egress],
     dataClasses: { in: [...c.dataClasses.in], out: [...c.dataClasses.out] },

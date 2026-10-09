@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { issueContext } from '../../src/kernel/broker.js';
+import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
@@ -347,5 +347,122 @@ describe('capability broker: error messages', () => {
     const err = (await ctx.http!.getText('http://boards-api.greenhouse.io/v1/secret-path?token=abc123').catch((e: unknown) => e)) as Error;
     expect(err.message).toBe('G-EGRESS: only https is allowed (http://boards-api.greenhouse.io)');
     expect(ctx.denials()).toEqual([err.message]);
+  });
+});
+
+describe('v1 kernel extensions: broker', () => {
+  const H = 'https://boards-api.greenhouse.io';
+  const at = fixedClock('2026-10-08T00:00:00Z');
+  const issueWith = (contract: typeof fetcher, providers: Parameters<typeof issueContext>[0]['providers'], extra: Partial<Parameters<typeof issueContext>[0]> = {}) =>
+    issueContext({ contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers, clock: at, signal: new AbortController().signal, ...extra });
+  const packer = defineContract({ ...common, id: 'packer', description: 'Reads the user pack only', kind: 'deterministic', capabilities: { pack: true }, budget: { usdPerCall: 0, usdPerRun: 0 } });
+
+  it('gives ctx.pack only to a contract that declares capabilities.pack, deep-frozen', () => {
+    const pack = { profile: { name: 'Asha Rao', skills: ['go'] } };
+    expect(issueWith(plain, { fetch: fakeFetch({}) }, { pack }).pack).toBeUndefined();
+    const ctx = issueWith(packer, { fetch: fakeFetch({}) }, { pack });
+    expect(ctx.pack).toEqual(pack);
+    const p = ctx.pack as { profile: { name: string; skills: string[] } };
+    expect(() => {
+      p.profile.name = 'x';
+    }).toThrow(TypeError);
+    expect(() => p.profile.skills.push('rust')).toThrow(TypeError);
+  });
+
+  it('getJson parses JSON', async () => {
+    const ctx = issueWith(fetcher, { fetch: fakeFetch({ [`${H}/j`]: { body: '{"jobs":[1,2]}' } }) });
+    await expect(ctx.http!.getJson(`${H}/j`)).resolves.toEqual({ status: 200, json: { jobs: [1, 2] } });
+  });
+
+  it('getJson rejects invalid JSON with invalid_output', async () => {
+    const ctx = issueWith(fetcher, { fetch: fakeFetch({ [`${H}/j`]: { body: '{nope' } }) });
+    await expect(ctx.http!.getJson(`${H}/j`)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+
+  it('refuses a body over policy.maxResponseBytes with invalid_output, for getText and getJson', async () => {
+    const policy = { ...PRODUCT_POLICY_V1, maxResponseBytes: 8 };
+    const f = fakeFetch({ [`${H}/big`]: { body: '"0123456789"' }, [`${H}/ok`]: { body: '"1234"' } });
+    const ctx = issueWith(fetcher, { fetch: f }, { policy });
+    await expect(ctx.http!.getText(`${H}/big`)).rejects.toMatchObject({ code: 'invalid_output', message: 'response exceeds 8 bytes' });
+    await expect(ctx.http!.getJson(`${H}/big`)).rejects.toMatchObject({ code: 'invalid_output', message: 'response exceeds 8 bytes' });
+    await expect(ctx.http!.getJson(`${H}/ok`)).resolves.toEqual({ status: 200, json: '1234' });
+  });
+
+  it('counts the cap in bytes, not characters, and stops reading a streamed body past it', async () => {
+    const policy = { ...PRODUCT_POLICY_V1, maxResponseBytes: 5 };
+    let pulled = 0;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled += 1;
+        c.enqueue(new TextEncoder().encode('ééé'));
+      },
+    });
+    const f: FetchLike = async () => ({ status: 200, body: stream, text: async () => { throw new Error('text() must not be used when a body stream exists'); } });
+    const ctx = issueWith(fetcher, { fetch: f }, { policy });
+    await expect(ctx.http!.getText(`${H}/s`)).rejects.toMatchObject({ code: 'invalid_output', message: 'response exceeds 5 bytes' });
+    expect(pulled).toBeLessThan(5);
+    const small: FetchLike = async () => ({ status: 200, body: new Response('ééé').body, text: async () => '' });
+    await expect(issueWith(fetcher, { fetch: small }, { policy: { ...PRODUCT_POLICY_V1, maxResponseBytes: 6 } }).http!.getText(`${H}/s`)).resolves.toEqual({ status: 200, body: 'ééé' });
+  });
+
+  it('sends the fixed accept and honest user-agent headers', async () => {
+    const inits: unknown[] = [];
+    const f: FetchLike = async (_u, init) => {
+      inits.push(init);
+      return { status: 200, text: async () => '{}' };
+    };
+    const ctx = issueWith(fetcher, { fetch: f });
+    await ctx.http!.getText(`${H}/a`);
+    await ctx.http!.getJson(`${H}/b`);
+    for (const init of inits) {
+      expect(init).toMatchObject({
+        redirect: 'manual',
+        headers: { accept: 'application/json, text/plain;q=0.8, */*;q=0.1', 'user-agent': 'jobpilot/0.1 (+local)' },
+      });
+    }
+  });
+
+  it('paces requests per host through the shared host pacer', async () => {
+    const slept: number[] = [];
+    const pacer = createHostPacer(1000, at, async (ms) => {
+      slept.push(ms);
+    });
+    const f = fakeFetch({ [`${H}/a`]: { body: '{}' }, [`${H}/b`]: { body: '{}' } });
+    const first = issueWith(fetcher, { fetch: f }, { hostPacer: pacer });
+    const second = issueWith(fetcher, { fetch: f }, { hostPacer: pacer });
+    await first.http!.getJson(`${H}/a`);
+    expect(slept).toEqual([]);
+    await second.http!.getJson(`${H}/b`);
+    expect(slept).toHaveLength(1);
+    expect(slept[0]).toBeGreaterThanOrEqual(1000);
+    expect(f.calls).toHaveLength(2);
+  });
+
+  it('host pacer: waits only the remainder of the interval, and hosts are independent', async () => {
+    let now = Date.parse('2026-10-08T00:00:00Z');
+    const clock = { now: () => new Date(now).toISOString() };
+    const slept: number[] = [];
+    const pacer = createHostPacer(1000, clock, async (ms) => {
+      slept.push(ms);
+      now += ms;
+    });
+    await pacer.wait('a.example');
+    await pacer.wait('b.example');
+    expect(slept).toEqual([]);
+    now += 400;
+    await pacer.wait('a.example');
+    expect(slept).toEqual([600]);
+    now += 5000;
+    await pacer.wait('A.example.');
+    expect(slept).toEqual([600]);
+  });
+
+  it('host pacer: concurrent waits on one host are spaced, not collapsed', async () => {
+    const slept: number[] = [];
+    const pacer = createHostPacer(1000, at, async (ms) => {
+      slept.push(ms);
+    });
+    await Promise.all([pacer.wait('a.example'), pacer.wait('a.example'), pacer.wait('a.example')]);
+    expect(slept).toEqual([1000, 2000]);
   });
 });

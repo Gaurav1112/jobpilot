@@ -1,8 +1,9 @@
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
+import { createHostPacer, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
-import { type Envelope, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
+import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
@@ -17,6 +18,13 @@ import { type CompiledPipeline, SUPERVISOR_ID, seedClass } from './wiring.js';
 export interface Tracker {
   readonly kind: string;
   readonly machine: StateMachine;
+  /**
+   * The entity this envelope belongs to, or null when the tracker does not follow it. Must be a
+   * pure function of the envelope. Throwing is treated as a broken output, not a broken tracker:
+   * when it throws for an output of a done step, that step is quarantined with verdict G-TRACKER,
+   * its outputs are dropped and nothing is routed. A throw while tracking a quarantined input is
+   * only audited (`tracker_error`).
+   */
   keyOf(env: Envelope): string | null;
   /** `env` is the tracked envelope: an output when the step is done, its input when it is quarantined. */
   eventFor(agentId: string, outcome: 'done' | 'quarantined', env: Envelope): string | null;
@@ -37,6 +45,14 @@ export interface SupervisorDeps {
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
   /** Test hook: runs after a step's own transaction, before routing. Throwing here simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** The user's public pack; given to contracts with `capabilities.pack: true` and to guardrails. */
+  readonly pack?: unknown;
+  /** Hash of `pack`, part of the step key of pack agents only. Default 'none'. */
+  readonly packHash?: string;
+  /** The full pack (with P1 contact details); given to contracts with `capabilities.pack: 'full'`. */
+  readonly fullPack?: unknown;
+  /** Hash of `fullPack`, part of the step key of 'full' pack agents only. Default 'none'. */
+  readonly fullPackHash?: string;
 }
 
 export interface RunReport {
@@ -60,8 +76,14 @@ export class Supervisor {
    * needs is read back from the store.
    */
   private readonly breakersByRun = new Map<string, Breakers>();
+  private readonly sleep: (ms: number) => Promise<void>;
+  /** One per supervisor: every step's requests to a host share its spacing. */
+  private readonly hostPacer: HostPacer;
 
-  constructor(private readonly d: SupervisorDeps) {}
+  constructor(private readonly d: SupervisorDeps) {
+    this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+  }
 
   private get exec(): ExecutorDeps {
     const d = this.d;
@@ -72,7 +94,12 @@ export class Supervisor {
       providers: d.providers,
       clock: d.clock,
       guardrails: d.guardrails,
-      sleep: d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+      sleep: this.sleep,
+      hostPacer: this.hostPacer,
+      ...(d.pack !== undefined ? { pack: d.pack } : {}),
+      ...(d.packHash !== undefined ? { packHash: d.packHash } : {}),
+      ...(d.fullPack !== undefined ? { fullPack: d.fullPack } : {}),
+      ...(d.fullPackHash !== undefined ? { fullPackHash: d.fullPackHash } : {}),
       contractHashOf: (id, v) => (id === SUPERVISOR_ID && v === d.compiled.pipeline.version ? d.compiled.seedHash : d.registry.contractHashOf(id, v)),
       ...(d.onInvoke ? { onInvoke: d.onInvoke } : {}),
     };
@@ -185,11 +212,17 @@ export class Supervisor {
         });
         continue;
       }
-      const outcome: StepOutcome = await executeStep(this.exec, runId, agent, input);
+      const executed: StepOutcome = await executeStep(this.exec, runId, agent, input);
       count += 1;
       this.d.afterStep?.(count);
+      const trip = executed.kind === 'done' ? this.trackerTrip(executed.outputs) : undefined;
+      const outcome: StepOutcome = trip ? { kind: 'quarantined', stepKey: executed.stepKey, verdicts: [trip] } : executed;
 
       store.tx(() => {
+        if (trip) {
+          store.quarantineDoneStep(outcome.stepKey, JSON.stringify([trip]));
+          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, side: 'tracker', verdict: trip });
+        }
         if (outcome.kind === 'done') {
           for (const out of outcome.outputs) {
             this.route(runId, out);
@@ -223,6 +256,20 @@ export class Supervisor {
     };
     this.event(runId, 'run_finished', report);
     return report;
+  }
+
+  /** G-TRACKER: an output no tracker can key is not trusted. The first throw, in output then tracker order, decides. */
+  private trackerTrip(outputs: readonly Envelope[]): GuardrailVerdict | undefined {
+    for (const [i, out] of outputs.entries()) {
+      for (const t of this.d.trackers ?? []) {
+        try {
+          t.keyOf(out);
+        } catch (err) {
+          return { id: 'G-TRACKER', verdict: 'trip', detail: `tracker ${t.kind} could not key output ${i}: ${messageOf(err)}` };
+        }
+      }
+    }
+    return undefined;
   }
 
   private track(runId: string, env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
