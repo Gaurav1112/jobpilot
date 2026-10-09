@@ -10,8 +10,10 @@ import { withLock } from './lock.js';
 import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
 import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
-import { runProblems, type Problem } from './problems.js';
-import { projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
+import { runProblems, staleProblems, type Problem } from './problems.js';
+import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
+import { citeable } from './pack/rules.js';
+import type { Pack } from './pack/schema.js';
 import { AppStore, type DocsState } from './store/app-store.js';
 import { ensureHome } from './home.js';
 
@@ -36,6 +38,15 @@ const SOURCE_PREFIX = 'src-';
 export const REFRESH_HINT = 'All sources were already fetched today; use --refresh to fetch again';
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Review I2: whether a fact id is citeable under this run's pack (overrides applied); an unknown id is not. */
+const citeableIn = (pack: Pack): ((id: string) => boolean) => {
+  const ok = new Set(pack.facts.filter(citeable).map((f) => f.id));
+  return (id) => ok.has(id);
+};
+
+/** Every job of the catalogue, duplicates included, for the stale problems. */
+const allJobs = (app: AppStore) => app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'], duplicates: true });
 
 /**
  * The run id for `prefix` (`daily-<runDate>`): the first of `prefix`, `prefix-2`, `prefix-3`, … that is not a
@@ -186,9 +197,10 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });
+      markStaleDocs(app, citeableIn(loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
-      const problems = runProblems(app.kernel, runId, loaded.pack.naming);
+      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       o.afterProject?.();
       const fresh = newMatches(app);
       const notification = notificationFor(fresh, loaded.pack.naming, problems.length);
@@ -297,8 +309,9 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, [...plans.values()]);
       app.setSetting(RENDER_NONCE_KEY, String(nonce));
       const docChanges = projectDocs(app.kernel, app, runId, { docOnDisk: diskDocCheck(paths.out) });
+      markStaleDocs(app, citeableIn(loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
-      const problems = runProblems(app.kernel, runId, loaded.pack.naming);
+      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       const warnings = skippedWarnings(skipped);
       app.recordRun({ runId, at: now, counts, packHash: loaded.packHash, policyHash: k.policyHash, warnings, problems });
       const written = new Set(docChanges.map((c) => c.jobKey));

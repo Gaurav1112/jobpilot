@@ -41,9 +41,9 @@ const BAND_TONE: Readonly<Record<Band, Tone>> = { disclosed: 'good', undisclosed
 export const bandPill = (b: Band): Html => pill(BAND_SHORT[b], BAND_TONE[b], BAND_LABEL[b]);
 
 const DOCS_LABEL: Readonly<Record<DocsState, string>> = {
-  ready: 'Documents ready', blocked: 'Documents blocked', missing: 'Documents missing', 'below-floor': 'No documents', none: 'No documents yet',
+  ready: 'Documents ready', blocked: 'Documents blocked', missing: 'Documents missing', 'below-floor': 'No documents', none: 'No documents yet', stale: 'Documents out of date',
 };
-const DOCS_TONE: Readonly<Record<DocsState, Tone>> = { ready: 'good', blocked: 'critical', missing: 'warn', 'below-floor': 'muted', none: 'muted' };
+const DOCS_TONE: Readonly<Record<DocsState, Tone>> = { ready: 'good', blocked: 'critical', missing: 'warn', 'below-floor': 'muted', none: 'muted', stale: 'warn' };
 export const docsPill = (d: DocsState): Html => pill(DOCS_LABEL[d], DOCS_TONE[d]);
 
 /** "Remote · India", "Hybrid", "Remote unclear", from the posting's structured field and countries. */

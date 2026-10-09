@@ -511,7 +511,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     if (!JOB_KEY.test(key) || !DOC_NAME.test(name)) return c.text('Not found', 404);
     const job = withStore((s) => s.getJob(key));
     const doc = job?.docs.find((d) => d.path === `${key}/${name}`);
-    if (!job || !doc) return c.text('Not found', 404);
+    // Review I2: stale documents cite a fact the user rejected; they are never served.
+    if (!job || !doc || job.docsState === 'stale') return c.text('Not found', 404);
     const naming = packState(deps.home, now()).naming;
     const read = readRecorded(paths.out, doc.path, doc.sha256);
     if (read.ok && doc.format !== 'html' && fromDashboard(c)) {

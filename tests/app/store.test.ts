@@ -241,7 +241,7 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
     db.prepare(`INSERT INTO app_schema (id, version) VALUES (1, 0)`).run();
     for (const [i, m] of APP_MIGRATIONS.slice(0, 3).entries()) {
-      db.exec(m);
+      db.exec(m as string);
       db.prepare(`UPDATE app_schema SET version = ?`).run(i + 1);
     }
     db.prepare(
@@ -252,6 +252,38 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     // a row inserted afterwards by a run is not stamped
     s.upsertJob(jobRow({ jobKey: '00000000000000ff', sourceId: '2', docsState: 'ready' }));
     expect(s.getJob('00000000000000ff')?.notifiedAt).toBeNull();
+  });
+
+  it('I2: the stale migration keeps every row and foreign key of a version-6 DB, and allows docs_state stale', () => {
+    const kernel = Store.open(':memory:');
+    const db = kernel.db;
+    db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
+    db.prepare(`INSERT INTO app_schema (id, version) VALUES (1, 0)`).run();
+    for (const [i, m] of APP_MIGRATIONS.slice(0, 6).entries()) {
+      db.exec(m as string);
+      db.prepare(`UPDATE app_schema SET version = ?`).run(i + 1);
+    }
+    expect(() => db.prepare(`INSERT INTO jobs (job_key, source, source_id, dedupe_key, company, title, url, ats, location, docs_state, first_seen, last_seen) VALUES ('00000000000000aa', 'lever', '9', 'd', 'A', 'E', 'u', 'lever', 'R', 'stale', 'a', 'a')`).run()).toThrow(/CHECK/);
+    const ins = db.prepare(
+      `INSERT INTO jobs (job_key, source, source_id, dedupe_key, duplicate_of, company, title, url, ats, location, docs_state, first_seen, last_seen, notified_at, unplaced) VALUES (?, 'greenhouse', ?, 'dddddddddddddddd', ?, 'Acme', 'Eng', 'https://x.example/1', 'greenhouse', 'Remote', 'ready', 'a', 'a', 'n', '["f-1"]')`,
+    );
+    ins.run('0123456789abcdef', '1', null);
+    ins.run('00000000000000ff', '2', '0123456789abcdef');
+    db.prepare(`INSERT INTO job_sources (job_key, source, source_id) VALUES ('0123456789abcdef', 'greenhouse', '1')`).run();
+    db.prepare(`INSERT INTO job_docs (job_key, kind, format, path, sha256, pages, qa_ok) VALUES ('0123456789abcdef', 'resume', 'pdf', '0123456789abcdef/resume.pdf', 'aa', 1, 1)`).run();
+    db.prepare(`INSERT INTO status_history (job_key, "from", "to", at, by) VALUES ('0123456789abcdef', NULL, 'new', 'a', 'user')`).run();
+    const before = db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all();
+    const s = AppStore.on(kernel);
+    expect(s.schemaVersion()).toBe(APP_MIGRATIONS.length);
+    expect(db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all()).toEqual(before.map((r) => ({ ...(r as object), cited_facts: null })));
+    expect(db.pragma('foreign_key_check')).toEqual([]);
+    expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs' AND sql IS NOT NULL`).all()).toEqual([{ name: 'jobs_by_dedupe_key' }]);
+    // stale is accepted now; foreign keys still hold
+    expect(s.setDocs('0123456789abcdef', 'stale', 'cites a fact you rejected (f-1)', [])).toBe(true);
+    expect(s.getJob('0123456789abcdef')?.docsState).toBe('stale');
+    expect(() => db.prepare(`INSERT INTO job_docs (job_key, kind, format, path, sha256, pages, qa_ok) VALUES ('ffffffffffffffff', 'resume', 'pdf', 'x', 'aa', 1, 1)`).run()).toThrow(/FOREIGN KEY/);
+    expect(() => db.prepare(`UPDATE jobs SET docs_state = 'bogus'`).run()).toThrow(/CHECK/);
   });
 
   it('keeps warnings and problems with a run, and finds the latest run by prefix', () => {

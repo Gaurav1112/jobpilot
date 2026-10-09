@@ -217,3 +217,33 @@ function qaBlocks(kernel: Store, events: readonly { kind: string; data: string }
   }
   return [...byJob.values()];
 }
+
+/**
+ * Review I2: one `docs-stale` problem per job whose documents are stale (they cite a fact that is no longer citeable),
+ * in job-key order. Listed after every run until the posting is seen again (and rebuilt) or the fact is restored; not a
+ * failure of the run, so it does not change the exit code.
+ */
+export function staleProblems(
+  jobs: readonly { jobKey: string; company: string; title: string; docsState: string; docsDetail: string | null }[],
+  naming: Pick<Naming, 'forbiddenTerms'>,
+): Problem[] {
+  const safe = (t: string): string => {
+    const line = oneLine(t);
+    try {
+      assertNoForbidden(line, naming);
+      return line;
+    } catch (err) {
+      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
+      throw err;
+    }
+  };
+  return [...jobs]
+    .filter((j) => j.docsState === 'stale')
+    .sort((a, b) => (a.jobKey < b.jobKey ? -1 : a.jobKey > b.jobKey ? 1 : 0))
+    .map((j) => ({
+      kind: 'docs-stale' as const,
+      agent: 'projector',
+      item: safe(`${j.company} — ${j.title} (job ${j.jobKey})`),
+      reason: safe(`the documents ${j.docsDetail ?? 'cite a fact that is no longer citeable'}; they are rebuilt the next time the posting is seen`),
+    }));
+}

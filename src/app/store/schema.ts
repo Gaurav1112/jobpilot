@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3';
+
 /**
  * The app catalogue's tables (spec §6). They live in the kernel's DB file but are the app's own: the app keeps its
  * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never touch a kernel table.
@@ -8,12 +10,44 @@
  * points at the preferred row through `duplicate_of`.
  */
 export const JOB_STATUSES = ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped'] as const;
-/** `missing`: QA passed, but a listed file is no longer on disk with its recorded sha256 (Task 10 fix round 1). */
-export const DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing'] as const;
+/**
+ * `missing`: QA passed, but a listed file is no longer on disk with its recorded sha256 (Task 10 fix round 1).
+ * `stale` (final review I2): the documents cite a fact that is no longer citeable under the current pack and the user's
+ * overrides; never offered for download, rebuilt the next time the posting is seen.
+ */
+export const DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing', 'stale'] as const;
+/** The docs states of migration 1, frozen: that migration's SQL must never change. */
+const V1_DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing'] as const;
 
 const list = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
 
-export const APP_MIGRATIONS: readonly string[] = [
+/**
+ * A migration: SQL run in one transaction, or (for a table rebuild, which SQLite needs to change a CHECK) a function run
+ * in one transaction with foreign keys off, after which `PRAGMA foreign_key_check` must be empty (SQLite's documented
+ * table-rebuild procedure; `AppStore` turns foreign keys back on afterwards).
+ */
+export type AppMigration = string | { readonly foreignKeysOff: true; readonly run: (db: Database.Database) => void };
+
+/**
+ * Rebuilds `jobs` from its own stored SQL with `docs_state` allowing every current state, keeping every column, row,
+ * index and trigger; then adds `cited_facts`. Refuses (throws) when the stored SQL does not have the expected CHECK.
+ */
+function staleMigration(db: Database.Database): void {
+  const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'`).get() as { sql: string } | undefined;
+  if (!row) throw new Error('migration: no jobs table');
+  const oldCheck = `CHECK (docs_state IN (${list(V1_DOCS_STATES)}))`;
+  if (row.sql.split(oldCheck).length !== 2 || !row.sql.startsWith('CREATE TABLE jobs (')) throw new Error('migration: the jobs table is not the expected shape');
+  const sql = row.sql.replace(oldCheck, `CHECK (docs_state IN (${list(DOCS_STATES)}))`).replace(/^CREATE TABLE jobs \(/, 'CREATE TABLE jobs_rebuilt (');
+  const extras = (db.prepare(`SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name = 'jobs' AND sql IS NOT NULL ORDER BY type, name`).all() as { sql: string }[]).map((r) => r.sql);
+  db.exec(sql);
+  db.exec(`INSERT INTO jobs_rebuilt SELECT * FROM jobs`);
+  db.exec(`DROP TABLE jobs`);
+  db.exec(`ALTER TABLE jobs_rebuilt RENAME TO jobs`);
+  for (const e of extras) db.exec(e);
+  db.exec(`ALTER TABLE jobs ADD COLUMN cited_facts TEXT`);
+}
+
+export const APP_MIGRATIONS: readonly AppMigration[] = [
   `
   CREATE TABLE jobs (
     job_key TEXT PRIMARY KEY,
@@ -39,7 +73,7 @@ export const APP_MIGRATIONS: readonly string[] = [
     jd_text TEXT NOT NULL DEFAULT '',
     terms TEXT,
     recommended_format TEXT CHECK (recommended_format IS NULL OR recommended_format IN ('pdf', 'docx')),
-    docs_state TEXT NOT NULL DEFAULT 'none' CHECK (docs_state IN (${list(DOCS_STATES)})),
+    docs_state TEXT NOT NULL DEFAULT 'none' CHECK (docs_state IN (${list(V1_DOCS_STATES)})),
     docs_detail TEXT,
     posted_at TEXT,
     first_seen TEXT NOT NULL,
@@ -142,4 +176,6 @@ export const APP_MIGRATIONS: readonly string[] = [
   );
   CREATE INDEX job_downloads_by_job ON job_downloads (job_key, seq);
   `,
+  // Final review I2: docs_state `stale`, and the fact ids a job's documents cite (JSON array; NULL until known).
+  { foreignKeysOff: true, run: staleMigration },
 ];

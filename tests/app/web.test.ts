@@ -174,6 +174,17 @@ beforeEach(async () => {
 });
 afterEach(() => removeHome(home));
 
+describe('I2: stale documents on the dashboard', () => {
+  it('shows why, offers no download or preview, and refuses the files', async () => {
+    withStore((s) => s.setDocs(K1, 'stale', 'cites a fact you rejected (f-nw-01)', s.getJob(K1)?.docs ?? []));
+    const page = await get(`/jobs/${K1}`);
+    expect(page.status).toBe(200);
+    expect(page.body.replace(/&#0?39;|&apos;/g, "'")).toContain("These documents cite a fact you rejected; they'll be rebuilt next time the posting is seen");
+    expect(page.body).not.toContain(`/jobs/${K1}/files/`);
+    for (const name of ['resume.pdf', 'cover.docx', 'resume.html']) expect((await app.request(`/jobs/${K1}/files/${name}`, { headers: { cookie, ...dl } })).status).toBe(404);
+  });
+});
+
 describe('dashboard: jobs list', () => {
   it('renders the rows comp-first (disclosed by max INR, then undisclosed, then review), hiding rejected, below-floor and duplicate listings', async () => {
     const { status, body } = await get('/');

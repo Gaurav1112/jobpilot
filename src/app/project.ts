@@ -3,7 +3,7 @@ import type { DocCheck } from './docs-check.js';
 import type { Doc, DocsState, JobUpsert } from './store/app-store.js';
 import type { AppStore } from './store/app-store.js';
 import { JOB_TRACKER_KIND, jobKeyOf } from './tracker.js';
-import type { EligibilityVerdict, Evidence, Posting, QaReport, Rendered, ResumePlan, Scored } from './types.js';
+import type { CoverPlan, EligibilityVerdict, Evidence, Posting, QaReport, Rendered, ResumePlan, Scored } from './types.js';
 import type { Envelope, GuardrailVerdict } from '../kernel/envelope.js';
 import type { EventRow, QueueStatus, Store } from '../kernel/store/store.js';
 
@@ -198,7 +198,7 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   }
 
   // 4. one row per job
-  const docs: Record<DocsState, number> = { ready: 0, blocked: 0, 'below-floor': 0, none: 0, missing: 0 };
+  const docs: Record<DocsState, number> = { ready: 0, blocked: 0, 'below-floor': 0, none: 0, missing: 0, stale: 0 };
   let jobs = 0;
   let inserted = 0;
   let stale = 0;
@@ -213,7 +213,7 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
         stale += 1;
         continue;
       }
-      app.putDocs(res.jobKey, r.docs);
+      app.putDocs(res.jobKey, r.docs, r.citedFacts);
       jobs += 1;
       if (res.inserted) inserted += 1;
       docs[r.row.docsState] += 1;
@@ -306,7 +306,7 @@ function safeEnvelope(kernel: Store, id: string): Envelope | undefined {
   }
 }
 
-function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { row: JobUpsert; docs: Doc[] } | undefined {
+function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { row: JobUpsert; docs: Doc[]; citedFacts: string[] | null } | undefined {
   // Unique envelopes, furthest stage first, then envelope id.
   const envs = [...new Map(g.envs.map((e) => [e.envelopeId, e])).values()].sort(
     (a, b) => (RANK[b.type] ?? 0) - (RANK[a.type] ?? 0) || cmp(a.envelopeId, b.envelopeId),
@@ -377,7 +377,61 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
     unplaced: plan?.unplaced ?? [],
     at,
   };
-  return { row, docs };
+  return { row, docs, citedFacts: docs.length > 0 && rendered && qa ? citedFactsOf(rendered.plan) : null };
+}
+
+/** Review I2: every fact id a rendered cover plan cites: resume bullets, certs, education and cover paragraphs. */
+export function citedFactsOf(plan: unknown): string[] {
+  const p = plan as Partial<CoverPlan> | undefined;
+  const r = p?.resume;
+  const ids = [
+    ...(r?.roles ?? []).flatMap((role) => role.bullets.map((b) => b.factId)),
+    ...(r?.certs ?? []).map((c) => c.factId),
+    ...(r?.education ?? []).map((e) => e.factId),
+    ...(p?.paragraphs ?? []).flatMap((x) => x.factIds),
+  ];
+  return [...new Set(ids)].sort();
+}
+
+/** Review I2: the docs detail of stale documents, naming the facts that are no longer citeable. */
+export const staleDetail = (facts: readonly string[]): string => `cites a fact you rejected or no longer confirm (${facts.join(', ')})`;
+
+/**
+ * Review I2, after every run (and rebuild): every job whose documents are `ready` but cite a fact that is not citeable
+ * under the current pack and the user's overrides becomes `stale` (never offered, rebuilt the next time the posting is
+ * seen); a `stale` job whose facts are all citeable again goes back to `ready` (or `missing` when a file changed on
+ * disk). Cited facts come from the job row, or, when unknown, from the rendered plan behind its files (and are kept).
+ * Returns the jobs it made stale or restored.
+ */
+export function markStaleDocs(app: AppStore, citeable: (factId: string) => boolean, docOnDisk: DocCheck): { stale: string[]; restored: string[] } {
+  const out = { stale: [] as string[], restored: [] as string[] };
+  app.tx(() => {
+    const jobs = app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'], duplicates: true }).filter((j) => j.docsState === 'ready' || j.docsState === 'stale');
+    for (const j of jobs) {
+      let cited = j.citedFacts;
+      if (cited === null) {
+        const plan = app.renderedPlanOf(j.jobKey);
+        if (plan === undefined) continue;
+        cited = citedFactsOf(plan);
+        app.setCitedFacts(j.jobKey, cited);
+      }
+      const bad = cited.filter((f) => !citeable(f));
+      if (j.docsState === 'ready' && bad.length > 0) {
+        app.setDocsState(j.jobKey, 'stale', staleDetail(bad));
+        out.stale.push(j.jobKey);
+      } else if (j.docsState === 'stale' && bad.length === 0) {
+        const docs = app.getJob(j.jobKey)?.docs ?? [];
+        const gone = docs.flatMap((d) => {
+          const s = docOnDisk(d.path, d.sha256);
+          return s === 'ok' ? [] : [`${d.path} ${s === 'absent' ? 'is not on disk' : 'changed on disk'}`];
+        });
+        if (gone.length > 0) app.setDocsState(j.jobKey, 'missing', `documents missing: ${gone.join('; ')}`);
+        else app.setDocsState(j.jobKey, 'ready', null);
+        out.restored.push(j.jobKey);
+      }
+    }
+  });
+  return out;
 }
 
 export interface AgentCounts {

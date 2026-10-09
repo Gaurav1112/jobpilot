@@ -43,6 +43,8 @@ export function docsReason(j: Pick<JobView, 'docsState' | 'docsDetail' | 'compan
       return 'No documents: this job scored under your minimum fit, so none were made.';
     case 'missing':
       return `Documents are missing on disk (${d.replace(/^documents missing:\s*/, '')}). Run "jobpilot docs rebuild" to make them again.`;
+    case 'stale':
+      return "These documents cite a fact you rejected; they'll be rebuilt next time the posting is seen";
     case 'none':
       return d === '' ? 'No documents yet: the next run makes them if this job qualifies.' : `No documents yet: ${d}`;
     case 'blocked':

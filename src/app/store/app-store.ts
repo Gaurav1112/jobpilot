@@ -120,6 +120,8 @@ export interface JobView {
   readonly appliedAt: string | null;
   /** When a run's notification announced this job (m8); null until then. */
   readonly notifiedAt: string | null;
+  /** Review I2: the fact ids the current documents cite, sorted; null when not known (yet). */
+  readonly citedFacts: string[] | null;
   readonly band: Band;
 }
 
@@ -205,6 +207,7 @@ interface JobRowDb {
   note: string;
   applied_at: string | null;
   notified_at: string | null;
+  cited_facts: string | null;
 }
 
 const json = (v: unknown): string | null => (v === null || v === undefined ? null : JSON.stringify(v));
@@ -295,10 +298,26 @@ export class AppStore {
       throw new Error(`app schema version ${version} is newer than this jobpilot (${APP_MIGRATIONS.length})`);
     }
     for (let v = version; v < APP_MIGRATIONS.length; v++) {
-      db.transaction(() => {
-        db.exec(APP_MIGRATIONS[v] ?? '');
-        db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
-      })();
+      const m = APP_MIGRATIONS[v] ?? '';
+      if (typeof m === 'string') {
+        db.transaction(() => {
+          db.exec(m);
+          db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
+        })();
+        continue;
+      }
+      // A table rebuild: foreign keys off around the transaction (they cannot change inside one), checked before commit.
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.transaction(() => {
+          m.run(db);
+          const broken = db.pragma('foreign_key_check') as unknown[];
+          if (broken.length > 0) throw new Error(`app migration ${v + 1} would break ${broken.length} foreign keys`);
+          db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
+        })();
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
     }
     return new AppStore(kernel, owned);
   }
@@ -469,12 +488,47 @@ export class AppStore {
   }
 
   /** Replaces the job's documents with `docs` (an empty list clears them). */
-  putDocs(jobKey: string, docs: readonly Doc[]): void {
+  /**
+   * Replaces a job's documents. `citedFacts` (review I2): the fact ids they cite, when the caller knows them; otherwise
+   * they are unknown (NULL) until `citedFactsFromKernel` finds the rendered plan behind the files.
+   */
+  putDocs(jobKey: string, docs: readonly Doc[], citedFacts: readonly string[] | null = null): void {
     this.tx(() => {
       this.db.prepare(`DELETE FROM job_docs WHERE job_key = ?`).run(jobKey);
       const ins = this.db.prepare(`INSERT INTO job_docs (job_key, kind, format, path, sha256, pages, qa_ok) VALUES (?, ?, ?, ?, ?, ?, ?)`);
       for (const d of docs) ins.run(jobKey, d.kind, d.format, d.path, d.sha256, d.pages, d.qaOk ? 1 : 0);
+      this.setCitedFacts(jobKey, docs.length === 0 ? [] : citedFacts);
     });
+  }
+
+  /** Review I2: records the fact ids a job's current documents cite (sorted, unique), or NULL for unknown. */
+  setCitedFacts(jobKey: string, ids: readonly string[] | null): void {
+    this.db.prepare(`UPDATE jobs SET cited_facts = ? WHERE job_key = ?`).run(ids === null ? null : JSON.stringify([...new Set(ids)].sort()), jobKey);
+  }
+
+  /** Review I2: sets only the docs state and detail (the stale pass); the documents themselves are kept. */
+  setDocsState(jobKey: string, state: DocsState, detail: string | null): void {
+    this.db.prepare(`UPDATE jobs SET docs_state = ?, docs_detail = ? WHERE job_key = ?`).run(state, detail, jobKey);
+  }
+
+  /**
+   * Review I2: the plan behind a job's current documents, from the kernel's stored `Rendered` envelopes (same
+   * connection, read only): the one whose files are exactly the job's recorded documents (path and sha256).
+   */
+  renderedPlanOf(jobKey: string): unknown {
+    const want = (this.db.prepare(`SELECT path, sha256 FROM job_docs WHERE job_key = ? ORDER BY path`).all(jobKey) as { path: string; sha256: string }[])
+      .map((d) => `${d.path}\u0000${d.sha256}`)
+      .join('\n');
+    if (want === '') return undefined;
+    const rows = this.db
+      .prepare(`SELECT body FROM envelopes WHERE type = 'Rendered@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY envelope_id`)
+      .all(jobKey) as { body: string }[];
+    for (const r of rows) {
+      const p = (JSON.parse(r.body) as { payload?: { files?: { path: string; sha256: string }[]; plan?: unknown } }).payload;
+      const got = (p?.files ?? []).map((f) => `${f.path}\u0000${f.sha256}`).sort().join('\n');
+      if (got === want) return p?.plan;
+    }
+    return undefined;
   }
 
   getJob(jobKey: string): JobDetail | undefined {
@@ -634,11 +688,11 @@ export class AppStore {
   }
 
   /** Replaces a job's documents and their state (docs rebuild): no other column is touched. False when there is no such job. */
-  setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[]): boolean {
+  setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[], citedFacts: readonly string[] | null = null): boolean {
     return this.tx(() => {
       const r = this.db.prepare(`UPDATE jobs SET docs_state = ?, docs_detail = ? WHERE job_key = ?`).run(state, detail, jobKey);
       if (r.changes === 0) return false;
-      this.putDocs(jobKey, docs);
+      this.putDocs(jobKey, docs, citedFacts);
       return true;
     });
   }
@@ -718,6 +772,7 @@ function view(r: JobRowDb, top: JobRowDb, dups: readonly JobRowDb[], floorInr?: 
     note: notes.join(' | '),
     appliedAt: group.find((g) => g.applied_at !== null)?.applied_at ?? null,
     notifiedAt: r.notified_at,
+    citedFacts: parse<string[]>(r.cited_facts),
     band: bandOf(r, floorInr),
   };
 }

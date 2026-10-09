@@ -161,3 +161,48 @@ describe.skipIf(pdftotext === undefined)('I3: failed commits and QA-blocked docu
     }
   }, 240_000);
 });
+
+describe.skipIf(pdftotext === undefined)('I2: documents that cite a fact the user rejected go stale', () => {
+  it('a job not seen again is marked stale after the run, listed as a problem, and ready again when the fact is restored', async () => {
+    const h = docsHome();
+    try {
+      await h.run();
+      const readyJobs = h.jobs().filter((j) => j.docsState === 'ready');
+      expect(readyJobs.length).toBeGreaterThan(1);
+      const cited = h.withApp((a) => readyJobs.map((j) => ({ key: j.jobKey, facts: a.getJob(j.jobKey)?.citedFacts ?? [] })));
+      for (const c of cited) expect(c.facts.length).toBeGreaterThan(0);
+      // a fact cited by some ready jobs but not all, so both outcomes are visible
+      const counts = new Map<string, number>();
+      for (const c of cited) for (const f of new Set(c.facts)) counts.set(f, (counts.get(f) ?? 0) + 1);
+      const fact = [...counts].find(([, n]) => n < cited.length)?.[0] ?? (cited[0]?.facts[0] as string);
+      const citing = cited.filter((c) => c.facts.includes(fact)).map((c) => c.key).sort();
+
+      // the boards are not read today (nothing is seen again), and the user rejects the fact
+      writeFileSync(join(h.home, 'pack/watchlist.yaml'), 'watchlist: []\n');
+      writeFileSync(join(h.home, 'pack/feeds.yaml'), 'enabled: []\n');
+      h.override(fact, 'rejected');
+      h.clock.t = '2026-10-10T01:30:00.000Z';
+      const s = await h.run();
+      const after = h.jobs();
+      for (const k of citing) {
+        const j = after.find((x) => x.jobKey === k);
+        expect(j?.docsState).toBe('stale');
+        expect(j?.docsDetail).toContain(fact);
+      }
+      for (const c of cited.filter((x) => !citing.includes(x.key))) expect(after.find((x) => x.jobKey === c.key)?.docsState).toBe('ready');
+      const stale = s.problems.filter((p) => p.kind === 'docs-stale');
+      expect(stale.map((p) => p.item.match(/job ([0-9a-f]{16})/)?.[1]).sort()).toEqual(citing);
+      expect(stale.every((p) => p.reason.includes(fact))).toBe(true);
+      expect(s.exitCode).toBe(0);
+
+      // the user restores the fact: the same files are citeable again, so ready again (still not seen)
+      h.override(fact, 'verified');
+      h.clock.t = '2026-10-11T01:30:00.000Z';
+      const back = await h.run();
+      for (const k of citing) expect(h.jobs().find((x) => x.jobKey === k)?.docsState).toBe('ready');
+      expect(back.problems.filter((p) => p.kind === 'docs-stale')).toEqual([]);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+});
