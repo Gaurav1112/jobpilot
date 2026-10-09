@@ -135,6 +135,14 @@ const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort()
 
 /** India named by a city or state rather than the country: a city of that name elsewhere must not add India. */
 const INDIA_BY_NAME = new Set(['india', 'bharat']);
+/**
+ * Spellings that name a part of a country (a city, a state, a constituent country) rather than the country or a
+ * region. Excluding one excludes that part only: "India (excluding Mumbai)" is still India.
+ */
+const SUB_PLACES: ReadonlySet<string> = new Set([
+  ...(PLACES.india ?? []).filter((a) => !INDIA_BY_NAME.has(a)),
+  'new mexico', 'new england', 'new south wales', 'england', 'scotland', 'wales', 'northern ireland', 'dubai', 'abu dhabi',
+]);
 /** Words that turn the places after them (to the end of the clause) into exclusions. */
 const EXCLUDING = /\b(?:except|excluding|excl\.?|outside(?: of)?|not(?: in| from)?|anywhere but|but not|other than)\b/i;
 /** A clause ends at these; commas do not end it ("except India, Pakistan" excludes both). */
@@ -144,13 +152,17 @@ const SEGMENT_SPLIT = /[;|\n/&]|\bor\b|\band\b/gi;
 
 interface PlaceScan {
   places: string[];
+  /** Excluded countries or regions (canonical names): these leave `places`. */
   excluded: string[];
+  /** Excluded cities or states, as written (lower-cased): signalled only, the country stays. */
+  excludedParts: string[];
 }
 
 function scanPlaces(text: string): PlaceScan {
   const t = text.normalize('NFKC');
   const out: string[] = [];
   const excluded: string[] = [];
+  const excludedParts: string[] = [];
   const bounds = [0, ...[...t.matchAll(SEGMENT_SPLIT)].flatMap((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]), t.length];
   for (let k = 0; k + 1 < bounds.length; k += 2) {
     const segStart = bounds[k] ?? 0;
@@ -164,7 +176,8 @@ function scanPlaces(text: string): PlaceScan {
       const before = t.slice(0, at);
       const clauseStart = Math.max(-1, ...[...before.matchAll(CLAUSE_END)].map((c) => c.index ?? -1)) + 1;
       if (EXCLUDING.test(before.slice(clauseStart))) {
-        excluded.push(name);
+        if (SUB_PLACES.has(alias)) excludedParts.push(alias.replace(/\s+/g, ' '));
+        else excluded.push(name);
         continue;
       }
       found.push({ name, byCity: name === 'india' && !INDIA_BY_NAME.has(alias) });
@@ -175,7 +188,7 @@ function scanPlaces(text: string): PlaceScan {
     for (const f of found) if (!(f.name === 'india' && cityOnlyIndia && lastCountry !== undefined && lastCountry.name !== 'india')) out.push(f.name);
   }
   const ex = sortedUnique(excluded);
-  return { places: withoutExcluded(out, ex), excluded: ex };
+  return { places: withoutExcluded(out, ex), excluded: ex, excludedParts: sortedUnique(excludedParts) };
 }
 
 /**
@@ -197,6 +210,9 @@ export const countriesIn = (text: string): string[] => scanPlaces(text).places;
 
 /** The places the text excludes ("Remote (except India)" gives ['india']), sorted; `countriesIn` leaves them out. */
 export const excludedPlaces = (text: string): string[] => scanPlaces(text).excluded;
+
+/** The cities or states the text excludes ("India (excluding Mumbai)" gives ['mumbai']); their country stays. */
+export const excludedParts = (text: string): string[] => scanPlaces(text).excludedParts;
 
 /**
  * One entry of a structured place list (a Himalayas restriction, a JSON-LD country, an Ashby address country): its
@@ -321,6 +337,8 @@ const ASKING = /\b(?:looking for|seeking|need|needs|require[sd]?|requirements?|m
  * "N+ years of|in|as|with ...". Sentences about the company itself (history, founding, combined experience, "we
  * have ..." without asking for anything), vesting and benefits are skipped. Above 14 years a figure also needs
  * experience or requirement wording in its sentence (a bullet alone is not enough). Figures above 30 are ignored.
+ * Accepted trade-off: a bullet-only 15+ requirement ("- 15+ years designing distributed systems") gives null, because
+ * company-highlight bullets ("- 20 years in the market") look the same; only a −20 scorer penalty is missed.
  */
 export function yearsRequired(text: string): number | null {
   let max: number | null = null;

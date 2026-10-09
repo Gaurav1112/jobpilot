@@ -3,7 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
 import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
-import { countriesIn, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
+import { countriesIn, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
 import { Posting, RawPosting } from '../types.js';
 
 /**
@@ -37,6 +37,7 @@ const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !
 const str = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null);
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : typeof v === 'string' && /^\s*\d+(?:\.\d+)?\s*$/.test(v) ? Number(v) : null);
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
+const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();
 const oneLine = (s: string): string => decodeEntities(s).replace(/\s+/g, ' ').trim();
 /** A list of strings (or one string) as one display string; null when there is nothing. */
 const listText = (v: unknown, sep = ', '): string | null => {
@@ -149,8 +150,14 @@ const FOREIGN_MONEY =
 /** A bare `$` beside a dollar country other than the US, with no USD or US$, is that country's dollar. */
 const DOLLAR_COUNTRY = /\b(?:canada|canadian|australia|australian|singapore|hong kong|new zealand|mexico|taiwan)\b/i;
 const US_DOLLAR = /\bUSD\b|US\$/;
-/** Sentence ends; "Rs.", "No.", "e.g." and the like are not ends. */
-const PAY_SENTENCE_SPLIT = /\n+|;\s*|(?<=[.!?])(?<!\b(?:rs|no|approx|e\.g|i\.e|incl|min|max|vs|etc|mr|ms|dr|p\.a)\.)\s+/i;
+/**
+ * Sentence ends, plus `;` clauses. "Rs.", "No.", "min.", "max.", "i.e." never end a sentence. "p.a.", "approx.",
+ * "incl." and "e.g." end one only before a capitalised word that is not a currency code: "₹12 LPA p.a. Equity ..."
+ * splits, so the equity sentence cannot touch the salary or its basis, while "approx. ₹20 LPA" and
+ * "approx. INR 20,00,000" stay one sentence with the figure they introduce.
+ */
+const PAY_SENTENCE_SPLIT =
+  /\n+|;\s*|(?<=[.!?])(?<!\b(?:[Rr][Ss]|[Nn]o|[Aa]pprox|e\.g|i\.e|[Ii]ncl|[Mm]in|[Mm]ax|vs|etc|[Mm]r|[Mm]s|[Dd]r|[Pp]\.[Aa])\.)\s+|(?<=\b(?:[Pp]\.[Aa]|[Aa]pprox|[Ii]ncl|e\.g)\.)\s+(?=[A-Z])(?!(?:INR|USD|EUR|GBP|Rs|RS)\b)/;
 /** Where a money figure starts: a currency sign or code before digits, or digits with a magnitude word. */
 const FIGURE = /(?:[₹$€£]|\b(?:rs\.?|inr|usd|eur|gbp)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr|k|m|l)?\b|\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr)\b/i;
 const UP_TO = /\b(?:up ?to|upto|max(?:imum)?\.?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
@@ -261,7 +268,7 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
         ...new Set([
           ...m.signals,
           ...remoteTextSignals('location', locationText),
-          ...excluded.map((p) => `location:excludes:${p}`),
+          ...sortedUnique([...excluded, ...excludedParts(locationText)]).map((p) => `location:excludes:${p}`),
           ...remoteTextSignals('title', title),
         ]),
       ],

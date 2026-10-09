@@ -114,7 +114,11 @@ export const Posting = defineType(
         .refine((c) => c.min !== null || c.max !== null, 'comp needs at least one bound')
         .refine((c) => c.min === null || c.max === null || c.min <= c.max, 'comp min must not exceed max')
         .nullable(),
-      /** The highest stated years-of-experience requirement (the upper bound of a range: "3-5 years" is 5); null when none is stated. */
+      /**
+       * The highest stated years-of-experience requirement (the upper bound of a range: "3-5 years" is 5); null when
+       * none is stated. Above 14 years the sentence must say experience or ask for it: a bullet-only 15+ requirement
+       * ("- 15+ years designing systems") is null, the accepted trade-off against company-highlight bullets.
+       */
       yearsRequired: z.number().nullable(),
     })
     .strict(),

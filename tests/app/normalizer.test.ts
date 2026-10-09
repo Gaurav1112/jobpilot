@@ -1092,3 +1092,59 @@ describe('fix round 2: minors (M11, M13)', () => {
     expect(p.comp).toEqual({ min: null, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 3 (re-review P1, M12, M14)
+// ---------------------------------------------------------------------------
+
+describe('fix round 3: an excluded city never excludes its country (P1)', () => {
+  const posting = (location: string, extra: Record<string, unknown> = {}) =>
+    one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', categories: { location }, ...extra })).remote;
+
+  it('keeps india and names the city', () => {
+    const cases: [string, string][] = [
+      ['Bengaluru, India (excluding Mumbai)', 'location:excludes:mumbai'],
+      ['Pan India, except Mumbai', 'location:excludes:mumbai'],
+      ['Remote - India (not Bangalore)', 'location:excludes:bangalore'],
+      ['Anywhere in India except Delhi NCR', 'location:excludes:delhi ncr'],
+    ];
+    for (const [loc, signal] of cases) {
+      const r = posting(loc);
+      expect(r.countries, loc).toContain('india');
+      expect(r.signals, loc).toContain(signal);
+      expect(r.signals, loc).not.toContain('location:excludes:india');
+    }
+    const lever = posting('Bengaluru (not Mumbai)', { country: 'IN', workplaceType: 'remote' });
+    expect(lever).toEqual({ structured: 'remote', countries: ['india'], signals: ['workplaceType:remote', 'location:excludes:mumbai'] });
+  });
+
+  it('still excludes a country or region named as such', () => {
+    expect(posting('Anywhere except India').countries).toEqual([]);
+    expect(posting('Worldwide (except APAC)')).toEqual({ structured: null, countries: ['worldwide'], signals: ['location:excludes:apac'] });
+  });
+});
+
+describe('fix round 3: p.a. and approx. end a sentence before a capitalised word (M12)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('reads the salary and keeps the next sentence out of it', () => {
+    expect(text('<p>Salary: ₹12 LPA p.a. Equity: ₹50 LPA over 4 years.</p>')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>CTC ₹20 LPA p.a. We also offer ₹5 LPA ESOPs.</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary ₹18 LPA approx. Bonus ₹3 LPA.</p>')).toEqual({ min: 1800000, max: 1800000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+
+  it('does not break before the figure an abbreviation introduces', () => {
+    expect(text('<p>Base salary approx. ₹20 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary approx. INR 20,00,000 per annum</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary approx. $150,000</p>')?.basis).toBe('base');
+    expect(text('<p>Base salary incl. allowances ₹20 LPA</p>')?.basis).toBe('base');
+  });
+});
+
+describe('fix round 3: bullet-only 15+ years is null (M14, accepted N2 trade-off)', () => {
+  it('needs experience or requirement wording above 14', () => {
+    expect(yearsRequired('- 15+ years designing distributed systems')).toBeNull();
+    expect(yearsRequired('- 15+ years of experience designing distributed systems')).toBe(15);
+  });
+});
