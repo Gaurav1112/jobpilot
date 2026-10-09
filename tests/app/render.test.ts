@@ -689,3 +689,21 @@ describe('determinism across processes and module boundaries', () => {
     expect(reached).toContain('src/app/render/fill.ts');
   });
 });
+
+describe('final fix L3: the newly allowed posting characters render and pass QA', () => {
+  withPdftotext('LIVE RUN 1 titles go through the writing team, the renderer and every qa check', async () => {
+    for (const title of [
+      'Senior Full Stack Developer [Java, Angular]',
+      'Principal Software Engineer_Fullstack',
+      'Technical Lead - GPU Infrastructure (100% Remote - Worldwide)',
+      'Senior PHP Backend Engineer (Remote, Full-Time) [AR025]',
+      'Senior Backend Engineer "Core" @ Scale ‐ Payments*',
+    ]) {
+      const { rendered, out } = await render(coverPlanOf(posting({ title })));
+      const [report] = await qaGate.run(rendered, ctxFor(qaGate, out, publicPackOf(fullPack()), {}, 'P1'));
+      const qa = QaReport.schema.parse(report);
+      expect(qa.checks.filter((c) => !c.ok), title).toEqual([]);
+      expect(rendered.text.cover, title).toContain(title);
+    }
+  }, 120_000);
+});

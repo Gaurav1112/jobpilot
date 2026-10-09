@@ -145,8 +145,13 @@ export function sanitisePostingText(raw: string): string {
 
 /** Abbreviations whose full stop does not end a sentence ("Sr. Backend Engineer", "Acme Inc. India"). */
 const ABBREVIATIONS = new Set(['sr', 'jr', 'inc', 'co', 'ltd', 'corp', 'llc', 'plc', 'st', 'dr', 'no', 'vs', 'intl', 'dept', 'mgr', 'eng', 'sw', 'jun', 'sen']);
-/** Allowed characters: letters, marks, digits, whitespace and & , . / ( ) - + # ' : ; | – —. */
-const DISALLOWED = /[^\p{L}\p{M}\p{N}\s&,./()\-+#':;|–—]/u;
+/**
+ * Allowed characters: letters, marks, digits, whitespace and & , . / ( ) - + # ' : ; | – —, plus (final fix L3, real
+ * titles such as "Senior Full Stack Developer [Java, Angular]", "Principal Software Engineer_Fullstack", "(100% Remote)")
+ * [ ] _ % − ‐ " ! ? @ * = ~. Markup and template characters (< > { } ` \) and control characters stay out; URLs,
+ * emails, pronouns, sentence ends and length have their own rules below.
+ */
+const DISALLOWED = /[^\p{L}\p{M}\p{N}\s&,./()\-+#':;|–—[\]_%−‐"!?@*=~]/u;
 /** "I" is the pronoun (not a level, as in "Software Engineer I" or "SDE I") only before a verb-like word or as I'm, I've, I'll, I'd. */
 const PRONOUN_I =
   /(?<![\p{L}\p{N}'])i(?:'m|'ve|'ll|'d|\s+(?:am|have|hold|will|was|can|worked|led|built|own|bring|believe|know|designed|developed|managed|love|enjoy))(?![\p{L}\p{N}'])/iu;
@@ -167,7 +172,8 @@ const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\
  * - has a sentence end (. ! ?) followed by more text; a full stop after an abbreviation (Sr., Inc., ...) or a single
  *   letter is not a sentence end;
  * - holds a URL or an email address;
- * - holds a character outside letters, marks, digits, whitespace and `& , . / ( ) - + # ' : ; | – —`.
+ * - holds a character outside letters, marks, digits, whitespace and `& , . / ( ) - + # ' : ; | – — [ ] _ % − ‐ " ! ? @
+ *   * = ~` (so `< > { } \` and a backtick never pass).
  */
 export function unsafePostingText(s: string): string | null {
   if (s === '') return 'is empty';

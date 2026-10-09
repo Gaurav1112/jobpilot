@@ -589,10 +589,35 @@ describe('fix round 1: review probes as regressions', () => {
     expect(why('Backend Engineer. Apply now')).toBe('has a sentence end followed by more text');
     expect(why('Backend Engineer at https://acme.example')).toBe('has a URL or email address');
     expect(why('Backend Engineer www.acme.example')).toBe('has a URL or email address');
-    expect(why('Backend Engineer!')).toMatch(/^has a character outside the allowed set \(U\+0021\)$/);
+    expect(why('Backend Engineer!')).toBeNull(); // final fix L3: ! is allowed; a sentence end before more text is not
+    expect(why('Backend Engineer! Join now')).toBe('has a sentence end followed by more text');
     expect(why('Acme &lt;script&gt;')).toMatch(/^has a character outside the allowed set/);
     expect(why('Backend {notice} Engineer')).toMatch(/^has a character outside the allowed set/);
     expect(why('jobs@acme.example')).toMatch(/^has a character outside the allowed set|^has a URL/);
     expect(why('   ')).toBe('is empty');
+  });
+
+  it('final fix L3: allows [ ] _ % − ‐ " \' ! ? @ * + = ~ and the LIVE RUN 1 titles; still blocks markup, URLs and emails', () => {
+    const why = (s: string) => unsafePostingText(sanitisePostingText(s));
+    for (const ok of [
+      'Senior Full Stack Developer [Java, Angular]',
+      'Principal Software Engineer_Fullstack',
+      'Technical Lead - GPU Infrastructure (100% Remote - Worldwide)',
+      'Senior PHP Backend Engineer (Remote, Full-Time) [AR025]',
+      'Senior Backend Developer (Go) — Full Remote, European Timezones Only (UTC−1 to UTC+3)',
+      'Backend Engineer ‐ Payments',
+      'Staff Engineer "Core"',
+      'Engineer @ Scale',
+      'Data Engineer*',
+      'C++ = Fun?',
+      'Platform Engineer ~ Infra',
+    ]) expect(why(ok), ok).toBeNull();
+    for (const ch of ['<', '>', '{', '}', '`', '\\']) expect(why(`Backend ${ch} Engineer`), ch).toMatch(/^has a character outside the allowed set/);
+    expect(why('Backend Engineer \u0007 now')).toBeNull(); // a control character is sanitised to a space, never kept
+    expect(unsafePostingText('Backend\u0007Engineer')).toMatch(/^has a character outside the allowed set/);
+    expect(why('Backend Engineer at https://acme.example')).toBe('has a URL or email address');
+    expect(why('Write to jobs@acme.example')).toBe('has a URL or email address');
+    expect(why('Join our team!')).toBe('has a first-person pronoun');
+    expect(why('Backend Engineer? Apply today')).toBe('has a sentence end followed by more text');
   });
 });
