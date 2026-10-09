@@ -33,7 +33,7 @@ export type Block =
   | { readonly kind: 'para'; readonly text: string; readonly factIds: readonly string[] }
   /** A bullet: a fact's claim verbatim, drawn after a literal "•". */
   | { readonly kind: 'bullet'; readonly text: string; readonly factId: string }
-  /** A plain line (the cover's date, salutation and sign-off). */
+  /** A plain line (the cover's salutation and sign-off). */
   | { readonly kind: 'line'; readonly text: string };
 
 export interface DocModel {
@@ -60,14 +60,6 @@ export function monthYear(ym: string): string {
   const name = m ? MONTHS[Number(m[2]) - 1] : undefined;
   if (!m || name === undefined) throw new Error(`not a YYYY-MM month: ${ym}`);
   return `${name.slice(0, 3)} ${m[1]}`;
-}
-
-/** "2026-10-01" → "1 October 2026". */
-export function longDate(iso: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  const name = m ? MONTHS[Number(m[2]) - 1] : undefined;
-  if (!m || name === undefined) throw new Error(`not a YYYY-MM-DD date: ${iso}`);
-  return `${Number(m[3])} ${name} ${m[1]}`;
 }
 
 /** email | phone | city | links, skipping empty fields. */
@@ -113,11 +105,13 @@ export function resumeModel(plan: ResumePlan, c: ContactDetails): DocModel {
   return { kind: 'resume', title: cleanText(`${c.name.trim()} - Resume`), author: cleanText(c.name.trim()), date: plan.firstSeen, blocks: blocks.map(cleanBlock) };
 }
 
-/** The cover letter: header, date line, "Dear Hiring Team,", the paragraphs, "Sincerely," and the name. */
+/**
+ * The cover letter: header, "Dear Hiring Team,", the paragraphs, "Sincerely," and the name. There is no date line
+ * (LIVE RUN 1, L5): the only date a plan has is the posting's, which is not the day the user sends the letter.
+ */
 export function coverModel(cover: CoverPlan, c: ContactDetails): DocModel {
   const blocks: Block[] = [
     ...head(c),
-    { kind: 'line', text: longDate(cover.resume.firstSeen) },
     { kind: 'line', text: SALUTATION },
     ...cover.paragraphs.map((p): Block => ({ kind: 'para', text: p.text, factIds: [...p.factIds] })),
     { kind: 'line', text: SIGN_OFF },

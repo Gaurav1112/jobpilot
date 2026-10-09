@@ -13,7 +13,7 @@ import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
 import { htmlAttributeText, htmlText, renderHtml } from '../../src/app/render/html.js';
-import { cleanText, contactLine, coverModel, longDate, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
+import { cleanText, contactLine, coverModel, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
 import { pdfIdOf, renderPdf, uncoveredGlyph } from '../../src/app/render/pdf.js';
 import type { Pack } from '../../src/app/pack/schema.js';
 import { CoverPlan, QaReport, Rendered } from '../../src/app/types.js';
@@ -81,8 +81,6 @@ describe('render model', () => {
     expect(monthYear('2022-03')).toBe('Mar 2022');
     expect(monthYear('present')).toBe('Present');
     expect(() => monthYear('2022-13')).toThrow();
-    expect(longDate('2026-10-01')).toBe('1 October 2026');
-    expect(longDate('2026-01-09')).toBe('9 January 2026');
     expect(contactLine({ name: 'A', email: 'a@example.com', phone: '', city: 'Pune', links: ['https://example.com/a'] })).toBe('a@example.com | Pune | https://example.com/a');
   });
 
@@ -101,12 +99,14 @@ describe('render model', () => {
     for (const b of cover.resume.roles[0]!.bullets) expect(lines).toContain(`• ${b.text}`);
   });
 
-  it('lays the cover out as header, date line, salutation, paragraphs, sign-off', () => {
+  it('lays the cover out as header, salutation, paragraphs, sign-off: no date line (L5)', () => {
     const cover = fillCover(coverPlanOf(), fullPack().answers);
     const lines = modelText(coverModel(cover, fullPack().contact)).split('\n');
-    expect(lines.slice(2, 4)).toEqual(['1 October 2026', 'Dear Hiring Team,']);
-    expect(lines.slice(4, 4 + cover.paragraphs.length)).toEqual(cover.paragraphs.map((p) => p.text));
+    expect(lines.slice(2, 3)).toEqual(['Dear Hiring Team,']);
+    expect(lines.slice(3, 3 + cover.paragraphs.length)).toEqual(cover.paragraphs.map((p) => p.text));
     expect(lines.slice(-2)).toEqual(['Sincerely,', 'Asha Rao']);
+    expect(lines).toHaveLength(2 + 1 + cover.paragraphs.length + 2);
+    for (const l of lines) expect(l).not.toMatch(/^\d{1,2} [A-Z][a-z]+ \d{4}$/);
   });
 
   it('normalises text for comparison: whitespace, page breaks, a line break after a hyphen', () => {
@@ -207,6 +207,16 @@ describe('renderer', () => {
     expect(rendered.recommended).toBe('pdf');
     expect(rendered.plan.paragraphs.at(-1)!.text).toBe('I am available from 1 November 2026, with a notice period of 30 days. Thank you for your time.');
     expect(rendered.text.resume.split('\n')[0]).toBe('Asha Rao');
+  });
+
+  it('writes no date line into the cover PDF, DOCX or HTML (L5: the posting date is not the letter date)', async () => {
+    const { rendered, out } = await render();
+    const date = '1 October 2026'; // the fixture posting's date (firstSeen), which the old date line printed
+    expect(rendered.text.cover).not.toContain(date);
+    expect(docxText(new Uint8Array(fileOf(out, rendered, 'cover', 'docx')))).not.toContain(date);
+    expect(htmlText(fileOf(out, rendered, 'cover', 'html').toString('utf8'))).not.toContain(date);
+    if (PDFTOTEXT !== undefined) expect(pdftotext(join(out, rendered.files.find((f) => f.kind === 'cover' && f.format === 'pdf')!.path))).not.toContain(date);
+    expect(rendered.text.cover.split('\n')[2]).toBe('Dear Hiring Team,');
   });
 
   it('recommends docx for a Workday posting', async () => {

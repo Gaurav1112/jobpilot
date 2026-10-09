@@ -18,8 +18,8 @@ import { postingSlots } from './grounded.js';
  * in only here, and the cover's p4 placeholders are filled only here, from `answers.yaml` (`render/fill.ts`). Its
  * outputs are P1 (`emits`, and the kernel floors a 'full' pack agent's outputs at P1 whatever it returns).
  *
- * Every line is already grounded; the renderer adds only the contact block, section headings, role dates, the date
- * line, the salutation and the sign-off (`render/model.ts`). Before writing it refuses any character the embedded font
+ * Every line is already grounded; the renderer adds only the contact block, section headings, role dates, the
+ * salutation and the sign-off (`render/model.ts`); the cover has no date line (L5). Before writing it refuses any character the embedded font
  * has no glyph for (`unrenderable-glyph:U+XXXX`, a named reason the projector shows)
  * and any forbidden term in the documents' text, contact block included, and after rendering it checks that the DOCX
  * text layer equals the document text. G-FILL then re-derives the fill and the document text from the plan and the full
