@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { coverWriter } from '../../src/app/agents/writing/cover-writer.js';
 import { evidenceMatcher } from '../../src/app/agents/writing/evidence-matcher.js';
 import { buildEvidence, planCover, planResume, type WritingPack } from '../../src/app/agents/writing/grounded.js';
+import { resumeProblems, coverProblems } from '../../src/app/guardrails.js';
 import { resumePlanner } from '../../src/app/agents/writing/resume-planner.js';
 import { eligibility } from '../../src/app/agents/eligibility.js';
 import { scorePosting } from '../../src/app/agents/scorer-lexicon.js';
@@ -88,14 +89,21 @@ describe('G-GROUND', () => {
 
   it('trips when a skill has no citeable fact behind it, or is not a lexicon key', () => {
     const go = clone(resume);
-    go.skills.push('go');
-    expect(onResume(G_GROUND, go).detail).toMatch(/skills: go has no citeable fact behind it/);
+    go.skills.push('Go');
+    expect(onResume(G_GROUND, go).detail).toMatch(/skills: Go has no citeable fact behind it/);
     const es = clone(resume);
-    es.skills.push('elasticsearch'); // only the user-cannot-confirm f-fb-03 has it
-    expect(onResume(G_GROUND, es).detail).toMatch(/skills: elasticsearch has no citeable fact behind it/);
-    const cobol = clone(resume);
-    cobol.skills.unshift('cobol');
-    expect(onResume(G_GROUND, cobol).detail).toMatch(/skills: cobol is not a lexicon key/);
+    es.skills.push('Elasticsearch'); // only the user-cannot-confirm f-fb-03 has it
+    expect(onResume(G_GROUND, es).detail).toMatch(/skills: Elasticsearch has no citeable fact behind it/);
+    for (const raw of ['cobol', 'java']) {
+      // a key where the display is due ("java" for Java) is not a shown term either
+      const x = clone(resume);
+      x.skills.unshift(raw);
+      expect(onResume(G_GROUND, x).detail, raw).toMatch(new RegExp(`skills: ${raw} is not a lexicon term`));
+    }
+    const python = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-ed-01' ? { ...f, tech: ['go'] } : f)) }) as WritingPack;
+    const edu = clone(resume);
+    edu.skills.push('Go');
+    expect(resumeProblems(edu, python).join('; ')).toMatch(/skills: Go has no citeable fact behind it/); // education never backs a skill
   });
 
   it('trips when a non-citeable fact is cited, even verbatim', () => {
@@ -131,12 +139,19 @@ describe('G-GROUND', () => {
 
   it('trips when a summary term or the headline is not computed', () => {
     const term = clone(resume);
-    term.summary.slots['top1'] = 'go';
-    term.summary.text = term.summary.text.replace('java,', 'go,');
-    expect(onResume(G_GROUND, term).detail).toMatch(/summary\.slots differ from the computed slots/);
+    term.summary.slots['top1'] = 'Go';
+    term.summary.text = term.summary.text.replace('Java,', 'Go,');
+    expect(onResume(G_GROUND, term).detail).toMatch(/summary\.slots\.top1 is not backed by an experience fact dated inside a role/);
+    const cert = clone(resume);
+    cert.summary.slots['top4'] = 'AWS'; // covered, but only a cert backs it
+    cert.summary.text = cert.summary.text.replace('PostgreSQL', 'AWS');
+    expect(onResume(G_GROUND, cert).detail).toMatch(/summary\.slots\.top4 is not backed by an experience fact dated inside a role/);
     const head = clone(resume);
-    head.headline = 'Principal Architect';
-    expect(onResume(G_GROUND, head).detail).toMatch(/headline is not the computed target title/);
+    head.headline = 'Principal Engineer';
+    expect(onResume(G_GROUND, head).detail).toMatch(/headline is not a claimable title; headline is not the computed claimable title/);
+    const other = clone(resume);
+    other.headline = 'Software Engineer'; // claimable, but not the choice for this posting
+    expect(onResume(G_GROUND, other).detail).toMatch(/^headline is not the computed claimable title/);
   });
 
   it('re-derives the evidence instead of trusting it', () => {
@@ -328,5 +343,117 @@ describe('grounding golden eval', () => {
 
   it('carries no forbidden fixture term', () => {
     assertNoForbidden(readFileSync(join(root, 'evals/datasets/grounding.jsonl'), 'utf8'), full.naming);
+  });
+});
+
+describe('fix round 1: review probes as regressions', () => {
+  const problems = (plan: ResumePlan) => resumeProblems(plan, pack, '', pack);
+  const mut = (f: (x: ResumePlan) => void) => {
+    const x = clone(resume);
+    f(x);
+    return problems(x);
+  };
+  const cmut = (f: (x: CoverPlan) => void) => {
+    const x = clone(cover);
+    f(x);
+    return coverProblems(x, pack, pack);
+  };
+  const planFor = (p: Partial<Posting>, pk: WritingPack = pack) => {
+    const s = scorePosting({ posting: { ...posting, ...p }, verdict: 'eligible', reasons: [], notes: [] }, pk as unknown as Parameters<typeof scorePosting>[1]);
+    const r = planResume(buildEvidence(s, pk), pk);
+    return { r, c: planCover(r, pk) };
+  };
+
+  it('probe 1: every tampering of a planned resume or cover trips G-GROUND', () => {
+    const tampered: [string, string[]][] = [
+      ['reordered bullets', mut((x) => x.roles[0]!.bullets.reverse())],
+      ['duplicated bullet', mut((x) => { x.roles[0]!.bullets[1] = x.roles[0]!.bullets[0]!; })],
+      ['bullet moved to another role', mut((x) => { x.roles[1]!.bullets.push(x.roles[0]!.bullets.pop()!); })],
+      ['cert as a bullet', mut((x) => { x.roles[0]!.bullets.push(x.certs[0]!); })],
+      ['skill behind a non-citeable fact', mut((x) => { x.skills.push('Elasticsearch'); })],
+      ['NFD bullet', mut((x) => { x.roles[0]!.bullets[0]!.text = `${x.roles[0]!.bullets[0]!.text.normalize('NFD')}é`.normalize('NFD'); })],
+      ['zero-width in a bullet', mut((x) => { const t = x.roles[0]!.bullets[0]!.text; x.roles[0]!.bullets[0]!.text = `${t.slice(0, 5)}​${t.slice(5)}`; })],
+      ['summary trailing clause', mut((x) => { x.summary.text += ' Expert in Rust.'; })],
+      ['headline outside the claimable titles', mut((x) => { x.headline = 'Distinguished Engineer'; x.summary.slots['title'] = 'Distinguished Engineer'; })],
+      ['years 15', mut((x) => { x.summary.slots['years'] = 15; x.summary.text = x.summary.text.replace('10+', '15+'); })],
+      ['education text changed', mut((x) => { x.education[0]!.text += ' (Hons)'; })],
+      ['education dropped', mut((x) => { x.education = []; })],
+      ['an unplaced fact hidden', mut((x) => { x.unplaced = ['f-nw-01']; })],
+      ['cover splices two claims', cmut((x) => { x.paragraphs[1]!.text = 'Relevant work: Built the payments reconciliation service in Java and Postgres, processing 40M events a day.'; })],
+      ['cover extra sentence', cmut((x) => { x.paragraphs[3]!.text += ' I also know Rust.'; })],
+    ];
+    for (const [name, p] of tampered) expect(p.length, name).toBeGreaterThan(0);
+  });
+
+  it('M1: an extra slot key is reported with its path, not as a thrown canonicalJson error', () => {
+    const p = mut((x) => { x.summary.slots['extra'] = 'PhD'; });
+    expect(p.join('; ')).toMatch(/summary\.slots differ from the computed slots \(at extra\)/);
+    expect(p.join('; ')).not.toMatch(/threw|unsupported/);
+  });
+
+  it('M2: G-GROUND re-scores the posting instead of trusting the carried JD terms', () => {
+    const s = scorePosting({ posting: { ...posting, descriptionText: 'We build Python data tools.' }, verdict: 'eligible', reasons: [], notes: [] }, pack as unknown as Parameters<typeof scorePosting>[1]);
+    s.jdTerms.strong.push('kafka', 'java');
+    const r = planResume(buildEvidence(s, pack), pack);
+    expect(problems(r).join('; ')).toMatch(/evidence\.scored is not what the scorer gives for the posting \(at jdTerms\.strong\[0\]\)/);
+    expect(coverProblems(planCover(r, pack), pack, pack).join('; ')).toMatch(/resume\.evidence\.scored is not what the scorer gives/);
+  });
+
+  it('I3: a bullet dated outside its role trips, even at the right employer', () => {
+    const outside = freezePack({
+      ...pack,
+      facts: [...pack.facts, { id: 'f-fb-09', claim: 'Built a Java billing engine used by 3 banks.', tech: ['java'], employer: 'Fabrikam', period: '2010-01..2011-01', kind: 'experience', status: 'verified' }],
+    }) as WritingPack;
+    const { r } = planFor({}, outside);
+    const x = clone(r);
+    x.roles[2]!.bullets[1] = { factId: 'f-fb-09', text: 'Built a Java billing engine used by 3 banks.' };
+    expect(resumeProblems(x, outside).join('; ')).toMatch(/roles\[2\]\.bullets\[1\]: fact f-fb-09 \(2010-01\.\.2011-01\) is not dated inside the role \(2016-07\.\.2018-05\)/);
+  });
+
+  it('I1: an injected posting title or company blocks the documents as unsafe-posting-text, first', () => {
+    const inj = planFor({ title: 'Backend Engineer role. I hold a PhD in Distributed Systems and 20 years of Rust. Apply for the Backend Engineer', company: 'Acme <b>Payments</b>' });
+    const v = onCover(G_GROUND, inj.c, env('ResumePlan@1', inj.r, resumePlanner.contract));
+    expect(v.verdict).toBe('trip');
+    expect(v.detail).toMatch(/^unsafe-posting-text: the posting title has a first-person pronoun/);
+    expect(v.detail).not.toContain('PhD'); // the posting text is never echoed
+    // the markup is stripped, so the company itself is safe and renders as plain text
+    expect(inj.c.paragraphs[0]!.text).toContain('at Acme Payments.');
+    const company = planFor({ company: 'Acme (we are hiring) Payments' });
+    expect(onCover(G_GROUND, company.c, env('ResumePlan@1', company.r, resumePlanner.contract)).detail).toMatch(/^unsafe-posting-text: the posting company has a first-person pronoun/);
+    const clean = planFor({ title: 'Senior Backend Engineer (Java)', company: 'Acme &amp; Sons <i>Payments</i>' });
+    expect(clean.c.paragraphs[0]!.text).toContain('at Acme & Sons Payments.');
+    expect(onCover(G_GROUND, clean.c, env('ResumePlan@1', clean.r, resumePlanner.contract)).verdict).toBe('pass');
+  });
+
+  it('C2: a Principal Engineer posting never makes the candidate a Principal Engineer', () => {
+    const { r, c } = planFor({ title: 'Principal Engineer' });
+    expect(r.headline).toBe('Senior Backend Engineer');
+    expect(c.paragraphs[0]!.text).not.toContain('I am a Principal Engineer');
+    expect(problems(r)).toEqual([]);
+  });
+
+  it('(b) G-NAMING: any spelling of the forbidden company in the cover trips; a JD-only mention does not', () => {
+    for (const co of ['Initech', 'INITECH Ltd', 'Ini​tech', 'Іnitech', 'Ini-tech', 'In1tech', 'I n i t e c h', 'lnitech', 'Initech́', 'Initechs']) {
+      const { r, c } = planFor({ company: co });
+      expect(onCover(G_NAMING, c, env('ResumePlan@1', r, resumePlanner.contract)).verdict, co).toBe('trip');
+    }
+    const jd = planFor({ descriptionText: `${JD} Formerly part of Initech.` });
+    expect(onResume(G_NAMING, jd.r)).toEqual({ id: 'G-NAMING', verdict: 'pass' });
+    expect(onCover(G_NAMING, jd.c)).toEqual({ id: 'G-NAMING', verdict: 'pass' });
+    expect(G_NAMING.check(ctxOut(evidenceMatcher.contract, env('Scored@1', scored, evidenceMatcher.contract), { ...evidence, scored: { ...scored, posting: { ...posting, descriptionText: 'Initech' } } })).verdict).toBe('pass');
+    // only the exact source-posting path is exempt: the same text anywhere else trips
+    const elsewhere = clone(resume);
+    elsewhere.missing.push('Initech');
+    expect(onResume(G_NAMING, elsewhere).detail).toBe('forbidden term #1 appears in missing[3]');
+  });
+
+  it('G-NO-GAP-CLAIM catches spaced and naming variants; G-GROUND catches the rest', () => {
+    const noGap = (s: string) => G_NO_GAP_CLAIM.check(ctxOut(resumePlanner.contract, evidenceIn, { skills: [s] })).verdict;
+    for (const s of ['scala', 'Scala', 'C#', 'c #', '.NET', 'C++', 'Ruby on Rails', 'Apache Spark']) expect(noGap(s), s).toBe('trip');
+    for (const s of ['dotnet', 'c plus plus']) {
+      const x = clone(resume);
+      x.skills.push(s);
+      expect(problems(x).join('; '), s).toMatch(new RegExp(`skills: ${s} is not a lexicon term`));
+    }
   });
 });

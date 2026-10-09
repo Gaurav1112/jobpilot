@@ -43,14 +43,15 @@ data; tests use `tests/fixtures/pack/` (a fictional candidate).
 | `contact.yaml` | P1 | name, email, phone, city, links. Read only by the renderer |
 | `facts.yaml` | P0 | facts: `id, claim, tech[], employer, role, period (YYYY-MM..YYYY-MM or ..present), kind (experience, cert, education, project), status (verified, user-stated, derived-unverified, user-cannot-confirm, rejected)`. Only `verified` and `user-stated` are citeable |
 | `roles.yaml` | P0 | employment history: `employer, title, location, start, end` (resume skeleton) |
+| `experience.yaml` | P0 | `asOf: YYYY-MM`, the month years of experience and fact recency are measured to. The daily run injects the current IST month from its clock before hashing (so pack-reading steps re-run once a month); tests pin it. No role or fact may start after `asOf`, and no role may end after it |
 | `eligibility.yaml` | P0 | residence `IN`; remote scopes accepted; onsite cities `[]`; employment types `[full-time]` |
-| `lexicon.yaml` | P0 | strong, medium and gap groups, each `{key, synonyms[]}` |
-| `targets.yaml` | P0 | title patterns, seniority words and points, `minFit: 60`, `maxYearsRequired: 14` |
+| `lexicon.yaml` | P0 | strong, medium and gap groups, each `{key, synonyms[], display?}`; `display` (default: the key) is how documents show the term ("PostgreSQL") |
+| `targets.yaml` | P0 | title patterns (`titles`: search and scoring only), seniority words and points, `minFit: 60`, `maxYearsRequired: 14`, and `claimableTitles` (titles the user can truthfully claim, used verbatim in documents; default: the distinct `roles.yaml` titles) |
 | `filters.yaml` | P0 | role-title deny patterns, company deny list (services and staffing), employment-type deny words |
 | `naming.yaml` | P0 | `employerDisplay` map (source employer string → display name) and `forbiddenTerms[]`; G-NAMING fails any output that contains a forbidden term |
 | `offers.yaml` | P2 | `floor: {amount: 1200000, currency: INR, period: year, basis: base}`. Equity is never counted |
 | `fx.yaml` | P0 | pinned rates to INR with an `asOf` date; the dashboard warns when `asOf` is more than 30 days old |
-| `answers.yaml` | P1/P2 | screening answers (notice, work mode, relocation, CTC). Shown on job pages; never in a document |
+| `answers.yaml` | P1/P2 | screening answers (notice, work mode, relocation, CTC). Shown on job pages. Of all answers only `available_from` and `notice_period` may appear in a document, and only in cover-letter p4, filled by the renderer (Task 10); a Task 10 output guardrail re-checks the filled text against `answers.yaml` verbatim, and G-NAMING runs on the rendered text |
 | `watchlist.yaml` | P0 | `{company, ats: greenhouse, lever or ashby, slug, hiresInIndia: bool}` |
 | `feeds.yaml` | P0 | enabled aggregator feeds |
 | `policy.user.yaml` | — | tightening-only overrides (kernel `mergePolicy`) |
@@ -279,27 +280,46 @@ ranked by:
 3 × |fact.tech ∩ JD terms (via synonyms)| + 1 × |claim words ∩ JD terms| + recency (0..1 by period end)
 ```
 
-It outputs the ranked fact ids per employer, plus covered and missing JD terms.
+It outputs the ranked fact ids per employer, plus covered and missing JD terms. Recency is measured to
+`experience.asOf`, never to the posting's date. A term is covered when a citeable experience, project or cert fact
+backs it; education facts back nothing.
 
 **resume-planner.**
-- **Headline:** the posting's title, normalised into the user's target family, chosen from
-  `targets.yaml` titles (never invented).
-- **Summary:** a fixed template. `{years}+ years` is computed from `roles.yaml` dates. The
-  top 4 covered JD terms come from the skills that are both in the facts and in the JD. The
-  most recent display employer completes it.
+- **Headline:** the `targets.claimableTitles` entry with the best word overlap with the
+  posting title, verbatim; a tie goes to the most recent role title (amended in Task 9 fix
+  round 1: `targets.titles` are titles the user aims for, so they are never claimed).
+- **Summary:** a fixed template. `{years}+ years` is computed from `roles.yaml` dates: whole
+  years of non-overlapping role months up to `experience.asOf` (never the posting's date).
+  The top 4 terms are covered JD terms backed by a citeable *experience* fact dated inside a
+  role, shown by their lexicon `display`. The most recent display employer completes it,
+  only when that role is ongoing.
 - **Skills line:** covered terms first, then the remaining citeable facts' tech, deduplicated.
   A gap skill is never listed.
 - **Experience:** every role in `roles.yaml`, newest first, with display employer names. For
-  each role the top N facts of that employer: 4 for the latest two roles, 2 for the rest.
-  Facts stay in rank order, each bullet is the verbatim claim, and the plan stores the
-  `factId` on every bullet.
-- **Certifications:** facts of kind `cert`.
+  each role the top N facts placed in it: 4 for the latest two roles, 2 for the rest. A fact is
+  placed only in a role at its display employer whose dates contain the fact's whole period;
+  a fact no role contains is never a bullet and is listed in the plan's `unplaced`. Facts stay
+  in rank order, each bullet is the verbatim claim, and the plan stores the `factId` on every
+  bullet.
+- **Certifications:** facts of kind `cert`. **Education:** facts of kind `education`,
+  verbatim.
 
 **cover-writer.** A fixed four-paragraph template:
-1. The role, the company and the source.
-2. The two highest-ranked facts, verbatim, introduced by a fixed sentence.
-3. The third fact plus the covered-term sentence.
-4. Availability, notice and remote-from-India, from `answers.yaml`, then a close.
+1. The role and the company (sanitised posting text: markup, entities and control characters
+   removed, NFKC, whitespace collapsed, at most 120 characters; a slot with a first-person
+   pronoun, more than 14 words, a sentence end followed by more text, a URL or email, or a
+   character outside letters, digits, whitespace and `&,./()-+#':;|–—` blocks the job's
+   documents as `unsafe-posting-text`), the user's claimable title and years, and "I am based
+   in India and am looking for a fully remote role." The source is not named (amended in
+   Task 9 fix round 1: it is not useful to a recruiter).
+2. The two highest-ranked placed facts, verbatim, introduced by a fixed sentence.
+3. The third fact plus the covered-term sentence, which lists only covered terms whose key or
+   display appears literally in a cited claim ("…; each appears in the work above.", or "…;
+   it appears in the work above." for one term).
+4. "I am available from {availableFrom}, with a notice period of {notice}. Thank you for your
+   time." The cover-writer reads only the public pack, so it leaves both placeholders; the
+   renderer fills them from `answers.yaml` `available_from` and `notice_period` and omits the
+   first sentence when either is missing (see §3).
 
 Every sentence is either a template literal or a verbatim fact claim. Each paragraph records
 its fact ids.
@@ -324,8 +344,8 @@ Both formats are always rendered.
 
 | Guardrail | Where | Rule |
 |---|---|---|
-| G-GROUND | out of resume-planner and cover-writer | Every bullet equals a citeable fact's claim, character for character. Every skill-line token is in the union of citeable facts' tech. Summary numbers equal computed values. Paragraph fact ids exist and are citeable |
-| G-NAMING | out of every writing agent, and the renderer's text | No `forbiddenTerms` (case-insensitive, word-boundary) |
+| G-GROUND | out of resume-planner and cover-writer | Re-derives the plan from the posting and the pack (the posting re-scored, years from `experience.asOf`) and never trusts the plan's values. Every bullet, cert and education entry equals a citeable fact's claim, character for character, and a bullet's fact is dated inside its role. Every skill-line entry is a display term backed by a citeable experience, project or cert fact. The headline is a claimable title. Summary numbers and terms equal computed values. Paragraph fact ids exist and are citeable; the sanitised posting title and company are safe (`unsafe-posting-text`) |
+| G-NAMING | out of every writing agent, and the renderer's text | No `forbiddenTerms` (case-insensitive, word-boundary, with lookalike, split, digit and plural spellings) in the payload, except the embedded source posting (`scored.posting`, `evidence.scored.posting`, `resume.evidence.scored.posting`) |
 | G-NO-GAP-CLAIM | out of resume-planner | No gap-group skill appears in the skills line |
 
 Any failure quarantines that job's documents. The job still shows on the dashboard with

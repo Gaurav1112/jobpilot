@@ -1,42 +1,42 @@
 strong:
-  - {key: java, synonyms: []}
-  - {key: spring, synonyms: [spring boot]}
-  - {key: kafka, synonyms: []}
+  - {key: java, synonyms: [], display: Java}
+  - {key: spring, synonyms: [spring boot], display: Spring}
+  - {key: kafka, synonyms: [], display: Kafka}
   - {key: microservices, synonyms: [microservice]}
   - {key: distributed systems, synonyms: [distributed system]}
-  - {key: postgres, synonyms: [postgresql]}
+  - {key: postgres, synonyms: [postgresql], display: PostgreSQL}
   - {key: event-driven, synonyms: [event driven]}
-  - {key: aws, synonyms: []}
-  - {key: kubernetes, synonyms: [k8s]}
-  - {key: redis, synonyms: []}
+  - {key: aws, synonyms: [], display: AWS}
+  - {key: kubernetes, synonyms: [k8s], display: Kubernetes}
+  - {key: redis, synonyms: [], display: Redis}
   - {key: multi-tenant, synonyms: [multitenant, multi tenant]}
-  - {key: saas, synonyms: []}
+  - {key: saas, synonyms: [], display: SaaS}
   - {key: fintech, synonyms: [payments]}
-  - {key: llm, synonyms: [llms, large language model, large language models, ai]}
+  - {key: llm, synonyms: [llms, large language model, large language models, ai], display: LLMs}
 medium:
-  - {key: go, synonyms: [golang]}
-  - {key: typescript, synonyms: []}
-  - {key: node, synonyms: [node.js, nodejs]}
-  - {key: react, synonyms: []}
-  - {key: rabbitmq, synonyms: []}
-  - {key: sqs, synonyms: []}
-  - {key: gcp, synonyms: []}
-  - {key: docker, synonyms: []}
-  - {key: elasticsearch, synonyms: []}
-  - {key: mongodb, synonyms: []}
-  - {key: cqrs, synonyms: []}
-  - {key: ddd, synonyms: []}
-  - {key: grpc, synonyms: []}
-  - {key: mcp, synonyms: []}
-  - {key: rag, synonyms: []}
-  - {key: python, synonyms: []}
+  - {key: go, synonyms: [golang], display: Go}
+  - {key: typescript, synonyms: [], display: TypeScript}
+  - {key: node, synonyms: [node.js, nodejs], display: Node.js}
+  - {key: react, synonyms: [], display: React}
+  - {key: rabbitmq, synonyms: [], display: RabbitMQ}
+  - {key: sqs, synonyms: [], display: SQS}
+  - {key: gcp, synonyms: [], display: GCP}
+  - {key: docker, synonyms: [], display: Docker}
+  - {key: elasticsearch, synonyms: [], display: Elasticsearch}
+  - {key: mongodb, synonyms: [], display: MongoDB}
+  - {key: cqrs, synonyms: [], display: CQRS}
+  - {key: ddd, synonyms: [], display: DDD}
+  - {key: grpc, synonyms: [], display: gRPC}
+  - {key: mcp, synonyms: [], display: MCP}
+  - {key: rag, synonyms: [], display: RAG}
+  - {key: python, synonyms: [], display: Python}
 gap:
-  - {key: scala, synonyms: []}
-  - {key: rust, synonyms: []}
-  - {key: c++, synonyms: []}
-  - {key: .net, synonyms: [c#]}
-  - {key: ruby, synonyms: []}
-  - {key: php, synonyms: []}
-  - {key: elixir, synonyms: []}
-  - {key: spark, synonyms: []}
-  - {key: hadoop, synonyms: []}
+  - {key: scala, synonyms: [], display: Scala}
+  - {key: rust, synonyms: [], display: Rust}
+  - {key: c++, synonyms: [], display: C++}
+  - {key: .net, synonyms: [c#], display: .NET}
+  - {key: ruby, synonyms: [], display: Ruby}
+  - {key: php, synonyms: [], display: PHP}
+  - {key: elixir, synonyms: [], display: Elixir}
+  - {key: spark, synonyms: [], display: Spark}
+  - {key: hadoop, synonyms: [], display: Hadoop}

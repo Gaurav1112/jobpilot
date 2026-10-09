@@ -34,7 +34,7 @@ const evidence: Evidence = {
 const resume: ResumePlan = {
   jobKey: posting.jobKey, evidence, headline: 'Engineer', summary: { text: 'Hi {n}', slots: { n: 3, s: 'x' } }, skills: ['Go'],
   roles: [{ employer: 'Acme', title: 'Eng', location: 'Pune', start: '2020-01', end: 'Present', bullets: [{ factId: 'f1', text: 'Did.' }] }],
-  certs: [{ factId: 'c1', text: 'Cert' }], covered: ['go'], missing: [], ats: 'greenhouse', firstSeen: '2026-10-09',
+  certs: [{ factId: 'c1', text: 'Cert' }], education: [], unplaced: [], covered: ['go'], missing: [], ats: 'greenhouse', firstSeen: '2026-10-09',
 };
 const cover: CoverPlan = { jobKey: posting.jobKey, resume, paragraphs: [{ text: 'Dear', factIds: ['f1'] }] };
 const files = [{ kind: 'resume' as const, format: 'pdf' as const, path: 'o/r.pdf', sha256: 'a'.repeat(64), pages: 1 }];

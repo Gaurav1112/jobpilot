@@ -98,7 +98,7 @@ describe('loadPack', () => {
 
   it.each([
     'contact.yaml', 'facts.yaml', 'roles.yaml', 'eligibility.yaml', 'lexicon.yaml', 'targets.yaml',
-    'filters.yaml', 'naming.yaml', 'offers.yaml', 'fx.yaml', 'watchlist.yaml', 'feeds.yaml',
+    'filters.yaml', 'naming.yaml', 'offers.yaml', 'fx.yaml', 'watchlist.yaml', 'feeds.yaml', 'experience.yaml',
   ])('rejects an unknown top-level key in %s, naming the file', (file) => {
     const d = copyFixture();
     append(d, file, '\nbogusKey: 1\n');
@@ -119,6 +119,44 @@ describe('loadPack', () => {
     expect(() => loadPack(d)).toThrow(/facts\.yaml/);
     writeFileSync(p, 'facts: [\n');
     expect(() => loadPack(d)).toThrow(/facts\.yaml/);
+  });
+
+  it('reads experience.asOf from experience.yaml; an asOf override wins (Task 9 fix C1)', () => {
+    expect(loadPack(FIXTURE).pack.experience).toEqual({ asOf: '2026-10' });
+    expect(loadPack(FIXTURE, {}, { asOf: '2027-01' }).pack.experience).toEqual({ asOf: '2027-01' });
+    expect(loadPack(FIXTURE, {}, { asOf: '2027-01' }).hash).not.toBe(loadPack(FIXTURE).hash); // a new month re-runs pack readers
+    expect(() => loadPack(FIXTURE, {}, { asOf: '2027-13' })).toThrow(/asOf/);
+    const d = copyFixture();
+    rmSync(join(d, 'experience.yaml'));
+    expect(() => loadPack(d)).toThrow(/experience\.asOf is required/);
+    expect(loadPack(d, {}, { asOf: '2026-10' }).hash).toBe(loadPack(FIXTURE).hash);
+  });
+
+  it('rejects a role or fact start, or a role end, later than asOf', () => {
+    expect(() => loadPack(FIXTURE, {}, { asOf: '2022-02' })).toThrow(/roles\.yaml: role 0 \(Northwind Labs\) starts 2022-03, after experience\.asOf 2022-02/);
+    const d = copyFixture();
+    const roles = join(d, 'roles.yaml');
+    writeFileSync(roles, readFileSync(roles, 'utf8').replace('end: "2022-02"', 'end: "2027-02"'));
+    expect(() => loadPack(d)).toThrow(/roles\.yaml: role 1 \(Contoso Retail\) ends 2027-02, after experience\.asOf 2026-10/);
+    const e = copyFixture();
+    const facts = join(e, 'facts.yaml');
+    writeFileSync(facts, readFileSync(facts, 'utf8').replace('period: "2023-01..present"', 'period: "2027-01..present"'));
+    expect(() => loadPack(e)).toThrow(/facts\.yaml: fact f-nw-04 starts 2027-01, after experience\.asOf 2026-10/);
+    // A cert's validity end may lie after asOf (it is an expiry, not experience).
+    expect(loadPack(FIXTURE, {}, { asOf: '2025-01' }).pack.facts.find((f) => f.id === 'f-ce-02')?.period).toBe('2022-09..2025-09');
+  });
+
+  it('defaults targets.claimableTitles to the distinct role titles, newest role first (Task 9 fix C2)', () => {
+    expect(loadPack(FIXTURE).pack.targets.claimableTitles).toEqual(['Senior Backend Engineer', 'Software Engineer II', 'Software Engineer']);
+    const d = copyFixture();
+    append(d, 'targets.yaml', '\nclaimableTitles: [Backend Engineer, Senior Backend Engineer]\n');
+    expect(loadPack(d).pack.targets.claimableTitles).toEqual(['Backend Engineer', 'Senior Backend Engineer']);
+  });
+
+  it('keeps an optional lexicon display name (Task 9 fix I5)', () => {
+    const { pack } = loadPack(FIXTURE);
+    expect(pack.lexicon.strong.find((g) => g.key === 'postgres')?.display).toBe('PostgreSQL');
+    expect(pack.lexicon.strong.find((g) => g.key === 'microservices')?.display).toBeUndefined();
   });
 
   it('rejects duplicate fact ids', () => {
@@ -228,6 +266,19 @@ describe('assertNoForbidden', () => {
     }
     // \u03b7 is not a lookalike of n, so it is not folded: this spelling is a different word.
     expect(() => assertNoForbidden('I\u03b7itech', naming)).not.toThrow();
+  });
+
+  it('sees through split, digit, l-for-I and plural spellings (Task 9 review M3)', () => {
+    for (const t of ['Ini-tech', 'Ini.tech', 'In1tech', '1nitech', 'I n i t e c h', 'lnitech', 'Initechs', 'INITECHS', 'Initech\u0301', 'Init3ch', 'In!tech']) {
+      expect(() => assertNoForbidden(`worked at ${t} once`, naming), t).toThrow(ForbiddenTermError);
+    }
+    const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech India'] };
+    expect(() => assertNoForbidden('at Ini-tech Ind1a now', n)).toThrow(ForbiddenTermError);
+    for (const t of ['reinitechnology', 'initiative', 'I am in tech', 'Initech-ish words like Initechnology']) {
+      if (t.startsWith('Initech-ish')) continue;
+      expect(() => assertNoForbidden(t, naming), t).not.toThrow();
+    }
+    expect(() => assertNoForbidden('Initechnology and initechnical', naming)).not.toThrow();
   });
 
   it('sees through zero-width characters and Unicode normalisation', () => {

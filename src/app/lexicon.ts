@@ -262,3 +262,12 @@ export function tagIs(tag: string, term: string): boolean {
 /** Whether any tag in `tags` is the key or a synonym of `group`. */
 export const tagsBack = (tags: readonly string[], group: TermGroup): boolean =>
   tags.some((tag) => [group.key, ...group.synonyms].some((term) => tagIs(tag, term)));
+
+/**
+ * Whether `term` occurs literally in `text`: the whole-word rule only (case-insensitive, symbols literal, spaces and
+ * hyphens interchangeable), with no ambiguous-word context rules and no synonyms. For "it appears in the work above".
+ */
+export function literalIn(text: string, term: string): boolean {
+  if (term.replace(/[\s-]+/g, '') === '') return false;
+  return plainHas(text, term.trim().toLowerCase());
+}

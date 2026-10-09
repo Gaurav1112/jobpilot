@@ -1,5 +1,5 @@
 {
-  "hash": "e76f8bdf8439496afd3889f3d0744a2d2cd4095b31c706383d7153fb172fa4f7",
+  "hash": "16467b4aed4ed68a0298764ea046cc03f9d95ec053886c92058c123519bb066d",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -48,6 +48,25 @@
           "covered": {
             "items": {
               "type": "string"
+            },
+            "type": "array"
+          },
+          "education": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "factId": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "factId",
+                "text"
+              ],
+              "type": "object"
             },
             "type": "array"
           },
@@ -460,6 +479,12 @@
               "slots"
             ],
             "type": "object"
+          },
+          "unplaced": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -470,6 +495,8 @@
           "skills",
           "roles",
           "certs",
+          "education",
+          "unplaced",
           "covered",
           "missing",
           "ats",
@@ -568,6 +595,25 @@
               "covered": {
                 "items": {
                   "type": "string"
+                },
+                "type": "array"
+              },
+              "education": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "factId": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "factId",
+                    "text"
+                  ],
+                  "type": "object"
                 },
                 "type": "array"
               },
@@ -980,6 +1026,12 @@
                   "slots"
                 ],
                 "type": "object"
+              },
+              "unplaced": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -990,6 +1042,8 @@
               "skills",
               "roles",
               "certs",
+              "education",
+              "unplaced",
               "covered",
               "missing",
               "ats",

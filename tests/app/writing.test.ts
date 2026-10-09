@@ -4,7 +4,7 @@ import { coverWriter } from '../../src/app/agents/writing/cover-writer.js';
 import { evidenceMatcher } from '../../src/app/agents/writing/evidence-matcher.js';
 import { buildEvidence, firstSeenOf, planCover, planResume, yearsOf, type WritingPack } from '../../src/app/agents/writing/grounded.js';
 import { resumePlanner } from '../../src/app/agents/writing/resume-planner.js';
-import { COVER_P1, COVER_P3_TAIL, COVER_P4, joinList, RENDER_PLACEHOLDERS, renderSummary, SUMMARY_TEMPLATE } from '../../src/app/agents/writing/templates.js';
+import { COVER_P1, COVER_P3_TAIL, COVER_P3_TAIL_ONE, COVER_P4, joinList, RENDER_PLACEHOLDERS, renderSummary, sanitisePostingText, SUMMARY_TEMPLATE, unsafePostingText } from '../../src/app/agents/writing/templates.js';
 import { scorePosting } from '../../src/app/agents/scorer-lexicon.js';
 import { tagIs } from '../../src/app/lexicon.js';
 import { loadPack } from '../../src/app/pack/load.js';
@@ -104,10 +104,8 @@ describe('firstSeen', () => {
     expect(firstSeenOf(posting(), pack)).toBe('2026-10-01');
     expect(firstSeenOf(posting({ postedAt: '2026-09-02T14:50:52-04:00' }), pack)).toBe('2026-09-02');
   });
-  it('without postedAt, is the latest month the citeable non-cert facts and the roles name (never the clock)', () => {
-    // Role months reach 2022-03; the citeable f-nw-04 starts 2023-01. The derived-unverified f-nw-05 (to 2024-06)
-    // and the cert validity periods (to 2025-09) are not evidence of a date, so they are ignored.
-    expect(firstSeenOf(posting({ postedAt: null }), pack)).toBe('2023-01-01');
+  it('without postedAt, is the first day of the pack asOf month (never the clock); no rule reads it', () => {
+    expect(firstSeenOf(posting({ postedAt: null }), pack)).toBe('2026-10-01');
   });
 });
 
@@ -144,12 +142,14 @@ describe('evidence-matcher', () => {
 
 const EXPECTED_RESUME_BODY = {
   jobKey: '0123456789abcdef',
-  headline: 'Backend Engineer',
+  headline: 'Senior Backend Engineer',
   summary: {
-    text: 'Backend Engineer with 10+ years building java, spring, kafka and postgres systems. Currently at Northwind Labs.',
-    slots: { title: 'Backend Engineer', years: 10, top1: 'java', top2: 'spring', top3: 'kafka', top4: 'postgres', employer: 'Northwind Labs' },
+    // aws is covered (the verified AWS cert backs it), but only an experience fact placed in a role may back a
+    // "years building X" claim, so it is not a summary term.
+    text: 'Senior Backend Engineer with 10+ years building Java, Spring, Kafka and PostgreSQL systems. Currently at Northwind Labs.',
+    slots: { title: 'Senior Backend Engineer', years: 10, top1: 'Java', top2: 'Spring', top3: 'Kafka', top4: 'PostgreSQL', employer: 'Northwind Labs' },
   },
-  skills: ['java', 'spring', 'kafka', 'postgres', 'event-driven', 'aws', 'kubernetes', 'fintech', 'docker', 'microservices', 'redis', 'multi-tenant', 'saas', 'rabbitmq', 'python'],
+  skills: ['Java', 'Spring', 'Kafka', 'PostgreSQL', 'event-driven', 'AWS', 'Kubernetes', 'fintech', 'Docker', 'microservices', 'Redis', 'multi-tenant', 'SaaS', 'RabbitMQ', 'Python'],
   roles: [
     {
       employer: 'Northwind Labs',
@@ -192,6 +192,8 @@ const EXPECTED_RESUME_BODY = {
     { factId: 'f-ce-02', text: 'Certified Kubernetes Application Developer (CKAD).' },
     { factId: 'f-ce-01', text: 'AWS Certified Solutions Architect - Associate.' },
   ],
+  education: [{ factId: 'f-ed-01', text: 'B.E. in Computer Engineering, Savitribai Phule Pune University.' }],
+  unplaced: [],
   covered: ['java', 'spring', 'kafka', 'postgres', 'event-driven', 'aws', 'kubernetes', 'fintech', 'docker'],
   missing: ['elasticsearch', 'grpc', 'scala'],
   ats: 'greenhouse',
@@ -200,7 +202,7 @@ const EXPECTED_RESUME_BODY = {
 
 const EXPECTED_PARAGRAPHS = [
   {
-    text: 'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Backend Engineer with 10+ years of backend experience, and I work fully remote from India.',
+    text: 'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Senior Backend Engineer with 10+ years of experience. I am based in India and am looking for a fully remote role.',
     factIds: [],
   },
   {
@@ -208,7 +210,8 @@ const EXPECTED_PARAGRAPHS = [
     factIds: ['f-ct-01', 'f-nw-01'],
   },
   {
-    text: 'Built REST services in Java with Spring and MySQL for the store-locator product. The role asks for java, spring, kafka, postgres, event-driven and fintech; each appears in the work above.',
+    // fintech is covered, but the cited text says "payments" (a synonym), so it is not listed.
+    text: 'Built REST services in Java with Spring and MySQL for the store-locator product. The role asks for Java, Spring, Kafka, PostgreSQL and event-driven; each appears in the work above.',
     factIds: ['f-fb-01'],
   },
   { text: 'I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.', factIds: [] },
@@ -236,8 +239,8 @@ describe('resume-planner', () => {
     const plan = planResume(buildEvidence(scoredOf(p), pack), pack);
     const cited = [...plan.roles.flatMap((r) => r.bullets), ...plan.certs].map((b) => b.factId);
     for (const id of ['f-nw-05', 'f-ct-04', 'f-fb-03']) expect(cited).not.toContain(id);
-    expect(plan.skills).not.toContain('elasticsearch'); // backed only by f-fb-03 (user-cannot-confirm)
-    expect(plan.skills).not.toContain('scala'); // a gap skill, and backed only by the rejected f-ct-04
+    expect(plan.skills).not.toContain('Elasticsearch'); // backed only by f-fb-03 (user-cannot-confirm)
+    expect(plan.skills).not.toContain('Scala'); // a gap skill, and backed only by the rejected f-ct-04
     expect(plan.missing).toEqual(['elasticsearch', 'scala']);
   });
 
@@ -246,7 +249,7 @@ describe('resume-planner', () => {
     const plan = planResume(buildEvidence(scoredOf(posting(), p2), p2), p2);
     expect(plan.roles[0]?.bullets.map((b) => b.factId)).toEqual(['f-nw-02', 'f-nw-03', 'f-nw-04']);
     expect(plan.covered).not.toContain('kafka'); // f-nw-01 was the only fact with kafka
-    expect(plan.skills).not.toContain('kafka');
+    expect(plan.skills).not.toContain('Kafka');
   });
 
   it('rewrites the forbidden employer through employerDisplay', () => {
@@ -280,21 +283,29 @@ describe('resume-planner', () => {
     expect(plan.roles[3]?.bullets).toEqual([]);
   });
 
-  it('picks the headline by word overlap with the posting title; a tie goes to the first entry', () => {
-    const head = (title: string) => planResume(buildEvidence(scoredOf(posting({ title })), pack), pack).headline;
-    expect(head('Staff Platform Engineer')).toBe('Platform Engineer'); // platform engineer and staff engineer tie at 2
-    expect(head('Principal Engineer')).toBe('Principal Engineer');
-    expect(head('Senior Software Engineer, Backend')).toBe('Backend Engineer'); // backend and software engineer tie
-    expect(head('Data Wrangler')).toBe('Backend Engineer'); // no overlap: the first entry
+  it('picks the headline from the claimable titles only, verbatim; a tie goes to the most recent role title (fix C2)', () => {
+    const head = (title: string, p: WritingPack = pack) => planResume(buildEvidence(scoredOf(posting({ title }), p), p), p).headline;
+    // The default claimable titles are the role titles: Senior Backend Engineer, Software Engineer II, Software Engineer.
+    expect(head('Principal Engineer')).toBe('Senior Backend Engineer'); // never "Principal Engineer": not a title held
+    expect(head('Staff Platform Engineer')).toBe('Senior Backend Engineer'); // all tie at 1: the most recent role title
+    expect(head('Software Engineer II, Payments')).toBe('Software Engineer II');
+    expect(head('Data Wrangler')).toBe('Senior Backend Engineer');
+    const custom = freezePack({ ...pack, targets: { ...pack.targets, claimableTitles: ['Backend Engineer', 'Software Engineer', 'SDE 3', 'Senior Backend Engineer'] } }) as WritingPack;
+    expect(head('SDE 3, Payments', custom)).toBe('SDE 3'); // verbatim, no re-casing
+    expect(head('Backend Engineer', custom)).toBe('Senior Backend Engineer'); // Backend Engineer and it tie at 2: the role title wins
+    expect(head('Lead Software Engineer', custom)).toBe('Software Engineer');
+    const p1 = planCover(planResume(buildEvidence(scoredOf(posting({ title: 'Principal Engineer' })), pack), pack), pack).paragraphs[0]!.text;
+    expect(p1).toContain('I am a Senior Backend Engineer with 10+ years');
   });
 });
 
 describe('summary template', () => {
   const base = { title: 'Backend Engineer', years: 10, employer: 'Northwind Labs' };
-  it('keeps the exact template string', () => {
+  it('keeps the exact template strings', () => {
     expect(SUMMARY_TEMPLATE).toBe('{title} with {years}+ years building {top1}, {top2}, {top3} and {top4} systems. Currently at {employer}.');
-    expect(COVER_P1).toBe('I am applying for the {title} role at {company}. I am a {targetTitle} with {years}+ years of backend experience, and I work fully remote from India.');
+    expect(COVER_P1).toBe('I am applying for the {title} role at {company}. I am a {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.');
     expect(COVER_P3_TAIL).toBe('The role asks for {coveredList}; each appears in the work above.');
+    expect(COVER_P3_TAIL_ONE).toBe('The role asks for {coveredList}; it appears in the work above.');
     expect(COVER_P4).toBe('I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.');
   });
   it('drops missing term slots, joining the rest with ", " and " and "', () => {
@@ -312,24 +323,28 @@ describe('summary template', () => {
   it('plans fewer slots when fewer terms are covered', () => {
     const plan = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Java and Kafka, on Kubernetes.' })), pack), pack);
     expect(plan.summary).toEqual({
-      text: 'Backend Engineer with 10+ years building java, kafka and kubernetes systems. Currently at Northwind Labs.',
-      slots: { title: 'Backend Engineer', years: 10, top1: 'java', top2: 'kafka', top3: 'kubernetes', employer: 'Northwind Labs' },
+      text: 'Senior Backend Engineer with 10+ years building Java, Kafka and Kubernetes systems. Currently at Northwind Labs.',
+      slots: { title: 'Senior Backend Engineer', years: 10, top1: 'Java', top2: 'Kafka', top3: 'Kubernetes', employer: 'Northwind Labs' },
     });
     const none = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Build things.' })), pack), pack);
     expect(none.summary).toEqual({
-      text: 'Backend Engineer with 10+ years. Currently at Northwind Labs.',
-      slots: { title: 'Backend Engineer', years: 10, employer: 'Northwind Labs' },
+      text: 'Senior Backend Engineer with 10+ years. Currently at Northwind Labs.',
+      slots: { title: 'Senior Backend Engineer', years: 10, employer: 'Northwind Labs' },
     });
     expect(none.covered).toEqual([]);
-    // every citeable tech key is still listed, none of them from the JD
-    expect(none.skills).toEqual(['java', 'spring', 'kafka', 'microservices', 'postgres', 'event-driven', 'aws', 'kubernetes', 'redis', 'multi-tenant', 'saas', 'fintech', 'rabbitmq', 'docker', 'python']);
+    // every backed key is still listed, by display name, none of them from the JD
+    expect(none.skills).toEqual(['Java', 'Spring', 'Kafka', 'microservices', 'PostgreSQL', 'event-driven', 'AWS', 'Kubernetes', 'Redis', 'multi-tenant', 'SaaS', 'fintech', 'RabbitMQ', 'Docker', 'Python']);
   });
   it('does not claim a current employer when no role is ongoing', () => {
     // 23 + 45 + 52 months (2022-03..2026-06, the end month included) = 120 months.
     const ended = freezePack({ ...pack, roles: pack.roles.map((r) => (r.end === 'present' ? { ...r, end: '2026-06' } : r)) }) as WritingPack;
     const plan = planResume(buildEvidence(scoredOf(posting(), ended), ended), ended);
-    expect(plan.summary.text).toBe('Backend Engineer with 10+ years building java, spring, kafka and postgres systems.');
+    // The Northwind facts run '..present' (to asOf 2026-10), past the role's new end, so none is placed (fix I3):
+    // Kafka loses its only experience backing and the Northwind role has no bullets.
+    expect(plan.summary.text).toBe('Senior Backend Engineer with 10+ years building Java, Spring, PostgreSQL and fintech systems.');
     expect(plan.summary.slots).not.toHaveProperty('employer');
+    expect(plan.unplaced).toEqual(['f-nw-01', 'f-nw-02', 'f-nw-03', 'f-nw-04']);
+    expect(plan.roles[0]?.bullets).toEqual([]);
   });
 });
 
@@ -350,22 +365,28 @@ describe('cover-writer', () => {
     expect(Object.keys(pack)).not.toContain('answers'); // the cover-writer never sees them
   });
 
-  it('lists in p3 only the covered terms the cited claims themselves name', () => {
+  it('lists in p3 only the covered terms whose key or display the cited claims literally hold (fix I5)', () => {
     const jd = 'Stack: Java, Spring Boot, Kafka, microservices, PostgreSQL, event-driven design, AWS, Kubernetes, Redis.';
     const resume = planResume(buildEvidence(scoredOf(posting({ title: 'Lead Software Engineer', descriptionText: jd })), pack), pack);
     const p3 = planCover(resume, pack).paragraphs[2]!;
     // The cited facts are f-nw-01, f-nw-02 and f-nw-03: java and spring are in their tech tags, but no claim names them.
     expect(resume.evidence.ranked.slice(0, 3).map((r) => r.factId)).toEqual(['f-nw-01', 'f-nw-02', 'f-nw-03']);
     expect(p3.text).toBe(
-      'Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes. The role asks for kafka, microservices, event-driven, kubernetes and redis; each appears in the work above.',
+      'Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes. The role asks for Kafka, microservices, event-driven, Kubernetes and Redis; each appears in the work above.',
     );
+  });
+
+  it('uses the singular sentence for one listed term', () => {
+    const resume = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Java only.' })), pack), pack);
+    const p3 = planCover(resume, pack).paragraphs[2]!;
+    expect(p3.text).toMatch(/The role asks for Java; it appears in the work above\.$/);
   });
 
   it('degrades without inventing: one ranked fact, no covered-term sentence', () => {
     const solo = freezePack({ ...pack, facts: pack.facts.filter((f) => f.id === 'f-nw-04' || f.kind === 'cert') }) as WritingPack;
     const resume = planResume(buildEvidence(scoredOf(posting(), solo), solo), solo);
     expect(planCover(resume, solo).paragraphs.map((p) => p.text)).toEqual([
-      'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Backend Engineer with 10+ years of backend experience, and I work fully remote from India.',
+      'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Senior Backend Engineer with 10+ years of experience. I am based in India and am looking for a fully remote role.',
       'Relevant work: Mentored four engineers and ran the weekly design review for the platform group.',
       'I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.',
     ]);
@@ -399,5 +420,117 @@ describe('the writing agents', () => {
     expect(a).toEqual(b);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
     expect((a[0] as CoverPlan).paragraphs).toEqual(EXPECTED_PARAGRAPHS);
+  });
+});
+
+describe('fix round 1: review probes as regressions', () => {
+  const plans = (p: Posting, pk: WritingPack = pack) => {
+    const ev = buildEvidence(scoredOf(p, pk), pk);
+    const r = planResume(ev, pk);
+    return { ev, r, c: planCover(r, pk) };
+  };
+  const base = plans(posting());
+
+  it('C1: postedAt never moves years or recency (2040, 2019, null)', () => {
+    for (const postedAt of ['2040-01-01', '2019-01-01', null]) {
+      const x = plans(posting({ postedAt }));
+      expect(x.r.summary.slots['years'], String(postedAt)).toBe(10);
+      expect(x.r.summary.text).toBe(base.r.summary.text);
+      expect(x.ev.ranked).toEqual(base.ev.ranked);
+      expect(x.r.roles).toEqual(base.r.roles);
+    }
+    // asOf, not the posting, moves them: a pack a year later has 11 years and older recency.
+    const later = freezePack({ ...pack, experience: { asOf: '2027-07' } }) as WritingPack;
+    expect(plans(posting(), later).r.summary.slots['years']).toBe(11);
+  });
+
+  it('I2: a cert, a project or an education fact never backs a "years building X" term', () => {
+    const awsOnly = plans(posting({ descriptionText: 'We run on AWS and Kubernetes. Python scripting helpful.' }));
+    expect(awsOnly.r.covered).toEqual(['aws', 'kubernetes', 'python']); // AWS by the cert, Python by a project
+    expect(awsOnly.r.summary.text).toBe('Senior Backend Engineer with 10+ years building Kubernetes systems. Currently at Northwind Labs.');
+    expect(awsOnly.r.skills.slice(0, 3)).toEqual(['AWS', 'Kubernetes', 'Python']); // the skills line may still list them
+    const edu = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-ed-01' ? { ...f, tech: ['go'] } : f)) }) as WritingPack;
+    const goJd = plans(posting({ descriptionText: 'Go and Kubernetes services.' }), edu);
+    expect(goJd.r.covered).toEqual(['kubernetes']);
+    expect(goJd.r.skills).not.toContain('Go');
+    expect(goJd.r.summary.text).not.toContain('Go');
+  });
+
+  it('I3: a fact dated outside every role at its employer is unplaced, never shown under the nearest role', () => {
+    const outside = freezePack({
+      ...pack,
+      facts: [...pack.facts, { id: 'f-fb-09', claim: 'Built a Java billing engine used by 3 banks.', tech: ['java'], employer: 'Fabrikam', period: '2010-01..2011-01', kind: 'experience', status: 'verified' }],
+    }) as WritingPack;
+    const a = plans(posting(), outside);
+    expect(a.r.roles.flatMap((r) => r.bullets.map((b) => b.factId))).not.toContain('f-fb-09');
+    expect(a.r.unplaced).toEqual(['f-fb-09']);
+    expect(a.c.paragraphs.flatMap((p) => p.factIds)).not.toContain('f-fb-09');
+
+    const twoRoles = freezePack({
+      ...pack,
+      roles: [...pack.roles, { employer: 'Northwind Labs', title: 'Backend Engineer', location: 'Pune', start: '2020-01', end: '2021-01' }],
+      facts: [
+        ...pack.facts,
+        { id: 'f-nw-09', claim: 'Designed the Java ledger for Northwind.', tech: ['java'], employer: 'Northwind Labs', period: '2021-03..2021-09', kind: 'experience', status: 'verified' },
+        { id: 'f-nw-10', claim: 'Shipped the first Northwind billing API.', tech: ['java'], employer: 'Northwind Labs', period: '2020-02..2020-11', kind: 'experience', status: 'verified' },
+      ],
+    }) as WritingPack;
+    const b = plans(posting(), twoRoles);
+    expect(b.r.unplaced).toEqual(['f-nw-09']); // in the gap between the two Northwind roles
+    const old = b.r.roles.find((r) => r.title === 'Backend Engineer')!;
+    expect(old.bullets.map((x) => x.factId)).toEqual(['f-nw-10']); // inside the 2020 role, so placed there
+  });
+
+  it('I5: every shown term is its display name, a synonym tag included', () => {
+    const ai = freezePack({
+      ...pack,
+      facts: [...pack.facts, { id: 'f-nw-11', claim: 'Used an AI chatbot API in an internal demo.', tech: ['ai'], employer: 'Northwind Labs', period: '2024-01..2024-02', kind: 'project', status: 'user-stated' }],
+    }) as WritingPack;
+    const x = plans(posting({ descriptionText: `${JD} Experience with large language models.` }), ai);
+    expect(x.r.skills).toContain('LLMs');
+    expect(x.r.skills).not.toContain('llm');
+    expect(x.r.summary.text).not.toContain('LLMs'); // a project backs it, so no years claim
+  });
+
+  it('(d) lists citeable education facts verbatim', () => {
+    expect(base.r.education).toEqual([{ factId: 'f-ed-01', text: 'B.E. in Computer Engineering, Savitribai Phule Pune University.' }]);
+  });
+
+  it('is invariant to the order of facts and roles in the pack', () => {
+    const shuffled = freezePack({ ...pack, facts: [...pack.facts].reverse(), roles: [...pack.roles].reverse() }) as WritingPack;
+    const s2 = plans(posting(), shuffled);
+    expect(JSON.stringify(s2.r)).toBe(JSON.stringify(base.r));
+    expect(JSON.stringify(s2.c)).toBe(JSON.stringify(base.c));
+  });
+
+  it('I1: sanitises posting text for template slots', () => {
+    expect(sanitisePostingText('Acme <b>Payments</b>')).toBe('Acme Payments');
+    expect(sanitisePostingText('R&amp;D  Engineer​‮')).toBe('R&D Engineer');
+    expect(sanitisePostingText('Women’s Health\tCo')).toBe("Women's Health Co");
+    expect(sanitisePostingText('ﬁnance Ｅngineer')).toBe('finance Engineer'); // NFKC
+    expect([...sanitisePostingText('x'.repeat(300))]).toHaveLength(120);
+  });
+
+  it('I1: flags unsafe posting text, by rule, and keeps ordinary titles', () => {
+    for (const ok of [
+      'Senior Backend Engineer (Java)', 'Staff Software Engineer I - SRE', 'Software Engineer II, Payments', 'Sr. Backend Engineer',
+      'Acme Inc. India', 'C++ / C# Developer', "Women's Health Co", 'Platform Engineer – Integration Services', 'Node.js Developer', 'Backend Engineer | Remote',
+      'R&D Engineer: Payments; Core', 'J. P. Morgan',
+    ]) expect(unsafePostingText(sanitisePostingText(ok)), ok).toBeNull();
+    const why = (s: string) => unsafePostingText(sanitisePostingText(s));
+    expect(why('Backend Engineer role. I hold a PhD in Distributed Systems and 20 years of Rust. Apply for the Backend Engineer')).toBe('has a first-person pronoun');
+    expect(why('Join our team')).toBe('has a first-person pronoun');
+    expect(why("I'm hiring")).toBe('has a first-person pronoun');
+    expect(why('Engineer I hold a PhD')).toBe('has a first-person pronoun');
+    expect(why('a b c d e f g h i j k l m n o p')).toBe('has a first-person pronoun');
+    expect(why('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen')).toBe('has more than 14 words');
+    expect(why('Backend Engineer. Apply now')).toBe('has a sentence end followed by more text');
+    expect(why('Backend Engineer at https://acme.example')).toBe('has a URL or email address');
+    expect(why('Backend Engineer www.acme.example')).toBe('has a URL or email address');
+    expect(why('Backend Engineer!')).toMatch(/^has a character outside the allowed set \(U\+0021\)$/);
+    expect(why('Acme &lt;script&gt;')).toMatch(/^has a character outside the allowed set/);
+    expect(why('Backend {notice} Engineer')).toMatch(/^has a character outside the allowed set/);
+    expect(why('jobs@acme.example')).toMatch(/^has a character outside the allowed set|^has a URL/);
+    expect(why('   ')).toBe('is empty');
   });
 });

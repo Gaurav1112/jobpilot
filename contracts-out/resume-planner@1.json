@@ -1,5 +1,5 @@
 {
-  "hash": "d8e3078a2899c1eae84238cdd1d2fce2e9054b658b285acfed1fa97c291a588e",
+  "hash": "65fdba91ee20dcc5b40b6faf00b2fd11fca691a0c749bc38a27959b9871aba5a",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -389,6 +389,25 @@
           "covered": {
             "items": {
               "type": "string"
+            },
+            "type": "array"
+          },
+          "education": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "factId": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "factId",
+                "text"
+              ],
+              "type": "object"
             },
             "type": "array"
           },
@@ -801,6 +820,12 @@
               "slots"
             ],
             "type": "object"
+          },
+          "unplaced": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -811,6 +836,8 @@
           "skills",
           "roles",
           "certs",
+          "education",
+          "unplaced",
           "covered",
           "missing",
           "ats",

@@ -1,0 +1,3 @@
+# The month years of experience and recency are measured to. The daily run injects the current IST month instead
+# (loadPack's asOf override); the fixture pins one so tests and evals never depend on the date.
+asOf: "2026-10"

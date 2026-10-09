@@ -58,18 +58,59 @@ function fold(s: string): string {
     .normalize('NFKC');
 }
 
+/** Digits and symbols that stand in for letters, and l for I, for the squashed token check only. */
+const STAND_INS: Readonly<Record<string, string>> = { '1': 'i', '!': 'i', '|': 'i', l: 'i', '3': 'e', '0': 'o', '4': 'a', '5': 's', '7': 't', $: 's', '@': 'a' };
+/** A token with its stand-ins mapped and everything but letters and digits (hyphens, dots, apostrophes) removed. */
+const squash = (tok: string): string =>
+  [...tok.replace(/['’]s$/u, '')]
+    .map((c) => STAND_INS[c] ?? c)
+    .join('')
+    .replace(/[^\p{L}\p{N}]/gu, '');
+/** The squashed tokens of folded text, and each run of two or more one-letter tokens joined ("I n i t e c h"). */
+function squashedTokens(folded: string): { toks: string[]; runs: string[] } {
+  const toks = folded.split(/[\s,;:/()[\]{}"<>?*+=~^&#%\\]+/u).map(squash).filter((t) => t !== '');
+  const runs: string[] = [];
+  let run: string[] = [];
+  for (const t of [...toks, '']) {
+    if (t.length === 1) run.push(t);
+    else {
+      if (run.length >= 2) runs.push(run.join(''));
+      run = [];
+    }
+  }
+  return { toks, runs };
+}
+
 /**
- * Throws `ForbiddenTermError` if `text` contains any forbidden term. Both sides are folded (see `fold`),
- * whitespace runs inside a term match any whitespace (including NBSP and newlines), and boundaries are
- * Unicode letter/digit lookarounds.
+ * Throws `ForbiddenTermError` if `text` contains any forbidden term. Both sides are folded (see `fold`).
+ * 1. Whitespace runs inside a term match any whitespace (including NBSP and newlines), and boundaries are Unicode
+ *    letter/digit lookarounds.
+ * 2. (Task 9 review M3) Token by token, on squashed tokens: hyphens, dots and apostrophes inside a token are dropped,
+ *    digit and symbol stand-ins are mapped (1 ! | l to i, 3 to e, 0 to o, ...), a run of one-letter tokens is joined,
+ *    and a trailing plural s or possessive is allowed; inside a run of spelled-out letters the term may sit anywhere. So `Ini-tech`, `In1tech`, `lnitech`, `I n i t e c h` and
+ *    `Initechs` match `Initech`, while `reinitechnology` (a longer word) does not.
  */
 export function assertNoForbidden(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): void {
   const hay = fold(text);
+  let tokens: { toks: string[]; runs: string[] } | undefined;
   for (const term of naming.forbiddenTerms) {
     const words = fold(term).split(/\s+/u).filter((w) => w !== '');
     if (words.length === 0) continue;
     const body = words.map(escapeRe).join('\\s+');
     if (new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'u').test(hay)) throw new ForbiddenTermError(term);
+    const want = words.map(squash).filter((w) => w !== '');
+    if (want.length === 0) continue;
+    tokens ??= squashedTokens(hay);
+    const { toks, runs } = tokens;
+    for (let i = 0; i + want.length <= toks.length; i++) {
+      const hit = want.every((w, j) => {
+        const t = toks[i + j];
+        return t === w || (j === want.length - 1 && t === `${w}s`);
+      });
+      if (hit) throw new ForbiddenTermError(term);
+    }
+    // A run of spelled-out letters is never an ordinary word, so the term may sit anywhere inside it.
+    if (runs.some((r) => r.includes(want.join('')))) throw new ForbiddenTermError(term);
   }
 }
 

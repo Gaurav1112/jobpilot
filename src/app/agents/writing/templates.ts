@@ -6,12 +6,19 @@
 
 /** Summary. Fewer than four covered terms drop the missing slots; none drops the "building" clause. */
 export const SUMMARY_TEMPLATE = '{title} with {years}+ years building {top1}, {top2}, {top3} and {top4} systems. Currently at {employer}.';
-/** Cover paragraph 1. */
-export const COVER_P1 = 'I am applying for the {title} role at {company}. I am a {targetTitle} with {years}+ years of backend experience, and I work fully remote from India.';
+/**
+ * Cover paragraph 1 (fix round 1). The brief's "and I work fully remote from India" could be untrue, so the last
+ * sentence says only what the pack's eligibility rules guarantee; "of backend experience" became "of experience",
+ * since the years count every role, backend or not. `{title}` and `{company}` are sanitised posting text
+ * (`sanitisePostingText`), and a slot that fails `unsafePostingText` blocks the job's documents.
+ */
+export const COVER_P1 = 'I am applying for the {title} role at {company}. I am a {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
 /** Cover paragraph 2: this lead-in, then the two top-ranked facts verbatim, each its own sentence. */
 export const COVER_P2_LEAD = 'Relevant work:';
-/** Cover paragraph 3: the third fact verbatim, then this sentence. */
+/** Cover paragraph 3: the third fact verbatim, then this sentence (two or more listed terms). */
 export const COVER_P3_TAIL = 'The role asks for {coveredList}; each appears in the work above.';
+/** The same sentence for exactly one listed term. */
+export const COVER_P3_TAIL_ONE = 'The role asks for {coveredList}; it appears in the work above.';
 /**
  * Cover paragraph 4. The cover-writer reads only the public pack, and `answers.yaml` (P1/P2) is not in it, so it
  * leaves `{availableFrom}` and `{notice}` as literal placeholders. The renderer (Task 10, full pack) fills them from
@@ -62,3 +69,76 @@ export function renderSummary(s: Readonly<SummarySlots>): string {
 
 /** A claim as its own sentence: verbatim, with a full stop added only when it has no closing punctuation. */
 export const asSentence = (claim: string): string => (/[.!?]["')\]]?$/.test(claim) ? claim : `${claim}.`);
+
+// ---- posting text used in templates (fix round 1, I1) ----
+
+/** The longest posting title or company a template takes, in characters, after sanitising. */
+export const POSTING_SLOT_MAX = 120;
+const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', ndash: '–', mdash: '—', rsquo: "'", lsquo: "'" };
+
+/**
+ * Sanitises a posting title or company for a template slot: markup tags removed, HTML entities decoded (so an
+ * encoded `<` still fails the character rule), format (zero-width, bidi) and private-use characters removed, control
+ * characters made spaces,
+ * NFKC, curly single quotes as `'`, whitespace collapsed, then capped at `POSTING_SLOT_MAX` characters.
+ */
+export function sanitisePostingText(raw: string): string {
+  const decoded = raw
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (m, e: string) => {
+      if (e[0] === '#') {
+        const n = e[1] === 'x' || e[1] === 'X' ? Number.parseInt(e.slice(2), 16) : Number.parseInt(e.slice(1), 10);
+        return Number.isFinite(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : ' ';
+      }
+      return ENTITIES[e.toLowerCase()] ?? m;
+    });
+  const clean = decoded
+    // format characters (zero-width, bidi) vanish, so they cannot split a word apart; control characters are spaces
+    .replace(/[\p{Cf}\p{Co}\p{Cs}]/gu, '')
+    .replace(/\p{Cc}/gu, ' ')
+    .normalize('NFKC')
+    .replace(/[‘’]/g, "'")
+    .replace(/\s+/gu, ' ')
+    .trim();
+  const chars = [...clean];
+  return chars.length > POSTING_SLOT_MAX ? chars.slice(0, POSTING_SLOT_MAX).join('').trim() : clean;
+}
+
+/** Abbreviations whose full stop does not end a sentence ("Sr. Backend Engineer", "Acme Inc. India"). */
+const ABBREVIATIONS = new Set(['sr', 'jr', 'inc', 'co', 'ltd', 'corp', 'llc', 'plc', 'st', 'dr', 'no', 'vs', 'intl', 'dept', 'mgr', 'eng', 'sw', 'jun', 'sen']);
+/** Allowed characters: letters, marks, digits, whitespace and & , . / ( ) - + # ' : ; | – —. */
+const DISALLOWED = /[^\p{L}\p{M}\p{N}\s&,./()\-+#':;|–—]/u;
+const PRONOUN = /(?<![\p{L}\p{N}'])(?:i'm|my|me|we|our)(?![\p{L}\p{N}'])/iu;
+const LONE_I = /(?<![\p{L}\p{N}'])i(?![\p{L}\p{N}'])/giu;
+const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\p{L}{2,}/iu;
+
+/**
+ * Why a sanitised posting slot may not go into a template, or null when it may. It is unsafe when it:
+ * - is empty;
+ * - holds a first-person pronoun (I, I'm, my, me, we, our). A capital "I" right after a word and before the end, a
+ *   dash, comma, slash, bar, colon or bracket is a level ("Software Engineer I - SRE"), not the pronoun;
+ * - has more than 14 words;
+ * - has a sentence end (. ! ?) followed by more text; a full stop after an abbreviation (Sr., Inc., ...) or a single
+ *   letter is not a sentence end;
+ * - holds a URL or an email address;
+ * - holds a character outside letters, marks, digits, whitespace and `& , . / ( ) - + # ' : ; | – —`.
+ */
+export function unsafePostingText(s: string): string | null {
+  if (s === '') return 'is empty';
+  const bad = DISALLOWED.exec(s);
+  if (bad !== null) return `has a character outside the allowed set (U+${(bad[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`;
+  if (URL_OR_EMAIL.test(s)) return 'has a URL or email address';
+  if (PRONOUN.test(s)) return 'has a first-person pronoun';
+  for (const m of s.matchAll(LONE_I)) {
+    const at = m.index ?? 0;
+    const level = m[0] === 'I' && /\p{L}\s$/u.test(s.slice(0, at)) && /^\s*(?:$|[-–—,/|():;])/u.test(s.slice(at + 1));
+    if (!level) return 'has a first-person pronoun';
+  }
+  if (s.split(/\s+/u).filter((w) => w !== '').length > 14) return 'has more than 14 words';
+  for (const m of s.matchAll(/[.!?](?=\s+\S)/gu)) {
+    const before = /([\p{L}]+)$/u.exec(s.slice(0, m.index ?? 0))?.[1] ?? '';
+    if (m[0] === '.' && (before.length === 1 || ABBREVIATIONS.has(before.toLowerCase()))) continue;
+    return 'has a sentence end followed by more text';
+  }
+  return null;
+}

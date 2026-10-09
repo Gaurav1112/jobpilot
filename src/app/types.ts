@@ -202,6 +202,10 @@ export const ResumePlan = defineType(
           .strict(),
       ),
       certs: z.array(FactText),
+      /** Citeable education facts, verbatim, newest first (fix round 1). */
+      education: z.array(FactText),
+      /** Citeable experience or project facts dated inside no role at their employer: never placed as a bullet. */
+      unplaced: z.array(z.string()),
       covered: z.array(z.string()),
       missing: z.array(z.string()),
       ats: Ats,

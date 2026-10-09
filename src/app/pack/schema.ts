@@ -28,7 +28,8 @@ export const RoleSchema = z.strictObject({
 });
 export const RolesFile = z.strictObject({ roles: z.array(RoleSchema) });
 
-export const LexiconGroupSchema = z.strictObject({ key: z.string().min(1), synonyms: z.array(z.string()) });
+/** `display` is how documents show the group ("PostgreSQL" for key postgres); it defaults to the key. */
+export const LexiconGroupSchema = z.strictObject({ key: z.string().min(1), synonyms: z.array(z.string()), display: z.string().trim().min(1).optional() });
 export const LexiconSchema = z.strictObject({
   strong: z.array(LexiconGroupSchema),
   medium: z.array(LexiconGroupSchema),
@@ -36,7 +37,13 @@ export const LexiconSchema = z.strictObject({
 });
 
 export const TargetsSchema = z.strictObject({
+  /** Titles the search aims for: scoring and search only, never written into a document as the candidate's title. */
   titles: z.array(z.string()),
+  /**
+   * Titles the candidate can truthfully claim, used verbatim as the resume headline and in the cover letter. Defaults
+   * to the distinct roles.yaml titles, newest role first.
+   */
+  claimableTitles: z.array(z.string().trim().min(1)).optional(),
   seniority: z.array(z.strictObject({ words: z.array(z.string()), points: z.number() })),
   titleBonusWords: z.array(z.string()),
   titleBonusPoints: z.number(),
@@ -52,6 +59,12 @@ const RegexSource = z.string().superRefine((s, ctx) => {
     ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'not a valid regular expression' });
   }
 });
+/**
+ * `asOf` (YYYY-MM) is the month years of experience and fact recency are measured to. The daily run injects the
+ * current IST month from its clock (loadPack's `asOf` override); the file pins one (the fixture does).
+ */
+export const ExperienceSchema = z.strictObject({ asOf: YearMonth });
+
 export const FiltersSchema = z.strictObject({
   roleDeny: z.array(RegexSource),
   companyDeny: z.array(z.string()),
@@ -168,13 +181,17 @@ export type Feeds = z.infer<typeof FeedsSchema>;
 export type Contact = z.infer<typeof ContactSchema>;
 export type Eligibility = z.infer<typeof EligibilitySchema>;
 
+export type Experience = z.infer<typeof ExperienceSchema>;
+
 export interface Pack {
   contact: Contact;
   facts: Fact[];
   roles: Role[];
+  experience: Experience;
   eligibility: Eligibility;
   lexicon: Lexicon;
-  targets: Targets;
+  /** `claimableTitles` is always set after loading (defaulted from the roles). */
+  targets: Targets & { claimableTitles: string[] };
   filters: Filters;
   naming: Naming;
   offers: Offers;
