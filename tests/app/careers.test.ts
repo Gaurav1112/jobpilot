@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  CAREERS_JOB_PAGE_WORST_MS,
+  CAREERS_LISTING_PAGE_WORST_MS,
+  CAREERS_MAX_LISTING_PAGES,
   CAREERS_MAX_PAGES,
+  careersTimeoutMs,
   CAREERS_RENDER_INTERVAL_MS,
   CAREERS_TEXT_MAX_BYTES,
   careersHosts,
@@ -14,6 +18,7 @@ import {
   makeSrcCareers,
 } from '../../src/app/agents/sources/careers.js';
 import { sha256Hex } from '../../src/app/agents/sources/sha256.js';
+import { DEFAULT_TIMING } from '../../src/app/browser/playwright-provider.js';
 import { loadPack } from '../../src/app/pack/load.js';
 import type { DiscoveryRequest, RawPosting } from '../../src/app/types.js';
 import type { AgentContext } from '../../src/kernel/agent.js';
@@ -34,8 +39,11 @@ type Route = Partial<BrowserPage> & { html: string };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
 
-function run(routes: Record<string, Route>, opts: { pack?: unknown; maxPages?: number; r?: DiscoveryRequest } = {}) {
-  const agent = makeSrcCareers([HOST], opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {});
+function run(routes: Record<string, Route>, opts: { pack?: unknown; maxPages?: number; maxListingPages?: number; r?: DiscoveryRequest } = {}) {
+  const agent = makeSrcCareers([HOST], {
+    ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
+    ...(opts.maxListingPages !== undefined ? { maxListingPages: opts.maxListingPages } : {}),
+  });
   const browser = fakeBrowser(routes);
   const ctx = issueContext({
     contract: agent.contract,
@@ -59,10 +67,19 @@ const jsonLdJob = (title: string, more: Record<string, unknown> = {}) => ({
 });
 
 describe('src-careers contract', () => {
-  it('is an io sourcing agent that reads the pack, renders up to 60 pages, with a timeout of 60 x (10 s + 20 s)', () => {
+  it('is an io sourcing agent that reads the pack, with a page budget whose worst case fits the 30-minute cap', () => {
     const { contract } = makeSrcCareers([HOST]);
-    expect(contract).toMatchObject({ id: 'src-careers', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 60 }, pack: true }, egress: [HOST], timeoutMs: 1_800_000 });
-    expect(CAREERS_MAX_PAGES).toBe(60);
+    // 2 listing pages x 275 s + 16 job pages x 75 s = 1,750 s.
+    expect(contract).toMatchObject({ id: 'src-careers', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 18 }, pack: true }, egress: [HOST], timeoutMs: 1_750_000 });
+    expect(CAREERS_MAX_PAGES).toBe(18);
+    expect(CAREERS_MAX_LISTING_PAGES).toBe(2);
+    expect(careersTimeoutMs(18, 2)).toBe(2 * 275_000 + 16 * 75_000);
+    // The worst cases follow the provider's product timing.
+    const t = DEFAULT_TIMING;
+    expect(CAREERS_JOB_PAGE_WORST_MS).toBe(CAREERS_RENDER_INTERVAL_MS + t.navigationMs + t.jobSettleCapMs);
+    expect(CAREERS_LISTING_PAGE_WORST_MS).toBe(CAREERS_RENDER_INTERVAL_MS + t.navigationMs + t.settleCapMs + t.expandBudgetMs + 5_000 + t.settleCapMs);
+    // A budget that cannot fit fails when the contract is built.
+    expect(() => makeSrcCareers([HOST], { maxPages: 30 })).toThrow(/timeoutMs/);
     expect(CAREERS_RENDER_INTERVAL_MS).toBe(PRODUCT_POLICY_V1.minBrowserIntervalMs);
     expect(contract.retry.on).not.toContain('timeout');
     expect(contract.consumes.id).toBe('DiscoveryRequest@1');
@@ -163,7 +180,7 @@ describe('src-careers with a fake browser', () => {
       [`${H}/jobs/one`]: plainJob('One'),
       [`${H}/jobs/two`]: plainJob('Two'),
       [`${H}/jobs/three`]: plainJob('Three'),
-    });
+    }, { maxPages: 10, maxListingPages: 3 });
     expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort()).toEqual(['One', 'Three', 'Two']);
     expect(browser.calls.slice(0, 3).map((c) => c.url)).toEqual([LIST, `${H}/jobs?page=2`, `${H}/jobs?page=3`]);
   });
@@ -177,7 +194,7 @@ describe('src-careers with a fake browser', () => {
 
     const pages = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [i === 0 ? LIST : `${H}/jobs?page=${i + 1}`, { html: `<html><head><link rel="next" href="/jobs?page=${i + 2}"></head><body></body></html>` }]));
     const long = run(pages, { maxPages: 4 });
-    await expect(long.out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: listing pagination exceeds page budget of 4' });
+    await expect(long.out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: listing pagination exceeds 2 listing pages' });
 
     const tight = run({
       [LIST]: { html: `<html><head><link rel="next" href="/jobs?page=2"></head><body>${a('/jobs/one')}${a('/jobs/two')}</body></html>` },
@@ -191,19 +208,20 @@ describe('src-careers with a fake browser', () => {
       ['numbered', { [LIST]: { html: listing(a('/jobs/one'), '<nav>' + a('/jobs?page=2', '2') + a('/jobs?page=3', '3') + '</nav>') }, [`${H}/jobs?page=2`]: { html: listing(a('/jobs/two'), a('/jobs?page=1', '1'), a('/jobs?page=3', '3')) }, [`${H}/jobs?page=3`]: { html: listing(a('/jobs/three'), a('/jobs?page=2', '2')) } }],
       ['next arrow', { [LIST]: { html: listing(a('/jobs/one'), a('/jobs?page=2', 'Next ›')) }, [`${H}/jobs?page=2`]: { html: listing(a('/jobs/two'), a('/jobs?page=3', '', ' aria-label="Next page"')) }, [`${H}/jobs?page=3`]: { html: listing(a('/jobs/three')) } }],
       ['offset', { [LIST]: { html: listing(a('/jobs/one'), a('/jobs?start=20', '&gt;', ' aria-label="Next page"')) }, [`${H}/jobs?start=20`]: { html: listing(a('/jobs/two'), a('/jobs?start=40', '&gt;')) }, [`${H}/jobs?start=40`]: { html: listing(a('/jobs/three'), a('/jobs?start=0', '1')) } }],
+      ['show 20 more link', { [LIST]: { html: listing(a('/jobs/one'), a('/jobs?page=2', 'Show 20 more')) }, [`${H}/jobs?page=2`]: { html: listing(a('/jobs/two'), a('/jobs/three')) } }],
       ['show all', { [LIST]: { html: listing(a('/jobs/one'), a('/jobs/all', 'Show all jobs')) }, [`${H}/jobs/all`]: { html: listing(a('/jobs/one'), a('/jobs/two'), a('/jobs/three'), a('/jobs/all', 'Show all jobs')) } }],
     ];
     for (const [name, routes] of shapes) {
       const jobs = { [`${H}/jobs/one`]: plainJob('One'), [`${H}/jobs/two`]: plainJob('Two'), [`${H}/jobs/three`]: plainJob('Three') };
-      const { out } = run({ ...routes, ...jobs });
+      const { out } = run({ ...routes, ...jobs }, { maxPages: 10, maxListingPages: 3 });
       expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort(), name).toEqual(['One', 'Three', 'Two']);
     }
   });
 
   it('fails loudly on pagination the browser could not follow, a load-more past the click cap, or a listing still loading', async () => {
-    const unfollowed = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 0, capReached: false, unfollowedControls: ['<button aria-label="next">'] } } });
+    const unfollowed = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 0, scrolls: 0, capReached: false, unfollowedControls: ['<button aria-label="next">'] } } });
     await expect(unfollowed.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: unsupported pagination on .*aria-label="next"/) });
-    const capped = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 50, capReached: true, unfollowedControls: [] } } });
+    const capped = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 50, scrolls: 0, capReached: true, unfollowedControls: [] } } });
     await expect(capped.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/"load more" still present after 50 clicks/) });
     const loading = run({ [LIST]: { html: listing(a('/jobs/one')), settled: false } });
     await expect(loading.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/^careers example-careers: listing still loading at 45 s/) });
@@ -215,9 +233,29 @@ describe('src-careers with a fake browser', () => {
     await expect(run({ [LIST]: { html: listing(a('/jobs/one')), jsonLd: [itemList] } }).out).rejects.toMatchObject({ message: expect.stringMatching(/ItemList shows only 1 of 37 items/) });
   });
 
+  it('counts a template title or a bare "Loading…" body as a parse failure', async () => {
+    const { out } = run({
+      [LIST]: { html: listing(a('/jobs/tpl'), a('/jobs/dollar'), a('/jobs/loading'), a('/jobs/fine')) },
+      [`${H}/jobs/tpl`]: { html: '<h1>{{ job.title }}</h1>', text: 'x' },
+      [`${H}/jobs/dollar`]: { html: '<html><head><title>${title}</title></head><body></body></html>', text: 'x' },
+      [`${H}/jobs/loading`]: { html: '<html><head><title>Careers | Acme</title></head><body><div>Loading…</div></body></html>', text: 'Loading…' },
+      [`${H}/jobs/fine`]: plainJob('Fine'),
+    });
+    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Fine']);
+    // The h1 inside a script is not the title.
+    const scripted = run({ [LIST]: { html: listing(a('/jobs/s')) }, [`${H}/jobs/s`]: { html: '<html><head><title>Real Title</title></head><body><script>el.innerHTML = "<h1>" + d.t + "</h1>";</script></body></html>', text: 'Real text' } });
+    expect(((await scripted.out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Real Title']);
+  });
+
+  it('passes its linkPattern with every listing render', async () => {
+    const { browser, out } = run({ [LIST]: { html: listing(a('/jobs/one')) }, [`${H}/jobs/one`]: plainJob('One') });
+    await out;
+    expect(browser.calls.map((c) => [c.expand, c.linkPattern])).toEqual([[true, '^/jobs/'], [false, undefined]]);
+  });
+
   it('fails loudly on a job page that never settled', async () => {
     const { out } = run({ [LIST]: { html: listing(a('/jobs/one')) }, [`${H}/jobs/one`]: { ...plainJob('One'), settled: false } });
-    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/job page .* was still changing/) });
+    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/^careers example-careers: job page still loading: https:\/\/careers.example.com\/jobs\/one$/) });
   });
 
   it('fails loudly when two job links differ only by query string, since their ids would collide', async () => {
@@ -300,6 +338,7 @@ describe('src-careers with real chromium', async () => {
   /** Shortened settle timing for everything else. */
   let provider: Provider;
 
+  const two = '<a href="/jobs/a">a</a> <a href="/jobs/b">b</a>';
   const doc = (body: string, head = '') => `<!doctype html><html><head>${head}</head><body><main>${body}</main></body></html>`;
   /** A list filled by script: after `delay` ms, fetch `api` and add one anchor per path. */
   const injector = (api: string, delay = 0) =>
@@ -329,6 +368,20 @@ describe('src-careers with real chromium', async () => {
     '/js-next': () => ({ body: doc('<h1>Jobs</h1><a href="/jobs/a">a</a><nav aria-label="pagination"><button aria-label="next" onclick="void 0"><svg width="10" height="10"></svg></button><button>2</button></nav>') }),
     '/dead-more': () => ({ body: doc('<h1>Jobs</h1><a href="/jobs/a">a</a><button type="button">Show more</button>') }),
     '/empty-listing': () => ({ body: doc('<h1>Jobs</h1><p>No openings right now.</p>') }),
+    '/form-attr-get': () => ({ body: doc(`<h1>Jobs</h1>${two}<form id="g" method="get" action="/listing-search"><input name="q" value="x"></form><button type="button" form="g">Show more</button>`) }),
+    '/form-attr-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<form id="f" method="post" action="/apply-submit"><input name="email" value="me@x"></form><button form="f">Show more</button>`) }),
+    '/in-form-opportunities': () => ({ body: doc(`<h1>Jobs</h1>${two}<form method="get" action="/s"><input name="a"><button type="button" onclick="1">Load more opportunities</button></form>`) }),
+    '/submit-type': () => ({ body: doc(`<h1>Jobs</h1>${two}<button type="submit">Show more</button>`) }),
+    '/show20-untyped': () => ({ body: doc(`<h1>Jobs</h1>${two}<button onclick="1">Show 20 more</button>`) }),
+    '/cookie-banner': () => ({ body: doc(`<h1>Jobs</h1>${two}<div class="consent"><button type="button" onclick="fetch('/api/consent', { method: 'POST' })">Show all vendors</button><button type="button">Show all</button></div>`) }),
+    '/div-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<div role="button" style="display:inline-block" onclick="fetch('/api/state-change', { method: 'POST' })">Show all</div>`) }),
+    '/api/state-change': () => ({ type: 'application/json', body: '{}' }),
+    '/show20': () => ({ body: doc(`<h1>Jobs</h1><div id="l">${two}</div><button type="button" onclick="document.getElementById('l').insertAdjacentHTML('beforeend', '<a href=&quot;/jobs/c&quot;>c</a>'); this.remove();">Show 20 more</button>`) }),
+    '/infinite': () => ({ body: doc(`<h1>Jobs</h1><div id="l">${two}</div><div style="height:3000px"></div><script>let n = 0; addEventListener('scroll', () => { if (n < 2 && innerHeight + scrollY >= document.body.scrollHeight - 10) { n += 1; document.getElementById('l').insertAdjacentHTML('beforeend', '<a href="/jobs/s' + n + '">s' + n + '</a>'); document.body.insertAdjacentHTML('beforeend', '<div style="height:3000px"></div>'); } });</script>`) }),
+    '/slow-job-list': () => ({ body: doc('<h1>Jobs</h1><a href="/jobs/slow">S</a>') }),
+    '/jobs/slow': () => ({ body: doc('<div id="j">Loading…</div><script>fetch("/api/slow-desc").then((r) => r.json()).then((d) => { document.getElementById("j").innerHTML = "<h1>" + d.t + "</h1><p>" + d.d + "</p>"; });</script>', '<title>Careers | Acme</title>') }),
+    '/slow-job': () => ({ body: doc('<div id="j">Loading…</div><script>fetch("/api/slow-desc").then((r) => r.json()).then((d) => { document.getElementById("j").innerHTML = "<h1>" + d.t + "</h1><p>" + d.d + "</p>"; });</script>', '<title>Careers | Acme</title>') }),
+    '/api/slow-desc': () => ({ type: 'application/json', body: JSON.stringify({ t: 'Real Title', d: 'Full description' }), delayMs: 25_000 }),
   };
 
   beforeAll(async () => {
@@ -364,7 +417,7 @@ describe('src-careers with real chromium', async () => {
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const { PlaywrightBrowserProvider } = await import('../../src/app/browser/playwright-provider.js');
     slowProvider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true });
-    provider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true, timing: { pollMs: 200, minSettleMs: 800, settleCapMs: 6_000, idleMs: 5_000 } });
+    provider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true, timing: { pollMs: 200, minSettleMs: 800, settleCapMs: 6_000, jobMinSettleMs: 400, jobSettleCapMs: 6_000 } });
   }, 30_000);
 
   afterAll(async () => {
@@ -375,14 +428,17 @@ describe('src-careers with real chromium', async () => {
     await new Promise<void>((r) => server.close(() => r()));
   });
 
-  const render = (url: string, opts: { expand?: boolean; deniedHosts?: string[]; via?: Provider } = {}) =>
-    (opts.via ?? provider).render({ url, navigationHosts: ['127.0.0.1'], deniedHosts: opts.deniedHosts ?? [], deniedBrands: ['linkedin'], maxBytes: 16_777_216, expand: opts.expand ?? false, signal: new AbortController().signal });
+  const render = (url: string, opts: { expand?: boolean; linkPattern?: string | undefined; deniedHosts?: string[]; via?: Provider } = {}) =>
+    (opts.via ?? provider).render({
+      url, navigationHosts: ['127.0.0.1'], deniedHosts: opts.deniedHosts ?? [], deniedBrands: ['linkedin'], maxBytes: 16_777_216, expand: opts.expand ?? false,
+      ...(opts.linkPattern !== undefined ? { linkPattern: opts.linkPattern } : {}), signal: new AbortController().signal,
+    });
   const since = (n: number) => hits.slice(n).map((h) => h.split(' ').slice(0, 2).join(' '));
   const agentCtx = (listUrl: string, via: Provider = provider): AgentContext => ({
     clock: fixedClock('2026-10-09T00:00:00Z'),
     signal: new AbortController().signal,
     pack: packOf(entry({ listUrl })),
-    browser: { render: (url, o) => render(url, { expand: o?.expand ?? false, deniedHosts: [...PRODUCT_POLICY_V1.deniedEgressHosts], via }) },
+    browser: { render: (url, o) => render(url, { expand: o?.expand ?? false, linkPattern: o?.linkPattern, deniedHosts: [...PRODUCT_POLICY_V1.deniedEgressHosts], via }) },
     spent: () => ({ usd: 0, inputTokens: 0, outputTokens: 0 }),
     maxCall: () => 0,
     denials: () => [],
@@ -390,7 +446,7 @@ describe('src-careers with real chromium', async () => {
 
   it.skipIf(!installed)('renders links that JavaScript adds after load, with the honest user-agent, and loads no images', async () => {
     const page = await render(`${base}/listing.html`, { expand: true });
-    expect(page).toMatchObject({ status: 200, finalUrl: `${base}/listing.html`, settled: true, expansion: { clicks: 0, capReached: false, unfollowedControls: [] } });
+    expect(page).toMatchObject({ status: 200, finalUrl: `${base}/listing.html`, settled: true, expansion: { clicks: 0, scrolls: 0, capReached: false, unfollowedControls: [] } });
     expect(page.html).toContain('href="/jobs/backend-engineer"');
     expect(page.text).toContain('3 roles');
     expect(page.text).not.toContain('About us');
@@ -484,16 +540,55 @@ describe('src-careers with real chromium', async () => {
 
   it.skipIf(!installed)('clicks "load more" until it is gone, never a button in a form, and reports script-only pagers', async () => {
     const more = await render(`${base}/load-more`, { expand: true });
-    expect(more.expansion).toEqual({ clicks: 2, capReached: false, unfollowedControls: [] });
+    expect(more.expansion).toEqual({ clicks: 2, scrolls: 0, capReached: false, unfollowedControls: [] });
     expect(more.html).toContain('href="/jobs/p2"');
     const inForm = await render(`${base}/more-in-form`, { expand: true });
     expect(inForm.expansion?.clicks).toBe(0);
     expect(inForm.expansion?.unfollowedControls).toEqual([expect.stringContaining('Load more')]);
     const jsNext = await render(`${base}/js-next`, { expand: true });
     expect(jsNext.expansion?.unfollowedControls).toEqual([expect.stringContaining('aria-label="next"'), expect.stringContaining('>2<')]);
-    const dead = await render(`${base}/dead-more`, { expand: true });
-    expect(dead.expansion).toEqual({ clicks: 1, capReached: false, unfollowedControls: [] });
+    await expect(render(`${base}/dead-more`, { expand: true })).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/load-more did not add jobs \("Show more"\)/) });
   }, 60_000);
+
+  it.skipIf(!installed)('clicks only safe controls: never one tied to a form, a submit button or a cookie banner; reports them instead', async () => {
+    for (const path of ['/form-attr-get', '/form-attr-post', '/in-form-opportunities', '/submit-type', '/show20-untyped']) {
+      const before = hits.length;
+      const page = await render(`${base}${path}`, { expand: true });
+      expect(page.expansion?.clicks, path).toBe(0);
+      expect(page.expansion?.unfollowedControls, path).toHaveLength(1);
+      expect(since(before), path).toEqual([`GET 127.0.0.1${path}`]);
+    }
+    const before = hits.length;
+    const banner = await render(`${base}/cookie-banner`, { expand: true });
+    expect(banner.expansion).toEqual({ clicks: 0, scrolls: 0, capReached: false, unfollowedControls: [] });
+    expect(since(before)).toEqual(['GET 127.0.0.1/cookie-banner']);
+  }, 60_000);
+
+  it.skipIf(!installed)('a clicked control that adds no jobs fails loudly (the XHR POST it makes is the page\'s own)', async () => {
+    const before = hits.length;
+    await expect(render(`${base}/div-post`, { expand: true, linkPattern: '^/jobs/' })).rejects.toMatchObject({ message: expect.stringMatching(/load-more did not add jobs \("Show all"\)/) });
+    expect(since(before)).toEqual(['GET 127.0.0.1/div-post', 'POST 127.0.0.1/api/state-change']);
+  }, 30_000);
+
+  it.skipIf(!installed)('clicks "Show 20 more", and scrolls an infinite list until it stops growing', async () => {
+    const more = await render(`${base}/show20`, { expand: true, linkPattern: '^/jobs/' });
+    expect(more.expansion).toMatchObject({ clicks: 1, capReached: false, unfollowedControls: [] });
+    expect(more.html).toContain('href="/jobs/c"');
+    const scroll = await render(`${base}/infinite`, { expand: true, linkPattern: '^/jobs/' });
+    expect(scroll.expansion).toMatchObject({ clicks: 0, scrolls: 2, capReached: false });
+    expect(scroll.html).toContain('href="/jobs/s2"');
+  }, 60_000);
+
+  it.skipIf(!installed)('the agent fails loudly on "Load more opportunities" inside a form', async () => {
+    await expect(makeSrcCareers(['127.0.0.1']).run(req(), agentCtx(`${base}/in-form-opportunities`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/unsupported pagination .*Load more opportunities/) });
+  }, 30_000);
+
+  it.skipIf(!installed)('waits for a job description that arrives after 25 s (product timing), and fails loudly at a short cap', async () => {
+    const page = await render(`${base}/slow-job`, { via: slowProvider });
+    expect(page.settled).toBe(true);
+    expect(page.html).toContain('Real Title');
+    await expect(makeSrcCareers(['127.0.0.1']).run(req(), agentCtx(`${base}/slow-job-list`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/job page still loading: .*\/jobs\/slow/) });
+  }, 90_000);
 
   it.skipIf(!installed)('stops expanding at the click cap', async () => {
     const { PlaywrightBrowserProvider } = await import('../../src/app/browser/playwright-provider.js');

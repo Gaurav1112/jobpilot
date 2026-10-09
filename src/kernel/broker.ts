@@ -72,7 +72,7 @@ async function readCapped(res: FetchResponse, maxBytes: number): Promise<string>
 
 /** Read-only page rendering. The agent names the URL and whether it is a listing; the broker fixes everything else. */
 export interface BrowserTool {
-  render(url: string, opts?: { readonly expand?: boolean }): Promise<BrowserPage>;
+  render(url: string, opts?: { readonly expand?: boolean; readonly linkPattern?: string }): Promise<BrowserPage>;
 }
 
 export interface LlmTool {
@@ -239,9 +239,16 @@ export function issueContext(a: IssueArgs): AgentContext {
     let pages = 0;
     ctx.browser = {
       async render(url, opts) {
-        // The only option is `expand`; anything else (a header, a user agent, a proxy) is refused, not ignored.
-        if (opts !== undefined && (typeof opts !== 'object' || opts === null || Object.keys(opts).some((k) => k !== 'expand') || (opts.expand !== undefined && typeof opts.expand !== 'boolean'))) {
-          throw deny('G-NO-EVASION: render accepts only { expand: boolean }');
+        // The only options are `expand` and `linkPattern`; anything else (a header, a user agent, a proxy) is refused, not ignored.
+        if (
+          opts !== undefined &&
+          (typeof opts !== 'object' ||
+            opts === null ||
+            Object.keys(opts).some((k) => k !== 'expand' && k !== 'linkPattern') ||
+            (opts.expand !== undefined && typeof opts.expand !== 'boolean') ||
+            (opts.linkPattern !== undefined && (typeof opts.linkPattern !== 'string' || opts.linkPattern.length > 200)))
+        ) {
+          throw deny('G-NO-EVASION: render accepts only { expand: boolean, linkPattern: string }');
         }
         const u = checkUrl(url);
         if (pages >= browserCap.maxPages) {
@@ -265,6 +272,7 @@ export function issueContext(a: IssueArgs): AgentContext {
             deniedBrands: [...a.policy.deniedEgressBrands],
             maxBytes: a.policy.maxResponseBytes,
             expand: opts?.expand === true,
+            ...(opts?.linkPattern !== undefined ? { linkPattern: opts.linkPattern } : {}),
             signal: a.signal,
           });
         } catch (e) {

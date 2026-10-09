@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { defineAgent, type Agent, type AgentContext, type BrowserPage } from '../../../kernel/agent.js';
 import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
+import { isMoreLabel } from '../../browser/labels.js';
 import { compileSafePattern } from '../../pack/regex.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../types.js';
 import { checkParsed, finish, isRecord } from './common.js';
@@ -25,14 +26,33 @@ import { sha256Hex } from './sha256.js';
  * that only a query string tells apart (their ids would collide).
  */
 
-/** Page budget per step: the listing page(s) plus every job page. */
-export const CAREERS_MAX_PAGES = 60;
 /** The fallback (and JSON-LD description) text kept per posting, in UTF-8 bytes. */
 export const CAREERS_TEXT_MAX_BYTES = 50 * 1024;
-/** The provider's cap on waiting for one page to settle. */
-const RENDER_WAIT_MS = 20_000;
 /** PRODUCT_POLICY_V1.minBrowserIntervalMs; agent code may not import the policy, so a test pins the two together. */
 export const CAREERS_RENDER_INTERVAL_MS = 10_000;
+
+/**
+ * Worst-case wall time of one render, from the provider's DEFAULT_TIMING (a test pins them together):
+ * - a job page: the browser interval 10 s + navigation 20 s + job settle cap 45 s = 75 s;
+ * - a listing page: 10 s + 20 s + listing settle cap 45 s + expansion. The expansion runs clicks and scrolls until
+ *   its 150 s budget is spent, and the step that crosses the budget may still take a 5 s click plus a 45 s settle:
+ *   150 + 5 + 45 = 200 s. So a listing page is 10 + 20 + 45 + 200 = 275 s.
+ */
+export const CAREERS_JOB_PAGE_WORST_MS = 10_000 + 20_000 + 45_000;
+export const CAREERS_LISTING_PAGE_WORST_MS = 10_000 + 20_000 + 45_000 + 150_000 + 5_000 + 45_000;
+
+/**
+ * Page budget per step, sized so the worst case fits the kernel's 30-minute step cap:
+ * 2 listing pages x 275 s + 16 job pages x 75 s = 550 + 1,200 = 1,750 s (29 min 10 s) <= 1,800 s.
+ * So one step reads at most 2 listing pages and 18 pages in all (17 jobs from a single-page listing, 16 from a
+ * two-page one); a larger site fails loudly rather than being cut short.
+ */
+export const CAREERS_MAX_PAGES = 18;
+export const CAREERS_MAX_LISTING_PAGES = 2;
+
+/** The step timeout for a page budget: every listing page and every other page at its worst case. */
+export const careersTimeoutMs = (maxPages: number, maxListingPages: number): number =>
+  maxListingPages * CAREERS_LISTING_PAGE_WORST_MS + (maxPages - maxListingPages) * CAREERS_JOB_PAGE_WORST_MS;
 
 /** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: src-careers's egress. */
 export function careersHosts(watchlist: readonly { readonly ats: string; readonly listUrl?: string | undefined }[]): string[] {
@@ -44,10 +64,14 @@ export function careersHosts(watchlist: readonly { readonly ats: string; readonl
 }
 
 /** Builds `src-careers` for the given careers hosts (see `careersHosts`). */
-export function makeSrcCareers(hosts: readonly string[], opts: { readonly maxPages?: number } = {}): Agent<DiscoveryRequest, RawPosting> {
+export function makeSrcCareers(
+  hosts: readonly string[],
+  opts: { readonly maxPages?: number; readonly maxListingPages?: number } = {},
+): Agent<DiscoveryRequest, RawPosting> {
   const egress = [...new Set(hosts.map((h) => h.toLowerCase()))].sort();
   if (egress.length === 0) throw new TypeError('src-careers needs at least one careers host');
   const maxPages = opts.maxPages ?? CAREERS_MAX_PAGES;
+  const maxListingPages = Math.min(opts.maxListingPages ?? CAREERS_MAX_LISTING_PAGES, maxPages);
   const contract = defineContract({
     id: 'src-careers',
     version: '1.0.0',
@@ -62,12 +86,12 @@ export function makeSrcCareers(hosts: readonly string[], opts: { readonly maxPag
     egress,
     dataClasses: { in: ['P0'], out: ['P0'] },
     budget: { usdPerCall: 0, usdPerRun: 0 },
-    // Worst case: every page waits out the browser interval and the full render cap.
-    timeoutMs: maxPages * (CAREERS_RENDER_INTERVAL_MS + RENDER_WAIT_MS),
+    // Worst case of every page (see CAREERS_MAX_PAGES); a budget that does not fit 30 minutes fails here, loudly.
+    timeoutMs: careersTimeoutMs(maxPages, maxListingPages),
     // A timeout is not retried: a second pass would take as long again.
     retry: { max: 2, on: ['overloaded', 'network'], backoffMs: [2000, 8000] },
   });
-  return defineAgent(contract, (req, ctx) => (req.ats === 'careers' ? scan(req, ctx, maxPages) : Promise.resolve([])));
+  return defineAgent(contract, (req, ctx) => (req.ats === 'careers' ? scan(req, ctx, maxPages, maxListingPages) : Promise.resolve([])));
 }
 
 // ---- URLs ----
@@ -173,13 +197,9 @@ const resolveUrl = (href: string, base: string): URL | null => {
   }
 };
 
-const NEXT_WORDS = /^(next( page)?|more jobs|(show|view|see) all( jobs| positions| openings| roles)?|(load|show|view|see) more( jobs| positions| openings| roles| results)?)$/i;
-
-/** An anchor label that means "more of this list": Next, ›, », Show all jobs, Load more (37), aria-label "Next page". */
+/** An anchor label that means "more of this list" (the shared rule in src/app/browser/labels.ts), counts allowed. */
 export function isNextLabel(label: string): boolean {
-  const t = label.replace(/\(\s*\d+\s*\)/g, '').replace(/\s+/g, ' ').trim();
-  if (/^[›»>]+$/.test(t)) return true;
-  return NEXT_WORDS.test(t.replace(/\s*[›»>]+$/, '').trim());
+  return isMoreLabel(label);
 }
 
 /** Query parameters that number the pages of a listing; a sibling URL differs from a listing page only in these. */
@@ -213,7 +233,9 @@ const oneLine = (s: string | undefined): string | undefined => {
  * The page's own title for a job without JSON-LD: the first `<h1>`; failing that `og:title`, then `<title>`
  * (career sites built on page builders often carry the job title only in an h2 and the page metadata).
  */
-function pageTitleOf(html: string): string | undefined {
+function pageTitleOf(rawHtml: string): string | undefined {
+  // Script and template text is not the page's title, even when it holds an <h1> string.
+  const html = rawHtml.replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1\s*>/gi, ' ');
   const h1 = oneLine(/<h1\b[^>]*>([\s\S]*?)<\/h1\s*>/i.exec(html)?.[1]);
   if (h1 !== undefined) return h1;
   for (const m of html.matchAll(/<meta\b([^>]*)>/gi)) {
@@ -302,7 +324,12 @@ function shortItemLists(jsonLd: readonly unknown[]): string[] {
   return out;
 }
 
-async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number): Promise<RawPosting[]> {
+/** Template syntax left in a title: the page never rendered it. */
+const UNRENDERED = /\{\{|"\+|\$\{|<%/;
+/** A body that is only a loading placeholder. */
+const LOADING = /^loading(…|\.{3})?$/i;
+
+async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number, maxListingPages: number): Promise<RawPosting[]> {
   const browser = ctx.browser;
   if (!browser) throw new KernelError('policy_denied', 'no browser capability issued');
   const loud = (why: string) => new KernelError('invalid_output', `careers ${req.slug}: ${why}`);
@@ -323,10 +350,10 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number):
   let renders = 0;
   while (queue.length > 0) {
     const url = queue.shift() as string;
-    if (renders >= maxPages) throw loud(`listing pagination exceeds page budget of ${maxPages}`);
+    if (renders >= maxListingPages) throw loud(`listing pagination exceeds ${maxListingPages} listing pages`);
     rendered.add(url);
     listingCanonical.add(canonicalJobUrl(url));
-    const page: BrowserPage = await browser.render(url, { expand: true });
+    const page: BrowserPage = await browser.render(url, { expand: true, linkPattern: entry.linkPattern });
     renders += 1;
     if (page.status >= 400) throw loud(`listing ${url} returned ${page.status}`);
     if (!page.settled) throw loud(`listing still loading at ${LISTING_SETTLE_CAP_S} s (${url})`);
@@ -390,7 +417,7 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number):
       skipped.push(`careers ${req.slug}: ${link} returned ${page.status}`);
       continue;
     }
-    if (!page.settled) throw loud(`job page ${link} was still changing when rendering stopped; refusing a truncated posting`);
+    if (!page.settled) throw loud(`job page still loading: ${link}`);
     if (listingCanonical.has(canonicalJobUrl(page.finalUrl))) {
       skipped.push(`careers ${req.slug}: ${link} redirected to the listing`);
       continue;
@@ -403,6 +430,10 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number):
       continue;
     }
     const text = capText(jobPosting ? htmlToText(typeof jobPosting.description === 'string' ? jobPosting.description : '') : page.text);
+    if (UNRENDERED.test(title) || LOADING.test(text.trim())) {
+      skipped.push(`careers ${req.slug}: ${link} looks unrendered (title "${title.slice(0, 40)}")`);
+      continue;
+    }
     postings.push({
       source: 'careers',
       sourceId: careersSourceId(link),

@@ -47,7 +47,9 @@ export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   // Job boards whose terms forbid automated access: no agent may reach them, by http or browser, whatever a contract
   // lists. The brands cover every country domain and subdomain (www.glassdoor.co.in, in.indeed.com); lnkd.in is
   // LinkedIn's link shortener.
-  deniedEgressHosts: ['glassdoor.com', 'indeed.com', 'linkedin.com', 'lnkd.in', 'naukri.com'],
+  // indeedjobs.com hosts employer career sites on Indeed, naukrigulf.com is Naukri's Gulf board, licdn.com is
+  // LinkedIn's CDN and tracking loader. The boards' own careers pages (careers.linkedin.com) are denied too.
+  deniedEgressHosts: ['glassdoor.com', 'indeed.com', 'indeedjobs.com', 'licdn.com', 'linkedin.com', 'lnkd.in', 'naukri.com', 'naukrigulf.com'],
   deniedEgressBrands: ['glassdoor', 'indeed', 'linkedin', 'naukri'],
   deniedSubmitHosts: ['linkedin.com', 'naukri.com', 'indeed.com'],
   egressClasses: { 'api.anthropic.com': ['P0'] },

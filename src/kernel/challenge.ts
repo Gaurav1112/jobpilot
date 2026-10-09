@@ -10,8 +10,10 @@
  *      `x-px-blocked`, `x-amzn-waf-action: captcha|challenge`;
  *   C. a vendor interstitial marker in the document (markers of the wall itself, not of widgets or of the passive
  *      scripts the same vendors inject into ordinary pages);
- *   D. the `<title>` or first `<h1>` worded as a wall ("Just a moment", "Attention required", "Access denied",
- *      "Are you a robot", "Verify you are human", "Security check", "Pardon our interruption");
+ *   D. the whole `<title>` or first `<h1>`, a site suffix (" | Cloudflare", " - Acme") removed, is a wall phrase
+ *      ("Just a moment", "Attention required", "Access denied", "Are you a robot", "Verify you are human",
+ *      "Security check", "Pardon our interruption"), on a short page (< 1,500 characters of text) with no
+ *      JobPosting JSON-LD: "Security Check Officer" is a job title, not a wall;
  *   E. the word captcha in the visible text, only on a short page (< 2 KB of text) with no JobPosting JSON-LD and
  *      no form holding two or more inputs: a CAPTCHA widget inside an apply form is never a challenge.
  */
@@ -24,9 +26,11 @@ export interface ChallengeInput {
 }
 
 const VENDOR_MARKERS =
-  /_cf_chl_opt|\/cdn-cgi\/challenge-platform\/h\/[a-z]\/orchestrate\/|id=["']?challenge-(form|running|stage)|cf-browser-verification|captcha-delivery\.com|_pxCaptcha|px-captcha|Incapsula incident ID|gokuProps/i;
+  /_cf_chl_opt|\/cdn-cgi\/challenge-platform\/h\/[a-z]+\/orchestrate\/|id=["']?challenge-(form|running|stage)|cf-browser-verification|captcha-delivery\.com|_pxCaptcha|px-captcha|Incapsula incident ID|_Incapsula_Resource\?[^"']*incident_id=|gokuProps|\/_sec\/cp_challenge\/|sec-if-cpt-container/i;
 
-const WALL_WORDING = /^(just a moment|attention required|access denied|are you a robot|verify (you are|you're) (a )?human|security check|pardon our interruption)/i;
+/** The whole title or heading (site suffix such as " | Cloudflare" or " - Acme" removed) is one of the wall phrases. */
+const WALL_WORDING = /^(just a moment|attention required|access denied|are you a robot|verify (you are|you're) (a )?human|security check|pardon our interruption)[\s.!?…]*$/i;
+const withoutSiteSuffix = (t: string): string => t.replace(/\s+[|–—-]\s+.*$/, '').trim();
 
 const decode = (s: string): string =>
   s.replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&#39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
@@ -68,11 +72,13 @@ export function challengeReason(doc: ChallengeInput): string | null {
   if (/captcha|challenge/i.test(h['x-amzn-waf-action'] ?? '')) return 'B: x-amzn-waf-action';
   const marker = VENDOR_MARKERS.exec(doc.html);
   if (marker) return `C: ${marker[0]}`;
-  for (const tag of ['title', 'h1'] as const) {
-    const t = firstText(doc.html, tag);
-    if (WALL_WORDING.test(t)) return `D: ${tag} "${t.slice(0, 60)}"`;
-  }
   const text = visibleText(doc.html);
+  if (text.length < 1500 && !hasJobPostingLd(doc.html)) {
+    for (const tag of ['title', 'h1'] as const) {
+      const t = firstText(doc.html, tag);
+      if (WALL_WORDING.test(withoutSiteSuffix(t))) return `D: ${tag} "${t.slice(0, 60)}"`;
+    }
+  }
   if (/captcha/i.test(text) && text.length < 2048 && !hasJobPostingLd(doc.html) && !hasInputForm(doc.html)) return 'E: captcha on a short page';
   return null;
 }

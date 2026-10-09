@@ -38,7 +38,7 @@ export function fakeBrowser(
     async render(req) {
       calls.push(req);
       const r = routes[req.url];
-      const expansion = req.expand ? { expansion: r?.expansion ?? { clicks: 0, capReached: false, unfollowedControls: [] } } : {};
+      const expansion = req.expand ? { expansion: r?.expansion ?? { clicks: 0, scrolls: 0, capReached: false, unfollowedControls: [] } } : {};
       if (!r) return { status: 404, finalUrl: req.url, html: '<h1>Not found</h1>', text: 'Not found', jsonLd: [], headers: {}, settled: true, ...expansion };
       return { status: r.status ?? 200, finalUrl: r.finalUrl ?? req.url, html: r.html, text: r.text ?? '', jsonLd: r.jsonLd ?? [], headers: r.headers ?? {}, settled: r.settled ?? true, ...expansion };
     },

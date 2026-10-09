@@ -4,6 +4,8 @@ import { challengeReason } from '../../kernel/challenge.js';
 import { KernelError } from '../../kernel/errors.js';
 import { hostMatches, hostMatchesBrand, normalizeHost } from '../../kernel/policy.js';
 import type { BrowserExpansion, BrowserPage, BrowserProvider, BrowserRenderRequest } from '../../kernel/providers.js';
+import { compileSafePattern } from '../pack/regex.js';
+import { LOAD_MORE_LABEL, NEXT_LABEL, SHOW_ALL_LABEL } from './labels.js';
 
 /** Resource types a read-only scan never needs; they are aborted before they leave the machine. */
 const BLOCKED_TYPES = new Set(['image', 'font', 'media']);
@@ -16,38 +18,45 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 /** Redirect hops one render follows before giving up. */
 const MAX_REDIRECTS = 10;
 
-/** Button `type`s that act on a form; such a button is never clicked. */
-const FORM_BUTTON_TYPES = ['submit', 'image', 'reset'];
 
 /**
- * How long rendering waits. The defaults are the product values; tests shorten them. None of these changes what
- * the browser sends or how it presents itself.
+ * How long rendering waits, and how far a listing is expanded. The defaults are the product values; tests shorten
+ * them. None of these changes what the browser sends or how it presents itself.
  */
 export interface RenderTiming {
   /** Loading the document (every redirect hop included). */
   readonly navigationMs: number;
-  /** A job page: waiting for network idle before checking that its text has stopped changing. */
-  readonly idleMs: number;
-  /** A listing: how often the same-host link count is sampled. */
+  /** How often a page is sampled while it settles. */
   readonly pollMs: number;
+  /** Equal consecutive samples (with no data request in flight) that make a page settled. */
+  readonly stableSamples: number;
+  /** A job page: the least time it is watched before it may count as settled. */
+  readonly jobMinSettleMs: number;
+  /** A job page: the most time it is watched; still changing (or still fetching) here means not settled. */
+  readonly jobSettleCapMs: number;
   /** A listing: the least time it is watched before it may count as settled. */
   readonly minSettleMs: number;
-  /** A listing: equal consecutive link counts (with no data request in flight) that make it settled. */
-  readonly stableSamples: number;
-  /** A listing: the most time it is watched; still changing at this point means not settled. */
+  /** A listing: the most time one settle may take; still changing here means not settled. */
   readonly settleCapMs: number;
-  /** A listing: "load more" clicks before the expansion counts as capped. */
+  /** A listing: load-more clicks before the expansion counts as capped. */
   readonly maxClicks: number;
+  /** A listing: scrolls to the bottom (infinite scroll) before the expansion counts as capped. */
+  readonly maxScrolls: number;
+  /** A listing: wall time for all clicks and scrolls, their settles included, before the expansion counts as capped. */
+  readonly expandBudgetMs: number;
 }
 
 export const DEFAULT_TIMING: RenderTiming = {
   navigationMs: 20_000,
-  idleMs: 20_000,
   pollMs: 1_000,
-  minSettleMs: 5_000,
   stableSamples: 3,
+  jobMinSettleMs: 2_000,
+  jobSettleCapMs: 45_000,
+  minSettleMs: 5_000,
   settleCapMs: 45_000,
   maxClicks: 50,
+  maxScrolls: 50,
+  expandBudgetMs: 150_000,
 };
 
 export interface PlaywrightProviderOptions {
@@ -308,15 +317,24 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 
     let settled: boolean;
     let expansion: BrowserExpansion | undefined;
+    const links: LinkRule = { source: '', flags: 'iu' };
+    if (req.linkPattern !== undefined) {
+      try {
+        links.source = compileSafePattern(req.linkPattern).source;
+      } catch (e) {
+        throw new KernelError('invalid_output', `unsafe linkPattern: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
     if (req.expand) {
-      settled = await this.settleListing(p, state);
+      settled = await this.settleListing(p, state, links);
+      expansion = { clicks: 0, scrolls: 0, capReached: false, unfollowedControls: [] };
       if (settled) {
-        const ex = await this.expand(p, state);
+        const ex = await this.expand(p, state, links, req.url);
         settled = ex.settled;
-        expansion = { clicks: ex.clicks, capReached: ex.capReached, unfollowedControls: settled ? await unfollowedControls(p) : [] };
-      } else expansion = { clicks: 0, capReached: false, unfollowedControls: [] };
+        expansion = { clicks: ex.clicks, scrolls: ex.scrolls, capReached: ex.capReached, unfollowedControls: settled ? await unfollowedControls(p) : [] };
+      }
     } else {
-      settled = await this.settleJob(p);
+      settled = await this.settleJob(p, state);
     }
     const stop = this.verdict(state);
     if (stop) return stop;
@@ -347,130 +365,169 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     };
   }
 
-  /** A job page: network idle, then its text length unchanged over `stableSamples` polls. */
-  private async settleJob(page: Page): Promise<boolean> {
+  /**
+   * A job page: sample the main text length every pollMs; settled once at least jobMinSettleMs have passed and the
+   * last `stableSamples` lengths are equal with no document, xhr or fetch request in flight. Not by jobSettleCapMs:
+   * not settled, so a description still arriving is never read as "Loading…".
+   */
+  private async settleJob(page: Page, state: RenderState): Promise<boolean> {
     const t = this.timing;
-    await page.waitForLoadState('networkidle', { timeout: t.idleMs }).catch((e: unknown) => {
-      if ((e as { name?: unknown }).name !== 'TimeoutError') throw e;
-    });
-    const samples: number[] = [];
-    for (let i = 0; i < t.stableSamples; i++) {
-      if (i > 0) await sleep(t.pollMs);
-      samples.push(await textLength(page));
-    }
-    return samples.every((n) => n === samples[0] && n >= 0);
+    return this.settle(t.jobMinSettleMs, t.jobSettleCapMs, state, () => textLength(page));
   }
 
   /**
-   * A listing: sample the same-host link count every pollMs; settled once at least minSettleMs have passed and the
-   * last `stableSamples` counts are equal with no data request in flight. Still changing at settleCapMs: not settled.
+   * A listing: sample the same-host job-link count every pollMs; settled once at least minSettleMs have passed and
+   * the last `stableSamples` counts are equal with no data request in flight. Still changing at settleCapMs: not settled.
    */
-  private async settleListing(page: Page, state: RenderState): Promise<boolean> {
+  private async settleListing(page: Page, state: RenderState, links: LinkRule): Promise<boolean> {
+    const t = this.timing;
+    return this.settle(t.minSettleMs, t.settleCapMs, state, () => jobLinks(page, links));
+  }
+
+  private async settle(minMs: number, capMs: number, state: RenderState, sample: () => Promise<number>): Promise<boolean> {
     const t = this.timing;
     const start = Date.now();
-    const counts: number[] = [];
+    const values: number[] = [];
     for (;;) {
       await sleep(t.pollMs);
-      counts.push(await sameHostLinks(page));
-      const last = counts.slice(-t.stableSamples);
+      values.push(await sample());
+      const last = values.slice(-t.stableSamples);
       const stable = last.length === t.stableSamples && last.every((n) => n === last[0] && n >= 0) && state.inflight.size === 0;
       const elapsed = Date.now() - start;
-      if (stable && elapsed >= t.minSettleMs) return true;
-      if (elapsed >= t.settleCapMs) return false;
+      if (stable && elapsed >= minMs) return true;
+      if (elapsed >= capMs) return false;
     }
   }
 
-  /** Clicks same-page "load more" buttons one at a time, re-settling after each, up to maxClicks. */
-  private async expand(page: Page, state: RenderState): Promise<{ clicks: number; capReached: boolean; settled: boolean }> {
+  /**
+   * Expands a settled listing, read-only: clicks safe load-more controls one at a time (each click must add job
+   * links, or the render fails), then scrolls to the bottom while that adds job links (infinite scroll). Clicks and
+   * scrolls are capped by count and by expandBudgetMs; still adding jobs at a cap is `capReached`.
+   */
+  private async expand(page: Page, state: RenderState, links: LinkRule, url: string): Promise<{ clicks: number; scrolls: number; capReached: boolean; settled: boolean }> {
+    const t = this.timing;
+    const until = Date.now() + t.expandBudgetMs;
+    const labels = { loadMore: LOAD_MORE_LABEL.source, showAll: SHOW_ALL_LABEL.source };
     let clicks = 0;
     for (;;) {
-      const id = await page.evaluate(nextExpandable, FORM_BUTTON_TYPES);
-      if (id === null) return { clicks, capReached: false, settled: true };
-      if (clicks >= this.timing.maxClicks) return { clicks, capReached: true, settled: true };
-      const before = await sameHostLinks(page);
+      const target = await page.evaluate(nextExpandable, labels);
+      if (target === null) break;
+      if (clicks >= t.maxClicks || Date.now() >= until) return { clicks, scrolls: 0, capReached: true, settled: true };
+      const before = await jobLinks(page, links);
       try {
-        await page.click(`[data-jobpilot-expand="${id}"]`, { timeout: 5_000 });
-      } catch {
-        await page.evaluate(markControl, { id, as: 'failed' }).catch(() => undefined);
-        continue;
+        await page.click(`[data-jobpilot-expand="${target.id}"]`, { timeout: 5_000 });
+      } catch (e) {
+        throw new KernelError('invalid_output', `load-more could not be clicked ("${target.label}") on ${url}: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
       }
       clicks += 1;
-      if (!(await this.settleListing(page, state))) return { clicks, capReached: false, settled: false };
-      if ((await sameHostLinks(page)) === before) await page.evaluate(markControl, { id, as: 'exhausted' }).catch(() => undefined);
+      if (!(await this.settleListing(page, state, links))) return { clicks, scrolls: 0, capReached: false, settled: false };
+      if ((await jobLinks(page, links)) <= before) throw new KernelError('invalid_output', `load-more did not add jobs ("${target.label}") on ${url}`);
     }
+    let scrolls = 0;
+    for (;;) {
+      const before = await jobLinks(page, links);
+      await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      if (!(await this.settleListing(page, state, links))) return { clicks, scrolls, capReached: false, settled: false };
+      if ((await jobLinks(page, links)) <= before) break;
+      scrolls += 1;
+      if (scrolls >= t.maxScrolls || Date.now() >= until) return { clicks, scrolls, capReached: true, settled: true };
+    }
+    return { clicks, scrolls, capReached: false, settled: true };
   }
 }
 
-/** Same-host `a[href]` count; -1 while the document is being replaced. */
-async function sameHostLinks(page: Page): Promise<number> {
+/** The job-link rule counted in the page: same-host links whose path plus query match `source` (all, when empty). */
+interface LinkRule {
+  source: string;
+  flags: string;
+}
+
+/** Same-host job-link count; -1 while the document is being replaced. */
+async function jobLinks(page: Page, rule: LinkRule): Promise<number> {
   return page
-    .evaluate(() => {
+    .evaluate((r) => {
+      const re = r.source === '' ? null : new RegExp(r.source, r.flags);
       let n = 0;
       for (const a of Array.from(document.querySelectorAll('a[href]'))) {
         try {
-          if (new URL((a as HTMLAnchorElement).href, location.href).host === location.host) n += 1;
+          const u = new URL((a as HTMLAnchorElement).href, location.href);
+          if (u.host === location.host && (re === null || re.test(u.pathname + u.search))) n += 1;
         } catch {
           // An unparsable href is not a link.
         }
       }
       return n;
+    }, rule)
+    .catch(() => -1);
+}
+
+/** Main text length; -1 while the document is being replaced. */
+async function textLength(page: Page): Promise<number> {
+  return page
+    .evaluate(() => {
+      const main = document.querySelector('main, [role="main"]') ?? document.body;
+      return main instanceof HTMLElement ? main.innerText.length : (main?.textContent?.length ?? 0);
     })
     .catch(() => -1);
 }
 
-async function textLength(page: Page): Promise<number> {
-  return page.evaluate(() => document.body?.innerText.length ?? 0).catch(() => -1);
-}
-
-/** In the page: the next visible "load more" control to click, marked with a fresh id, or null. */
-function nextExpandable(formButtonTypes: string[]): string | null {
-  const re = /load more|show more|more jobs|show all/i;
-  for (const el of Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"]'))) {
-    if (!(el instanceof HTMLElement) || el.hasAttribute('data-jobpilot-done')) continue;
-    const label = ((el instanceof HTMLInputElement ? el.value : el.innerText) || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-    if (!re.test(label)) continue;
-    const href = el.tagName === 'A' ? el.getAttribute('href') : null;
-    if (href !== null && !/^\s*(#|javascript:)/i.test(href)) continue; // a real link: the agent follows it
-    if (el.closest('form') !== null) continue;
-    if (formButtonTypes.includes((el.getAttribute('type') ?? '').toLowerCase())) continue;
+/**
+ * In the page: the next control the provider may click, marked with a fresh id, or null. Only a `<button
+ * type=button>`, a `[role=button]` or an `<a>` with no navigating href; never one tied to a form (inside it, a
+ * `form` attribute, a submit or reset type), never one inside a dialog or a cookie or consent banner; visible,
+ * enabled, and labelled by the shared load-more or show-all rule.
+ */
+function nextExpandable(labels: { loadMore: string; showAll: string }): { id: string; label: string } | null {
+  const loadMore = new RegExp(labels.loadMore, 'i');
+  const showAll = new RegExp(labels.showAll, 'i');
+  const banner = '[role="dialog"], [aria-modal], dialog, [id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [id*="gdpr" i], [class*="gdpr" i], [id*="onetrust" i], [class*="onetrust" i]';
+  for (const el of Array.from(document.querySelectorAll('button, [role="button"], a'))) {
+    if (!(el instanceof HTMLElement) || el.hasAttribute('data-jobpilot-clicked-out')) continue;
+    const kind = el.tagName === 'BUTTON' ? 'button' : el.tagName === 'A' ? 'a' : 'role';
+    if (kind === 'button' && (el.getAttribute('type') ?? '').toLowerCase() !== 'button') continue;
+    if (kind === 'a') {
+      const href = el.getAttribute('href');
+      if (href !== null && !/^\s*(#|javascript:)/i.test(href)) continue; // a real link: the agent follows it
+    }
+    if (el.closest('form') !== null || el.hasAttribute('form') || (el as HTMLButtonElement).form) continue;
+    if (el.closest(banner) !== null) continue;
     if ((el as HTMLButtonElement).disabled === true || el.getAttribute('aria-disabled') === 'true') continue;
+    const label = (el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim();
+    if (!loadMore.test(label) && !showAll.test(label)) continue;
     const box = el.getBoundingClientRect();
     const style = getComputedStyle(el);
     if (box.width === 0 || box.height === 0 || style.visibility === 'hidden' || style.display === 'none') continue;
     const n = Number(document.documentElement.getAttribute('data-jobpilot-n') ?? '0') + 1;
     document.documentElement.setAttribute('data-jobpilot-n', String(n));
     el.setAttribute('data-jobpilot-expand', String(n));
-    return String(n);
+    return { id: String(n), label };
   }
   return null;
 }
 
-/** In the page: marks a clicked control as exhausted (it added nothing) or failed (it could not be clicked). */
-function markControl(a: { id: string; as: string }): void {
-  document.querySelector(`[data-jobpilot-expand="${a.id}"]`)?.setAttribute('data-jobpilot-done', a.as);
-}
-
 /**
- * Controls that look like pagination but have no link to follow: script-only next or numbered buttons, a load-more
- * the expansion could not click (inside a form, failed). Real links are the agent's to follow.
+ * Controls that look like more of the list (the shared load-more, show-all and next rules, or a number in a pager)
+ * but have no link to follow and were not clicked: script-only next or numbered buttons, a load-more tied to a form,
+ * a submit button. Real links are the agent's to follow; dialogs and cookie banners are not the listing.
  */
 async function unfollowedControls(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const words = /^(next( page)?|more jobs|(show|view|see) all( jobs| positions| openings| roles)?|(load|show|view|see) more( jobs| positions| openings| roles| results)?)$/i;
+  const labels = { loadMore: LOAD_MORE_LABEL.source, showAll: SHOW_ALL_LABEL.source, next: NEXT_LABEL.source };
+  return page.evaluate((l) => {
+    const rules = [new RegExp(l.loadMore, 'i'), new RegExp(l.showAll, 'i'), new RegExp(l.next, 'i')];
+    const banner = '[role="dialog"], [aria-modal], dialog, [id*="cookie" i], [class*="cookie" i], [id*="consent" i], [class*="consent" i], [id*="gdpr" i], [class*="gdpr" i], [id*="onetrust" i], [class*="onetrust" i]';
     const out: string[] = [];
-    for (const el of Array.from(document.querySelectorAll('button, [role="button"], a, input[type="button"]'))) {
-      if (!(el instanceof HTMLElement) || el.getAttribute('data-jobpilot-done') === 'exhausted') continue;
+    for (const el of Array.from(document.querySelectorAll('button, [role="button"], a, input'))) {
+      if (!(el instanceof HTMLElement)) continue;
       const href = el.tagName === 'A' ? el.getAttribute('href') : null;
       if (href !== null && !/^\s*(#|javascript:)/i.test(href)) continue;
       if ((el as HTMLButtonElement).disabled === true || el.getAttribute('aria-disabled') === 'true') continue;
+      if (el.closest(banner) !== null) continue;
       const box = el.getBoundingClientRect();
       if (box.width === 0 || box.height === 0) continue;
-      const raw = ((el instanceof HTMLInputElement ? el.value : el.innerText) || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
-      const t = raw.replace(/\(\s*\d+\s*\)/g, '').replace(/\s+/g, ' ').trim();
+      const label = ((el instanceof HTMLInputElement ? el.value : el.innerText) || el.getAttribute('aria-label') || el.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
       const pager = el.closest('nav, [role="navigation"], [class*="pag" i], [aria-label*="pag" i]') !== null;
-      const looks = /^[›»>]+$/.test(t) || words.test(t.replace(/\s*[›»>]+$/, '').trim()) || (pager && /^\d+$/.test(t));
-      if (looks) out.push(el.outerHTML.replace(/\s+/g, ' ').slice(0, 160));
+      if (rules.some((re) => re.test(label)) || (pager && /^\d+$/.test(label))) out.push(el.outerHTML.replace(/\s+/g, ' ').slice(0, 160));
     }
     return out.slice(0, 10);
-  });
+  }, labels);
 }

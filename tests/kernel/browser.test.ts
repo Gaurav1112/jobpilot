@@ -108,7 +108,7 @@ describe('capability broker: ctx.browser', () => {
     const req = b.calls[0] as BrowserRenderRequest;
     expect(req.url).toBe(`${H}/jobs`);
     expect(req.navigationHosts).toEqual([HOST, 'jobs.example.org']);
-    expect(req.deniedHosts).toEqual(expect.arrayContaining(['linkedin.com', 'glassdoor.com', 'lnkd.in']));
+    expect(req.deniedHosts).toEqual(expect.arrayContaining(['linkedin.com', 'glassdoor.com', 'lnkd.in', 'indeedjobs.com', 'naukrigulf.com', 'licdn.com']));
     expect(req.deniedBrands).toEqual(['glassdoor', 'indeed', 'linkedin', 'naukri']);
     expect(req.maxBytes).toBe(PRODUCT_POLICY_V1.maxResponseBytes);
     expect(req.expand).toBe(false);
@@ -197,6 +197,29 @@ describe('capability broker: ctx.browser', () => {
     expect(r('<h1>Senior Engineer</h1><p>access denied to pets</p>')).toBeNull();
   });
 
+  it('rule D matches the whole title (site suffix trimmed), only on a short page without JobPosting', () => {
+    const r = (html: string) => challengeReason({ status: 200, headers: {}, html });
+    expect(r('<title>Attention Required! | Cloudflare</title>')).toMatch(/^D/);
+    expect(r('<title>Just a moment...</title>')).toMatch(/^D/);
+    expect(r('<title>Access Denied - Example Co</title>')).toMatch(/^D/);
+    expect(r('<h1>Security check</h1>')).toMatch(/^D/);
+    for (const t of ['Security Check Officer', 'Security Checkpoint Supervisor', 'Access Denied Management Engineer']) {
+      expect(r(`<title>${t} | Example Co</title><h1>${t}</h1><p>Airport screening role.</p>`), t).toBeNull();
+    }
+    expect(r(`<title>Access Denied</title><p>${'x'.repeat(1500)}</p>`)).toBeNull();
+    expect(r('<title>Access Denied</title><script type="application/ld+json">{"@type":"JobPosting"}</script>')).toBeNull();
+  });
+
+  it('knows the Cloudflare, Imperva and Akamai interstitial markers, not their passive scripts', () => {
+    const r = (html: string) => challengeReason({ status: 200, headers: {}, html: `<h1>Jobs</h1><p>${'text '.repeat(400)}</p>${html}` });
+    expect(r('<script src="/cdn-cgi/challenge-platform/h/bc/orchestrate/chl_page/v1"></script>')).toMatch(/^C/);
+    expect(r('<iframe src="/_Incapsula_Resource?CWUDNSAI=1&incident_id=123-456"></iframe>')).toMatch(/^C/);
+    expect(r('<div id="sec-if-cpt-container"></div>')).toMatch(/^C/);
+    expect(r('<script src="/_sec/cp_challenge/ak-challenge-4-3.js"></script>')).toMatch(/^C/);
+    expect(r('<script src="/_Incapsula_Resource?SWJIYLWA=719d34d31c8e3a6e6fffd425f7e032f3"></script>')).toBeNull();
+    expect(r('<script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>')).toBeNull();
+  });
+
   it('maps a 5xx to overloaded and passes a 404 through to the agent', async () => {
     const ctx = issue(fakeBrowser({ [`${H}/down`]: page('oops', { status: 503 }) }));
     await expect(ctx.browser!.render(`${H}/down`)).rejects.toMatchObject({ code: 'overloaded' });
@@ -248,10 +271,10 @@ describe('capability broker: ctx.browser', () => {
     expect(Object.keys(ctx.browser!)).toEqual(['render']);
     const b = fakeBrowser({});
     const c2 = issue(b);
-    await c2.browser!.render(`${H}/a`, { expand: true });
-    expect(Object.keys(b.calls[0] as object).sort()).toEqual(['deniedBrands', 'deniedHosts', 'expand', 'maxBytes', 'navigationHosts', 'signal', 'url']);
-    expect(b.calls[0]?.expand).toBe(true);
-    for (const bad of [{ proxy: 'x' }, { userAgent: 'Mozilla' }, { expand: true, headers: {} }, { expand: 'yes' }, null]) {
+    await c2.browser!.render(`${H}/a`, { expand: true, linkPattern: '^/jobs/' });
+    expect(Object.keys(b.calls[0] as object).sort()).toEqual(['deniedBrands', 'deniedHosts', 'expand', 'linkPattern', 'maxBytes', 'navigationHosts', 'signal', 'url']);
+    expect(b.calls[0]).toMatchObject({ expand: true, linkPattern: '^/jobs/' });
+    for (const bad of [{ proxy: 'x' }, { userAgent: 'Mozilla' }, { expand: true, headers: {} }, { expand: 'yes' }, null, { linkPattern: 5 }, { linkPattern: 'x'.repeat(201) }]) {
       await expect(c2.browser!.render(`${H}/a`, bad as never), JSON.stringify(bad)).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/G-NO-EVASION/) });
     }
     expect(b.calls).toHaveLength(1);
@@ -272,7 +295,9 @@ describe('job boards are denied by brand under any suffix, for http and browser'
     for (const h of ['notindeed.com', 'indeed.example.com', 'glassdoorway.com', 'careers.example.com', 'indeedcareers.org']) {
       expect(['glassdoor', 'indeed', 'naukri', 'linkedin'].some((b) => hostMatchesBrand(h, b)), h).toBe(false);
     }
-    for (const h of ['www.glassdoor.co.in', 'in.indeed.com', 'lnkd.in']) expect(egressAllowed(PRODUCT_POLICY_V1, h, 'P0'), h).toBe(false);
+    for (const h of ['www.glassdoor.co.in', 'in.indeed.com', 'lnkd.in', 'acme.indeedjobs.com', 'www.naukrigulf.com', 'static.licdn.com', 'careers.linkedin.com']) {
+      expect(egressAllowed(PRODUCT_POLICY_V1, h, 'P0'), h).toBe(false);
+    }
   });
 
   it('refuses www.glassdoor.co.in, in.indeed.com and lnkd.in even when a contract lists them', async () => {

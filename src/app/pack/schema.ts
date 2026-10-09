@@ -106,7 +106,9 @@ const ListUrl = z.string().superRefine((s, ctx) => {
  * career site without a public API, rendered by `src-careers`: `slug` is a kebab id, `listUrl` the https page that
  * lists every job, and `linkPattern` a required regex (safety-checked, flags 'iu') tested against each same-host
  * link's path plus query to pick the job links. It is required because no default rule tells a job page from a
- * benefits or team page. The careers hosts also become `src-careers`'s exact egress.
+ * benefits or team page.
+ * A listUrl on a denied job board (LinkedIn, Naukri, Indeed, Glassdoor, under any suffix) is refused, so those
+ * companies' own careers pages cannot be watched either. The careers hosts also become `src-careers`'s exact egress.
  */
 export const WatchEntrySchema = z
   .strictObject({

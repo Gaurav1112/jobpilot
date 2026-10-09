@@ -55,7 +55,9 @@ export interface BrowserPage {
 export interface BrowserExpansion {
   /** "Load more"-style buttons clicked. */
   readonly clicks: number;
-  /** True when a load-more control was still there after the click cap. */
+  /** Scrolls to the bottom that loaded more jobs (infinite scroll). */
+  readonly scrolls: number;
+  /** True when clicking or scrolling was still adding jobs at its cap (count or time). */
   readonly capReached: boolean;
   /** Controls that look like pagination but have no link to follow (for example a script-only "Next" button). */
   readonly unfollowedControls: readonly string[];
@@ -80,6 +82,11 @@ export interface BrowserRenderRequest {
    * form, never a form button) until none is left, and report pagination controls that cannot be followed.
    */
   readonly expand: boolean;
+  /**
+   * The agent's job-link pattern (a regex source, tested on path plus query of same-host links). The provider counts
+   * matching links to decide that a listing has settled and that each load-more click added jobs.
+   */
+  readonly linkPattern?: string;
   readonly signal: AbortSignal;
 }
 

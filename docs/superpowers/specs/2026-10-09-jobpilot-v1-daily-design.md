@@ -109,40 +109,70 @@ Teams and agents (each has one skill, one output type and one contract):
 **Career-page browsing (`src-careers`, Task 5b).** Rules for the read-only browser:
 
 - *Egress.* The contract's `egress` is the exact list of the watchlist's careers hosts. It governs every
-  top-level navigation: the URL, each redirect hop (checked before it is requested), and `finalUrl`. The policy
-  deny list applies by host and by brand under any suffix or subdomain (`linkedin`, `naukri`, `indeed`,
-  `glassdoor`, plus `lnkd.in`), for http and browser alike.
-- *Third-party subresources.* Scripts, styles and data calls the page makes to other hosts are allowed, so that
-  script-built listings render. They are the page's own behaviour and carry nothing of the user's:
+  top-level navigation: the URL, each redirect hop (checked before it is requested), and `finalUrl`.
+- *Denied boards.* The policy deny list applies by host and by brand, for http and browser alike:
+  - by brand, under any suffix or subdomain: `linkedin`, `naukri`, `indeed`, `glassdoor`;
+  - by host: `lnkd.in`, `indeedjobs.com`, `naukrigulf.com` and `licdn.com`.
+
+  The boards' own careers pages (`careers.linkedin.com`, Indeed's careers site) are denied too, so these
+  companies cannot be watched as employers.
+- *Third-party subresources.* Scripts, styles and data calls (including XHR or fetch POSTs) that the page itself
+  makes to other hosts are allowed, so that script-built listings render (Workday searches by POST). They carry
+  nothing of the user's:
   - each page gets a fresh browser context with no cookies or storage;
   - requests carry the honest user-agent;
   - the agent can only name a URL;
+  - nothing is typed;
   - images, fonts, media, WebSockets, pop-ups and denied hosts are blocked;
-  - a non-GET navigation (a form submission) is refused and fails the step (G-READONLY).
+  - a non-GET navigation (any form submission) is refused and fails the step (G-READONLY).
 - *Challenge stop.* A CAPTCHA or bot wall fails the step with `challenged`, never retried. The provider checks the
   raw document before the page may run, so no challenge script executes or re-requests the page. The broker checks
   the rendered page again. A page is a challenge when any of these holds:
   - **A**, status 403 or 429;
   - **B**, a vendor header: `cf-mitigated: challenge`, DataDome, `x-px-blocked`, or `x-amzn-waf-action`
     captcha or challenge;
-  - **C**, a vendor interstitial marker: `_cf_chl_opt`, the Cloudflare orchestrate path, `challenge-form`,
-    `challenge-running` or `challenge-stage`, `captcha-delivery.com`, `px-captcha`, an Incapsula incident ID, or
-    AWS `gokuProps`;
-  - **D**, a `<title>` or first `<h1>` worded as a wall;
+  - **C**, a vendor interstitial marker:
+    - Cloudflare: `_cf_chl_opt`, or the orchestrate path;
+    - the `challenge-form`, `challenge-running` or `challenge-stage` elements;
+    - DataDome: `captcha-delivery.com`;
+    - PerimeterX: `px-captcha`;
+    - Imperva: an incident ID, or the `_Incapsula_Resource?…incident_id=` iframe;
+    - AWS: `gokuProps`;
+    - Akamai: `/_sec/cp_challenge/` or `sec-if-cpt-container`;
+  - **D**, the *whole* `<title>` or first `<h1>`, with any site suffix removed, is a wall phrase ("Just a moment",
+    "Access denied", "Security check", and so on), on a short page (under 1,500 characters) with no JobPosting.
+    "Security Check Officer" is a job, not a wall;
   - **E**, "captcha" in the visible text of a short page (under 2 KB) that has no JobPosting JSON-LD and no form
     with two or more inputs. A reCAPTCHA inside an apply form is not a challenge.
-- *Completeness.* A listing is read only once its same-host link count is stable: 3 equal polls at 1 s
-  intervals, at least 5 s, no data request in flight, capped at 45 s. The provider then clicks same-page
-  "load more" buttons (never inside a form, never a form button, at most 50 clicks). The agent follows next,
-  "show all" and numbered (`page`, `start`, `offset`) links within `maxPages`. Every one of these fails the step
-  loudly:
+- *Settling.* Every page is sampled every 1 s and is settled only when 3 equal samples arrive with no document,
+  xhr or fetch request in flight:
+  - a listing samples its same-host job-link count, waits at least 5 s, and is capped at 45 s per settle;
+  - a job page samples its main text length, waits at least 2 s, and is capped at 45 s.
+- *Expanding a listing.* After it settles, the provider:
+  1. clicks controls one at a time. A control qualifies only if it is a `<button type=button>`, a
+     `[role=button]`, or an `<a>` with no navigating href; it is never tied to a form (inside one, a `form`
+     attribute, submit or reset), never inside a dialog or a cookie or consent banner, and its label matches one
+     anchored rule (`load|show|view|see [N] more [jobs…] [(N)]`, `show|view|see all [jobs…] [(N)]`). Every click
+     must add job links;
+  2. scrolls to the bottom while that adds job links (infinite scroll).
+
+  Clicks and scrolls are capped at 50 each and at 150 s of wall time. The agent follows next, "show all" and
+  numbered (`page`, `start`, `offset`) links.
+- *Loud failures.* Each of these fails the step:
   - a listing still loading at the cap;
   - zero job links;
-  - the click cap reached;
-  - a pagination control only a script could follow;
+  - a click that added no jobs;
+  - the click, scroll or time cap reached;
+  - a control matching the label rule (or a next or numbered pager button) that could not be clicked or followed;
   - an ItemList with fewer items than it announces;
+  - more than 2 listing pages;
   - links over the page budget;
-  - a job page that never settles.
+  - a job page still loading at its cap;
+  - a title that is unrendered template text.
+- *Budget arithmetic.* A job page costs at most 10 s (pacing) + 20 s (navigation) + 45 s (settle) = 75 s. A listing
+  page costs at most 10 + 20 + 45 + 200 s (the 150 s expansion budget plus one last 5 s click and a 45 s settle)
+  = 275 s. A step reads at most 2 listing pages and 18 pages in all: 2 × 275 + 16 × 75 = 1,750 s, under the
+  30-minute step cap. A site needing more fails loudly.
 
 **Fan-out typing.** One agent produces one type, so `eligibility` produces `EligibilityVerdict@1
 {verdict: eligible, rejected or review, reasons[]}`. The wiring routes it onward, and the
