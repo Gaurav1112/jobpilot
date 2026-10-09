@@ -4,7 +4,7 @@ import { assertNoForbidden, ForbiddenTermError } from './pack/load.js';
 import type { Naming } from './pack/schema.js';
 import type { AppStore, JobStatus } from './store/app-store.js';
 import { JOB_STATUSES } from './store/schema.js';
-import { jobKey } from './text/norm.js';
+import { dedupeKey, jobKey } from './text/norm.js';
 
 export const NOTE_REMOVED = '[note removed: contained a forbidden term]';
 
@@ -23,12 +23,10 @@ export interface DeskReport {
   /** Job files read (every `*.json` in `<dir>/jobs`). */
   readonly read: number;
   readonly inserted: number;
-  /** Rows that joined a job a run had already found (same job key). */
+  /** Rows whose posting a run had already found (same source id), now carrying the Desk status. */
   readonly attached: number;
-  /** Rows that joined a job an earlier Desk row created (several requisitions, one job key). */
-  readonly merged: number;
-  /** Attached or merged rows whose Desk status differed from the job's; the furthest status was kept. */
-  readonly statusConflicts: number;
+  /** Imported rows that are a cross-source duplicate listing (same dedupe key, another source) of another row. */
+  readonly duplicates: number;
   /** Rows whose `(source, sourceId)` was already imported: a re-run. */
   readonly alreadyPresent: number;
   /** Notes replaced by `NOTE_REMOVED`. */
@@ -36,7 +34,7 @@ export interface DeskReport {
   /** `why` texts dropped for holding a forbidden term. */
   readonly whyRemoved: number;
   readonly skipped: { file: string; reason: string }[];
-  /** Imported rows (inserted, attached or merged) by their Desk status, and by source. */
+  /** Imported rows (inserted or attached) by their Desk status, and by source. */
   readonly byStatus: Record<string, number>;
   readonly bySource: Record<string, number>;
 }
@@ -113,10 +111,11 @@ function forbidden(text: string, naming: Naming): boolean {
 
 /**
  * Imports the Application Desk export (`<dir>/jobs/*.json`, flat rows or `{id, data}`), in file-name order. Each row
- * becomes a job with docs `none`, its Desk status, note and applied_at, and one `migration` status history entry; its
- * doc id prefix gives the source and the rest the source id, so a later run that re-finds the posting attaches to it.
- * The job key is the normaliser's `jobKey(company, title, location)`; Desk rows sharing one merge into one job (see
- * `AppStore.importJob`), and a status the user set on the dashboard is never overridden. Idempotent: a `(source, sourceId)` already
+ * becomes its own job with docs `none`, its Desk status, note and applied_at, and one `migration` status history entry.
+ * The doc id prefix gives the source and the rest the source id; the job key is the normaliser's `jobKey(source,
+ * sourceId)`, so a later run that re-finds the posting upserts the same row. The dedupe key (company, title,
+ * location) links a cross-source duplicate to its preferred row; same-source rows always stay separate jobs. A status
+ * the user set on the dashboard is never overridden (`AppStore.importJob`). Idempotent: a `(source, sourceId)` already
  * imported is left alone. A note holding a forbidden term is replaced by `NOTE_REMOVED`, a `why` holding one is
  * dropped, and a company or title holding one skips the row; all are counted.
  */
@@ -129,8 +128,7 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
   const bySource: Record<string, number> = {};
   let inserted = 0;
   let attached = 0;
-  let merged = 0;
-  let statusConflicts = 0;
+  const imported: string[] = [];
   let alreadyPresent = 0;
   let notesSanitised = 0;
   let whyRemoved = 0;
@@ -163,10 +161,13 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
       whyRemoved += 1;
     }
     const firstSeen = isoUtc(row.found_at);
-    const { outcome, conflict } = app.importJob({
-      jobKey: jobKey(row.company, row.title, row.location),
+    const sourceId = id.slice(prefix.length);
+    const key = jobKey(source, sourceId);
+    const outcome = app.importJob({
+      jobKey: key,
+      dedupeKey: dedupeKey(row.company, row.title, row.location),
       source,
-      sourceId: id.slice(prefix.length),
+      sourceId,
       company: row.company,
       title: row.title,
       url: row.url,
@@ -199,13 +200,13 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
       continue;
     }
     if (outcome === 'inserted') inserted += 1;
-    else if (outcome === 'attached') attached += 1;
-    else merged += 1;
-    if (conflict) statusConflicts += 1;
+    else attached += 1;
+    imported.push(key);
     byStatus[row.status] = (byStatus[row.status] ?? 0) + 1;
     bySource[source] = (bySource[source] ?? 0) + 1;
   }
-  return { read: files.length, inserted, attached, merged, statusConflicts, alreadyPresent, notesSanitised, whyRemoved, skipped, byStatus: sorted(byStatus), bySource: sorted(bySource) };
+  const duplicates = imported.filter((k) => app.getJob(k)?.duplicateOf !== null).length;
+  return { read: files.length, inserted, attached, duplicates, alreadyPresent, notesSanitised, whyRemoved, skipped, byStatus: sorted(byStatus), bySource: sorted(bySource) };
 }
 
 const sorted = (r: Record<string, number>): Record<string, number> => Object.fromEntries(Object.entries(r).sort(([a], [b]) => (a < b ? -1 : 1)));

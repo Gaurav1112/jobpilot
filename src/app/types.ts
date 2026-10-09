@@ -69,7 +69,10 @@ export const Posting = defineType(
   1,
   z
     .object({
+      /** The posting's identity, `jobKey(source, sourceId)`: one job per posting, stable across days. */
       jobKey: JobKey,
+      /** `dedupeKey(company, title, location)`: links one job listed on two sources; never an identity. */
+      dedupeKey: JobKey,
       source: z.string(),
       sourceId: z.string(),
       company: z.string(),

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { projectRun, runCounts } from '../../src/app/project.js';
 import { AppStore } from '../../src/app/store/app-store.js';
+import { dedupeKey, jobKey } from '../../src/app/text/norm.js';
 import { jobKeyOf, makeJobTracker } from '../../src/app/tracker.js';
 import type { EligibilityVerdict, Posting, QaReport, Rendered, Scored } from '../../src/app/types.js';
 import { makeEnvelopeId, ZERO_COST, type Envelope } from '../../src/kernel/envelope.js';
@@ -12,9 +13,9 @@ const AT = '2026-10-09T01:30:00.000Z';
 const FX = { toINR: { INR: 1, USD: 83.5, EUR: 90.2, GBP: 106.4 } };
 const OPTS = { minFit: 60, fx: FX };
 
+/** A fictional posting; its keys are computed as the normalizer does unless `over` sets them. */
 function posting(n: number, over: Partial<Posting> = {}): Posting {
-  return {
-    jobKey: n.toString(16).padStart(16, 'a'),
+  const p: Omit<Posting, 'jobKey' | 'dedupeKey'> = {
     source: 'greenhouse',
     sourceId: String(1000 + n),
     company: `Company ${n}`,
@@ -31,6 +32,7 @@ function posting(n: number, over: Partial<Posting> = {}): Posting {
     yearsRequired: null,
     ...over,
   };
+  return { jobKey: jobKey(p.source, p.sourceId), dedupeKey: dedupeKey(p.company, p.title, p.locationText), ...p, ...over } as Posting;
 }
 const verdict = (p: Posting, v: EligibilityVerdict['verdict'], reasons: string[] = []): EligibilityVerdict => ({ posting: p, verdict: v, reasons, notes: ['pay not disclosed'] });
 const scored = (p: Posting, score: number, v: Scored['verdict'] = 'eligible'): Scored => ({
@@ -230,14 +232,16 @@ describe('projectRun', () => {
     const at2 = '2026-10-16T01:30:00.000Z';
     b.store.startRun(run2, 'daily@1', 'policy-hash', at2);
     b.store.appendEvent(run2, at2, 'run_started', {}, 'policy-hash');
-    const retitled = posting(3, { jobKey: 'ffffffffffffffff', title: 'Staff Backend Engineer' });
+    // Same (source, sourceId), so the same job key; the new title changes only the dedupe key.
+    const retitled = posting(3, { title: 'Staff Backend Engineer' });
+    expect(retitled.jobKey).toBe(posting(3).jobKey);
+    expect(retitled.dedupeKey).not.toBe(posting(3).dedupeKey);
     const raw = b.input('RawPosting@1', {});
     const [post] = b.done('normalizer', raw, [{ type: 'Posting@1', payload: retitled }], run2) as [Envelope];
     const [ev] = b.done('eligibility', post, [{ type: 'EligibilityVerdict@1', payload: verdict(retitled, 'eligible') }], run2) as [Envelope];
     b.done('scorer-lexicon', ev, [{ type: 'Scored@1', payload: scored(retitled, 50) }], run2);
 
     expect(projectRun(b.store, app, run2, OPTS)).toMatchObject({ jobs: 1, inserted: 0 });
-    expect(app.getJob('ffffffffffffffff')).toBeUndefined();
     expect(app.getJob(posting(3).jobKey)).toMatchObject({
       title: 'Staff Backend Engineer', score: 50, docsState: 'below-floor', docs: [], status: 'applied', note: 'called back', firstSeen: AT, lastSeen: at2,
     });
@@ -257,15 +261,28 @@ describe('projectRun', () => {
     expect(app.getJob(posting(10).jobKey)).toBeUndefined();
   });
 
-  it('attaches a second source that lists the same job, and the furthest stage decides the row', () => {
+  it('keeps a feed listing of the same job as its own row, linked to the ATS row and hidden by default', () => {
     const b = new RunBuilder();
     const app = AppStore.on(b.store);
     b.write(b.chain(posting(11), 'eligible', 70), true);
-    const dup = posting(11, { source: 'himalayas', sourceId: 'https://himalayas.example.test/j/11', descriptionText: 'shorter' });
-    b.done('normalizer', b.input('RawPosting@1', {}), [{ type: 'Posting@1', payload: dup }]);
-    expect(projectRun(b.store, app, RUN, OPTS).jobs).toBe(1);
-    expect(app.getJob(posting(11).jobKey)).toMatchObject({ docsState: 'ready', jdText: 'JD 11' });
-    expect(app.getJob(posting(11).jobKey)?.sources.map((s) => s.source)).toEqual(['greenhouse', 'himalayas']);
+    const dup = posting(11, { source: 'himalayas', sourceId: 'https://himalayas.example.test/j/11', ats: 'feed', descriptionText: 'shorter' });
+    b.chain(dup, 'eligible', 65);
+    expect(projectRun(b.store, app, RUN, OPTS)).toMatchObject({ jobs: 2, inserted: 2 });
+    expect(app.getJob(posting(11).jobKey)).toMatchObject({ docsState: 'ready', jdText: 'JD 11', duplicateOf: null, alsoListedOn: ['himalayas'] });
+    expect(app.getJob(dup.jobKey)).toMatchObject({ docsState: 'none', jdText: 'shorter', duplicateOf: posting(11).jobKey });
+    expect(app.listJobs().map((j) => j.jobKey)).toEqual([posting(11).jobKey]);
+  });
+
+  it('keeps two same-title postings of one company and source as two jobs', () => {
+    const b = new RunBuilder();
+    const app = AppStore.on(b.store);
+    const a = posting(12, { sourceId: '5001' });
+    const c = posting(12, { sourceId: '5002' });
+    expect(a.dedupeKey).toBe(c.dedupeKey);
+    b.chain(a, 'eligible', 70);
+    b.chain(c, 'eligible', 70);
+    expect(projectRun(b.store, app, RUN, OPTS)).toMatchObject({ jobs: 2, inserted: 2 });
+    expect(app.listJobs().map((j) => [j.jobKey, j.duplicateOf])).toEqual([a.jobKey, c.jobKey].sort().map((k) => [k, null]));
   });
 
   it('is idempotent: projecting the same run twice changes nothing', () => {

@@ -91,8 +91,9 @@ const inr = (v: number | null, p: Posting['comp'], fx: FxRates): number | null =
  * | a quarantined writing step (input Scored or later) | docs `blocked` with the guardrail verdict |
  * | anything else | docs `none` (with a failed writing step named in `docs_detail`) |
  *
- * Every posting seen attaches its `(source, sourceId)`; a known one maps to its existing row (a newer version, or a
- * Desk row). Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
+ * The job key is the posting's identity (`jobKey(source, sourceId)`), so a re-emitted posting upserts its row (a newer
+ * version) and a Desk row with that source id is the same row; cross-source listings are linked by the store through
+ * the dedupe key. Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
  * note are never written. Projecting a run twice is a no-op.
  */
 export function projectRun(kernel: Store, app: AppStore, runId: string, opts: ProjectOptions): ProjectResult {
@@ -172,7 +173,6 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
       const r = rowOf(key, g, at, opts);
       if (!r) continue;
       const res = app.upsertJob(r.row);
-      for (const p of r.otherPostings) app.attachSource(res.jobKey, p.source, p.sourceId);
       app.putDocs(res.jobKey, r.docs);
       jobs += 1;
       if (res.inserted) inserted += 1;
@@ -192,7 +192,7 @@ function inputOf(kernel: Store, stepKey: string): Envelope | undefined {
   }
 }
 
-function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { row: JobUpsert; docs: Doc[]; otherPostings: Posting[] } | undefined {
+function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { row: JobUpsert; docs: Doc[] } | undefined {
   // Unique envelopes, furthest stage first, then envelope id.
   const envs = [...new Map(g.envs.map((e) => [e.envelopeId, e])).values()].sort(
     (a, b) => (RANK[b.type] ?? 0) - (RANK[a.type] ?? 0) || cmp(a.envelopeId, b.envelopeId),
@@ -201,16 +201,9 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
   const primary = carriers[0];
   if (!primary) return undefined;
   const posting = postingOf(primary) as Posting;
-  const ident = (p: Posting) => `${p.source}\u0000${p.sourceId}`;
-  const otherPostings = [...new Map(carriers.map((e) => postingOf(e) as Posting).filter((p) => ident(p) !== ident(posting)).map((p) => [ident(p), p])).values()];
-
-  const sameSource = envs.filter((e) => {
-    const p = postingOf(e);
-    return p === undefined || ident(p) === ident(posting);
-  });
-  const elig = pick<EligibilityVerdict>(sameSource, 'EligibilityVerdict@1');
-  const sc = pick<Scored>(sameSource, 'Scored@1');
-  const ev = pick<Evidence>(sameSource, 'Evidence@1');
+  const elig = pick<EligibilityVerdict>(envs, 'EligibilityVerdict@1');
+  const sc = pick<Scored>(envs, 'Scored@1');
+  const ev = pick<Evidence>(envs, 'Evidence@1');
   const plan = pick<ResumePlan>(envs, 'ResumePlan@1');
   const rendered = pick<Rendered>(envs, 'Rendered@1');
   const qa = pick<QaReport>(envs, 'QaReport@1');
@@ -238,6 +231,7 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
   const comp = posting.comp;
   const row: JobUpsert = {
     jobKey: key,
+    dedupeKey: posting.dedupeKey,
     source: posting.source,
     sourceId: posting.sourceId,
     company: posting.company,
@@ -263,7 +257,7 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
     postedAt: posting.postedAt,
     at,
   };
-  return { row, docs, otherPostings };
+  return { row, docs };
 }
 
 export interface AgentCounts {

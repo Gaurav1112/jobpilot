@@ -18,7 +18,7 @@ import {
 } from '../../src/app/types.js';
 
 const posting: Posting = {
-  jobKey: '0123456789abcdef', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
+  jobKey: '0123456789abcdef', dedupeKey: 'fedcba9876543210', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
   title: 'Backend Engineer', url: 'https://example.com/jobs/1', locationText: 'Remote - India',
   remote: { structured: 'remote', countries: ['india'], signals: ['workplaceType:remote', 'location:remote'] }, employmentType: null, descriptionText: 'Build things.',
   postedAt: '2026-10-01', comp: { min: 1, max: 2, currency: 'INR', period: 'year', basis: 'base' }, yearsRequired: 5,
@@ -83,9 +83,15 @@ describe('message types', () => {
     expect(Scored.schema.safeParse({ ...scored, verdict: 'rejected' }).success).toBe(false);
   });
 
+  it('requires a dedupeKey on a Posting', () => {
+    const { dedupeKey: _d, ...noDedupe } = posting;
+    expect(Posting.schema.safeParse(noDedupe).success).toBe(false);
+  });
+
   it('constrains jobKey everywhere it appears', () => {
     for (const bad of ['greenhouse:acme:1', '0123456789ABCDEF', '0123456789abcde', '']) {
       expect(Posting.schema.safeParse({ ...posting, jobKey: bad }).success).toBe(false);
+      expect(Posting.schema.safeParse({ ...posting, dedupeKey: bad }).success).toBe(false);
       expect(ResumePlan.schema.safeParse({ ...resume, jobKey: bad }).success).toBe(false);
       expect(CoverPlan.schema.safeParse({ ...cover, jobKey: bad }).success).toBe(false);
       expect(Rendered.schema.safeParse({ ...rendered, jobKey: bad }).success).toBe(false);

@@ -3,7 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
 import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
-import { countriesIn, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
+import { countriesIn, dedupeKey, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
 import { Posting, RawPosting } from '../types.js';
 
 /**
@@ -298,7 +298,8 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
   const locationText = m.locationText.replace(/\s+/g, ' ').trim();
   const excluded = excludedPlaces(locationText);
   return {
-    jobKey: jobKey(raw.company, title, locationText),
+    jobKey: jobKey(raw.source, raw.sourceId),
+    dedupeKey: dedupeKey(raw.company, title, locationText),
     source: raw.source,
     sourceId: raw.sourceId,
     company: raw.company,

@@ -5,7 +5,10 @@ import { Store } from '../../kernel/store/store.js';
 import { APP_MIGRATIONS, DOCS_STATES, JOB_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
-/** How far the user got with a job; a migration merge keeps the furthest. `rejected` (by the employer) follows applying. */
+/**
+ * How far the user got with a job. Used only to show one status for a cross-source group whose rows were imported
+ * with different statuses: the furthest wins. `rejected` (by the employer) follows applying.
+ */
 export const STATUS_PRECEDENCE: Readonly<Record<JobStatus, number>> = { new: 0, skipped: 1, approved: 2, applied: 3, rejected: 4, interview: 5, offer: 6 };
 export type DocsState = (typeof DOCS_STATES)[number];
 export type Verdict = 'eligible' | 'rejected' | 'review';
@@ -18,6 +21,8 @@ export type Verdict = 'eligible' | 'rejected' | 'review';
 export type Band = 'disclosed' | 'undisclosed' | 'review' | 'below-floor' | 'rejected';
 export const DEFAULT_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review'];
 const BAND_RANK: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 1, review: 2, 'below-floor': 3, rejected: 4 };
+/** Sources that are the employer's own ATS or career site; their listing is preferred over a feed's. */
+export const ATS_SOURCES: ReadonlySet<string> = new Set(['greenhouse', 'lever', 'ashby', 'careers']);
 
 export interface Doc {
   readonly kind: 'resume' | 'cover';
@@ -30,7 +35,10 @@ export interface Doc {
 
 /** The run-owned columns of a job, plus the posting identity and the time it was seen. Never status or note. */
 export interface JobUpsert {
+  /** `jobKey(source, sourceId)`: the row identity. */
   readonly jobKey: string;
+  /** `dedupeKey(company, title, location)`: links cross-source listings of one job. */
+  readonly dedupeKey: string;
   readonly source: string;
   readonly sourceId: string;
   readonly company: string;
@@ -70,6 +78,13 @@ export interface JobImport extends JobUpsert {
 
 export interface JobView {
   readonly jobKey: string;
+  readonly dedupeKey: string;
+  readonly source: string;
+  readonly sourceId: string;
+  /** The preferred row of this job's cross-source group, when this row is a duplicate listing; else null. */
+  readonly duplicateOf: string | null;
+  /** On a preferred row: the sources of its duplicate listings, sorted ("also listed on"). */
+  readonly alsoListedOn: string[];
   readonly company: string;
   readonly title: string;
   readonly url: string;
@@ -93,6 +108,7 @@ export interface JobView {
   readonly postedAt: string | null;
   readonly firstSeen: string;
   readonly lastSeen: string;
+  /** The group's status (see `AppStore`): a duplicate shows its preferred row's. */
   readonly status: JobStatus;
   readonly note: string;
   readonly appliedAt: string | null;
@@ -102,6 +118,7 @@ export interface JobView {
 export interface JobDetail extends JobView {
   readonly sources: { source: string; sourceId: string }[];
   readonly docs: Doc[];
+  /** The group's status history: the preferred row's and its duplicates', by time. */
   readonly history: { from: JobStatus | null; to: JobStatus; at: string; by: 'user' | 'migration' }[];
 }
 
@@ -115,6 +132,8 @@ export interface JobFilter {
   readonly text?: string;
   /** The comp floor in INR per year; a disclosed maximum under it is `below-floor`. Omitted: no comp floor. */
   readonly floorInr?: number;
+  /** Also list duplicate listings (rows with `duplicateOf` set). Default false. */
+  readonly duplicates?: boolean;
 }
 
 export interface RunSummary {
@@ -127,6 +146,10 @@ export interface RunSummary {
 
 interface JobRowDb {
   job_key: string;
+  source: string;
+  source_id: string;
+  dedupe_key: string;
+  duplicate_of: string | null;
   company: string;
   title: string;
   url: string;
@@ -161,14 +184,14 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Run-owned columns, in the order `runParams` binds them. */
 const RUN_COLUMNS = [
-  'company', 'title', 'url', 'ats', 'location', 'remote', 'comp', 'comp_min_inr', 'comp_max_inr', 'comp_basis', 'score', 'breakdown',
-  'verdict', 'reasons', 'notes', 'jd_text', 'terms', 'recommended_format', 'docs_state', 'docs_detail', 'posted_at',
+  'dedupe_key', 'company', 'title', 'url', 'ats', 'location', 'remote', 'comp', 'comp_min_inr', 'comp_max_inr', 'comp_basis', 'score',
+  'breakdown', 'verdict', 'reasons', 'notes', 'jd_text', 'terms', 'recommended_format', 'docs_state', 'docs_detail', 'posted_at',
 ] as const;
 
 function runParams(r: JobUpsert): unknown[] {
   return [
-    r.company, r.title, r.url, r.ats, r.location, json(r.remote), json(r.comp ?? null), r.compMinInr, r.compMaxInr, r.compBasis, r.score,
-    json(r.breakdown), r.verdict, JSON.stringify(r.reasons), JSON.stringify(r.notes), r.jdText, json(r.terms), r.recommendedFormat,
+    r.dedupeKey, r.company, r.title, r.url, r.ats, r.location, json(r.remote), json(r.comp ?? null), r.compMinInr, r.compMaxInr, r.compBasis,
+    r.score, json(r.breakdown), r.verdict, JSON.stringify(r.reasons), JSON.stringify(r.notes), r.jdText, json(r.terms), r.recommendedFormat,
     r.docsState, r.docsDetail, r.postedAt,
   ];
 }
@@ -177,9 +200,25 @@ function assertStatus(s: string): asserts s is JobStatus {
   if (!(JOB_STATUSES as readonly string[]).includes(s)) throw new Error(`invalid job status ${s}; expected one of ${JOB_STATUSES.join(', ')}`);
 }
 
+/** Preferred first: an ATS source over a feed, then the earliest first_seen, then the job key. */
+function preferred(a: Pick<JobRowDb, 'source' | 'first_seen' | 'job_key'>, b: Pick<JobRowDb, 'source' | 'first_seen' | 'job_key'>): number {
+  const rank = (s: string) => (ATS_SOURCES.has(s) ? 0 : 1);
+  return rank(a.source) - rank(b.source) || cmp(a.first_seen, b.first_seen) || cmp(a.job_key, b.job_key);
+}
+
 /**
- * The app catalogue, beside the kernel's tables in the same DB file. Runs write only run-owned columns
- * (`upsertJob`); status and note belong to the user and change only through `setStatus` and `setNote`.
+ * The app catalogue, beside the kernel's tables in the same DB file.
+ *
+ * - **One posting, one job.** The row identity is `jobKey(source, sourceId)`: two postings from one source are two jobs
+ *   even with the same title, and a re-emitted posting is a newer version of its row (an upsert).
+ * - **Cross-source duplicates.** Rows with one `dedupe_key` from *different* sources are one job listed twice. All are
+ *   kept; every row whose source differs from the group's preferred row (`preferred`: ATS over feed, then earliest
+ *   first_seen, then job key) points at it through `duplicate_of`. Rows from the preferred row's own source stay
+ *   separate jobs. `listJobs` hides duplicates by default and gives the preferred row `alsoListedOn`.
+ * - **User-owned columns.** Runs write only run-owned columns (`upsertJob`). Status and note belong to the user and
+ *   live on the preferred row: `setStatus` and `setNote` on any row of a group write the whole group (history on the
+ *   preferred row), and every row shows the group's status (the furthest, for rows imported with different ones) and
+ *   its distinct notes joined.
  */
 export class AppStore {
   private constructor(
@@ -236,108 +275,134 @@ export class AppStore {
     return this.kernel.tx(fn);
   }
 
-  /**
-   * The job a posting belongs to: the job its `(source, sourceId)` is already attached to (a newer version of a known
-   * posting, or a Desk row), else its own job key.
-   */
-  resolveKey(jobKey: string, source: string, sourceId: string): string {
-    const hit = this.db.prepare(`SELECT job_key FROM job_sources WHERE source = ? AND source_id = ?`).get(source, sourceId) as
+  private row(jobKey: string): JobRowDb | undefined {
+    return this.db.prepare(`SELECT * FROM jobs WHERE job_key = ?`).get(jobKey) as JobRowDb | undefined;
+  }
+
+  /** The posting must not already be another job, and the job key must not belong to another posting. */
+  private assertIdentity(r: Pick<JobUpsert, 'jobKey' | 'source' | 'sourceId'>, existing: JobRowDb | undefined): void {
+    const other = this.db.prepare(`SELECT job_key FROM job_sources WHERE source = ? AND source_id = ?`).get(r.source, r.sourceId) as
       | { job_key: string }
       | undefined;
-    return hit?.job_key ?? jobKey;
+    if (other && other.job_key !== r.jobKey) throw new Error(`posting ${r.source}:${r.sourceId} is already job ${other.job_key}, not ${r.jobKey}`);
+    if (existing && (existing.source !== r.source || existing.source_id !== r.sourceId)) {
+      throw new Error(`job ${r.jobKey} is posting ${existing.source}:${existing.source_id}, not ${r.source}:${r.sourceId}`);
+    }
+  }
+
+  private insert(r: JobUpsert, user: { status: JobStatus; note: string; appliedAt: string | null } | undefined): void {
+    this.db
+      .prepare(
+        `INSERT INTO jobs (job_key, source, source_id, ${RUN_COLUMNS.join(', ')}, first_seen, last_seen, status, note, applied_at)
+         VALUES (?, ?, ?, ${RUN_COLUMNS.map(() => '?').join(', ')}, ?, ?, ?, ?, ?)`,
+      )
+      .run(r.jobKey, r.source, r.sourceId, ...runParams(r), r.at, r.at, user?.status ?? 'new', user?.note ?? '', user?.appliedAt ?? null);
+    this.db.prepare(`INSERT INTO job_sources (job_key, source, source_id) VALUES (?, ?, ?)`).run(r.jobKey, r.source, r.sourceId);
   }
 
   /**
    * Inserts the job, or updates its run-owned columns and `last_seen` (never `status`, `note`, `applied_at` or
-   * `first_seen`), and attaches its source. A re-emitted `(source, sourceId)` maps to the job it is attached to, so
-   * a newer version of a posting never makes a duplicate row.
+   * `first_seen`), then re-links its dedupe group (and its old one, when the dedupe key changed).
    */
   upsertJob(r: JobUpsert): { jobKey: string; inserted: boolean } {
     return this.tx(() => {
-      const key = this.resolveKey(r.jobKey, r.source, r.sourceId);
-      const exists = this.db.prepare(`SELECT 1 FROM jobs WHERE job_key = ?`).get(key) !== undefined;
-      if (exists) {
+      const cur = this.row(r.jobKey);
+      this.assertIdentity(r, cur);
+      if (cur) {
         this.db
           .prepare(`UPDATE jobs SET ${RUN_COLUMNS.map((c) => `${c} = ?`).join(', ')}, last_seen = ? WHERE job_key = ?`)
-          .run(...runParams(r), r.at, key);
+          .run(...runParams(r), r.at, r.jobKey);
+        if (cur.dedupe_key !== r.dedupeKey) this.relink(cur.dedupe_key);
       } else {
-        this.db
-          .prepare(`INSERT INTO jobs (job_key, ${RUN_COLUMNS.join(', ')}, first_seen, last_seen) VALUES (?, ${RUN_COLUMNS.map(() => '?').join(', ')}, ?, ?)`)
-          .run(key, ...runParams(r), r.at, r.at);
+        this.insert(r, undefined);
       }
-      this.attachSource(key, r.source, r.sourceId);
-      return { jobKey: key, inserted: !exists };
+      this.relink(r.dedupeKey);
+      return { jobKey: r.jobKey, inserted: !cur };
     });
-  }
-
-  /** Attaches a source to a job; a `(source, sourceId)` already attached anywhere is left where it is. */
-  attachSource(jobKey: string, source: string, sourceId: string): void {
-    this.db.prepare(`INSERT OR IGNORE INTO job_sources (job_key, source, source_id) VALUES (?, ?, ?)`).run(jobKey, source, sourceId);
   }
 
   /**
-   * Migration only. A new job is inserted with the Desk's status, note and applied_at and a `migration` history entry.
-   * A `(source, sourceId)` already imported is `present` (a re-run). An existing job gets the source attached and, unless
-   * the user has set a status on it (a `user` history entry), takes the Desk row's user-owned columns as a merge:
-   * - the furthest status wins (`STATUS_PRECEDENCE`), recorded as a `migration` history entry when it changes;
-   * - a non-empty note not already in the job's note is appended after ` | `;
-   * - applied_at keeps the existing value, else takes the Desk's.
-   * The outcome is `attached` for a job a run found first (no history) and `merged` for one an earlier Desk row created
-   * (several Desk rows, one job key); `conflict` says the Desk status differed from the job's.
+   * Migration only. A new posting is inserted with the Desk's status, note and applied_at and a `migration` history
+   * entry (`inserted`). A posting a run found first, whose status the user never set (no history), takes them too
+   * (`attached`). A posting with history is left alone (`present`): a re-run, or the user's own word.
    */
-  importJob(r: JobImport): { outcome: 'inserted' | 'attached' | 'merged' | 'present'; conflict: boolean } {
+  importJob(r: JobImport): 'inserted' | 'attached' | 'present' {
     assertStatus(r.status);
     return this.tx(() => {
-      const known = this.db.prepare(`SELECT job_key FROM job_sources WHERE source = ? AND source_id = ?`).get(r.source, r.sourceId);
-      if (known !== undefined) return { outcome: 'present', conflict: false };
-      const cur = this.db.prepare(`SELECT status, note, applied_at FROM jobs WHERE job_key = ?`).get(r.jobKey) as
-        | { status: JobStatus; note: string; applied_at: string | null }
-        | undefined;
+      const cur = this.row(r.jobKey);
+      this.assertIdentity(r, cur);
+      let outcome: 'inserted' | 'attached' | 'present';
       if (!cur) {
-        this.db
-          .prepare(
-            `INSERT INTO jobs (job_key, ${RUN_COLUMNS.join(', ')}, first_seen, last_seen, status, note, applied_at)
-             VALUES (?, ${RUN_COLUMNS.map(() => '?').join(', ')}, ?, ?, ?, ?, ?)`,
-          )
-          .run(r.jobKey, ...runParams(r), r.at, r.at, r.status, r.note, r.appliedAt);
+        this.insert(r, { status: r.status, note: r.note, appliedAt: r.appliedAt });
         this.history(r.jobKey, null, r.status, r.statusAt, 'migration');
-        this.attachSource(r.jobKey, r.source, r.sourceId);
-        return { outcome: 'inserted', conflict: false };
+        outcome = 'inserted';
+      } else if (this.db.prepare(`SELECT 1 FROM status_history WHERE job_key = ? LIMIT 1`).get(r.jobKey) === undefined) {
+        this.db
+          .prepare(`UPDATE jobs SET status = ?, note = ?, applied_at = ? WHERE job_key = ?`)
+          .run(r.status, cur.note === '' ? r.note : cur.note, cur.applied_at ?? r.appliedAt, r.jobKey);
+        this.history(r.jobKey, cur.status, r.status, r.statusAt, 'migration');
+        outcome = 'attached';
+      } else {
+        outcome = 'present';
       }
-      const bys = (this.db.prepare(`SELECT DISTINCT by FROM status_history WHERE job_key = ?`).all(r.jobKey) as { by: string }[]).map((b) => b.by);
-      const conflict = cur.status !== r.status;
-      if (!bys.includes('user')) {
-        const to = STATUS_PRECEDENCE[r.status] > STATUS_PRECEDENCE[cur.status] ? r.status : cur.status;
-        const note = r.note === '' || cur.note.includes(r.note) ? cur.note : cur.note === '' ? r.note : `${cur.note} | ${r.note}`;
-        this.db.prepare(`UPDATE jobs SET status = ?, note = ?, applied_at = ? WHERE job_key = ?`).run(to, note, cur.applied_at ?? r.appliedAt, r.jobKey);
-        // A run-found job gets its first history entry even when the Desk status is `new`.
-        if (to !== cur.status || bys.length === 0) this.history(r.jobKey, cur.status, to, r.statusAt, 'migration');
-      }
-      this.attachSource(r.jobKey, r.source, r.sourceId);
-      return { outcome: bys.length === 0 ? 'attached' : 'merged', conflict };
+      this.relink(r.dedupeKey);
+      return outcome;
     });
+  }
+
+  /** Recomputes `duplicate_of` for one dedupe group. */
+  private relink(dedupeKey: string): void {
+    const rows = (this.db.prepare(`SELECT job_key, source, first_seen, duplicate_of FROM jobs WHERE dedupe_key = ?`).all(dedupeKey) as Pick<
+      JobRowDb,
+      'job_key' | 'source' | 'first_seen' | 'duplicate_of'
+    >[]).sort(preferred);
+    const top = rows[0];
+    if (!top) return;
+    const set = this.db.prepare(`UPDATE jobs SET duplicate_of = ? WHERE job_key = ?`);
+    for (const r of rows) {
+      const dup = r !== top && r.source !== top.source ? top.job_key : null;
+      if (dup !== r.duplicate_of) set.run(dup, r.job_key);
+    }
   }
 
   private history(jobKey: string, from: JobStatus | null, to: JobStatus, at: string, by: 'user' | 'migration'): void {
     this.db.prepare(`INSERT INTO status_history (job_key, "from", "to", at, by) VALUES (?, ?, ?, ?, ?)`).run(jobKey, from, to, at, by);
   }
 
-  /** Sets a user status and appends it to the history. Returns false (and records nothing) when it is unchanged. */
+  /** The preferred row of `jobKey`'s group and the rows that point at it. */
+  private group(jobKey: string): { top: JobRowDb; dups: JobRowDb[] } {
+    const r = this.row(jobKey);
+    if (!r) throw new Error(`unknown job ${jobKey}`);
+    const top = r.duplicate_of === null ? r : (this.row(r.duplicate_of) as JobRowDb);
+    const dups = this.db.prepare(`SELECT * FROM jobs WHERE duplicate_of = ? ORDER BY job_key`).all(top.job_key) as JobRowDb[];
+    return { top, dups };
+  }
+
+  /**
+   * Sets the user status of the job's whole group (the preferred row and its duplicates), with one history entry on
+   * the preferred row. Returns false (and records nothing) when the group already shows that status everywhere.
+   */
   setStatus(jobKey: string, to: JobStatus, by: 'user' | 'migration', at: string): boolean {
     assertStatus(to);
     return this.tx(() => {
-      const cur = this.db.prepare(`SELECT status FROM jobs WHERE job_key = ?`).get(jobKey) as { status: JobStatus } | undefined;
-      if (!cur) throw new Error(`unknown job ${jobKey}`);
-      if (cur.status === to) return false;
-      this.db.prepare(`UPDATE jobs SET status = ? WHERE job_key = ?`).run(to, jobKey);
-      this.history(jobKey, cur.status, to, at, by);
+      const { top, dups } = this.group(jobKey);
+      const rows = [top, ...dups];
+      if (rows.every((r) => r.status === to)) return false;
+      const shown = groupStatus(rows);
+      const set = this.db.prepare(`UPDATE jobs SET status = ? WHERE job_key = ?`);
+      for (const r of rows) set.run(to, r.job_key);
+      this.history(top.job_key, shown, to, at, by);
       return true;
     });
   }
 
+  /** Sets the note of the job's whole group. */
   setNote(jobKey: string, note: string): void {
-    const res = this.db.prepare(`UPDATE jobs SET note = ? WHERE job_key = ?`).run(note, jobKey);
-    if (res.changes !== 1) throw new Error(`unknown job ${jobKey}`);
+    this.tx(() => {
+      const { top, dups } = this.group(jobKey);
+      const set = this.db.prepare(`UPDATE jobs SET note = ? WHERE job_key = ?`);
+      for (const r of [top, ...dups]) set.run(note, r.job_key);
+    });
   }
 
   /** Replaces the job's documents with `docs` (an empty list clears them). */
@@ -350,11 +415,9 @@ export class AppStore {
   }
 
   getJob(jobKey: string): JobDetail | undefined {
-    const row = this.db.prepare(`SELECT * FROM jobs WHERE job_key = ?`).get(jobKey) as JobRowDb | undefined;
+    const row = this.row(jobKey);
     if (!row) return undefined;
-    const sources = (
-      this.db.prepare(`SELECT source, source_id FROM job_sources WHERE job_key = ? ORDER BY source, source_id`).all(jobKey) as { source: string; source_id: string }[]
-    ).map((s) => ({ source: s.source, sourceId: s.source_id }));
+    const { top, dups } = this.group(jobKey);
     const docs = (
       this.db.prepare(`SELECT kind, format, path, sha256, pages, qa_ok FROM job_docs WHERE job_key = ? ORDER BY kind, format`).all(jobKey) as {
         kind: Doc['kind'];
@@ -365,22 +428,33 @@ export class AppStore {
         qa_ok: number;
       }[]
     ).map((d) => ({ kind: d.kind, format: d.format, path: d.path, sha256: d.sha256, pages: d.pages, qaOk: d.qa_ok === 1 }));
+    const keys = [top, ...dups].map((r) => r.job_key);
     const history = this.db
-      .prepare(`SELECT "from", "to", at, by FROM status_history WHERE job_key = ? ORDER BY seq`)
-      .all(jobKey) as JobDetail['history'];
-    return { ...view(row), sources, docs, history };
+      .prepare(`SELECT "from", "to", at, by FROM status_history WHERE job_key IN (${keys.map(() => '?').join(', ')}) ORDER BY at, seq`)
+      .all(...keys) as JobDetail['history'];
+    return { ...view(row, top, dups), sources: [{ source: row.source, sourceId: row.source_id }], docs, history };
   }
 
   /**
    * Comp-first (spec §7): disclosed comp at or above the floor by max INR desc, then undisclosed, then review; within
    * each band by score desc (no score last), then first_seen desc, then job key, a total order. Rejected and
-   * below-floor jobs follow in that band order only when `filter.band` names them.
+   * below-floor jobs follow in that band order only when `filter.band` names them; duplicate listings only when
+   * `filter.duplicates` is set.
    */
   listJobs(filter: JobFilter = {}): JobView[] {
     const bands = new Set(filter.band ?? DEFAULT_BANDS);
     const statuses = filter.status === undefined ? undefined : new Set<string>(filter.status);
     const text = filter.text?.toLowerCase();
-    const rows = (this.db.prepare(`SELECT * FROM jobs`).all() as JobRowDb[]).map((r) => view(r, filter.floorInr));
+    const all = this.db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all() as JobRowDb[];
+    const byKey = new Map(all.map((r) => [r.job_key, r]));
+    const dupsOf = new Map<string, JobRowDb[]>();
+    for (const r of all) if (r.duplicate_of !== null) dupsOf.set(r.duplicate_of, [...(dupsOf.get(r.duplicate_of) ?? []), r]);
+    const rows = all
+      .filter((r) => filter.duplicates === true || r.duplicate_of === null)
+      .map((r) => {
+        const top = r.duplicate_of === null ? r : (byKey.get(r.duplicate_of) as JobRowDb);
+        return view(r, top, dupsOf.get(top.job_key) ?? [], filter.floorInr);
+      });
     return rows
       .filter((j) => bands.has(j.band))
       .filter((j) => statuses === undefined || statuses.has(j.status))
@@ -432,6 +506,11 @@ export class AppStore {
   }
 }
 
+/** The furthest status in a group (STATUS_PRECEDENCE); the preferred row (first) wins a tie. */
+function groupStatus(rows: readonly JobRowDb[]): JobStatus {
+  return rows.reduce((best, r) => (STATUS_PRECEDENCE[r.status] > STATUS_PRECEDENCE[best] ? r.status : best), (rows[0] as JobRowDb).status);
+}
+
 function bandOf(r: JobRowDb, floorInr: number | undefined): Band {
   if (r.verdict === 'rejected') return 'rejected';
   if (r.docs_state === 'below-floor') return 'below-floor';
@@ -442,9 +521,17 @@ function bandOf(r: JobRowDb, floorInr: number | undefined): Band {
   return 'review';
 }
 
-function view(r: JobRowDb, floorInr?: number): JobView {
+/** One row as shown: its own run-owned columns, and the group's (`top` plus `dups`) user-owned ones. */
+function view(r: JobRowDb, top: JobRowDb, dups: readonly JobRowDb[], floorInr?: number): JobView {
+  const group = [top, ...dups];
+  const notes = [...new Set(group.map((g) => g.note).filter((n) => n !== ''))];
   return {
     jobKey: r.job_key,
+    dedupeKey: r.dedupe_key,
+    source: r.source,
+    sourceId: r.source_id,
+    duplicateOf: r.duplicate_of,
+    alsoListedOn: r.duplicate_of === null ? [...new Set(dups.map((d) => d.source))].sort() : [],
     company: r.company,
     title: r.title,
     url: r.url,
@@ -468,9 +555,9 @@ function view(r: JobRowDb, floorInr?: number): JobView {
     postedAt: r.posted_at,
     firstSeen: r.first_seen,
     lastSeen: r.last_seen,
-    status: r.status,
-    note: r.note,
-    appliedAt: r.applied_at,
+    status: groupStatus(group),
+    note: notes.join(' | '),
+    appliedAt: group.find((g) => g.applied_at !== null)?.applied_at ?? null,
     band: bandOf(r, floorInr),
   };
 }

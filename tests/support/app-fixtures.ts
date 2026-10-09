@@ -7,6 +7,7 @@ export const LATER = '2026-10-10T01:30:00.000Z';
 export function jobRow(over: Partial<JobUpsert> = {}): JobUpsert {
   return {
     jobKey: '0123456789abcdef',
+    dedupeKey: 'dddddddddddddddd',
     source: 'greenhouse',
     sourceId: '1001',
     company: 'Acme Robotics',

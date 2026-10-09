@@ -274,7 +274,7 @@ export function splitTitle(title: string): { title: string; places: string[] } {
 /**
  * The title's comparison form: NFKC, lowercase, whitespace collapsed, gender markers removed, a trailing full stop
  * removed, and trailing parentheses that only name places or a work arrangement ("(Remote)", "(India)",
- * "(Remote - India)") removed. Other parentheses ("(YDB Team)") are part of the title. `jobKey` moves the removed
+ * "(Remote - India)") removed. Other parentheses ("(YDB Team)") are part of the title. `dedupeKey` moves the removed
  * places into the location part, so "Engineer (US)" and "Engineer (India)" stay distinct.
  */
 export const normTitle = (title: string): string => splitTitle(title).title;
@@ -303,10 +303,20 @@ export function normLocation(location: string): string {
 }
 
 /**
- * `sha256(company | normTitle | normLocation)`, first 16 hex chars. The company is trimmed, whitespace-collapsed and
- * lower-cased; the places taken out of the title join the location parts.
+ * The posting's identity: `sha256(source | sourceId)`, first 16 hex chars. Stable for one posting across days (a
+ * re-emitted posting is a newer version of the same job) and unique per posting, so two postings of one title at one
+ * company stay two jobs with two document folders.
  */
-export function jobKey(company: string, title: string, location: string): string {
+export function jobKey(source: string, sourceId: string): string {
+  return sha256Hex(`${source}|${sourceId}`).slice(0, 16);
+}
+
+/**
+ * The cross-source duplicate key: `sha256(company | normTitle | normLocation)`, first 16 hex chars. The company is
+ * trimmed, whitespace-collapsed and lower-cased; the places taken out of the title join the location parts. Used only
+ * to link one job listed on two sources (a Greenhouse posting also on a feed); never an identity.
+ */
+export function dedupeKey(company: string, title: string, location: string): string {
   const t = splitTitle(title);
   return sha256Hex(`${collapse(company).toLowerCase()}|${t.title}|${normLocation([location, ...t.places].join(', '))}`).slice(0, 16);
 }

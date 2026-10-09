@@ -2,6 +2,10 @@
  * The app catalogue's tables (spec §6). They live in the kernel's DB file but are the app's own: the app keeps its
  * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never touch a kernel table.
  * Each entry is applied once, in order, in its own transaction, by `AppStore`.
+ *
+ * A job is one posting: `job_key` is `jobKey(source, sourceId)`, and `job_sources` holds that one pair (kept for
+ * spec §6 and the lookup by source id). `dedupe_key` links one job listed on several sources: a non-preferred listing
+ * points at the preferred row through `duplicate_of`.
  */
 export const JOB_STATUSES = ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped'] as const;
 export const DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none'] as const;
@@ -12,6 +16,10 @@ export const APP_MIGRATIONS: readonly string[] = [
   `
   CREATE TABLE jobs (
     job_key TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    dedupe_key TEXT NOT NULL,
+    duplicate_of TEXT REFERENCES jobs (job_key),
     company TEXT NOT NULL,
     title TEXT NOT NULL,
     url TEXT NOT NULL,
@@ -37,8 +45,10 @@ export const APP_MIGRATIONS: readonly string[] = [
     last_seen TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'new' CHECK (status IN (${list(JOB_STATUSES)})),
     note TEXT NOT NULL DEFAULT '',
-    applied_at TEXT
+    applied_at TEXT,
+    UNIQUE (source, source_id)
   );
+  CREATE INDEX jobs_by_dedupe_key ON jobs (dedupe_key);
   CREATE TABLE job_sources (
     job_key TEXT NOT NULL REFERENCES jobs (job_key),
     source TEXT NOT NULL,

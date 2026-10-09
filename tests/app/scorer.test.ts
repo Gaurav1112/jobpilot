@@ -17,6 +17,7 @@ const frozen = freezePack(pack);
 
 const posting = (over: Partial<Posting> = {}): Posting => ({
   jobKey: '0123456789abcdef',
+  dedupeKey: 'fedcba9876543210',
   source: 'lever',
   sourceId: 's1',
   company: 'Example Lever Co',

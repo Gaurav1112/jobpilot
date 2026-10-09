@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { decodeEntities, htmlToText } from '../../src/app/text/html.js';
-import { countriesIn, jobKey, normLocation, normTitle, postedAtOf, remoteTextSignals, yearsRequired } from '../../src/app/text/norm.js';
+import { countriesIn, dedupeKey, jobKey, normLocation, normTitle, postedAtOf, remoteTextSignals, yearsRequired } from '../../src/app/text/norm.js';
 import { normalize, normalizer } from '../../src/app/agents/normalizer.js';
 import { ashbyParse } from '../../src/app/agents/sources/ashby.js';
 import { greenhouseParse } from '../../src/app/agents/sources/greenhouse.js';
@@ -154,18 +154,31 @@ describe('normLocation', () => {
   });
 });
 
-describe('jobKey', () => {
+describe('jobKey (fix round 1 of Task 8: the posting identity)', () => {
+  it('is the first 16 hex chars of sha256(source|sourceId)', () => {
+    expect(jobKey('greenhouse', '8638232002')).toBe(hex16('greenhouse|8638232002'));
+    expect(jobKey('careers', 'abcdef0123456789')).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('separates postings of one title at one company, and one id at two sources', () => {
+    expect(jobKey('greenhouse', '1')).not.toBe(jobKey('greenhouse', '2'));
+    expect(jobKey('greenhouse', '1')).not.toBe(jobKey('lever', '1'));
+    expect(jobKey('greenhouse', '1')).toBe(jobKey('greenhouse', '1'));
+  });
+});
+
+describe('dedupeKey', () => {
   it('is the first 16 hex chars of sha256(company|normTitle|normLocation)', () => {
-    expect(jobKey('Acme', 'Backend Engineer (m/f/d)', 'Remote, India')).toBe(hex16('acme|backend engineer|india, remote'));
-    expect(jobKey('Acme', 'Backend Engineer', 'Remote, India')).toMatch(/^[0-9a-f]{16}$/);
+    expect(dedupeKey('Acme', 'Backend Engineer (m/f/d)', 'Remote, India')).toBe(hex16('acme|backend engineer|india, remote'));
+    expect(dedupeKey('Acme', 'Backend Engineer', 'Remote, India')).toMatch(/^[0-9a-f]{16}$/);
   });
 
   it('is stable across casing, spacing, suffixes and location order', () => {
-    const k = jobKey('Acme', 'Backend Engineer', 'Remote, India');
-    expect(jobKey('ACME', '  backend   ENGINEER (Remote) ', 'India (Remote)')).toBe(k);
-    expect(jobKey('Acme', 'Frontend Engineer', 'Remote, India')).not.toBe(k);
-    expect(jobKey('Acme', 'Backend Engineer', 'Remote, Canada')).not.toBe(k);
-    expect(jobKey('Acme2', 'Backend Engineer', 'Remote, India')).not.toBe(k);
+    const k = dedupeKey('Acme', 'Backend Engineer', 'Remote, India');
+    expect(dedupeKey('ACME', '  backend   ENGINEER (Remote) ', 'India (Remote)')).toBe(k);
+    expect(dedupeKey('Acme', 'Frontend Engineer', 'Remote, India')).not.toBe(k);
+    expect(dedupeKey('Acme', 'Backend Engineer', 'Remote, Canada')).not.toBe(k);
+    expect(dedupeKey('Acme2', 'Backend Engineer', 'Remote, India')).not.toBe(k);
   });
 });
 
@@ -323,7 +336,8 @@ describe('normalizer contract', () => {
 describe('greenhouse', () => {
   it('maps the full posting (pay_input_ranges in cents, double-escaped content)', () => {
     expect(one(byId(gh, '8638232002'))).toEqual({
-      jobKey: hex16('gitlab|ai transformation owner, cro|remote, united states'),
+      jobKey: hex16('greenhouse|8638232002'),
+      dedupeKey: hex16('gitlab|ai transformation owner, cro|remote, united states'),
       source: 'greenhouse', sourceId: '8638232002', company: 'GitLab', slug: 'gitlab', ats: 'greenhouse',
       title: 'AI Transformation Owner, CRO',
       url: 'https://job-boards.greenhouse.io/gitlab/jobs/8638232002',
@@ -391,7 +405,8 @@ describe('greenhouse', () => {
 describe('lever', () => {
   it('maps the full posting (remote India)', () => {
     expect(one(byId(lv, 'a89d4ff8-b50b-4e56-9b74-0823d2751c66'))).toEqual({
-      jobKey: hex16('veeva|netsuite developer|hyderabad, india'),
+      jobKey: hex16('lever|a89d4ff8-b50b-4e56-9b74-0823d2751c66'),
+      dedupeKey: hex16('veeva|netsuite developer|hyderabad, india'),
       source: 'lever', sourceId: 'a89d4ff8-b50b-4e56-9b74-0823d2751c66', company: 'Veeva', slug: 'veeva', ats: 'lever',
       title: 'NetSuite Developer',
       url: 'https://jobs.lever.co/veeva/a89d4ff8-b50b-4e56-9b74-0823d2751c66',
@@ -465,7 +480,8 @@ describe('lever', () => {
 describe('ashby', () => {
   it('maps the full posting (remote India by text, no compensation)', () => {
     expect(one(byId(ab, '0b2a4106-7f01-4205-813d-81e4fa1abdb4'))).toEqual({
-      jobKey: hex16('confluent|staff software engineer i - sre|in remote india'),
+      jobKey: hex16('ashby|0b2a4106-7f01-4205-813d-81e4fa1abdb4'),
+      dedupeKey: hex16('confluent|staff software engineer i - sre|in remote india'),
       source: 'ashby', sourceId: '0b2a4106-7f01-4205-813d-81e4fa1abdb4', company: 'Confluent', slug: 'confluent', ats: 'ashby',
       title: 'Staff Software Engineer I - SRE',
       url: 'https://jobs.ashbyhq.com/confluent/0b2a4106-7f01-4205-813d-81e4fa1abdb4',
@@ -522,7 +538,8 @@ describe('himalayas', () => {
   it('maps the full posting (India restriction, remote-only feed)', () => {
     const p = byId(hm, 'https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693');
     expect(one(p)).toEqual({
-      jobKey: hex16('jitterbit|java software engineer - connectors - remote|india'),
+      jobKey: hex16('himalayas|https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693'),
+      dedupeKey: hex16('jitterbit|java software engineer - connectors - remote|india'),
       source: 'himalayas', sourceId: 'https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693',
       company: 'Jitterbit', slug: 'himalayas', ats: 'feed',
       title: 'Java Software Engineer - Connectors - Remote',
@@ -567,7 +584,8 @@ describe('himalayas', () => {
 describe('jobicy', () => {
   it('maps the full posting (Anywhere, yearly USD salary)', () => {
     expect(one(byId(jbAny, '152574'))).toEqual({
-      jobKey: hex16('relationalai|solution engineer|anywhere'),
+      jobKey: hex16('jobicy|152574'),
+      dedupeKey: hex16('relationalai|solution engineer|anywhere'),
       source: 'jobicy', sourceId: '152574', company: 'RelationalAI', slug: 'jobicy', ats: 'feed',
       title: 'Solution Engineer',
       url: 'https://jobicy.com/jobs/152574-solution-engineer-3',
@@ -601,7 +619,8 @@ describe('jobicy', () => {
 describe('careers', () => {
   it('maps the full JSON-LD posting (TELECOMMUTE, Country object, yearly baseSalary)', () => {
     expect(one(careersJsonLd())).toEqual({
-      jobKey: hex16('example careers co|senior backend engineer|india'),
+      jobKey: hex16('careers|abcdef0123456789'),
+      dedupeKey: hex16('example careers co|senior backend engineer|india'),
       source: 'careers', sourceId: 'abcdef0123456789', company: 'Example Careers Co', slug: 'example-careers', ats: 'careers',
       title: 'Senior Backend Engineer',
       url: 'https://careers.example/jobs/backend-engineer',
@@ -965,19 +984,19 @@ describe('fix round 1: yearsRequired (I7, widened)', () => {
   });
 });
 
-describe('fix round 1: jobKey keeps title places (I8, M7)', () => {
+describe('fix round 1: dedupeKey keeps title places (I8, M7)', () => {
   it('gives US and India variants of one title different keys', () => {
-    expect(jobKey('Acme', 'Software Engineer (US)', 'Remote')).not.toBe(jobKey('Acme', 'Software Engineer (India)', 'Remote'));
-    expect(jobKey('Acme', 'Backend Engineer (Remote)', 'Bengaluru')).not.toBe(jobKey('Acme', 'Backend Engineer (Hybrid)', 'Bengaluru'));
+    expect(dedupeKey('Acme', 'Software Engineer (US)', 'Remote')).not.toBe(dedupeKey('Acme', 'Software Engineer (India)', 'Remote'));
+    expect(dedupeKey('Acme', 'Backend Engineer (Remote)', 'Bengaluru')).not.toBe(dedupeKey('Acme', 'Backend Engineer (Hybrid)', 'Bengaluru'));
   });
 
   it('still matches the place written in the title or in the location', () => {
-    expect(jobKey('Acme', 'Engineer (India)', 'Remote')).toBe(jobKey('Acme', 'Engineer', 'Remote, India'));
-    expect(jobKey('Acme', 'Engineer (India)', 'Remote')).toBe(hex16('acme|engineer|india, remote'));
+    expect(dedupeKey('Acme', 'Engineer (India)', 'Remote')).toBe(dedupeKey('Acme', 'Engineer', 'Remote, India'));
+    expect(dedupeKey('Acme', 'Engineer (India)', 'Remote')).toBe(hex16('acme|engineer|india, remote'));
   });
 
   it('trims the company, folds city aliases, ignores a trailing full stop', () => {
-    expect(jobKey(' Acme ', 'Engineer.', 'Bangalore, India')).toBe(jobKey('Acme', 'Engineer', 'Bengaluru, India'));
+    expect(dedupeKey(' Acme ', 'Engineer.', 'Bangalore, India')).toBe(dedupeKey('Acme', 'Engineer', 'Bengaluru, India'));
   });
 });
 

@@ -65,25 +65,85 @@ describe('AppStore.upsertJob', () => {
     });
   });
 
-  it('a re-emitted (source, sourceId) is a newer version of the same row, even under another job key', () => {
+  it('a re-emitted (source, sourceId) is a newer version of the same row', () => {
     const s = AppStore.on(Store.open(':memory:'));
     s.upsertJob(jobRow());
-    // A retitled career page re-emits the same sourceId; its normalised key differs.
-    const r = s.upsertJob(jobRow({ jobKey: 'fedcba9876543210', title: 'Principal Engineer', at: LATER }));
+    // A retitled career page re-emits the same sourceId, so the same job key; its dedupe key changes.
+    const r = s.upsertJob(jobRow({ dedupeKey: 'eeeeeeeeeeeeeeee', title: 'Principal Engineer', at: LATER }));
     expect(r).toEqual({ jobKey: '0123456789abcdef', inserted: false });
     expect(s.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'rejected', 'below-floor'] })).toHaveLength(1);
-    expect(s.getJob('0123456789abcdef')?.title).toBe('Principal Engineer');
-    expect(s.getJob('fedcba9876543210')).toBeUndefined();
+    expect(s.getJob('0123456789abcdef')).toMatchObject({ title: 'Principal Engineer', dedupeKey: 'eeeeeeeeeeeeeeee' });
   });
 
-  it('dedupes by job key across sources and attaches every source', () => {
+  it('refuses a known (source, sourceId) under another job key', () => {
     const s = AppStore.on(Store.open(':memory:'));
     s.upsertJob(jobRow());
-    s.upsertJob(jobRow({ source: 'himalayas', sourceId: 'https://himalayas.example.test/j/1' }));
-    expect(s.getJob('0123456789abcdef')?.sources).toEqual([
-      { source: 'greenhouse', sourceId: '1001' },
-      { source: 'himalayas', sourceId: 'https://himalayas.example.test/j/1' },
-    ]);
+    expect(() => s.upsertJob(jobRow({ jobKey: 'fedcba9876543210' }))).toThrow(/already job 0123456789abcdef/);
+  });
+});
+
+describe('AppStore cross-source duplicates (fix round 1)', () => {
+  const GH = '1111111111111111';
+  const GH2 = '2222222222222222';
+  const HM = '3333333333333333';
+  const JB = '4444444444444444';
+  const all = { band: ['disclosed', 'undisclosed', 'review', 'rejected', 'below-floor'] as const, duplicates: true };
+
+  it('keeps two postings of one title from the same source as two jobs, never linked', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: GH, sourceId: '1' }));
+    s.upsertJob(jobRow({ jobKey: GH2, sourceId: '2' }));
+    expect(s.listJobs().map((j) => [j.jobKey, j.duplicateOf])).toEqual([[GH, null], [GH2, null]]);
+  });
+
+  it('links a feed listing of an ATS job to the ATS row, whichever arrived first, and hides it by default', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', at: AT }));
+    s.upsertJob(jobRow({ jobKey: GH, source: 'greenhouse', sourceId: '1', at: LATER }));
+    expect(s.getJob(HM)?.duplicateOf).toBe(GH);
+    expect(s.getJob(GH)).toMatchObject({ duplicateOf: null, alsoListedOn: ['himalayas'] });
+    expect(s.listJobs().map((j) => j.jobKey)).toEqual([GH]);
+    expect(s.listJobs(all).map((j) => j.jobKey)).toEqual([GH, HM]);
+  });
+
+  it('between feeds, the earliest first_seen wins, then the job key', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: JB, source: 'jobicy', sourceId: 'j1', at: LATER }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', at: AT }));
+    expect(s.getJob(JB)?.duplicateOf).toBe(HM);
+    const t = AppStore.on(Store.open(':memory:'));
+    t.upsertJob(jobRow({ jobKey: JB, source: 'jobicy', sourceId: 'j1' }));
+    t.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1' }));
+    expect(t.getJob(JB)?.duplicateOf).toBe(HM);
+    expect(t.getJob(HM)?.alsoListedOn).toEqual(['jobicy']);
+  });
+
+  it('with several same-source postings in a group, a feed listing links to the preferred one only', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: GH2, sourceId: '2', at: LATER }));
+    s.upsertJob(jobRow({ jobKey: GH, sourceId: '1', at: AT }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1' }));
+    expect([GH, GH2, HM].map((k) => s.getJob(k)?.duplicateOf)).toEqual([null, null, GH]);
+  });
+
+  it('unlinks a row whose dedupe key changes', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: GH, sourceId: '1' }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1' }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', dedupeKey: 'eeeeeeeeeeeeeeee', at: LATER }));
+    expect(s.getJob(HM)?.duplicateOf).toBeNull();
+    expect(s.getJob(GH)?.alsoListedOn).toEqual([]);
+  });
+
+  it('status and note live on the preferred row; a duplicate shows them, and a write to it lands on the group', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: GH, sourceId: '1' }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1' }));
+    s.setStatus(HM, 'applied', 'user', AT);
+    s.setNote(HM, 'via the feed');
+    expect(s.getJob(GH)).toMatchObject({ status: 'applied', note: 'via the feed' });
+    expect(s.getJob(HM)).toMatchObject({ status: 'applied', note: 'via the feed' });
+    expect(s.getJob(GH)?.history).toEqual([{ from: 'new', to: 'applied', at: AT, by: 'user' }]);
   });
 });
 
