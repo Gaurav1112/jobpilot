@@ -202,11 +202,20 @@ describe('countriesIn', () => {
     expect(countriesIn('Asia')).toEqual(['asia']);
   });
 
-  it('needs whole words: tier codes and words containing a name are not countries', () => {
-    expect(countriesIn('*Job Posting Only: USA1')).toEqual([]);
+  it('needs whole words: words containing a name are not countries', () => {
     expect(countriesIn('Indiana')).toEqual([]);
     expect(countriesIn('Remote')).toEqual([]);
     expect(countriesIn('')).toEqual([]);
+  });
+
+  it('final fix I6: reads a capitalised country code glued to a tier number (USA1, US2, UK3)', () => {
+    expect(countriesIn('*Job Posting Only: USA1')).toEqual(['united states']);
+    expect(countriesIn('US2 - Remote')).toEqual(['united states']);
+    expect(countriesIn('Remote (UK3)')).toEqual(['united kingdom']);
+    // lower case, or letters around it, are not a tier code
+    expect(countriesIn('usa1')).toEqual([]);
+    expect(countriesIn('BUS1 route')).toEqual([]);
+    expect(countriesIn('USA12345')).toEqual([]);
   });
 });
 

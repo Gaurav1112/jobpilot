@@ -217,6 +217,16 @@ describe('pack import: the fictional fixtures produce a valid pack', () => {
     expect(report.warnings.join('\n')).toMatch(/1 Desk job file .*not valid JSON/);
   });
 
+  it('final fix I6: Desk boards are hiresInIndia (found as remote-India); extra entries keep the values they give', async () => {
+    const extra = join(tmp, 'extra-i6.yaml');
+    writeFileSync(extra, 'watchlist:\n  - {company: Example Lever Co, ats: lever, slug: example-lv, hiresInIndia: false, allRemote: false}\n  - {company: Hooli, ats: lever, slug: hooli, hiresInIndia: false, allRemote: true}\n');
+    await importPack(opts({ extraWatchlist: extra }));
+    const w = (y('watchlist.yaml') as { watchlist: { slug: string; hiresInIndia: boolean; allRemote: boolean }[] }).watchlist;
+    expect(w.find((e) => e.slug === 'example-lv')).toMatchObject({ hiresInIndia: false, allRemote: false });
+    expect(w.find((e) => e.slug === 'hooli')).toMatchObject({ hiresInIndia: false, allRemote: true });
+    for (const slug of ['globex', 'Umbrella', 'acmerobotics', 'gitlab']) expect(w.find((e) => e.slug === slug)?.hiresInIndia, slug).toBe(true);
+  });
+
   it('writes the v2 defaults, feeds, offers, naming and fx', async () => {
     await importPack(opts());
     expect(y('lexicon.yaml')).toEqual(DEFAULT_LEXICON);

@@ -37,8 +37,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
  *    c. eligible when: India is a country and something structured or the location or title says remote; or the
- *       watchlist entry is all-remote; or structured remote, the countries are empty or name apac, asia, south asia or
- *       worldwide, and the watchlist says hiresInIndia; or the location says remote and India.
+ *       watchlist entry is all-remote; or structured remote, the countries name apac, asia, south asia or worldwide,
+ *       and the watchlist says hiresInIndia; or the location says remote and India. Remote with no country, region or
+ *       worldwide stated is never eligible on hiresInIndia alone (final fix I6): it is review.
  *    d. otherwise, when anything says remote (structured, a signal, or the word in the title, location or
  *       description) → `review` with `remote-unclear` and the note `remote scope unclear - verify`; else `onsite`.
  *    The watchlist entry is found by (ats, slug), or by company name for a feed.
@@ -290,7 +291,9 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
   if (countries.includes('india') && remoteStated) return null;
   if (entry?.allRemote === true) return null;
-  if (structured === 'remote' && (countries.length === 0 || countries.some((c) => INDIA_REGIONS.has(c))) && entry?.hiresInIndia === true) return null;
+  // Final fix I6: hiresInIndia upgrades only a stated region with India (apac, asia, south asia, worldwide). Remote with
+  // no country, region or worldwide at all is unclear (a US-only role often states none) and goes to review below.
+  if (structured === 'remote' && countries.some((c) => INDIA_REGIONS.has(c)) && entry?.hiresInIndia === true) return null;
   if (REMOTE_WORD.test(p.locationText) && /india/i.test(p.locationText)) return null;
 
   const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);

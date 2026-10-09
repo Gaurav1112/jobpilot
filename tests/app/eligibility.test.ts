@@ -273,12 +273,31 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ remote: remote(null, ['india'], ['location:remote']), locationText: 'IN Remote India' })).toEqual(ELIGIBLE_UNDISCLOSED);
     // all-remote watchlist company (lever example-lv), even with a city and nothing saying remote
     expect(decide({ ats: 'lever', slug: 'example-lv', locationText: 'Bengaluru', remote: remote(null, ['india']) })).toEqual(ELIGIBLE_UNDISCLOSED);
-    // hiresInIndia (greenhouse example-gh) with APAC, Asia, South Asia, worldwide or no country restriction
-    for (const c of [['apac'], ['asia'], ['south asia'], ['worldwide'], []]) {
+    // hiresInIndia (greenhouse example-gh) with APAC, Asia, South Asia or worldwide (final fix I6: no longer with no
+    // country at all, which is review)
+    for (const c of [['apac'], ['asia'], ['south asia'], ['worldwide']]) {
       expect(decide({ slug: 'example-gh', remote: remote('remote', c), locationText: 'Remote' }), c.join()).toEqual(ELIGIBLE_UNDISCLOSED);
     }
     // feeds look the watchlist up by company
     expect(decide({ ats: 'feed', source: 'himalayas', slug: 'himalayas', company: 'example greenhouse co', remote: remote('remote', ['worldwide']) })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('final fix I6: remote with no country, region or worldwide is review whatever hiresInIndia says, unless allRemote', () => {
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    // hiresInIndia (greenhouse example-gh): structured remote, plain remote location, and the Confluent USA1 shape
+    expect(decide({ slug: 'example-gh', remote: remote('remote', []), locationText: 'Remote' })).toEqual(review);
+    expect(decide({ slug: 'example-gh', remote: remote(null, [], ['location:remote']), locationText: 'Remote' })).toEqual(review);
+    expect(decide({ slug: 'example-gh', remote: remote('remote', [], ['workplaceType:Remote', 'isRemote:true']), locationText: '*Job Posting Only: USA1' })).toEqual(review);
+    // hiresInIndia still upgrades structured remote with worldwide, APAC or Asia
+    for (const c of [['worldwide'], ['apac'], ['asia']]) expect(decide({ slug: 'example-gh', remote: remote('remote', c), locationText: 'Remote' }), c.join()).toEqual(ELIGIBLE_UNDISCLOSED);
+    // an all-remote company (lever example-lv) stays eligible with no country
+    expect(decide({ ats: 'lever', slug: 'example-lv', remote: remote('remote', []), locationText: 'Remote' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // the Confluent posting through the normalizer: USA1 is the United States, so a hiresInIndia board does not rescue it
+    const confluent = normalize({
+      source: 'ashby', sourceId: 'c1', company: 'Example Greenhouse Co', slug: 'example-gh',
+      raw: { id: 'c1', title: 'Senior Software Engineer', jobUrl: 'https://jobs.ashbyhq.com/x/c1', location: '*Job Posting Only: USA1', isRemote: true, workplaceType: 'Remote', employmentType: 'FullTime', descriptionPlain: 'Build storage.' },
+    });
+    expect(confluent.remote.countries).toEqual(['united states']);
   });
 
   it('5.4 remote but unclear: review with the fixed note; nothing remote: onsite', () => {
