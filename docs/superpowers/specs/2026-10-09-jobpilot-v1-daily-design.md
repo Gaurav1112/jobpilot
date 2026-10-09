@@ -101,7 +101,7 @@ Teams and agents (each has one skill, one output type and one contract):
 
 | Team | Agent | Kind | Output |
 |---|---|---|---|
-| sourcing | `src-greenhouse`, `src-lever`, `src-ashby`, one per feed confirmed by research | io | RawPosting@1 |
+| sourcing | `src-greenhouse`, `src-lever`, `src-ashby`, `src-himalayas`, `src-jobicy`, `src-careers` (Playwright, read-only, for career sites without an API) | io | RawPosting@1 |
 | understanding | `normalizer` | det | Posting@1 |
 | evaluation | `eligibility`, `scorer-lexicon` | det | Eligible@1 / Rejected@1, Scored@1 |
 | writing | `evidence-matcher`, `resume-planner`, `cover-writer`, `renderer`, `qa-gate` | det | as above |
