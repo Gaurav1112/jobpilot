@@ -315,3 +315,47 @@ describe('AppStore.listJobs comp-first sort (spec §7)', () => {
     expect(s.listJobs({ text: '100%_' })).toEqual([]);
   });
 });
+
+describe('AppStore: Task 13 additions (dashboard)', () => {
+  it('keeps the plan\'s unplaced fact ids as a run-owned column (default empty)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow());
+    expect(s.getJob('0123456789abcdef')?.unplaced).toEqual([]);
+    s.upsertJob(jobRow({ unplaced: ['f-old-01', 'f-old-02'], at: LATER }));
+    expect(s.getJob('0123456789abcdef')?.unplaced).toEqual(['f-old-01', 'f-old-02']);
+    expect(s.listJobs()[0]?.unplaced).toEqual(['f-old-01', 'f-old-02']);
+  });
+
+  it('setStatus to applied stamps applied_at once on the whole group', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow());
+    s.setStatus('0123456789abcdef', 'applied', 'user', AT);
+    expect(s.getJob('0123456789abcdef')?.appliedAt).toBe(AT);
+    s.setStatus('0123456789abcdef', 'interview', 'user', LATER);
+    s.setStatus('0123456789abcdef', 'applied', 'user', LATER);
+    expect(s.getJob('0123456789abcdef')?.appliedAt).toBe(AT);
+  });
+
+  it('records applied snapshots, one set per job and day, append-only', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow());
+    const files = [
+      { kind: 'resume' as const, format: 'pdf' as const, path: '0123456789abcdef/applied-2026-10-09/resume.pdf', sha256: 'a'.repeat(64) },
+      { kind: 'cover' as const, format: 'pdf' as const, path: '0123456789abcdef/applied-2026-10-09/cover.pdf', sha256: 'b'.repeat(64) },
+    ];
+    expect(s.hasSnapshot('0123456789abcdef', '2026-10-09')).toBe(false);
+    s.putSnapshot('0123456789abcdef', '2026-10-09', files, AT);
+    expect(s.hasSnapshot('0123456789abcdef', '2026-10-09')).toBe(true);
+    expect(s.snapshots('0123456789abcdef')).toEqual([{ day: '2026-10-09', at: AT, files: [files[1], files[0]] }]);
+    expect(() => s.putSnapshot('0123456789abcdef', '2026-10-09', files, LATER)).toThrow();
+    expect(() => s.kernel.db.prepare(`DELETE FROM job_snapshots`).run()).toThrow(/append-only/);
+    expect(() => s.kernel.db.prepare(`UPDATE job_snapshots SET sha256 = 'x'`).run()).toThrow(/append-only/);
+  });
+
+  it('lists the status history of many jobs at once, for the jobs list', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow());
+    s.setStatus('0123456789abcdef', 'applied', 'user', AT);
+    expect(s.histories(['0123456789abcdef', 'ffffffffffffffff'])).toEqual({ '0123456789abcdef': [{ from: 'new', to: 'applied', at: AT, by: 'user' }] });
+  });
+});

@@ -432,3 +432,15 @@ describe('projector: documents on disk (Task 10 fix round 1, replay safety)', ()
     expect(app.getJob(posting(10).jobKey)).toMatchObject({ docsState: 'blocked', docsDetail: 'renderer failed: input_rejected (G-NAMING: forbidden term #1)' });
   });
 });
+
+describe('projector: the plan\'s unplaced facts (Task 13)', () => {
+  it('stores the resume plan\'s unplaced fact ids on the job row', () => {
+    const b = new RunBuilder();
+    const app = AppStore.on(b.store);
+    const p = posting(7);
+    const sc = b.chain(p, 'eligible', 80);
+    b.done('resume-planner', sc, [{ type: 'ResumePlan@1', payload: { jobKey: p.jobKey, unplaced: ['f-old-02', 'f-old-01'], covered: ['java'], missing: ['go'] } }]);
+    projectRun(b.store, app, RUN, OPTS);
+    expect(app.getJob(p.jobKey)).toMatchObject({ unplaced: ['f-old-01', 'f-old-02'], terms: { covered: ['java'], missing: ['go'] } });
+  });
+});

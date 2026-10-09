@@ -25,6 +25,7 @@ import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
+import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -402,6 +403,22 @@ docs
       const summary = await rebuildDocs({ home: jobpilotHome(), clock: systemClock });
       console.log(formatSummary(summary));
       if (summary.exitCode !== 0) process.exitCode = summary.exitCode;
+    }),
+  );
+
+program
+  .command('serve')
+  .description('Serve the dashboard on http://127.0.0.1:<port> (this machine only)')
+  .option('--port <n>', 'port to listen on', String(DEFAULT_PORT))
+  .action((o: { port: string }) =>
+    guarded(() => {
+      const port = /^\d{1,5}$/.test(o.port) ? Number(o.port) : Number.NaN;
+      if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be a number from 1 to 65535');
+      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+      server.on('error', (e) => {
+        console.error(`error: ${e.message}`);
+        process.exit(1);
+      });
     }),
   );
 

@@ -1,0 +1,190 @@
+import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
+import { dateText, scoreText } from '../format.js';
+import { externalUrl, html, type Html } from '../html.js';
+import { breakdownText, docsReason, reasonText } from '../copy.js';
+import { bandPill, compCell, csrfField, docsPill, pill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+
+export interface Recommended {
+  readonly format: 'pdf' | 'docx';
+  /** "Greenhouse", "Workday", "Most applicant systems". */
+  readonly atsName: string;
+}
+
+export interface JobPageData {
+  readonly job: JobDetail;
+  readonly csrf: string;
+  readonly snapshots: readonly Snapshot[];
+  /** Screening answers from the pack, as label and value; null when the pack could not be read. */
+  readonly answers: readonly (readonly [string, string])[] | null;
+  /** A lexicon key's display name. */
+  readonly display: (key: string) => string;
+  readonly recommended: Recommended;
+  /** The preferred listing, when this row is another listing of it. */
+  readonly preferred: { readonly jobKey: string; readonly source: string } | null;
+  readonly istDay: (iso: string) => string;
+  /** A one-off message after a status change (a snapshot that could not be made). */
+  readonly flash?: string;
+}
+
+const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
+const KIND_NAME = { resume: 'Resume', cover: 'Cover letter' } as const;
+
+function header(j: JobDetail): Html {
+  const url = externalUrl(j.url);
+  return html`<header class="job-head">
+<p class="crumbs"><a href="/">Jobs</a></p>
+<h1>${j.title}</h1>
+<p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span><span class="sep" aria-hidden="true">·</span><span>via ${j.source}${j.ats !== j.source ? html` (${j.ats})` : ''}</span></p>
+<div class="head-facts">
+<div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
+<div class="fact-box"><span class="label">Fit score</span><span class="big num">${j.score === null ? '–' : scoreText(j.score)}</span></div>
+<div class="fact-box"><span class="label">Band</span>${bandPill(j.band)}</div>
+<div class="fact-box"><span class="label">Where</span>${remotePill(j.remote)}</div>
+</div>
+${url !== undefined ? html`<p><a class="btn" href="${url}" rel="noopener noreferrer" target="_blank">Open the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>` : ''}
+</header>`;
+}
+
+function duplicates(j: JobDetail, preferred: JobPageData['preferred']): Html | '' {
+  if (preferred !== null) {
+    return html`<p class="note">This is another listing of <a href="/jobs/${preferred.jobKey}">the same job on ${preferred.source}</a>; status and note are shared.</p>`;
+  }
+  if (j.alsoListedOn.length === 0) return '';
+  return html`<p class="note">Also listed on ${j.alsoListedOn.join(', ')}. Status and note are shared across the listings.</p>`;
+}
+
+function whyMatched(j: JobDetail, display: (k: string) => string): Html {
+  if (j.breakdown === null || j.breakdown.length === 0) {
+    return html`<section class="card" aria-labelledby="why"><h2 id="why">Why it matched</h2><p class="muted">Not scored: ${j.verdict === 'rejected' ? 'this job is not eligible.' : 'no run has scored it yet.'}</p></section>`;
+  }
+  return html`<section class="card" aria-labelledby="why"><h2 id="why">Why it matched</h2>
+<div class="table-wrap"><table class="breakdown">
+<thead><tr><th scope="col">What counted</th><th scope="col" class="num">Points</th></tr></thead>
+<tbody>${j.breakdown.map(
+    (b) => html`<tr${b.points < 0 ? html` class="neg"` : ''}><td>${breakdownText(b.label, display)}</td><td class="num">${b.points > 0 ? '+' : ''}${scoreText(b.points)}</td></tr>`,
+  )}</tbody>
+<tfoot><tr><th scope="row">Score</th><td class="num">${j.score === null ? '–' : scoreText(j.score)}</td></tr></tfoot>
+</table></div></section>`;
+}
+
+function eligibility(j: JobDetail): Html {
+  const verdict = j.verdict === 'eligible' ? pill('Eligible', 'good') : j.verdict === 'review' ? pill('Needs a look', 'warn') : j.verdict === 'rejected' ? pill('Not eligible', 'critical') : pill('Not assessed yet', 'muted');
+  return html`<section class="card" aria-labelledby="elig"><h2 id="elig">Eligibility</h2>
+<p>${verdict}</p>
+${j.reasons.length > 0 ? html`<ul class="plain">${j.reasons.map((r) => html`<li>${reasonText(r)} <code>${r}</code></li>`)}</ul>` : ''}
+${j.notes.length > 0 ? html`<ul class="plain notes">${j.notes.map((n) => html`<li>${n}</li>`)}</ul>` : ''}
+${j.reasons.length === 0 && j.notes.length === 0 ? html`<p class="muted">Nothing to flag.</p>` : ''}
+</section>`;
+}
+
+function downloads(j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Html {
+  const files = j.docs.filter((d) => d.kind === kind && d.format !== 'html').sort((a, b) => Number(b.format === rec.format) - Number(a.format === rec.format));
+  return html`<div class="downloads">${files.map((d) => {
+    const isRec = d.format === rec.format;
+    return html`<a class="btn${isRec ? ' btn-primary' : ''}" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}${isRec ? html` <span class="rec">recommended</span>` : ''}</a>`;
+  })}</div>`;
+}
+
+function preview(j: JobDetail, kind: 'resume' | 'cover'): Html {
+  const h = j.docs.find((d) => d.kind === kind && d.format === 'html');
+  if (!h) return html`<p class="muted">No preview for this document.</p>`;
+  return html`<iframe class="preview preview-${kind}" sandbox="" src="/jobs/${j.jobKey}/files/${h.kind}.${h.format}" title="${KIND_NAME[kind]} preview" referrerpolicy="no-referrer"></iframe>`;
+}
+
+function terms(j: JobDetail, display: (k: string) => string): Html | '' {
+  if (j.terms === null) return '';
+  const list = (xs: readonly string[], tone: 'good' | 'muted') =>
+    xs.length === 0 ? html`<span class="muted">none</span>` : html`${xs.map((t) => html`<span class="term term-${tone}">${display(t)}</span>`)}`;
+  return html`<div class="terms">
+<div><h3>Covered by your facts</h3><p class="term-list">${list(j.terms.covered, 'good')}</p></div>
+<div><h3>Missing</h3><p class="term-list">${list(j.terms.missing, 'muted')}</p><p class="hint">Missing terms are never added to your resume. Only facts from your pack are used.</p></div>
+</div>`;
+}
+
+function documents(d: JobPageData): Html {
+  const j = d.job;
+  const reason = docsReason(j);
+  const body =
+    reason !== null || j.docs.length === 0
+      ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
+      : html`<p class="hint">${d.recommended.atsName} reads ${FORMAT_NAME[d.recommended.format]} best. Hover a resume bullet to see the fact it comes from.</p>
+<div class="doc-grid">
+<div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}${preview(j, 'resume')}</div>
+<div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}${preview(j, 'cover')}</div>
+</div>`;
+  return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Documents you can send ${docsPill(j.docsState)}</h2>
+${body}
+${terms(j, d.display)}
+</section>`;
+}
+
+/** The applied snapshots: the exact files the user sent. An htmx status change swaps it out of band. */
+export function sentSection(j: Pick<JobDetail, 'jobKey'>, snapshots: readonly Snapshot[], istDay: (iso: string) => string, oob = false): Html {
+  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${snapshots.length === 0 ? html` hidden` : ''}>
+<h2 id="sent-h">Documents you sent</h2>
+${snapshots.map(
+  (s) => html`<div class="sent"><h3>Applied ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p><ul class="plain sent-files">${s.files.map(
+    (f) =>
+      html`<li><a href="/jobs/${j.jobKey}/sent/${s.day}/${f.kind}.${f.format}"${f.format === 'html' ? '' : html` download`}>${KIND_NAME[f.kind]} · ${FORMAT_NAME[f.format]}</a>${
+        f.format === 'html' ? html` <span class="muted">(preview)</span>` : ''
+      }</li>`,
+  )}</ul></div>`,
+)}
+</section>`;
+}
+
+/** The status block: the current status, a button per status, and any message. Returned alone to htmx. */
+export function statusSection(j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history'>, csrf: string, istDay: (iso: string) => string, flash?: string): Html {
+  const last = j.history.at(-1);
+  return html`<section id="status" class="card" aria-labelledby="status-h">
+<h2 id="status-h">Your status ${statusPill(j.status)}</h2>
+${j.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(j.appliedAt))}</p>` : ''}
+<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML">
+${csrfField(csrf)}
+<div class="btn-row">${STATUSES.map(
+    (s: JobStatus) => html`<button class="btn${s === j.status ? ' btn-current' : ''}" name="to" value="${s}"${s === j.status ? html` aria-pressed="true"` : html` aria-pressed="false"`}>${STATUS_LABEL[s]}</button>`,
+  )}</div>
+</form>
+${flash !== undefined ? html`<p class="flash" role="status">${flash}</p>` : ''}
+${last !== undefined ? html`<p class="hint">Last change: ${last.from === null ? '' : html`${STATUS_LABEL[last.from]} → `}${STATUS_LABEL[last.to]} on ${dateText(istDay(last.at))}${last.by === 'migration' ? ' (from your Application Desk)' : ''}</p>` : ''}
+</section>`;
+}
+
+export function noteSection(j: Pick<JobDetail, 'jobKey' | 'note'>, csrf: string): Html {
+  return html`<section class="card" aria-labelledby="note-h"><h2 id="note-h">Your note</h2>
+<form method="post" action="/jobs/${j.jobKey}/note" hx-post="/jobs/${j.jobKey}/note" hx-target="#note-saved" hx-swap="innerHTML">
+${csrfField(csrf)}
+<label class="visually-hidden" for="note">Note</label>
+<textarea id="note" name="note" rows="4" maxlength="4000">${j.note}</textarea>
+<div class="btn-row"><button class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
+</form></section>`;
+}
+
+function answers(a: JobPageData['answers']): Html {
+  return html`<section class="card" aria-labelledby="ans"><h2 id="ans">Screening answers</h2>
+${
+  a === null
+    ? html`<p class="muted">Your pack could not be read, so the answers are not shown.</p>`
+    : a.length === 0
+      ? html`<p class="muted">No answers in answers.yaml yet.</p>`
+      : html`<p class="hint">From your answers.yaml, to copy into the application form. They never go into your documents.</p><dl class="answers">${a.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`
+}
+</section>`;
+}
+
+export function jobBody(d: JobPageData): Html {
+  const j = d.job;
+  return html`${header(j)}
+${duplicates(j, d.preferred)}
+<div class="job-grid">
+${documents(d)}
+${sentSection(j, d.snapshots, d.istDay)}
+${whyMatched(j, d.display)}
+${eligibility(j)}
+${statusSection(j, d.csrf, d.istDay, d.flash)}
+${noteSection(j, d.csrf)}
+${answers(d.answers)}
+<section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>
+<details><summary>Show the full text</summary><div class="jd">${j.jdText}</div></details></section>
+</div>`;
+}

@@ -113,4 +113,21 @@ export const APP_MIGRATIONS: readonly string[] = [
   ALTER TABLE jobs ADD COLUMN notified_at TEXT;
   UPDATE jobs SET notified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE notified_at IS NULL;
   `,
+  // Task 13 (dashboard): the resume plan's unplaced fact ids (facts dated inside no role), and the applied snapshots:
+  // the exact files the user sent, copied read-only into <jobKey>/applied-<day>/ when the status became applied.
+  `
+  ALTER TABLE jobs ADD COLUMN unplaced TEXT NOT NULL DEFAULT '[]';
+  CREATE TABLE job_snapshots (
+    job_key TEXT NOT NULL REFERENCES jobs (job_key),
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('resume', 'cover')),
+    format TEXT NOT NULL CHECK (format IN ('pdf', 'docx', 'html')),
+    path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (job_key, day, kind, format)
+  );
+  CREATE TRIGGER job_snapshots_append_only_u BEFORE UPDATE ON job_snapshots BEGIN SELECT RAISE(ABORT, 'job_snapshots is append-only'); END;
+  CREATE TRIGGER job_snapshots_append_only_d BEFORE DELETE ON job_snapshots BEGIN SELECT RAISE(ABORT, 'job_snapshots is append-only'); END;
+  `,
 ];

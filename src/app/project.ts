@@ -358,6 +358,7 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
     docsState,
     docsDetail,
     postedAt: posting.postedAt,
+    unplaced: plan?.unplaced ?? [],
     at,
   };
   return { row, docs };

@@ -63,6 +63,8 @@ export interface JobUpsert {
   readonly docsState: DocsState;
   readonly docsDetail: string | null;
   readonly postedAt: string | null;
+  /** The resume plan's unplaced fact ids (citeable facts dated inside no role); default none. */
+  readonly unplaced?: readonly string[];
   /** When this posting was seen: sets last_seen, and first_seen on insert. */
   readonly at: string;
 }
@@ -106,6 +108,8 @@ export interface JobView {
   readonly docsState: DocsState;
   readonly docsDetail: string | null;
   readonly postedAt: string | null;
+  /** The resume plan's unplaced fact ids, sorted: the dashboard asks the user to fix their dates. */
+  readonly unplaced: string[];
   readonly firstSeen: string;
   readonly lastSeen: string;
   /** The group's status (see `AppStore`): a duplicate shows its preferred row's. */
@@ -123,6 +127,21 @@ export interface JobDetail extends JobView {
   /** This row's status history; a group status change is recorded on every row of the group. */
   readonly history: { from: JobStatus | null; to: JobStatus; at: string; by: 'user' | 'migration' }[];
 }
+
+/** One applied snapshot: the files the user sent on `day` (`applied-<day>/`), read-only, with their sha256. */
+export interface SnapshotFile {
+  readonly kind: Doc['kind'];
+  readonly format: Doc['format'];
+  /** Relative to the out root: `<jobKey>/applied-<day>/<kind>.<format>`. */
+  readonly path: string;
+  readonly sha256: string;
+}
+export interface Snapshot {
+  readonly day: string;
+  readonly at: string;
+  readonly files: SnapshotFile[];
+}
+export type HistoryEntry = JobDetail['history'][number];
 
 export interface JobFilter {
   readonly status?: readonly JobStatus[];
@@ -177,6 +196,7 @@ interface JobRowDb {
   docs_state: DocsState;
   docs_detail: string | null;
   posted_at: string | null;
+  unplaced: string;
   first_seen: string;
   last_seen: string;
   status: JobStatus;
@@ -193,13 +213,14 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const RUN_COLUMNS = [
   'dedupe_key', 'company', 'title', 'url', 'ats', 'location', 'remote', 'comp', 'comp_min_inr', 'comp_max_inr', 'comp_basis', 'score',
   'breakdown', 'verdict', 'reasons', 'notes', 'jd_text', 'terms', 'recommended_format', 'docs_state', 'docs_detail', 'posted_at',
+  'unplaced',
 ] as const;
 
 function runParams(r: JobUpsert): unknown[] {
   return [
     r.dedupeKey, r.company, r.title, r.url, r.ats, r.location, json(r.remote), json(r.comp ?? null), r.compMinInr, r.compMaxInr, r.compBasis,
     r.score, json(r.breakdown), r.verdict, JSON.stringify(r.reasons), JSON.stringify(r.notes), r.jdText, json(r.terms), r.recommendedFormat,
-    r.docsState, r.docsDetail, r.postedAt,
+    r.docsState, r.docsDetail, r.postedAt, JSON.stringify([...(r.unplaced ?? [])].sort()),
   ];
 }
 
@@ -411,8 +432,11 @@ export class AppStore {
       if (rows.every((r) => r.status === to)) return false;
       const shown = groupStatus(rows);
       const set = this.db.prepare(`UPDATE jobs SET status = ? WHERE job_key = ?`);
+      // The first time the group becomes applied is its applied date (a Desk import keeps its own).
+      const stamp = to === 'applied' && rows.every((r) => r.applied_at === null);
       for (const r of rows) {
         set.run(to, r.job_key);
+        if (stamp) this.db.prepare(`UPDATE jobs SET applied_at = ? WHERE job_key = ?`).run(at, r.job_key);
         if (shown !== to) this.history(r.job_key, shown, to, at, by);
       }
       return true;
@@ -531,6 +555,44 @@ export class AppStore {
       .run(s.runId, s.at, JSON.stringify(s.counts), s.packHash, s.policyHash, JSON.stringify(s.warnings ?? []), JSON.stringify(s.problems ?? []));
   }
 
+  /** Whether the job has an applied snapshot for `day` (YYYY-MM-DD). */
+  hasSnapshot(jobKey: string, day: string): boolean {
+    return this.db.prepare(`SELECT 1 FROM job_snapshots WHERE job_key = ? AND day = ? LIMIT 1`).get(jobKey, day) !== undefined;
+  }
+
+  /** Records one applied snapshot (its files are already on disk, read-only). Append-only: a second one for the day throws. */
+  putSnapshot(jobKey: string, day: string, files: readonly SnapshotFile[], at: string): void {
+    this.tx(() => {
+      const ins = this.db.prepare(`INSERT INTO job_snapshots (job_key, day, kind, format, path, sha256, at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      for (const f of files) ins.run(jobKey, day, f.kind, f.format, f.path, f.sha256, at);
+    });
+  }
+
+  /** The job's applied snapshots, newest day first; files by kind, then format. */
+  snapshots(jobKey: string): Snapshot[] {
+    const rows = this.db
+      .prepare(`SELECT day, kind, format, path, sha256, at FROM job_snapshots WHERE job_key = ? ORDER BY day DESC, kind, format`)
+      .all(jobKey) as (SnapshotFile & { day: string; at: string })[];
+    const out: Snapshot[] = [];
+    for (const r of rows) {
+      let s = out.at(-1);
+      if (s?.day !== r.day) out.push((s = { day: r.day, at: r.at, files: [] }));
+      s.files.push({ kind: r.kind, format: r.format, path: r.path, sha256: r.sha256 });
+    }
+    return out;
+  }
+
+  /** The status history of each listed job that has one, oldest first (the jobs list shows Desk imports' history). */
+  histories(jobKeys: readonly string[]): Record<string, HistoryEntry[]> {
+    const out: Record<string, HistoryEntry[]> = {};
+    if (jobKeys.length === 0) return out;
+    const rows = this.db
+      .prepare(`SELECT job_key, "from", "to", at, by FROM status_history WHERE job_key IN (${jobKeys.map(() => '?').join(', ')}) ORDER BY job_key, seq`)
+      .all(...jobKeys) as (HistoryEntry & { job_key: string })[];
+    for (const { job_key, ...h } of rows) (out[job_key] ??= []).push(h);
+    return out;
+  }
+
   /** The latest `n` runs, newest first. */
   listRuns(n: number): RunSummary[] {
     const rows = this.db.prepare(`SELECT * FROM runs_summary ORDER BY at DESC, run_id DESC LIMIT ?`).all(n) as RunRowDb[];
@@ -623,6 +685,7 @@ function view(r: JobRowDb, top: JobRowDb, dups: readonly JobRowDb[], floorInr?: 
     docsState: r.docs_state,
     docsDetail: r.docs_detail,
     postedAt: r.posted_at,
+    unplaced: parse<string[]>(r.unplaced) ?? [],
     firstSeen: r.first_seen,
     lastSeen: r.last_seen,
     status: groupStatus(group),
