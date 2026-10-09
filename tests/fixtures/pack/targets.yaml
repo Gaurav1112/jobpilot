@@ -9,9 +9,9 @@ titles:
 seniority:
   - words: [staff, lead, principal, sde-3, sde iii]
     points: 10
-  - words: [senior]
+  - words: [senior, sr]
     points: 8
-titleBonusWords: [backend, platform, java, distributed]
+titleBonusWords: [backend, back end, platform, java, distributed]
 titleBonusPoints: 10
 minFit: 60
 maxYearsRequired: 14

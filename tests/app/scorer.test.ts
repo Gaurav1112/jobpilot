@@ -63,7 +63,7 @@ describe('lexicon: termsIn', () => {
   it('matches whole words only, case-insensitive', () => {
     expect(termsIn('JAVA developers', groups)).toEqual(['java']);
     expect(termsIn('javascript only', groups)).toEqual([]);
-    expect(termsIn('nodes and node-red', groups)).toEqual(['node']); // "node-red" names node
+    expect(termsIn('nodes and node-red', groups)).toEqual([]); // bare node is ambiguous, and not a list item here
     expect(termsIn('springfield', groups)).toEqual([]);
   });
 
@@ -71,12 +71,49 @@ describe('lexicon: termsIn', () => {
     expect(termsIn('Spring Boot, spring, Java, java, event driven, event-driven', groups)).toEqual(['event-driven', 'java', 'spring']);
   });
 
-  it('go: never inside a word, never English go; needs a list or a language context', () => {
+  it('go: never inside a word, never English go; needs a qualifier, a tech list or a skill phrase', () => {
     const go = (t: string) => termsIn(t, groups).includes('go');
-    for (const t of ['good engineers', 'Google Cloud', 'go-to-market plan', 'ready to go', 'Be bold, go above and beyond', 'go live in May', "let's go, team", 'we go fast and go far', 'on the go', 'Go-getter wanted', 'gopher'])
+    for (const t of ['good engineers', 'Google Cloud', 'go-to-market plan', 'ready to go', 'Be bold, go above and beyond', 'go live in May', "let's go, team", 'we go fast and go far', 'on the go', 'Go-getter wanted', 'gopher', 'go/no-go decisions', 'a no-go area', 'Go and check the dashboard', 'In Go we trust', '(Go)', '- Go'])
       expect(go(t), t).toBe(false);
-    for (const t of ['Java, Go, Python', 'Go/Rust', 'Languages: Java, Python and Go', 'Python or Go.', '(Go)', 'experience in Go', 'written in Go', 'proficiency with go', 'Go services at scale', 'Go programming', '- Go\n- Kafka', 'golang', 'Golang microservices', 'Go (Golang)'])
+    for (const t of ['Java, Go, Python', 'Go/Java', 'Languages: Java, Python and Go', 'Python or Go.', 'experience in Go', 'written in Go', 'familiar with go', 'deep knowledge of Go', 'Go services at scale', 'Go programming', '- Go, Java', 'golang', 'Golang microservices', 'Go (Golang)'])
       expect(go(t), t).toBe(true);
+  });
+
+  it('ambiguous words: the reviewer golden cases (task 7 fix round 1)', () => {
+    const lex = [
+      { key: 'react', synonyms: [] }, { key: 'spark', synonyms: [] }, { key: 'spring', synonyms: ['spring boot'] },
+      { key: 'node', synonyms: ['node.js', 'nodejs'] }, { key: 'llm', synonyms: ['llms', 'large language model', 'large language models', 'ai'] },
+      { key: 'go', synonyms: ['golang'] }, { key: 'typescript', synonyms: [] }, { key: 'rust', synonyms: [] }, { key: 'ruby', synonyms: [] },
+      { key: 'kubernetes', synonyms: ['k8s'] }, { key: 'kotlin', synonyms: [] },
+    ];
+    const cases: [string, string[]][] = [
+      ['companies can react faster', []],
+      ['React, TypeScript', ['react', 'typescript']],
+      ['a spark of genius', []],
+      ['Spark Streaming', ['spark']],
+      ['spring hiring', []],
+      ['Spring Boot', ['spring']],
+      ['Kubernetes node pools', ['kubernetes']],
+      ['Node.js', ['node']],
+      ['we embrace AI', []],
+      ['AI/ML platform', ['llm']],
+      ['go/no-go', []],
+      ['Kotlin, Swift, JAVA, and React', ['kotlin', 'react']],
+      ['spring, summer', []],
+      ['ReactJS and React.js', ['react']],
+      ['AI-powered tools', []],
+      ['use AI', []],
+      ['generative AI features', ['llm']],
+      ['GenAI', ['llm']],
+      ['AI platform team', ['llm']],
+      ['large language models', ['llm']],
+      ['Ruby on Rails', ['ruby']],
+      ['rust belt', []],
+      ['Rust, Go', ['go', 'rust']],
+      ['spark ideas', []],
+      ['each node in the cluster', []],
+    ];
+    for (const [t, want] of cases) expect(termsIn(t, lex), t).toEqual(want);
   });
 
   it('an empty or blank term matches nothing (a stray "" in the pack must not match every posting)', () => {
@@ -114,6 +151,12 @@ describe('scorer-lexicon: the v2 §6 formula', () => {
     const staff = scorePosting(verdict(posting({ title: 'Senior Staff Platform Engineer' })), pack);
     expect(staff.breakdown).toEqual([{ label: 'base', points: 30 }, { label: 'title:seniority', points: 10 }, { label: 'title:family', points: 10 }]);
     expect(scorePosting(verdict(posting({ title: 'Staffing Partner' })), pack).score).toBe(30);
+  });
+
+  it('reads Sr. as senior and back end / back-end as the backend family (task 7 fix round 1 pack)', () => {
+    expect(scorePosting(verdict(posting({ title: 'Sr. Software Engineer' })), pack).breakdown).toEqual([{ label: 'base', points: 30 }, { label: 'title:seniority', points: 8 }]);
+    expect(scorePosting(verdict(posting({ title: 'Sr Back-end Engineer' })), pack).score).toBe(48);
+    expect(scorePosting(verdict(posting({ title: 'Back End Engineer' })), pack).breakdown).toEqual([{ label: 'base', points: 30 }, { label: 'title:family', points: 10 }]);
   });
 
   it('subtracts gaps and the years penalty, rounds half up, clamps to 0..100', () => {

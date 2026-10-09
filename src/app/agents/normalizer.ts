@@ -131,6 +131,19 @@ const NOT_BASE =
 const BASE = /\b(?:base|fixed|ctc)\b/i;
 /** `base` iff the wording says base, fixed or CTC and names no other kind of pay. */
 const basisIsBase = (s: string): boolean => BASE.test(s) && !NOT_BASE.test(s);
+/** Indian annual pay figures: LPA and CTC are read as base for the floor, whatever word introduces them. */
+const INDIA_ANNUAL = /\b(?:ctc|lpa)\b/i;
+/** Salary wording that states base pay when nothing else is named. */
+const SALARY_TEXT = /\b(?:salary|salaries|pay range)\b/i;
+/** Wording that may bundle more than base: it stays unknown unless base (or LPA/CTC) is stated. */
+const PACKAGE_TEXT = /\b(?:compensation|package|total)\b/i;
+/**
+ * The basis of a sentence in the description (task 7 fix round 1): `base` when it names no variable, total, bonus,
+ * equity or OTE pay, and it says base, fixed, CTC or LPA, or it says salary or pay range without compensation,
+ * package or total.
+ */
+const textBasisIsBase = (s: string): boolean =>
+  !NOT_BASE.test(s) && (BASE.test(s) || INDIA_ANNUAL.test(s) || (SALARY_TEXT.test(s) && !PACKAGE_TEXT.test(s)));
 /** For a Greenhouse blurb, only these make a base title doubtful (blurbs routinely say "plus equity"). */
 const BLURB_NOT_BASE = /\b(?:ote|on[- ]target|total\s+comp\w*|tc)\b/i;
 
@@ -188,7 +201,7 @@ function withoutIncluded(sentence: string): string {
  * names only non-salary pay (equity, bonus ...), a currency the Posting cannot carry, a bare `$` beside Canada or
  * another dollar country, or cannot be parsed with confidence. A single figure after "up to" keeps only the max; after
  * "from", "starting at", "at least" or before "+" / "or more" only the min. Implausible figures are dropped. The
- * basis is `base` only when every contributing sentence says base, fixed or CTC and names no other kind of pay; when
+ * basis is `base` only when every contributing sentence is base by `textBasisIsBase`; when
  * any sentence states base explicitly, only those base figures are used. A clause whose only pay words are
  * variable, incentive, OTE, commission, bonus or equity is skipped.
  */
@@ -213,7 +226,7 @@ export function compFromText(text: string): Comp | null {
       if (up) min = null;
       if (from) max = null;
     }
-    ranges.push({ min, max, currency: r.range.currency, base: basisIsBase(sentence) });
+    ranges.push({ min, max, currency: r.range.currency, base: textBasisIsBase(sentence) });
   }
   // Explicit base figures are the salary; other salary mentions next to them are not unioned in.
   const base = ranges.filter((r) => r.base);

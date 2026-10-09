@@ -5,6 +5,7 @@ import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
+import { citiesIn, countriesIn } from '../text/norm.js';
 import { EligibilityVerdict, Posting } from '../types.js';
 
 /**
@@ -18,18 +19,21 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    `company:<name>`.
  * 4. employment: the structured type, split on `, ; / |`, each part canonicalised (`canonicalEmployment`). Any part in
  *    `eligibility.employmentTypes` (full-time) passes. Otherwise the first known part rejects as
- *    `employment:<canonical>` (contract, temporary, intern, part-time). When no part is known (null, or "Regular"),
- *    the first `filters.employmentDeny` word (pack order) in the type, the title or the first 1500 characters of the
- *    description rejects as `employment:<word>`. A known full-time type is trusted over words in the text.
+ *    `employment:<canonical>` (contract, temporary, intern, part-time). When no part is known (null, or "Regular"):
+ *    "full-time" or "permanent" in the type, title or first 1500 characters passes; else "intern" in the title, or the
+ *    first EMPLOYMENT_PHRASES phrase there, rejects as `employment:<word>` (contract-to-hire, c2h, contract, hourly,
+ *    temporary, intern, freelance). A bare deny word is not an employment phrase.
  * 5. remote from India, by the decision table:
- *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. Then the text (title, location, first 1500 characters):
- *       `hybrid` or `N days (a week) in (the) office` → `hybrid`; `on-site`/`onsite` → `onsite`. Refinement: technical
- *       compounds are not a work arrangement, so "hybrid cloud" (and the other HYBRID_TECH words) and "onsite
- *       interview" do not count.
+ *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
+ *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
+ *       work-arrangement phrases count (HYBRID_PHRASES, ONSITE_PHRASES, "must be located/based in|near <city or our
+ *       office>"). Negations and alternatives ("not hybrid", "no office", "remote or hybrid") never count.
  *    b. India excluded → `remote-excludes-india:<rule>`, rules in this order: `location` (a `location:excludes:india`
  *       signal; a city-level exclusion is informational only), `us-only`, `must-reside`, `us-work-authorization`,
- *       `eu-only` (phrases in the title, location or first 1500 characters), and `country-list` (structured remote with
- *       a non-empty country list naming none of india, apac, asia, south asia, worldwide).
+ *       `eu-only` (phrases in the title, location or first 1500 characters; US, USA and U.S. only in capitals), and
+ *       `country-list`: structured remote or a location that says remote, with a non-empty country list naming none
+ *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
+ *       `review` instead. This runs before the allRemote and hiresInIndia checks.
  *    c. eligible when: India is a country and something structured or the location or title says remote; or the
  *       watchlist entry is all-remote; or structured remote, the countries are empty or name apac, asia, south asia or
  *       worldwide, and the watchlist says hiresInIndia; or the location says remote and India.
@@ -49,7 +53,8 @@ export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
-  filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
+  // `filters.employmentDeny` is not read: the text path uses the fixed EMPLOYMENT_PHRASES (task 7 fix round 1, I1).
+  filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()) }),
   eligibility: z.object({ employmentTypes: z.array(z.string()) }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   offers: z.object({ floor: z.object({ amount: z.number(), currency: z.enum(['INR', 'USD', 'EUR', 'GBP']) }).nullable() }),
@@ -83,25 +88,74 @@ export function canonicalEmployment(value: string): string | null {
   return Object.hasOwn(EMPLOYMENT, key) ? (EMPLOYMENT[key] ?? null) : null;
 }
 
+/** Full-time stated in the type, title or text: it passes like a structured full-time type. */
+const FULL_TIME_TEXT = /\b(?:full[\s_-]?time|permanent)\b/i;
+/** A pay figure per hour ("$60 per hour", "₹900/hr"): "events per hour" is not employment. */
+const PAY_PER_HOUR = /(?:[$€£₹]|\b(?:usd|inr|eur|gbp|rs\.?)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:\/\s*|per\s+)(?:hour|hr)\b/i;
+/**
+ * Employment phrases, in order (task 7 fix round 1, I1): a bare deny word is not enough ("first 6 months", "hourly
+ * batch jobs", "temporary credentials", "contract testing", "smart contract" all pass).
+ */
+const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
+  ['contract-to-hire', /\bcontract[\s-]to[\s-]hire\b/i],
+  ['c2h', /\bc2h\b/i],
+  ['contract', /\bcontract (?:role|position|basis|employee)s?\b/i],
+  ['contract', /\b\d+[\s-]months?[\s-]contract\b/i],
+  ['hourly', /\bhourly rate\b/i],
+  ['hourly', PAY_PER_HOUR],
+  ['temporary', /\btemporary (?:position|role)s?\b/i],
+  ['intern', /\binternships?\b/i],
+  ['freelance', /\bfreelance\b/i],
+];
+
 function employmentReason(p: Posting, pack: EligibilityPack): string | null {
   const parts = (p.employmentType ?? '').split(/[,;/|]/).map((s) => s.trim()).filter((s) => s !== '');
   const known = parts.map(canonicalEmployment).filter((c): c is string => c !== null);
   if (known.some((c) => pack.eligibility.employmentTypes.includes(c))) return null;
   if (known.length > 0) return `employment:${known[0]}`;
   const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, HEAD)].join('\n');
-  const word = pack.filters.employmentDeny.find((w) => hasTerm(text, w));
-  return word === undefined ? null : `employment:${word}`;
+  if (FULL_TIME_TEXT.test(text)) return null;
+  if (/\bintern\b/i.test(p.title)) return 'employment:intern';
+  const phrase = EMPLOYMENT_PHRASES.find(([, re]) => re.test(text));
+  return phrase === undefined ? null : `employment:${phrase[0]}`;
 }
 
-/** Technical compounds of "hybrid" that say nothing about where the work happens. */
-const HYBRID_TECH = 'cloud|multi-?cloud|infrastructure|environments?|architectures?|apps?|applications?|search|models?|deployments?';
-const HYBRID_TEXT = [new RegExp(`\\bhybrid\\b(?![\\s-]+(?:${HYBRID_TECH})\\b)`, 'i'), /\b\d+ days? (?:a week )?in (?:the )?office\b/i];
-const ONSITE_TEXT = /\bon-?site\b(?![\s-]+interviews?\b)/i;
-const EXCLUSIONS: readonly (readonly [string, RegExp])[] = [
-  ['us-only', /\b(?:us|usa|united states)[\s-]only\b/i],
-  ['must-reside', /\bmust (?:be|reside) (?:located )?in the (?:us|united states|uk|eu)\b/i],
-  ['us-work-authorization', /\bauthorized to work in the (?:us|united states)\b/i],
-  ['eu-only', /\b(?:eu|europe)[\s-]only\b/i],
+/** "not hybrid", "no office", "remote or hybrid", "onsite/remote": negations and alternatives never reject. */
+const NEGATED_OR_ALTERNATIVE =
+  /\b(?:not|no|non)[\s-]+(?:an?\s+)?(?:hybrid|on-?site|in[- ]office|office)\b|\bremote\s*(?:\/|\bor\b|\band\/or\b)\s*(?:hybrid|on-?site|in[- ]office)\b|\b(?:hybrid|on-?site|in[- ]office)\s*(?:\/|\bor\b|\band\/or\b)\s*remote\b/gi;
+const withoutAlternatives = (s: string): string => s.replace(NEGATED_OR_ALTERNATIVE, ' ');
+/** In the title or location a bare word is the arrangement. */
+const HYBRID_WORD = /\bhybrid\b/i;
+const ONSITE_WORD = /\bon-?site\b|\bin[- ]office\b/i;
+/** In the description only these work-arrangement phrases count (task 7 fix round 1, I2). */
+const HYBRID_PHRASES: readonly RegExp[] = [
+  /\bhybrid[\s-]+(?:work|working|role|position|model|schedule|arrangement|setup|policy|mode)\b/i,
+  /\b(?:role|position|job) is (?:a )?hybrid\b/i,
+  /\b\d+(?:\s*[-–]\s*\d+)? days? (?:(?:a|per|\/) ?week )?(?:in|at) (?:the )?office\b/i,
+  /\bin (?:the )?office \d+(?:\s*[-–]\s*\d+)? days\b/i,
+  /\b(?:on-?site|in[- ]office) (?:\d+|one|two|three|four) days\b/i,
+];
+const ONSITE_PHRASES: readonly RegExp[] = [
+  /\bwork(?:ing)? from (?:the|our) office\b/i,
+  /\bon-?site (?:role|position)\b/i,
+  /\bon-?site presence (?:is )?required\b/i,
+  /\b(?:role|position|job) is (?:an? )?on-?site\b/i,
+  /\b(?:work|working|based) (?:on-?site|in[- ]office)\b/i,
+  /\brelocat(?:e|ion) (?:is )?required\b/i,
+];
+/** "must be located/based in|near <city or our office>": an office requirement (a country is not). */
+const MUST_BE_NEAR = /\bmust be (?:located|based) (?:in|near|close to|within commuting distance of) ([^.;\n]{0,60})/gi;
+const officeRequirement = (s: string): boolean =>
+  [...s.matchAll(MUST_BE_NEAR)].some((m) => citiesIn(m[1] ?? '').length > 0 || /\boffices?\b/i.test(m[1] ?? ''));
+
+/** The country forms of the US match only as written in capitals ("Contact us only" is not the US). */
+const US_FORMS: ReadonlySet<string> = new Set(['US', 'USA', 'U.S.', 'U.S.A.']);
+const countryToken = (t: string): boolean => (/^(?:us|usa|u\.s\.(?:a\.)?)$/i.test(t) ? US_FORMS.has(t) : true);
+const EXCLUSIONS: readonly (readonly [string, (s: string) => boolean])[] = [
+  ['us-only', (s) => /(?<![\p{L}\p{N}])(?:US|USA|U\.S\.(?:A\.)?)[\s-]only\b/u.test(s) || /\bunited states[\s-]only\b/i.test(s)],
+  ['must-reside', (s) => [...s.matchAll(/\bmust (?:be|reside) (?:located )?in the (us|usa|u\.s\.(?:a\.)?|united states|uk|eu)(?![\p{L}\p{N}])/giu)].some((m) => countryToken(m[1] ?? ''))],
+  ['us-work-authorization', (s) => [...s.matchAll(/\bauthori[sz]ed to work in the (us|usa|u\.s\.(?:a\.)?|united states)(?![\p{L}\p{N}])/giu)].some((m) => countryToken(m[1] ?? ''))],
+  ['eu-only', (s) => /\b(?:eu|europe)[\s-]only\b/i.test(s)],
 ];
 /** Regions that include India (decision 1: asia and south asia, like apac). */
 const INDIA_REGIONS: ReadonlySet<string> = new Set(['apac', 'asia', 'south asia', 'worldwide']);
@@ -116,20 +170,29 @@ function watchEntry(p: Posting, pack: EligibilityPack): EligibilityPack['watchli
   return pack.watchlist.find((w) => w.ats === p.ats && w.slug === p.slug);
 }
 
+const indiaInScope = (countries: readonly string[]): boolean => countries.some((c) => c === 'india' || INDIA_REGIONS.has(c));
+
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
 function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | null {
   const { structured, countries, signals } = p.remote;
   if (structured === 'onsite') return 'onsite';
   if (structured === 'hybrid') return 'hybrid';
-  const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
-  if (HYBRID_TEXT.some((re) => re.test(head))) return 'hybrid';
-  if (ONSITE_TEXT.test(head)) return 'onsite';
+  const where = withoutAlternatives(`${p.title}\n${p.locationText}`);
+  if (HYBRID_WORD.test(where)) return 'hybrid';
+  if (ONSITE_WORD.test(where)) return 'onsite';
+  const jd = withoutAlternatives(p.descriptionText.slice(0, HEAD));
+  if (HYBRID_PHRASES.some((re) => re.test(jd))) return 'hybrid';
+  if (ONSITE_PHRASES.some((re) => re.test(jd)) || officeRequirement(jd)) return 'onsite';
 
   if (signals.includes('location:excludes:india')) return 'remote-excludes-india:location';
-  const phrase = EXCLUSIONS.find(([, re]) => re.test(head));
+  const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
+  const phrase = EXCLUSIONS.find(([, test]) => test(head));
   if (phrase !== undefined) return `remote-excludes-india:${phrase[0]}`;
-  const indiaInScope = countries.some((c) => c === 'india' || INDIA_REGIONS.has(c));
-  if (structured === 'remote' && countries.length > 0 && !indiaInScope) return 'remote-excludes-india:country-list';
+  // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
+  // names India or a region with India makes it unclear rather than excluded.
+  if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
+    return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'remote-excludes-india:country-list';
+  }
 
   const entry = watchEntry(p, pack);
   const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
@@ -153,7 +216,7 @@ function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | {
   return belowFloor(inr, floor, pack.fx) ? { reject: `below-floor:${inr.max}` } : { note: null };
 }
 
-/** The verdict for one posting under the pack's rules. Pure. */
+/** The verdict for one posting under the pack's rules. Pure. It trusts `pack` to be well formed: the agent validates it first (a malformed pack here throws a TypeError, not a KernelError). */
 export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   if (p.title.trim() === '' || p.url.trim() === '') return reject('closed');
   // A blank pattern would match every title: it matches nothing instead (blank deny words likewise, in `hasTerm`).

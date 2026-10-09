@@ -452,7 +452,7 @@ describe('lever', () => {
     expect(c({ min: 50, max: 80, currency: 'USD', interval: 'per-year-salary' })).toBeNull();
     expect(c({ min: 60000, max: 90000, currency: 'INR', interval: 'per-year-salary' })).toBeNull();
     // No salaryRange at all: the text decides.
-    expect(one(raw('lever', base)).comp).toEqual({ min: 10000000, max: 10000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(one(raw('lever', base)).comp).toEqual({ min: 10000000, max: 10000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 
   it('includes salaryDescription in the text', () => {
@@ -554,7 +554,7 @@ describe('himalayas', () => {
     // One known bound is kept; the other is not invented.
     expect(c({ minSalary: 100000, maxSalary: null, currency: 'USD', salaryPeriod: 'annual' })).toEqual({ min: 100000, max: null, currency: 'USD', period: 'year', basis: 'base' });
     expect(c({ minSalary: null, maxSalary: 150000, currency: 'USD', salaryPeriod: 'annual' })).toEqual({ min: null, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
-    expect(c({ minSalary: null, maxSalary: null, currency: null, salaryPeriod: 'annual' })).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(c({ minSalary: null, maxSalary: null, currency: null, salaryPeriod: 'annual' })).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 
   it('maps object restrictions and keeps an unlisted one', () => {
@@ -669,7 +669,7 @@ describe('comp from text', () => {
 
   it('reads only lines that mention salary, base, CTC, LPA, compensation or pay', () => {
     expect(text('<p>CTC: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
-    expect(text('<p>Compensation: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Compensation: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Fixed pay: ₹30 LPA</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Base salary: $150,000 - $180,000 per annum</p>')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year', basis: 'base' });
     expect(text('<p>We raised $50,000,000 last year.</p>')).toBeNull();
@@ -690,13 +690,13 @@ describe('comp from text', () => {
 
   it('drops implausible figures (below 1 LPA a year), and lines that disagree', () => {
     expect(text('<p>Pay: ₹50,000 per annum</p>')).toBeNull();
-    expect(text('<p>We pay $500 for your home office.</p><p>Salary: $120,000</p>')).toEqual({ min: 120000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
-    expect(text('<p>Salary: $120,000</p><p>Salary: $150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>We pay $500 for your home office.</p><p>Salary: $120,000</p>')).toEqual({ min: 120000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: $120,000</p><p>Salary: $150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
     expect(text('<p>Salary: $120,000</p><p>Salary: €150,000</p>')).toBeNull();
   });
 
   it('annualises a monthly figure', () => {
-    expect(text('<p>Salary: ₹2,50,000 per month</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: ₹2,50,000 per month</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });
 
@@ -783,7 +783,7 @@ describe('fix round 1: comp basis (I1, I4)', () => {
     expect(text('<p>Base salary $150,000 plus variable pay</p>')?.basis).toBe('unknown');
     expect(text('<p>TC: $250,000 including base</p>')?.basis).toBe('unknown');
     expect(text('<p>Base salary: $150,000</p>')?.basis).toBe('base');
-    expect(text('<p>Salary: $150,000</p>')?.basis).toBe('unknown');
+    expect(text('<p>Salary: $150,000</p>')?.basis).toBe('base');
   });
 
   it('judges a Greenhouse range by its title first', () => {
@@ -808,7 +808,7 @@ describe('fix round 1: text gate per sentence (I2, M3)', () => {
     expect(text('<p>We pay well. Last year we raised $50M.</p>')).toBeNull();
     expect(text('<p>Base salary: competitive. Our customers save $2M a year.</p>')).toBeNull();
     expect(text('<p>Base salary competitive; we saved clients $5k</p>')).toBeNull();
-    expect(text('<p>About us. We pay competitively. Salary: ₹40 LPA. Our ARR is $10M.</p>')).toEqual({ min: 4000000, max: 4000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>About us. We pay competitively. Salary: ₹40 LPA. Our ARR is $10M.</p>')).toEqual({ min: 4000000, max: 4000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>The role pays $150,000 per year.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
     expect(text('<p>Earn $150,000 a year.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
   });
@@ -824,7 +824,7 @@ describe('fix round 1: text gate per sentence (I2, M3)', () => {
 
   it('reads a bare $ beside Canada, Australia or Singapore as not US dollars', () => {
     expect(text('<p>Canada salary range: $120,000 - $150,000</p>')).toBeNull();
-    expect(text('<p>US and Canada salary range: USD 120,000 - 150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>US and Canada salary range: USD 120,000 - 150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
   });
 
   it('keeps a plain-text careers description sentence-sized, so an About-us figure is not pay', () => {
@@ -839,14 +839,14 @@ describe('fix round 1: one-sided ranges (I3)', () => {
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('keeps only the stated bound', () => {
-    expect(text('<p>Salary from $100,000</p>')).toEqual({ min: 100000, max: null, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary from $100,000</p>')).toEqual({ min: 100000, max: null, currency: 'USD', period: 'year', basis: 'base' });
     expect(text('<p>Base salary starting at ₹18 LPA</p>')).toEqual({ min: 1800000, max: null, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Pay: up to $150,000</p>')).toEqual({ min: null, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
-    expect(text('<p>Salary: $120k+</p>')).toEqual({ min: 120000, max: null, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: $120k+</p>')).toEqual({ min: 120000, max: null, currency: 'USD', period: 'year', basis: 'base' });
     // A real range with "from ... to" is two bounds.
-    expect(text('<p>Salary from $100,000 to $120,000</p>')).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary from $100,000 to $120,000</p>')).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
     // "from" elsewhere in the sentence does not make it open-ended.
-    expect(text('<p>Remote from India, salary $100,000</p>')).toEqual({ min: 100000, max: 100000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Remote from India, salary $100,000</p>')).toEqual({ min: 100000, max: 100000, currency: 'USD', period: 'year', basis: 'base' });
   });
 
   it('keeps the known bound of a structured range', () => {
@@ -1033,8 +1033,8 @@ describe('fix round 2: variable pay never joins the salary (N1)', () => {
   });
 
   it('uses only the base figures when base is stated, not a union with unknown ones', () => {
-    expect(text('<p>Base salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
-    expect(text('<p>Salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 200000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Base salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 200000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: $150,000.</p><p>Salary for senior levels: $200,000.</p>')).toEqual({ min: 150000, max: 200000, currency: 'USD', period: 'year', basis: 'base' });
   });
 
   it('does not split after p.a., approx., incl. or e.g.', () => {
@@ -1081,10 +1081,10 @@ describe('fix round 2: minors (M11, M13)', () => {
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('reads min., minimum, max. and maximum as one-sided', () => {
-    expect(text('<p>Salary: min. ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'unknown' });
-    expect(text('<p>Salary: minimum ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'unknown' });
-    expect(text('<p>Salary: max. ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
-    expect(text('<p>Salary: maximum ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: min. ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: minimum ₹20 LPA</p>')).toEqual({ min: 2000000, max: null, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: max. ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: maximum ₹30 LPA</p>')).toEqual({ min: null, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 
   it('reads a Lever salaryRange min of 0 as not stated', () => {
@@ -1129,7 +1129,7 @@ describe('fix round 3: p.a. and approx. end a sentence before a capitalised word
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('reads the salary and keeps the next sentence out of it', () => {
-    expect(text('<p>Salary: ₹12 LPA p.a. Equity: ₹50 LPA over 4 years.</p>')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: ₹12 LPA p.a. Equity: ₹50 LPA over 4 years.</p>')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>CTC ₹20 LPA p.a. We also offer ₹5 LPA ESOPs.</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Base salary ₹18 LPA approx. Bonus ₹3 LPA.</p>')).toEqual({ min: 1800000, max: 1800000, currency: 'INR', period: 'year', basis: 'base' });
   });
@@ -1158,8 +1158,8 @@ describe('fix round 4: an included component is never a bound (Q1)', () => {
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('reads the figure, not the part it includes', () => {
-    expect(text('<p>Salary ₹20 LPA incl. HRA ₹5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'unknown' });
-    expect(text('<p>Compensation ₹20 LPA incl. PF ₹1.5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary ₹20 LPA incl. HRA ₹5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Compensation ₹20 LPA incl. PF ₹1.5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>CTC ₹20 LPA including gratuity ₹0.5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Salary incl. HRA: ₹20 LPA</p>')?.max).toBe(2000000);
   });
@@ -1191,5 +1191,40 @@ describe('fix round 4: "anywhere in <country>" is that country (M16)', () => {
     expect(countriesIn('Remote, anywhere within APAC')).toEqual(['apac']);
     expect(countriesIn('Anywhere')).toEqual(['worldwide']);
     expect(countriesIn('Anywhere in the world')).toEqual(['worldwide']);
+  });
+});
+
+describe('task 7 fix round 1: salary wording is base', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('a figure beside salary, pay range, CTC or LPA, with no variable, total, bonus, equity or OTE word, is base', () => {
+    expect(text('<p>Salary: $150,000</p>')?.basis).toBe('base');
+    expect(text('<p>Pay range: $120,000 - $150,000</p>')?.basis).toBe('base');
+    expect(text('<p>Salary: ₹40 LPA</p>')?.basis).toBe('base');
+    expect(text('<p>₹19–₹24 LPA (based on experience)</p>')?.basis).toBe('base');
+  });
+
+  it('LPA and CTC are Indian annual pay figures: base even beside compensation or package', () => {
+    expect(text('<p>Compensation: ₹19–₹24 LPA (based on experience)</p>')).toEqual({ min: 1900000, max: 2400000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>CTC package: ₹30 LPA</p>')?.basis).toBe('base');
+  });
+
+  it('compensation, package or total wording without LPA or CTC stays unknown unless base is stated', () => {
+    expect(text('<p>Salary package: $150,000</p>')?.basis).toBe('unknown');
+    expect(text('<p>Compensation and salary: $150,000</p>')?.basis).toBe('unknown');
+    expect(text('<p>Compensation: $150,000 base</p>')?.basis).toBe('base');
+    expect(text('<p>Total salary: $150,000</p>')?.basis).toBe('unknown');
+  });
+
+  it('variable, total, bonus, equity or OTE words keep it unknown', () => {
+    expect(text('<p>Salary: ₹40 LPA plus variable</p>')?.basis).toBe('unknown');
+    expect(text('<p>Salary $150,000 plus equity</p>')?.basis).toBe('unknown');
+    expect(text('<p>OTE salary: $150,000</p>')?.basis).toBe('unknown');
+  });
+
+  it('the recorded Volga posting (₹19–24 LPA) is now base', () => {
+    const volga = hm.find((p) => p.sourceId.includes('volga-partners'))!;
+    expect(one(volga).comp).toEqual({ min: 1900000, max: 2400000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });

@@ -213,6 +213,13 @@ export function withoutExcluded(places: Iterable<string>, excluded: readonly str
  */
 export const countriesIn = (text: string): string[] => scanPlaces(text).places;
 
+/**
+ * The cities and states (parts of a country, not the country or a region) named in `text`, as written, lower-cased,
+ * in order: "near Pune" gives ['pune'], "in India" gives [].
+ */
+export const citiesIn = (text: string): string[] =>
+  [...text.normalize('NFKC').matchAll(PLACE_RE)].map((m) => (m[1] ?? '').toLowerCase().replace(/\s+/g, ' ')).filter((a) => SUB_PLACES.has(a));
+
 /** The places the text excludes ("Remote (except India)" gives ['india']), sorted; `countriesIn` leaves them out. */
 export const excludedPlaces = (text: string): string[] => scanPlaces(text).excluded;
 

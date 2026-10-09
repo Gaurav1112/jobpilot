@@ -19,7 +19,7 @@ import { EligibilityVerdict, Scored } from '../types.js';
  * | `yearsRequired` above `targets.maxYearsRequired` | −`yearsPenalty` | `years>max` |
  *
  * Skills are read from the description only (the title has its own rows), each group once through its synonyms
- * (`termsIn`). The sum is rounded half up (`Math.floor(x + 0.5)`) and clamped to 0..100. Only rows that apply appear in
+ * (`termsIn`, with every tier as list neighbours for the ambiguous words). The sum is rounded half up (`Math.floor(x + 0.5)`) and clamped to 0..100. Only rows that apply appear in
  * the breakdown, in the table's order, keys sorted within a row kind. Verdict and notes pass through; a rejected
  * verdict yields no output (it is terminal at eligibility). The `minFit` cut is applied downstream (evidence-matcher).
  */
@@ -48,10 +48,11 @@ export function scorePosting(v: EligibilityVerdict, pack: ScorerPack): Scored {
   const seniority = pack.targets.seniority.find((g) => anyTermIn(posting.title, g.words));
   if (seniority !== undefined) breakdown.push({ label: 'title:seniority', points: seniority.points });
   if (anyTermIn(posting.title, pack.targets.titleBonusWords)) breakdown.push({ label: 'title:family', points: pack.targets.titleBonusPoints });
+  const all = [...pack.lexicon.strong, ...pack.lexicon.medium, ...pack.lexicon.gap];
   const jdTerms = {
-    strong: termsIn(posting.descriptionText, pack.lexicon.strong),
-    medium: termsIn(posting.descriptionText, pack.lexicon.medium),
-    gap: termsIn(posting.descriptionText, pack.lexicon.gap),
+    strong: termsIn(posting.descriptionText, pack.lexicon.strong, all),
+    medium: termsIn(posting.descriptionText, pack.lexicon.medium, all),
+    gap: termsIn(posting.descriptionText, pack.lexicon.gap, all),
   };
   for (const kind of ['strong', 'medium', 'gap'] as const) {
     for (const key of jdTerms[kind]) breakdown.push({ label: `${kind}:${key}`, points: POINTS[kind] });

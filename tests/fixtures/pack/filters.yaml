@@ -13,7 +13,7 @@ roleDeny:
   - ^manager\b
   - \bsales\b
   - \baccount (executive|manager)\b
-  - solutions engineer
+  - \bsolutions? engineer\b
   - support engineer
   - customer success
   - devrel
@@ -34,6 +34,7 @@ companyDeny:
   - Infosys
   - Wipro
   - HCL
+  - HCLTech
   - Tech Mahindra
   - Cognizant
   - Accenture

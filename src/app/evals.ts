@@ -16,6 +16,7 @@ function one<T>(outs: readonly unknown[], f: (o: T) => unknown): unknown {
  * the public part of it (no contact, no answers), frozen with `freezePack` as the supervisor does, with its hash.
  */
 export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
+  // `loadPack`'s hash is already the hash of the public pack (no contact, no answers), exactly what the agents see.
   const { pack: full, hash } = loadPack(packDir);
   const { contact: _contact, answers: _answers, ...publicPack } = full;
   const pack = freezePack(publicPack);

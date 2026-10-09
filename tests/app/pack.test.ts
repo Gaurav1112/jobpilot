@@ -238,6 +238,11 @@ describe('roleDeny', () => {
       expect(denied(t), t).toBe(true);
     }
   });
+  it('drops solution and solutions engineers, but not a backend engineer on a solutions platform (task 7 fix round 1)', () => {
+    expect(denied('Solution Engineer')).toBe(true);
+    expect(denied('Solutions Engineer')).toBe(true);
+    expect(denied('Solutions Platform Backend Engineer')).toBe(false);
+  });
 });
 
 describe('compileRoleDeny', () => {

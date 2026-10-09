@@ -62,6 +62,7 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ company: 'Infosys Limited' })).toEqual(rejected('company:Infosys'));
     expect(decide({ company: 'persistent systems' })).toEqual(rejected('company:Persistent'));
     expect(decide({ company: 'L&T Technology Services' })).toEqual(rejected('company:L&T Technology'));
+    expect(decide({ company: 'HCLTech' })).toEqual(rejected('company:HCLTech')); // the current brand (task 7 fix round 1 pack)
     expect(decide({ company: 'Trust Bank' }).verdict).toBe('eligible'); // not UST
     expect(decide({ company: 'Eyeota' }).verdict).toBe('eligible'); // not EY
   });
@@ -84,26 +85,97 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ employmentType: 'Full-Time, Contract' })).toEqual(ELIGIBLE_UNDISCLOSED); // full-time is offered
   });
 
-  it('4. employment: with no (or no known) structured type, the pack deny words in the title or first 1500 chars', () => {
-    expect(decide({ employmentType: null, title: 'Java Developer (Contract)' })).toEqual(rejected('employment:contract'));
-    expect(decide({ employmentType: null, descriptionText: 'This is a 6 months fixed-term engagement.' })).toEqual(rejected('employment:fixed-term'));
-    expect(decide({ employmentType: 'Full-time contract' })).toEqual(rejected('employment:contract'));
-    expect(decide({ employmentType: null, descriptionText: `${'x'.repeat(1500)} contract` })).toEqual(ELIGIBLE_UNDISCLOSED);
-    // a structured full-time type is trusted over incidental words in the text
-    expect(decide({ employmentType: 'Full-time', descriptionText: 'Includes 6 months paid parental leave.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+  it('4. employment: with no (or no known) structured type, only employment phrases in the title or first 1500 chars reject', () => {
+    const text = (descriptionText: string, title = 'Senior Backend Engineer') => decide({ employmentType: null, title, descriptionText });
+    expect(text('This is a contract role for 9 months.')).toEqual(rejected('employment:contract'));
+    expect(text('Hired on a contract basis.')).toEqual(rejected('employment:contract'));
+    expect(text('A contract position with our client.')).toEqual(rejected('employment:contract'));
+    expect(text('You will join as a contract employee.')).toEqual(rejected('employment:contract'));
+    expect(text('This is a 6-month contract.')).toEqual(rejected('employment:contract'));
+    expect(text('A 12 month contract, extendable.')).toEqual(rejected('employment:contract'));
+    expect(text('Contract-to-hire after 6 months.')).toEqual(rejected('employment:contract-to-hire'));
+    expect(text('C2H opportunity.')).toEqual(rejected('employment:c2h'));
+    expect(text('Hourly rate: negotiable.')).toEqual(rejected('employment:hourly'));
+    expect(text('We pay $60 per hour.')).toEqual(rejected('employment:hourly'));
+    expect(text('A temporary position covering parental leave.')).toEqual(rejected('employment:temporary'));
+    expect(text('A temporary role for the migration.')).toEqual(rejected('employment:temporary'));
+    expect(text('A paid internship for students.')).toEqual(rejected('employment:intern'));
+    expect(text('Build services.', 'Backend Intern')).toEqual(rejected('role:\\bintern(ship)?\\b')); // the role rule comes first
+    expect(text('We hire freelance developers.')).toEqual(rejected('employment:freelance'));
+    expect(decide({ employmentType: 'Regular', descriptionText: 'A contract role.' })).toEqual(rejected('employment:contract'));
+    expect(text(`${'x'.repeat(1500)} contract role`)).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
-  it('5.1 onsite or hybrid: structured, or text in the title, location or first 1500 chars', () => {
+  it('4. employment: the reviewer\'s six false rejections are eligible (I1)', () => {
+    for (const d of [
+      'In your first 6 months you will own the billing service.',
+      'Benefits include 6 months parental leave.',
+      'Run hourly batch jobs on Spark.',
+      'Issue temporary credentials via STS.',
+      'Consumer-driven contract testing with Pact.',
+      'Build smart contract integrations for our wallet.',
+    ]) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ employmentType: null, descriptionText: 'Processing 2M events per hour.' })).toEqual(ELIGIBLE_UNDISCLOSED); // per hour needs a pay figure
+  });
+
+  it('4. employment: full-time or permanent in the text passes, like a structured full-time type', () => {
+    expect(decide({ employmentType: null, descriptionText: 'Full-time. A contract role converting later.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ employmentType: null, title: 'Backend Engineer (Permanent)', descriptionText: 'A contract basis is possible.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ employmentType: 'Full-time contract' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ employmentType: 'Full-time', descriptionText: 'A contract role.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('5.1 onsite or hybrid: structured, or a bare word in the title or location', () => {
     expect(decide({ remote: remote('onsite', ['india']) })).toEqual(rejected('onsite'));
     expect(decide({ remote: remote('hybrid', ['india']) })).toEqual(rejected('hybrid'));
     expect(decide({ locationText: 'Bengaluru (Hybrid)' })).toEqual(rejected('hybrid'));
-    expect(decide({ descriptionText: 'Remote with 2 days a week in the office.' })).toEqual(rejected('hybrid'));
-    expect(decide({ descriptionText: 'You will work 3 days in office.' })).toEqual(rejected('hybrid'));
-    expect(decide({ descriptionText: 'This role is on-site in Pune.' })).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Pune - Onsite' })).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'In-office, Pune' })).toEqual(rejected('onsite'));
     expect(decide({ title: 'Backend Engineer (Onsite)' })).toEqual(rejected('onsite'));
-    expect(decide({ remote: remote('remote', ['india']), descriptionText: `${'x'.repeat(1500)} hybrid` })).toEqual(ELIGIBLE_UNDISCLOSED);
-    // documented refinements: technical uses of the words are not a work arrangement
-    expect(decide({ descriptionText: 'Experience with hybrid cloud and an onsite interview loop.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ title: 'Backend Engineer - Hybrid' })).toEqual(rejected('hybrid'));
+  });
+
+  it('5.1 onsite or hybrid: only work-arrangement phrases in the first 1500 chars of the description', () => {
+    const d = (descriptionText: string) => decide({ descriptionText });
+    expect(d('Remote with 2 days a week in the office.')).toEqual(rejected('hybrid'));
+    expect(d('You will work 3 days in office.')).toEqual(rejected('hybrid'));
+    expect(d('In the office 3 days a week.')).toEqual(rejected('hybrid'));
+    expect(d('We follow a hybrid work model.')).toEqual(rejected('hybrid'));
+    expect(d('This is a hybrid role in Pune.')).toEqual(rejected('hybrid'));
+    expect(d('A hybrid schedule.')).toEqual(rejected('hybrid'));
+    expect(d('The role is hybrid.')).toEqual(rejected('hybrid'));
+    expect(d('You will be working from our office in Pune.')).toEqual(rejected('onsite'));
+    expect(d('Work from the office every day.')).toEqual(rejected('onsite'));
+    expect(d('This is an on-site role.')).toEqual(rejected('onsite'));
+    expect(d('Onsite presence required.')).toEqual(rejected('onsite'));
+    expect(d('The position is onsite.')).toEqual(rejected('onsite'));
+    expect(d('You must be based near Pune.')).toEqual(rejected('onsite'));
+    expect(d('Must be located in Bengaluru or nearby.')).toEqual(rejected('onsite'));
+    expect(d('Must be located near our office.')).toEqual(rejected('onsite'));
+    expect(d('Relocation required.')).toEqual(rejected('onsite'));
+    expect(d('Relocation is required to Dubai.')).toEqual(rejected('onsite'));
+    expect(decide({ remote: remote('remote', ['india']), descriptionText: `${'x'.repeat(1500)} hybrid work model` })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // must be located in a country is not an office requirement
+    expect(d('Must be based in India.')).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('5.1 the reviewer\'s ten cases, negations and alternatives never reject (I2)', () => {
+    for (const t of [
+      'We run hybrid and multi-cloud infrastructure.',
+      'Experience with hybrid/multi-cloud setups.',
+      'Hybrid transactional/analytical processing (HTAP).',
+      'Scale hybrid workloads.',
+      'Build hybrid retrieval for search.',
+      'This role is fully remote, not hybrid.',
+      'You can work remote or hybrid.',
+      'Remote or onsite, your choice.',
+      'We meet once a year for an on-site team week.',
+      'Occasionally provide onsite support to customers.',
+      'Remote or hybrid work arrangements are available.',
+      'There is no office; we are remote.',
+      'Experience with hybrid cloud and an onsite interview loop.',
+    ]) expect(decide({ descriptionText: t }), t).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ locationText: 'Remote or Hybrid - India' })).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   it('5.2 remote that excludes India', () => {
@@ -115,9 +187,35 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ descriptionText: 'Must be located in the United States.' })).toEqual(rejected('remote-excludes-india:must-reside'));
     expect(decide({ descriptionText: 'You must be authorized to work in the US.' })).toEqual(rejected('remote-excludes-india:us-work-authorization'));
     expect(decide({ descriptionText: 'Remote (Europe only).' })).toEqual(rejected('remote-excludes-india:eu-only'));
+    expect(decide({ descriptionText: 'Remote, U.S. only.' })).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(decide({ descriptionText: 'Remote, United States only.' })).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(decide({ descriptionText: 'You must be authorized to work in the U.S.' })).toEqual(rejected('remote-excludes-india:us-work-authorization'));
     expect(decide({ remote: remote('remote', ['canada', 'united states']), locationText: 'Remote' })).toEqual(rejected('remote-excludes-india:country-list'));
-    // not structured remote: the country list alone does not reject
-    expect(decide({ remote: remote(null, ['canada'], ['location:remote']), locationText: 'Remote, Canada' }).verdict).toBe('review');
+  });
+
+  it('5.2 the pronoun "us" is not the US (I4)', () => {
+    expect(decide({ descriptionText: 'Contact us only if you have 5 years of Java.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ descriptionText: 'Join us only after reading our values.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ descriptionText: 'People must be in the us team channel.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('5.2 a remote location in foreign countries rejects, before allRemote and hiresInIndia (#5, I3)', () => {
+    const us = { remote: remote(null, ['united states'], ['location:remote']), locationText: 'Remote, United States' };
+    expect(decide(us)).toEqual(rejected('remote-excludes-india:country-list'));
+    expect(decide({ remote: remote(null, ['canada'], ['location:remote']), locationText: 'CA Remote Ontario' })).toEqual(rejected('remote-excludes-india:country-list'));
+    // an all-remote company (lever example-lv) and a hiresInIndia one (greenhouse example-gh) do not rescue it
+    expect(decide({ ...us, ats: 'lever', slug: 'example-lv' })).toEqual(rejected('remote-excludes-india:country-list'));
+    expect(decide({ ...us, slug: 'example-gh', remote: remote('remote', ['united states'], ['location:remote']) })).toEqual(rejected('remote-excludes-india:country-list'));
+    // guard: the description names India or a region with India: review instead
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    expect(decide({ ...us, descriptionText: 'We also hire in India through an employer of record.' })).toEqual(review);
+    expect(decide({ ...us, descriptionText: 'Open across APAC.' })).toEqual(review);
+    expect(decide({ ...us, ats: 'lever', slug: 'example-lv', descriptionText: 'Our team is spread across Asia.' })).toEqual(review);
+    expect(decide({ ...us, descriptionText: 'Anywhere except India.' })).toEqual(rejected('remote-excludes-india:country-list'));
+    // a location that does not say remote is not this rule
+    expect(decide({ remote: remote(null, ['canada'], []), locationText: 'Toronto, Canada', descriptionText: 'Join us.' })).toEqual(rejected('onsite'));
+    // an Indian city in the list keeps it in scope
+    expect(decide({ remote: remote(null, ['india', 'united states'], ['location:remote']), locationText: 'Remote, US; Bengaluru' })).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   it('5.3 remote from India: eligible', () => {

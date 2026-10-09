@@ -12,7 +12,7 @@ strong:
   - {key: multi-tenant, synonyms: [multitenant, multi tenant]}
   - {key: saas, synonyms: []}
   - {key: fintech, synonyms: [payments]}
-  - {key: llm, synonyms: [ai]}
+  - {key: llm, synonyms: [llms, large language model, large language models, ai]}
 medium:
   - {key: go, synonyms: [golang]}
   - {key: typescript, synonyms: []}
