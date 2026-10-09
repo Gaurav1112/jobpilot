@@ -367,7 +367,7 @@ describe('paging: no silent truncation', () => {
   }
 
   it('every paged source has at least 9 s of step time per page at its cap', () => {
-    expect(LEVER_MAX_PAGES).toBe(100);
+    expect(LEVER_MAX_PAGES).toBe(70);
     expect(HIMALAYAS_MAX_PAGES).toBe(80);
     expect(JOBICY_MAX_REQUESTS).toBe(20);
     expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
@@ -412,15 +412,15 @@ describe('paging: no silent truncation', () => {
     it('exactly at the cap: one more request confirms the end, so no false alarm', async () => {
       const rec = dyn((u) => {
         const skip = Number(u.searchParams.get('skip'));
-        return { body: skip < 10_000 ? leverPage(skip, 100) : '[]' };
+        return { body: skip < 7_000 ? leverPage(skip, 100) : '[]' };
       });
-      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(10_000);
+      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(7_000);
       expect(rec.urls).toHaveLength(LEVER_MAX_PAGES + 1);
     });
 
     it('past the cap → invalid_output, never a partial', async () => {
       const rec = dyn((u) => ({ body: leverPage(Number(u.searchParams.get('skip')), 100) }));
-      await expect(run(srcLever, veeva, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'lever veeva: page cap reached at 10000 postings' });
+      await expect(run(srcLever, veeva, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'lever veeva: page cap reached at 7000 postings' });
       expect(rec.urls).toHaveLength(LEVER_MAX_PAGES + 1);
     });
 

@@ -80,6 +80,7 @@ export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) =
   const fail = (message: string): KernelError => new KernelError('invalid_output', `${what}: ${message}`);
   const all: RawPosting[] = [];
   const seen = new Set<string>();
+  // Newest-first drift mid-walk: an insert pushes jobs down a page (duplicates, deduped); a removal (expiry) pulls one up, so it can be missed until the next run. Accepted.
   let expectedOffset = 0;
   for (let page = 1; ; page++) {
     const json = await getBoard(ctx, himalayasUrl(page), HIMALAYAS_FEED);

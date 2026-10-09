@@ -11,22 +11,22 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySe
  *   looks short, so the next page is always fetched: empty means the natural end, anything else is
  *   `invalid_output` ('lever <slug>: short page before end');
  * - only an empty page ends the walk;
- * - LEVER_MAX_PAGES (10,000 postings) is a safety cap. After that many pages one more request
+ * - LEVER_MAX_PAGES (7,000 postings) is a safety cap. After that many pages one more request
  *   confirms the end; if it is not empty the step fails ('lever <slug>: page cap reached at N
  *   postings'), so an exactly-full board is not a false alarm and a bigger one is never cut quietly;
  * - a page whose ids were all seen on earlier pages (the API ignored `skip`, or cycles A, B, A) is
  *   `invalid_output`.
  * Pages are processed in request order and deduped by id (the first copy wins), then sorted.
  * A failed page fails the whole step; the GETs are idempotent, so a retry starts again at page 1.
- * A live page took up to 7.7 s and pages share the 1 s host pacer, so the step timeout
- * (LEVER_TIMEOUT_MS) allows 9 s per page at the cap (8.9 s per request counting the confirming one;
- * the kernel caps a step at 900 s).
+ * Live requests took 10.6 to 12 s each on 2026-10-09 (pages share the 1 s host pacer). The step
+ * timeout (LEVER_TIMEOUT_MS, the kernel's 900 s maximum) allows 12.7 s per request at the cap,
+ * counting the confirming one, so a board too big for the cap fails with the cap error, not a timeout.
  * `raw` is the posting unchanged, except a `salaryRange` whose min and max are both 0 is
  * dropped (Lever's placeholder for "no salary"). Live postings carry no request-time fields.
  */
 export const LEVER_HOST = 'api.lever.co';
 export const LEVER_PAGE_SIZE = 100;
-export const LEVER_MAX_PAGES = 100;
+export const LEVER_MAX_PAGES = 70;
 export const LEVER_TIMEOUT_MS = 900_000;
 
 export const leverUrl = (slug: string, skip: number): string =>
