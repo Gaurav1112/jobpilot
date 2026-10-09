@@ -141,8 +141,8 @@ describe('redactors (agents allowed to lower a data class)', () => {
 });
 
 describe('v1 kernel extensions: HTTP policy caps', () => {
-  it('ships maxResponseBytes 5 MiB and minHostIntervalMs 1000 in the product policy', () => {
-    expect(PRODUCT_POLICY_V1.maxResponseBytes).toBe(5_242_880);
+  it('ships maxResponseBytes 16 MiB and minHostIntervalMs 1000 in the product policy', () => {
+    expect(PRODUCT_POLICY_V1.maxResponseBytes).toBe(16_777_216);
     expect(PRODUCT_POLICY_V1.minHostIntervalMs).toBe(1000);
   });
 
@@ -154,7 +154,7 @@ describe('v1 kernel extensions: HTTP policy caps', () => {
 
   it('refuses a user policy that raises maxResponseBytes or lowers minHostIntervalMs', () => {
     try {
-      mergePolicy(PRODUCT_POLICY_V1, { maxResponseBytes: 10_000_000, minHostIntervalMs: 10 });
+      mergePolicy(PRODUCT_POLICY_V1, { maxResponseBytes: 20_000_000, minHostIntervalMs: 10 });
       expect.unreachable();
     } catch (e) {
       expect(e).toBeInstanceOf(PolicyViolation);

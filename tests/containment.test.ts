@@ -52,7 +52,7 @@ describe('G-CONTAINMENT: submit-capable code lives only in src/agents/submit/', 
 });
 
 describe('G-CONTAINMENT: agent code reaches the outside world only through the broker', () => {
-  const agentFiles = ['src/agents', 'src/demo']
+  const agentFiles = ['src/agents', 'src/demo', 'src/app/agents']
     .map((d) => join(root, d))
     .filter((d) => existsSync(d))
     .flatMap(walk)
@@ -60,7 +60,9 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
   const AT = 'src/agents/jobs/score.ts';
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
-    expect(agentFiles.map(rel)).toEqual(expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts']));
+    expect(agentFiles.map(rel)).toEqual(
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts']),
+    );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
   });
 
@@ -89,6 +91,32 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
     expect(scanAgentSource(f, "import x from '../kernel/providers.js?/../../agents/x.js'")).toEqual([`${f}:1: import of ../kernel/providers.js?/../../agents/x.js`]);
     expect(scanAgentSource(f, "import x from '../kernel/providers.js#/../../agents/x.js'")).not.toEqual([]);
     expect(scanAgentSource(f, "import x from './y.js?v=1'")).toEqual([]);
+  });
+
+  it('treats src/app/agents/** as agent code, with app types and sibling agent modules allowed', () => {
+    const f = 'src/app/agents/sources/x.ts';
+    expect(isAgentCode(f)).toBe(true);
+    expect(isAgentCode('src/app/types.ts')).toBe(false);
+    for (const ok of [
+      "import { RawPosting } from '../../types.js'",
+      "import type { DiscoveryRequest } from '../../types.js'",
+      "import { finish } from './common.js'",
+      "import { x } from '../other/y.js'",
+      "import { defineAgent, type AgentContext } from '../../../kernel/agent.js'",
+      "import { KernelError } from '../../../kernel/errors.js'",
+    ]) {
+      expect(scanAgentSource(f, ok), ok).toEqual([]);
+    }
+    for (const bad of [
+      "import type { AgentContext } from '../../../kernel/broker.js'",
+      "import x from '../../../kernel/providers.js'",
+      "import { parseComp } from '../../comp/parse.js'",
+      "import { loadPack } from '../../pack/load.js'",
+      "import { x } from '../../../cli.js'",
+    ]) {
+      expect(scanAgentSource(f, bad), bad).toEqual([`${f}:1: import of ${bad.match(/'([^']+)'/)![1]}`]);
+    }
+    expect(scanAgentSource(f, 'fetch(u)')).toEqual([`${f}:1: reference to fetch`]);
   });
 
   it('reports offenders as file:line: reason', () => {

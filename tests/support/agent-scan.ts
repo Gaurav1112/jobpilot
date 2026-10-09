@@ -12,7 +12,10 @@ import ts from 'typescript';
 
 /** Agent code: everything an agent's run() can execute. The kernel, evals, CLI and demo wiring are the trusted side. */
 export const isAgentCode = (path: string) =>
-  path.startsWith('src/agents/') || path === 'src/demo/agents.ts' || path === 'src/demo/types.ts';
+  path.startsWith('src/agents/') || path.startsWith('src/app/agents/') || path === 'src/demo/agents.ts' || path === 'src/demo/types.ts';
+
+/** Shared app modules agent code may import: message types and predicates only (zod plus kernel definitions). */
+const APP_ALLOWED = ['src/app/types.ts'];
 
 /** The only kernel modules agent code may import: definitions, never providers, broker, store, executor or fakes. */
 const KERNEL_ALLOWED = ['agent', 'contract', 'errors', 'types', 'predicates', 'data-class'].map((m) => `src/kernel/${m}.ts`);
@@ -28,7 +31,7 @@ const FORBIDDEN_GLOBALS = new Set([
 export const allowedSpecifier = (file: string, spec: string): boolean => {
   if (!spec.startsWith('.')) return PACKAGES_ALLOWED.includes(spec);
   const target = posix.join(posix.dirname(file), spec.replace(/[?#].*$/s, '')).replace(/\.js$/, '.ts');
-  return KERNEL_ALLOWED.includes(target) || isAgentCode(target);
+  return KERNEL_ALLOWED.includes(target) || APP_ALLOWED.includes(target) || isAgentCode(target);
 };
 
 /** The module specifier of an import/export declaration, if it has a string one. */

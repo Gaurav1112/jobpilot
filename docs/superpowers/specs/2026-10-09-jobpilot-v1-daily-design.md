@@ -76,7 +76,7 @@ validates every file against its schema, exits non-zero on error, and prints the
 3. **Spend recorded per attempt**, so a crash between attempts cannot lose cost.
 4. **HTTP tool:** `getJson(url)` plus request headers (`accept`, a fixed honest
    `user-agent: jobpilot/0.1 (+local)`), a response size cap (`policy.maxResponseBytes`,
-   default 5 MiB), and a per-host minimum interval (`policy.minHostIntervalMs`, default
+   default 16 MiB; raised from 5 MiB in Task 5 because large Greenhouse boards return up to 10.5 MB unpaged), and a per-host minimum interval (`policy.minHostIntervalMs`, default
    1000 ms, enforced by the broker across agents within a run).
 5. **Egress host patterns: not needed in v1.** Every v1 source has one fixed API host, so
    contracts list bare hosts. Patterns move to sub-project 8 (source expansion).

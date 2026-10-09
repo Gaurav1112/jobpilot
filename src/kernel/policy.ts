@@ -46,7 +46,7 @@ export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   defaultEgressClasses: ['P0'],
   maxUsdPerRun: 5,
   maxPayloadBytes: 262_144,
-  maxResponseBytes: 5_242_880,
+  maxResponseBytes: 16_777_216,
   minHostIntervalMs: 1000,
   maxSubmitsPerDay: 10,
   requireApprovalForEffects: true,
