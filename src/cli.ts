@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { Command } from 'commander';
@@ -12,6 +13,19 @@ import { demoEvalSpecs } from './demo/evals.js';
 import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
 import { exportedAgents } from './exported-agents.js';
+import { nodeFetch } from './kernel/providers.js';
+import type { PlaywrightBrowserProvider } from './app/browser/playwright-provider.js';
+import { loadRunPack, preparePipeline } from './app/kernel.js';
+import { withLock } from './app/lock.js';
+import { migrateDesk } from './app/migrate-desk.js';
+import { osascriptNotifier } from './app/notify.js';
+import { offlineProviders } from './app/offline.js';
+import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
+import { homePaths, jobpilotHome } from './app/pack/paths.js';
+import type { Fact } from './app/pack/schema.js';
+import { dailySeeds } from './app/pipeline.js';
+import { formatSummary, istMonth, rebuildDocs, RENDER_NONCE_KEY, runDaily } from './app/run.js';
+import { AppStore } from './app/store/app-store.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -182,5 +196,166 @@ program
     const failed = failedGates(reports);
     if (failed.length > 0) process.exitCode = 1;
   });
+
+/** Runs a command body; any error is printed as one `error:` line and the exit code is 1. */
+async function guarded(fn: () => Promise<void> | void): Promise<void> {
+  try {
+    await fn();
+  } catch (e) {
+    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+    process.exitCode = 1;
+  }
+}
+
+/** The fact overrides from the app DB, without creating the DB when there is none yet. */
+function overridesAt(db: string): Record<string, Fact['status']> {
+  if (!existsSync(db)) return {};
+  const app = AppStore.open(db);
+  try {
+    return app.factOverrides();
+  } finally {
+    app.close();
+  }
+}
+
+/** The pack as today's run would load it (this IST month, the user's fact overrides, the kept render nonce). */
+function todaysPack() {
+  const paths = homePaths(jobpilotHome());
+  let nonce: number | undefined;
+  if (existsSync(paths.db)) {
+    const app = AppStore.open(paths.db);
+    try {
+      const v = app.getSetting(RENDER_NONCE_KEY);
+      nonce = v === undefined ? undefined : Number(v);
+    } finally {
+      app.close();
+    }
+  }
+  return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce);
+}
+
+program
+  .command('run')
+  .description('Run the daily pipeline, project the results into the app tables and post the notification')
+  .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
+  .option('--no-notify', 'do not post the macOS notification')
+  .action(async (o: { offlineFixtures?: string; notify: boolean }) =>
+    guarded(async () => {
+      const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+      // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
+      const live: PlaywrightBrowserProvider | undefined =
+        offline === undefined ? new (await import('./app/browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
+      try {
+        const summary = await runDaily({
+          home: jobpilotHome(),
+          clock: systemClock,
+          fetch: offline?.fetch ?? nodeFetch,
+          browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
+          notifier: o.notify ? osascriptNotifier : async () => {},
+        });
+        console.log(formatSummary(summary));
+      } finally {
+        await live?.close();
+      }
+    }),
+  );
+
+const pack = program.command('pack').description('User pack tools');
+pack
+  .command('check')
+  .description('Validate the pack as today\'s run would load it, prove the wiring and pacing, and print the pack hash')
+  .action(() =>
+    guarded(() => {
+      const loaded = todaysPack();
+      const prepared = preparePipeline(loaded.pack);
+      const { warnings } = dailySeeds(loaded.pack, '2000-01-01');
+      const careers = loaded.pack.watchlist.filter((w) => w.ats === 'careers').length;
+      console.log(`pack ok: ${homePaths(jobpilotHome()).pack}`);
+      console.log(`pack hash ${loaded.packHash}`);
+      console.log(`full pack hash ${loaded.fullPackHash}`);
+      console.log(`experience as of ${loaded.asOf}; ${loaded.pack.facts.length} facts; watchlist ${loaded.pack.watchlist.length} entries (${careers} careers); feeds ${loaded.pack.feeds.enabled.join(', ') || 'none'}`);
+      console.log(`pipeline ${prepared.compiled.pipeline.id}@${prepared.compiled.pipeline.version}: ${prepared.registry.list().length} agents; policy ${prepared.policyHash.slice(0, 12)}`);
+      for (const w of warnings) console.log(`warning: ${w}`);
+    }),
+  );
+
+const migrate = program.command('migrate').description('One-off imports');
+migrate
+  .command('desk <dir>')
+  .description('Import the Application Desk rows (status, note, applied date), sanitised by the pack naming rules')
+  .action((dir: string) =>
+    guarded(async () => {
+      const paths = homePaths(jobpilotHome());
+      if (!existsSync(join(paths.pack, 'naming.yaml'))) {
+        throw new Error(`migrate desk needs the pack's naming rules (${join(paths.pack, 'naming.yaml')}) to sanitise the rows; build the pack first`);
+      }
+      const { pack: loaded } = todaysPack();
+      if (loaded.naming.forbiddenTerms.length === 0) throw new Error('naming.yaml lists no forbiddenTerms; refusing to import Desk rows unsanitised');
+      await withLock(paths.home, 'migrate desk', async () => {
+        const app = AppStore.open(paths.db);
+        try {
+          console.log(JSON.stringify(migrateDesk(dir, app, { naming: loaded.naming }), null, 2));
+        } finally {
+          app.close();
+        }
+      });
+    }),
+  );
+
+const facts = program.command('facts').description('Fact status overrides (the pack files are never edited)');
+facts
+  .command('list')
+  .description('List every fact with its effective status')
+  .action(() =>
+    guarded(() => {
+      const paths = homePaths(jobpilotHome());
+      const overrides = overridesAt(paths.db);
+      const { pack: p } = todaysPack();
+      const w = Math.max(...p.facts.map((f) => f.id.length), 2);
+      for (const f of p.facts) {
+        const status = `${f.status}${Object.hasOwn(overrides, f.id) ? ' (override)' : ''}`;
+        let line = `${f.id.padEnd(w)}  ${status.padEnd(30)}  ${f.kind.padEnd(10)}  ${f.claim}`;
+        try {
+          assertNoForbidden(line, p.naming);
+        } catch (e) {
+          if (!(e instanceof ForbiddenTermError)) throw e;
+          line = `${f.id.padEnd(w)}  ${status.padEnd(30)}  ${f.kind.padEnd(10)}  [hidden: contains a forbidden term]`;
+        }
+        console.log(line);
+      }
+    }),
+  );
+for (const [verb, status] of [['verify', 'verified'], ['reject', 'rejected']] as const) {
+  facts
+    .command(`${verb} <id>`)
+    .description(`Mark a fact ${status} (an override; the next run re-runs the steps that read the pack)`)
+    .action((id: string) =>
+      guarded(() => {
+        const paths = homePaths(jobpilotHome());
+        const { pack: p } = todaysPack();
+        const fact = p.facts.find((f) => f.id === id);
+        if (!fact) throw new Error(`unknown fact ${id}`);
+        const app = AppStore.open(paths.db);
+        try {
+          app.setFactOverride(id, status, systemClock.now());
+        } finally {
+          app.close();
+        }
+        console.log(`${id}: ${fact.status} -> ${status}`);
+      }),
+    );
+}
+
+const docs = program.command('docs').description('Document tools');
+docs
+  .command('rebuild [jobKey]')
+  .description('Re-render the documents of the latest daily run (only the renderer runs again; nothing is fetched)')
+  .option('--all', 'every job of the latest daily run')
+  .action((jobKey: string | undefined, o: { all?: boolean }) =>
+    guarded(async () => {
+      const summary = await rebuildDocs({ home: jobpilotHome(), clock: systemClock, ...(jobKey !== undefined ? { jobKey } : {}), ...(o.all ? { all: true } : {}) });
+      console.log(formatSummary(summary));
+    }),
+  );
 
 await program.parseAsync();

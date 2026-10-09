@@ -95,4 +95,11 @@ export const APP_MIGRATIONS: readonly string[] = [
     policy_hash TEXT NOT NULL
   );
   `,
+  // Task 11: small app settings, e.g. `render.nonce` (the docs-rebuild counter that goes into the full pack).
+  `
+  CREATE TABLE app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+  );
+  `,
 ];

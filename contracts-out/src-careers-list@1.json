@@ -1,0 +1,136 @@
+{
+  "hash": "2841f99136c47c7525fc2367ef74fa8f49f0cff5d5fd5873ec4f91c67f103c92",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "browser": {
+        "maxPages": 6
+      },
+      "pack": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ats": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "ashby",
+              "feed",
+              "careers"
+            ],
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ats",
+          "slug",
+          "company",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "DiscoveryRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "careers.example.com"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-careers-list",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "linkPattern": {
+            "type": "string"
+          },
+          "listUrl": {
+            "type": "string"
+          },
+          "refresh": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "titleKey": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "company",
+          "slug",
+          "listUrl",
+          "url",
+          "linkPattern",
+          "titleKey",
+          "refresh"
+        ],
+        "type": "object"
+      },
+      "type": "CareerLink@1"
+    },
+    "redactor": false,
+    "requires": [
+      "req.known-ats"
+    ],
+    "retry": {
+      "backoffMs": [
+        2000,
+        8000
+      ],
+      "max": 2,
+      "on": [
+        "network",
+        "overloaded"
+      ]
+    },
+    "team": "sourcing",
+    "timeoutMs": 1650000,
+    "version": "1.0.0"
+  }
+}

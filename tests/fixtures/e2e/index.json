@@ -1,0 +1,10 @@
+{
+  "https://boards-api.greenhouse.io/v1/boards/example-gh/jobs?content=true&pay_transparency=true": "greenhouse-example-gh.json",
+  "https://api.lever.co/v0/postings/example-lv?mode=json&skip=0&limit=100": "lever-example-lv-0.json",
+  "https://api.lever.co/v0/postings/example-lv?mode=json&skip=100&limit=100": "lever-empty.json",
+  "https://api.ashbyhq.com/posting-api/job-board/example-ab?includeCompensation=true": "ashby-example-ab.json",
+  "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=1": "himalayas-1.json",
+  "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=2": "himalayas-2.json",
+  "https://careers.example.com/jobs": "careers-listing.html",
+  "https://careers.example.com/jobs/lead-backend-engineer-payments": "careers-job.html"
+}

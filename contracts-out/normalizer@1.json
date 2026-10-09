@@ -1,0 +1,256 @@
+{
+  "hash": "b68c0d711394367e34b8c8fcc6d79d0370d3528d040581e8a504daf5ff866ccb",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 10000
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {},
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "raw": {},
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawPosting@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "normalizer",
+    "kind": "deterministic",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ats": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "ashby",
+              "feed",
+              "careers"
+            ],
+            "type": "string"
+          },
+          "comp": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "basis": {
+                    "enum": [
+                      "base",
+                      "unknown"
+                    ],
+                    "type": "string"
+                  },
+                  "currency": {
+                    "enum": [
+                      "INR",
+                      "USD",
+                      "EUR",
+                      "GBP"
+                    ],
+                    "type": "string"
+                  },
+                  "max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "min": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "period": {
+                    "const": "year",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "min",
+                  "max",
+                  "currency",
+                  "period",
+                  "basis"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "company": {
+            "type": "string"
+          },
+          "dedupeKey": {
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          },
+          "descriptionText": {
+            "type": "string"
+          },
+          "employmentType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jobKey": {
+            "pattern": "^[0-9a-f]{16}$",
+            "type": "string"
+          },
+          "locationText": {
+            "type": "string"
+          },
+          "postedAt": {
+            "anyOf": [
+              {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T[0-9:.]+(?:Z|[+-]\\d{2}:?\\d{2})?)?$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "remote": {
+            "additionalProperties": false,
+            "properties": {
+              "countries": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "signals": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "structured": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "remote",
+                      "hybrid",
+                      "onsite"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "structured",
+              "countries",
+              "signals"
+            ],
+            "type": "object"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "yearsRequired": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "jobKey",
+          "dedupeKey",
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "ats",
+          "title",
+          "url",
+          "locationText",
+          "remote",
+          "employmentType",
+          "descriptionText",
+          "postedAt",
+          "comp",
+          "yearsRequired"
+        ],
+        "type": "object"
+      },
+      "type": "Posting@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "understanding",
+    "timeoutMs": 10000,
+    "version": "1.0.0"
+  }
+}

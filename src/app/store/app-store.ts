@@ -494,6 +494,15 @@ export class AppStore {
       .run(factId, status, at);
   }
 
+  /** An app setting (`render.nonce`, …), or undefined when unset. */
+  getSetting(key: string): string | undefined {
+    return (this.db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key) as { value: string } | undefined)?.value;
+  }
+
+  setSetting(key: string, value: string): void {
+    this.db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(key, value);
+  }
+
   /** Records (or re-records, for a re-projected run) one run's summary. */
   recordRun(s: RunSummary): void {
     this.db

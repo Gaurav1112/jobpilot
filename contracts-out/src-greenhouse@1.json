@@ -1,0 +1,123 @@
+{
+  "hash": "89c64d76916f5e9cd6b402c8f0caf504c1351d1dbb2870fdfab8741ee8a5fd16",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ats": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "ashby",
+              "feed",
+              "careers"
+            ],
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ats",
+          "slug",
+          "company",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "DiscoveryRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "boards-api.greenhouse.io"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-greenhouse",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "raw": {},
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawPosting@1"
+    },
+    "redactor": false,
+    "requires": [
+      "req.known-ats"
+    ],
+    "retry": {
+      "backoffMs": [
+        2000,
+        8000
+      ],
+      "max": 2,
+      "on": [
+        "network",
+        "overloaded",
+        "rate_limit",
+        "timeout"
+      ]
+    },
+    "team": "sourcing",
+    "timeoutMs": 30000,
+    "version": "1.0.0"
+  }
+}
