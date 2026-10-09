@@ -52,7 +52,12 @@ interface JobGroup {
   readonly envs: Envelope[];
   readonly quarantines: Quarantine[];
   readonly failures: { agent: string; error: string; inputRank: number; reason?: string }[];
+  /** Review I3: a writing step of this job could not commit its files in this run. */
+  commitFailed?: boolean;
 }
+
+/** Review I3: the docs detail of a job whose files could not be committed. */
+export const COMMIT_FAILED_DETAIL = 'the documents could not be written to disk (files commit failed); they are rendered again on the next run';
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const dataOf = (e: EventRow): Record<string, unknown> => JSON.parse(e.data) as Record<string, unknown>;
@@ -128,12 +133,14 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   const done = new Set<string>();
   const quarantined = new Map<string, { agent: string; verdict: unknown }>();
   const failed = new Map<string, { agent: string; error: string; reason?: string }>();
+  const commitFailed = new Set<string>();
   for (const e of events) {
     const d = dataOf(e);
     const stepKey = str(d['stepKey']);
     const agent = str(d['agent']) ?? '';
     if (stepKey === undefined) continue;
     if (e.kind === 'step_done' || (e.kind === 'step_replayed' && d['status'] === 'done')) done.add(stepKey);
+    else if (e.kind === 'files_commit_failed') commitFailed.add(stepKey);
     else if (e.kind === 'step_quarantined') quarantined.set(stepKey, { agent, verdict: d['verdict'] });
     else if (e.kind === 'step_replayed' && d['status'] === 'quarantined') {
       const row = kernel.getStep(stepKey);
@@ -175,6 +182,11 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
     const g = group(key);
     if (input) g.envs.push(input);
     g.quarantines.push({ agent: q.agent, inputRank, detail: `${q.agent} quarantined: ${verdictText(q.verdict)}` });
+  }
+  for (const stepKey of [...commitFailed].sort()) {
+    const input = inputOf(kernel, stepKey);
+    const key = input ? jobKeyOf(input) : null;
+    if (key !== null) group(key).commitFailed = true;
   }
   for (const [stepKey, f] of [...failed].sort(([a], [b]) => cmp(a, b))) {
     const input = inputOf(kernel, stepKey);
@@ -269,6 +281,7 @@ export function projectDocs(kernel: Store, app: AppStore, runId: string, opts: P
     const key = input ? jobKeyOf(input) : null;
     if (key === null) continue;
     if (e.kind === 'step_quarantined') out.set(key, { docsState: 'blocked', docsDetail: `${str(d['agent']) ?? '?'} quarantined: ${verdictText(d['verdict'])}`, docs: [] });
+    if (e.kind === 'files_commit_failed') out.set(key, { docsState: 'blocked', docsDetail: COMMIT_FAILED_DETAIL, docs: [] });
     if (e.kind === 'step_failed') {
       const reason = NAMED_REASON.exec(str(d['detail']) ?? '')?.[0];
       if (reason !== undefined) out.set(key, { docsState: 'blocked', docsDetail: `${str(d['agent']) ?? '?'} failed: ${str(d['error']) ?? 'unknown'} (${reason})`, docs: [] });
@@ -314,7 +327,10 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
   let docs: Doc[] = [];
   const writingQuarantine = g.quarantines.find((q) => q.inputRank >= WRITING_INPUT_RANK);
   const writingFailure = g.failures.find((f) => f.inputRank >= WRITING_INPUT_RANK);
-  if (qa) {
+  if (g.commitFailed) {
+    docsState = 'blocked';
+    docsDetail = COMMIT_FAILED_DETAIL;
+  } else if (qa) {
     ({ docsState, docsDetail, docs } = docsOfQa(qa, opts.docOnDisk));
   } else if (writingQuarantine) {
     docsState = 'blocked';

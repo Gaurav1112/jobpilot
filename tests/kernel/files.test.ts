@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -740,6 +740,33 @@ describe('I1: a replayed files step checks the files its stored output reference
     expect(second.kind === 'done' && second.outputs.map((o) => o.payload)).toEqual(first.kind === 'done' && first.outputs.map((o) => o.payload));
     // healed for good: the next replay finds the files and replays
     expect(await exec(store, out, agent)).toMatchObject({ kind: 'done', replayed: true });
+  });
+
+  it('I3: a failed commit fails the step outcome (nothing routed), keeps the step done, and the next replay heals it', async () => {
+    const out = root();
+    const store = Store.open(':memory:');
+    const agent = agentOf();
+    runs = 0;
+    mkdirSync(join(out, 'k'), { recursive: true });
+    chmodSync(join(out, 'k'), 0o500); // the rename into k/ is refused (EACCES)
+    let first;
+    try {
+      first = await exec(store, out, agent);
+    } finally {
+      chmodSync(join(out, 'k'), 0o700);
+    }
+    expect(first).toMatchObject({ kind: 'failed', error: 'invalid_output' });
+    expect(first.kind === 'failed' && first.detail).toMatch(/^files_commit_failed: /);
+    expect(store.getStep(first.stepKey)?.status).toBe('done');
+    const ev = store.events('r').find((e) => e.kind === 'files_commit_failed');
+    expect(JSON.parse(ev!.data)).toMatchObject({ agent: 'ref-writer', stepKey: first.stepKey, envelopeId: 'seed' });
+    expect(existsSync(join(out, 'k', 'a.txt'))).toBe(false);
+    // the obstacle is gone: the replay finds k/a.txt absent and runs the step again
+    const second = await exec(store, out, agent);
+    expect(second).toMatchObject({ kind: 'done', replayed: false });
+    expect(readFileSync(join(out, 'k', 'a.txt'), 'utf8')).toBe('A');
+    expect(store.events('r').map((e) => e.kind)).toContain('replay-healed');
+    expect(runs).toBe(2);
   });
 
   it('leaves a read-only files step alone: it wrote nothing to heal', async () => {

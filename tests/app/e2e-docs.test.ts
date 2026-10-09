@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -84,6 +84,78 @@ describe.skipIf(pdftotext === undefined)('I1: documents heal themselves after an
       expect(r?.done).toBeGreaterThan(0);
       expect(r?.replayed).toBe(0);
       h.withApp((a) => expect(a.kernel.events(run3.runId).filter((e) => e.kind === 'replay-healed').length).toBe(r?.done));
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+});
+
+describe.skipIf(pdftotext === undefined)('I3: failed commits and QA-blocked documents are problems', () => {
+  it('a failed commit is a commit-failed problem with exit 1, the job is blocked, and the next run heals it', async () => {
+    const h = docsHome();
+    try {
+      await h.run();
+      const key = ready(h.jobs())[0] as string;
+      chmodSync(join(h.home, 'out', key), 0o500);
+      h.override('f-nw-01', 'rejected'); // the pack changes, so the renderer writes new bytes
+      h.clock.t = '2026-10-09T02:00:00.000Z';
+      let s: DailySummary;
+      try {
+        s = await h.run();
+      } finally {
+        chmodSync(join(h.home, 'out', key), 0o700);
+      }
+      const failed = s.problems.filter((p) => p.kind === 'commit-failed');
+      expect(failed).toHaveLength(1);
+      expect(failed[0]).toMatchObject({ agent: 'renderer' });
+      expect(failed[0]?.item).toContain(`job ${key}`);
+      expect(s.exitCode).toBe(1);
+      expect(s.notification).toMatch(/· \d+ problems?$/);
+      const job = h.jobs().find((j) => j.jobKey === key);
+      expect(job?.docsState).toBe('blocked');
+      expect(job?.docsDetail).toMatch(/could not be written/);
+      // next day, obstacle gone: the replay finds the files changed and renders again; no manual rebuild
+      h.clock.t = '2026-10-10T01:30:00.000Z';
+      const next = await h.run();
+      expect(next.problems.filter((p) => p.kind === 'commit-failed')).toEqual([]);
+      expect(next.exitCode).toBe(0);
+      expect(h.jobs().find((j) => j.jobKey === key)?.docsState).toBe('ready');
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+
+  const stub = (dir: string, body: string): string => {
+    const p = join(dir, 'pdftotext-stub');
+    writeFileSync(p, `#!/bin/sh\n${body}\n`);
+    chmodSync(p, 0o755);
+    return p;
+  };
+
+  it('documents QA blocks for content (too many pages) are docs-blocked problems that keep exit 0', async () => {
+    const h = docsHome();
+    try {
+      // the real text layer, plus three page breaks: only qa.pages fails (a content cause)
+      const s = await h.run({ pdftotext: stub(h.home, `"${pdftotext}" "$@" && printf '\\f\\f\\f'`) });
+      const blocked = s.problems.filter((p) => p.kind === 'docs-blocked');
+      expect(blocked.length).toBeGreaterThan(0);
+      expect(blocked.every((p) => p.agent === 'qa-gate' && p.cause === 'content' && /qa\.pages/.test(p.reason))).toBe(true);
+      expect(blocked.length).toBe(h.jobs().filter((j) => j.docsState === 'blocked').length);
+      expect(s.exitCode).toBe(0);
+      expect(s.notification).toContain(`· ${s.problems.length} problem`);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+
+  it('documents QA blocks for a system cause (no text layer) are docs-blocked problems with exit 1', async () => {
+    const h = docsHome();
+    try {
+      const s = await h.run({ pdftotext: stub(h.home, 'exit 0') });
+      const blocked = s.problems.filter((p) => p.kind === 'docs-blocked');
+      expect(blocked.length).toBeGreaterThan(0);
+      expect(blocked.every((p) => p.cause === 'system' && /qa\.pdf-text/.test(p.reason))).toBe(true);
+      expect(s.exitCode).toBe(1);
     } finally {
       h.done();
     }

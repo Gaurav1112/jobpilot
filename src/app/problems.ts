@@ -9,12 +9,51 @@ import type { Naming } from './pack/schema.js';
  * the notification and kept in `runs_summary`.
  */
 export interface Problem {
-  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped';
+  /**
+   * `commit-failed` (review I3): a writing step's files could not be moved into place; its documents are blocked and
+   * the next run renders them again. `docs-blocked`: the qa-gate refused a job's documents (`cause` says whether the
+   * content or the system failed). `docs-stale` (review I2): ready documents cite a fact the user has since rejected.
+   */
+  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale';
   readonly agent: string;
   /** What the step was working on: the board (company and ats:slug), the career link, the posting or the job. */
   readonly item: string;
   readonly reason: string;
+  /** `docs-blocked` only: `system` counts in the exit code, `content` does not (QA_CHECK_CAUSE). */
+  readonly cause?: 'content' | 'system';
 }
+
+/**
+ * Review I3: why a failed qa-gate check blocked a job's documents. A `content` cause is decided by the posting and the
+ * pack (re-running gives the same refusal, like `input_rejected`): it is listed and counted in the notification but
+ * does not change the exit code. A `system` cause means the toolchain or the disk misbehaved: it makes the run exit 1.
+ * A check id not listed here is `system` (fail loud).
+ *
+ * | check | cause | why |
+ * |---|---|---|
+ * | qa.pages | content | the plan's text does not fit the page limit |
+ * | qa.terms | content | a planned term is not in the text the plan produced |
+ * | qa.hyphen | content | a wrap point the text itself creates |
+ * | qa.naming | content | a forbidden term in the pack or posting text |
+ * | qa.contact-intact | content | a contact token too long to keep on one line |
+ * | qa.files | system | a file is unreadable or not the bytes the renderer recorded |
+ * | qa.docx-text | system | the DOCX text layer differs from the document text (renderer or reader bug) |
+ * | qa.pdf-text | system | the PDF text layer differs, or pdftotext gave none (renderer or poppler) |
+ */
+export const QA_CHECK_CAUSE: Readonly<Record<string, 'content' | 'system'>> = {
+  'qa.pages': 'content',
+  'qa.terms': 'content',
+  'qa.hyphen': 'content',
+  'qa.naming': 'content',
+  'qa.contact-intact': 'content',
+  'qa.files': 'system',
+  'qa.docx-text': 'system',
+  'qa.pdf-text': 'system',
+};
+
+/** The cause of a QA block: `system` when any failed check is a system cause (or unknown), else `content`. */
+export const qaCause = (failedIds: readonly string[]): 'content' | 'system' =>
+  failedIds.some((id) => (QA_CHECK_CAUSE[id] ?? 'system') === 'system') ? 'system' : 'content';
 
 const MAX_TEXT = 200;
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -77,6 +116,7 @@ function reasonOf(e: StepEvent | undefined, kernel: Store): string {
   if (!e) return 'no step event recorded';
   const d = e.data;
   if (e.kind === 'step_failed') return `${s(d['error'])}: ${s(d['detail'])}`;
+  if (e.kind === 'files_commit_failed') return `the documents could not be written; they are rendered again on the next run (${s(d['message'])})`;
   if (e.kind === 'step_skipped') return d['reason'] === 'breaker_open' ? 'skipped: a breaker was open after earlier failures' : `skipped: ${s(d['reason'])}`;
   let verdict: unknown = d['verdict'];
   if (e.kind === 'step_replayed') {
@@ -93,38 +133,87 @@ function reasonOf(e: StepEvent | undefined, kernel: Store): string {
  */
 export function runProblems(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): Problem[] {
   const last = new Map<string, StepEvent>();
-  for (const ev of kernel.events(runId)) {
-    if (!['step_failed', 'step_quarantined', 'step_skipped', 'step_replayed'].includes(ev.kind)) continue;
+  const events = kernel.events(runId);
+  for (const ev of events) {
+    if (!['step_failed', 'step_quarantined', 'step_skipped', 'step_replayed', 'files_commit_failed'].includes(ev.kind)) continue;
     const data = JSON.parse(ev.data) as Record<string, unknown>;
     if (ev.kind === 'step_replayed' && data['status'] !== 'quarantined') continue;
     // Events name their input envelope; an older event without it is tied through its step row.
     const envelopeId = typeof data['envelopeId'] === 'string' ? data['envelopeId'] : kernel.getStep(s(data['stepKey']))?.input_envelope_id;
     if (typeof data['agent'] === 'string' && envelopeId) last.set(`${data['agent']}\u0000${envelopeId}`, { kind: ev.kind, data });
   }
+  const safe = (t: string): string => {
+    const line = oneLine(t);
+    try {
+      assertNoForbidden(line, naming);
+      return line;
+    } catch (err) {
+      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
+      throw err;
+    }
+  };
   const out: Problem[] = [];
   for (const q of kernel.queueItems(runId)) {
     if (q.status === 'done' || q.status === 'pending') continue;
     const e = last.get(`${q.agent_id}\u0000${q.envelope_id}`);
     const error = e?.kind === 'step_failed' ? s(e.data['error']) : undefined;
     const kind: Problem['kind'] =
-      q.status === 'skipped' ? 'skipped' : q.status === 'quarantined' ? 'quarantined' : error === 'gone' ? 'gone' : error === 'input_rejected' ? 'input_rejected' : 'failed';
+      q.status === 'skipped'
+        ? 'skipped'
+        : q.status === 'quarantined'
+          ? 'quarantined'
+          : e?.kind === 'files_commit_failed'
+            ? 'commit-failed'
+            : error === 'gone'
+              ? 'gone'
+              : error === 'input_rejected'
+                ? 'input_rejected'
+                : 'failed';
     let item: string;
     try {
       item = itemOf(kernel.getEnvelope(q.envelope_id));
     } catch {
       item = `envelope ${q.envelope_id}`;
     }
-    const safe = (t: string): string => {
-      const line = oneLine(t);
-      try {
-        assertNoForbidden(line, naming);
-        return line;
-      } catch (err) {
-        if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
-        throw err;
-      }
-    };
     out.push({ kind, agent: q.agent_id, item: safe(item), reason: safe(reasonOf(e, kernel)) });
   }
+  out.push(...qaBlocks(kernel, events, safe));
   return out;
+}
+
+/**
+ * Review I3: every job whose QaReport in this run (executed or replayed) failed, once per job, in step-key order,
+ * with the failed checks and their cause.
+ */
+function qaBlocks(kernel: Store, events: readonly { kind: string; data: string }[], safe: (t: string) => string): Problem[] {
+  const keys = new Set<string>();
+  for (const ev of events) {
+    if (ev.kind !== 'step_done' && ev.kind !== 'step_replayed') continue;
+    const d = JSON.parse(ev.data) as Record<string, unknown>;
+    if (d['agent'] !== 'qa-gate' || (ev.kind === 'step_replayed' && d['status'] !== 'done') || typeof d['stepKey'] !== 'string') continue;
+    keys.add(d['stepKey']);
+  }
+  const byJob = new Map<string, Problem>();
+  for (const stepKey of [...keys].sort()) {
+    for (const env of kernel.envelopesOfStep(stepKey)) {
+      const qa = env.payload as { jobKey?: unknown; ok?: unknown; checks?: { id: string; ok: boolean; detail: string }[] };
+      if (env.type !== 'QaReport@1' || qa.ok !== false || typeof qa.jobKey !== 'string' || byJob.has(qa.jobKey)) continue;
+      const failed = (qa.checks ?? []).filter((c) => !c.ok);
+      let item = `job ${qa.jobKey}`;
+      try {
+        const input = kernel.getStep(stepKey)?.input_envelope_id;
+        if (input) item = itemOf(kernel.getEnvelope(input));
+      } catch {
+        // keep the job key
+      }
+      byJob.set(qa.jobKey, {
+        kind: 'docs-blocked',
+        agent: 'qa-gate',
+        item: safe(item),
+        reason: safe(`qa failed (${failed.map((c) => c.id).join(', ')}): ${failed.map((c) => `${c.id}: ${c.detail}`).join('; ')}`),
+        cause: qaCause(failed.map((c) => c.id)),
+      });
+    }
+  }
+  return [...byJob.values()];
 }

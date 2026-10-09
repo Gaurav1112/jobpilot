@@ -26,6 +26,7 @@ const s = (v: unknown): string => (typeof v === 'string' ? v : '?');
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {
   failed: 'Failed', gone: 'Gone from the source', input_rejected: 'Input rejected', quarantined: 'Quarantined', skipped: 'Skipped',
+  'commit-failed': 'Documents not written', 'docs-blocked': 'Documents blocked by QA', 'docs-stale': 'Documents cite a rejected fact',
 };
 
 function counts(c: unknown): Html {

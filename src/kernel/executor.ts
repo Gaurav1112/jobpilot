@@ -159,7 +159,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
   const outcome = await runStep(deps, runId, agent, input, staging);
   if (staging === undefined) return outcome;
   const event = (kind: string, data: Record<string, unknown>): void =>
-    deps.store.appendEvent(runId, deps.clock.now(), kind, { agent: c.id, stepKey: outcome.stepKey, ...data }, deps.policyHash);
+    deps.store.appendEvent(runId, deps.clock.now(), kind, { agent: c.id, stepKey: outcome.stepKey, envelopeId: input.envelopeId, ...data }, deps.policyHash);
   if (outcome.kind === 'done') {
     // A fresh step, or a replayed one whose commit a crash interrupted: the stage is committed only now, after the
     // out guardrails passed and the step was recorded done. Throwing from the hook (tests) leaves it staged.
@@ -169,8 +169,13 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         const committed = await commitPending(staging.root, outcome.stepKey, staging.maxBytes);
         event('files_committed', { files: committed });
       } catch (e) {
-        event('files_commit_failed', { message: e instanceof Error ? e.message : String(e) });
+        // Review I3: the files its outputs reference are not on disk, so nothing may be routed on (a QA step would
+        // check the old files and its verdict would be memoised). The step row stays done: on the next run its replay
+        // finds the referenced files absent or changed and runs it again (I1, `replay-healed`).
+        const message = e instanceof Error ? e.message : String(e);
+        event('files_commit_failed', { message });
         await discardPending(staging.root, outcome.stepKey).catch(() => undefined);
+        return { kind: 'failed', stepKey: outcome.stepKey, error: 'invalid_output', detail: `files_commit_failed: ${message}` };
       }
     }
   } else if (outcome.kind === 'failed' || outcome.kind === 'quarantined') {

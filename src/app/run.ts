@@ -141,8 +141,12 @@ export function nonceOf(app: AppStore): number | undefined {
   return n;
 }
 
-/** Ruling 4: gone and input-rejected items are problems (listed and counted) but not failures of the run. */
-const exitCodeOf = (report: RunReport): 0 | 1 => (report.queue.failed - report.gone - report.inputRejected > 0 || report.queue.quarantined > 0 ? 1 : 0);
+/**
+ * Ruling 4: gone and input-rejected items are problems (listed and counted) but not failures of the run. A failed commit
+ * is a failed queue item, so it counts (review I3); a QA block counts only when its cause is the system.
+ */
+const exitCodeOf = (report: RunReport, problems: readonly Problem[]): 0 | 1 =>
+  report.queue.failed - report.gone - report.inputRejected > 0 || report.queue.quarantined > 0 || problems.some((p) => p.kind === 'docs-blocked' && p.cause === 'system') ? 1 : 0;
 
 /** Whether this run had source steps and every one of them was answered from the store. */
 function sourcesAllReplayed(counts: RunCounts): boolean {
@@ -205,7 +209,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       return {
         runId, runDate, asOf: loaded.asOf, resumed: resume, report, counts, projection, problems,
         packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings, notification, notified,
-        refresh: o.refresh === true, exitCode: exitCodeOf(report),
+        refresh: o.refresh === true, exitCode: exitCodeOf(report, problems),
       };
     } finally {
       app.close();
@@ -308,7 +312,7 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
         .map((j) => ({ jobKey: j.jobKey, docsState: j.docsState, lastSeen: j.lastSeen }));
       return {
         runId, runDate, asOf, resumed: resume, report, counts, problems, from: latest.runId, nonce, changes, notRebuilt,
-        packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings, exitCode: exitCodeOf(report),
+        packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings, exitCode: exitCodeOf(report, problems),
       };
     } finally {
       app.close();
