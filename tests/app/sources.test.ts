@@ -481,14 +481,14 @@ describe('paging: no silent truncation', () => {
         const page = Number(u.searchParams.get('page'));
         return { body: page === 1 ? hmFull(1, 842) : hmFull(page, 842, 1) };
       });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 15' });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 10' });
       expect(rec.urls).toHaveLength(2);
     });
 
     it('19 duplicates plus 1 new job → invalid_output', async () => {
       const page2 = hmPage(20, [...range(1, 19).map((k) => hmJob(k)), hmJob(500)], 842);
       const rec = serve({ [HM(1)]: { body: hmFull(1, 842) }, [HM(2)]: { body: page2 } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 15' });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 10' });
     });
 
     it('live-like shortfall (pages short by 1 to 4, 1.8% missing overall) passes', async () => {

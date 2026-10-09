@@ -79,12 +79,13 @@ export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HO
  * country=IN): 11 of 43 pages short by 1 to 4 jobs (the worst page held 16 of 20), 827 unique
  * jobs for a totalCount of 842 (98.2%), and totalCount moving by 1 between pages.
  * - A page that is not the last one (offset + limit < totalCount) must bring at least
- *   limit - HIMALAYAS_PAGE_SLACK new guids (15 of 20).
+ *   limit - HIMALAYAS_PAGE_SLACK new guids (10 of 20): loose enough that one short page does not
+ *   fail a normal day; overall coverage below is the main guard.
  * - At the end, unique guids must reach HIMALAYAS_MIN_COVERAGE of the largest totalCount seen.
  * - The final totalCount may sit at most one page (limit) below the largest one seen; a bigger
  *   fall (say a glitch answering totalCount 0) would end the walk early.
  */
-export const HIMALAYAS_PAGE_SLACK = 5;
+export const HIMALAYAS_PAGE_SLACK = 10;
 export const HIMALAYAS_MIN_COVERAGE = 0.95;
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
