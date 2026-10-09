@@ -7,6 +7,13 @@ import type { JobView } from '../store/app-store.js';
 
 export type Tone = 'good' | 'warn' | 'critical' | 'neutral' | 'muted' | 'accent';
 
+const SOURCE_NAME: Readonly<Record<string, string>> = {
+  greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', himalayas: 'Himalayas', jobicy: 'Jobicy', careers: 'a careers site',
+  feed: 'a job feed', workday: 'Workday', icims: 'iCIMS', smartrecruiters: 'SmartRecruiters', taleo: 'Taleo',
+};
+/** A source or ATS id as the user reads it mid-sentence: "Greenhouse", "Himalayas", "a careers site". */
+export const sourceName = (id: string): string => SOURCE_NAME[id] ?? id;
+
 const titleCase = (s: string): string => s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
 
 /** The remote verdict of a posting as a pill label, tone and the evidence behind it. */

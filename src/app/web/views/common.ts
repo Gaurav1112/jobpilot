@@ -13,7 +13,7 @@ import type { Tone } from '../copy.js';
 export const pill = (text: string, tone: Tone, title?: string): Html => html`<span class="pill pill-${tone}"${title !== undefined ? html` title="${title}"` : ''}>${text}</span>`;
 
 export const STATUS_LABEL: Readonly<Record<JobStatus, string>> = {
-  new: 'New',
+  new: 'Not started',
   approved: 'Shortlisted',
   applied: 'Applied',
   interview: 'Interviewing',

@@ -1,7 +1,7 @@
 import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
-import { breakdownText, docsReason, reasonText } from '../copy.js';
+import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
 import { bandPill, compCell, csrfField, docsPill, pill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface Recommended {
@@ -34,7 +34,7 @@ function header(j: JobDetail): Html {
   return html`<header class="job-head">
 <p class="crumbs"><a href="/">Jobs</a></p>
 <h1>${j.title}</h1>
-<p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span><span class="sep" aria-hidden="true">·</span><span>via ${j.source}${j.ats !== j.source ? html` (${j.ats})` : ''}</span></p>
+<p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span><span class="sep" aria-hidden="true">·</span><span>via ${sourceName(j.source)}${j.ats !== j.source && j.ats !== 'feed' ? html` (applies on ${sourceName(j.ats)})` : ''}</span></p>
 <div class="head-facts">
 <div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
 <div class="fact-box"><span class="label">Fit score</span><span class="big num">${j.score === null ? '–' : scoreText(j.score)}</span></div>
@@ -47,10 +47,10 @@ ${url !== undefined ? html`<p><a class="btn" href="${url}" rel="noopener norefer
 
 function duplicates(j: JobDetail, preferred: JobPageData['preferred']): Html | '' {
   if (preferred !== null) {
-    return html`<p class="note">This is another listing of <a href="/jobs/${preferred.jobKey}">the same job on ${preferred.source}</a>; status and note are shared.</p>`;
+    return html`<p class="note">This is another listing of <a href="/jobs/${preferred.jobKey}">the same job on ${sourceName(preferred.source)}</a>; status and note are shared.</p>`;
   }
   if (j.alsoListedOn.length === 0) return '';
-  return html`<p class="note">Also listed on ${j.alsoListedOn.join(', ')}. Status and note are shared across the listings.</p>`;
+  return html`<p class="note">Also listed on ${j.alsoListedOn.map(sourceName).join(', ')}. Status and note are shared across the listings.</p>`;
 }
 
 function whyMatched(j: JobDetail, display: (k: string) => string): Html {

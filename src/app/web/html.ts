@@ -11,14 +11,14 @@ import { escapeHtml } from '../render/html.js';
  * undefined (nothing), `Html`, and arrays of those (concatenated). Anything else throws, so an object can never
  * render as "[object Object]".
  */
-const BRAND = Symbol('Html');
+/** The only key that can make an `Html`; never exported, so no other module can wrap a raw string. */
+const MINT = Symbol('Html.mint');
 
 export class Html {
-  readonly [BRAND] = true;
-  private constructor(readonly value: string) {}
-  /** Internal: only `html` calls this. */
-  static of(value: string): Html {
-    return new Html(value);
+  readonly value: string;
+  constructor(key: typeof MINT, value: string) {
+    if (key !== MINT) throw new TypeError('Html values come only from the html template');
+    this.value = value;
   }
   toString(): string {
     return this.value;
@@ -43,7 +43,7 @@ function render(v: HtmlValue): string {
 export function html(strings: TemplateStringsArray, ...values: readonly HtmlValue[]): Html {
   let out = strings[0] ?? '';
   for (let i = 0; i < values.length; i++) out += render(values[i] as HtmlValue) + (strings[i + 1] ?? '');
-  return Html.of(out);
+  return new Html(MINT, out);
 }
 
 /** A URL safe for an `href` that leaves the dashboard: http(s) only, else undefined (the link is not rendered). */

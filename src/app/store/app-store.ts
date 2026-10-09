@@ -255,8 +255,8 @@ export class AppStore {
   ) {}
 
   /** Opens the DB file: the kernel's migrations first (through `Store.open`), then the app's. `close` closes both. */
-  static open(path: string): AppStore {
-    const kernel = Store.open(path);
+  static open(path: string, opts: { readonly timeoutMs?: number } = {}): AppStore {
+    const kernel = Store.open(path, opts);
     try {
       return AppStore.migrate(kernel, true);
     } catch (err) {
@@ -272,6 +272,11 @@ export class AppStore {
 
   private static migrate(kernel: Store, owned: boolean): AppStore {
     const db = kernel.db;
+    // Up to date: read only, so opening never waits for a run's write lock (the dashboard reads during a run).
+    const current = db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'app_schema'`).get() !== undefined
+      ? (db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number } | undefined)?.version
+      : undefined;
+    if (current === APP_MIGRATIONS.length) return new AppStore(kernel, owned);
     db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
     db.prepare(`INSERT OR IGNORE INTO app_schema (id, version) VALUES (1, 0)`).run();
     const version = (db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number }).version;

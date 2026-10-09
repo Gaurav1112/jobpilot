@@ -306,3 +306,13 @@ details summary { cursor: pointer; color: var(--accent); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 }
+
+/* --- fix round 1: htmx error toast, pager ------------------------------------------------------------------------- */
+.toast {
+  position: sticky; top: var(--space-2); z-index: 5; margin-bottom: var(--space-3);
+  color: var(--critical); background: var(--critical-soft); border: 1px solid var(--critical); border-left-width: 4px;
+  border-radius: var(--radius); padding: var(--space-2) var(--space-3); font-weight: 600; overflow-wrap: anywhere;
+}
+.pager { display: flex; align-items: center; justify-content: center; gap: var(--space-3); margin-top: var(--space-4); flex-wrap: wrap; }
+.btn-disabled { opacity: 0.45; cursor: default; }
+.btn-disabled:hover { background: var(--surface); }

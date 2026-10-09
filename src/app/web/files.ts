@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { checkRelPath } from '../../kernel/files.js';
 import type { Doc, SnapshotFile } from '../store/app-store.js';
@@ -12,7 +12,7 @@ import type { Doc, SnapshotFile } from '../store/app-store.js';
  *   link could alias a file outside the root), and must still have the sha256 the store recorded.
  *
  * `snapshotApplied` is the only writer: it copies (never links) a job's current documents into
- * `<jobKey>/applied-<day>/`, each file created exclusively and made read-only (0444). The kernel's files layer never
+ * `<jobKey>/applied-<day>/`, each file created exclusively and made read-only (0444), then the folder itself (0555). The kernel's files layer never
  * writes into an `applied-*` directory, so later renders cannot touch a snapshot.
  */
 
@@ -128,6 +128,8 @@ export function snapshotApplied(outDir: string, jobKey: string, docs: readonly D
     if (code(e) !== 'EEXIST') throw e;
   }
   const real = confinedDir(root, [jobKey, dirName]);
+  // An interrupted snapshot left the folder read-only: open it for the missing files, then close it again.
+  chmodSync(real, 0o755);
   const out: SnapshotFile[] = [];
   const name = (d: Doc): string => `${d.kind}.${d.format}`;
   for (const d of [...docs].sort((a, b) => (name(a) < name(b) ? -1 : name(a) > name(b) ? 1 : 0))) {
@@ -138,5 +140,6 @@ export function snapshotApplied(outDir: string, jobKey: string, docs: readonly D
     writeReadOnly(join(real, file), src.bytes);
     out.push({ kind: d.kind, format: d.format, path: `${jobKey}/${dirName}/${file}`, sha256: d.sha256 });
   }
+  chmodSync(real, 0o555);
   return out;
 }

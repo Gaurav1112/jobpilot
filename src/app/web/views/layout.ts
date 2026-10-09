@@ -28,11 +28,12 @@ export function layout(d: LayoutData): Html {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="same-origin">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
 <title>${d.title} · jobpilot</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
@@ -43,6 +44,7 @@ export function layout(d: LayoutData): Html {
 </div>
 </header>
 <main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
 ${d.banners.map((b) => html`<p class="banner banner-${b.tone}" role="${b.tone === 'info' ? 'status' : 'alert'}">${b.text}</p>`)}
 ${d.body}
 </main>

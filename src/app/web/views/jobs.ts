@@ -1,6 +1,7 @@
 import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
+import { sourceName } from '../copy.js';
 import { BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
@@ -22,7 +23,14 @@ export interface JobsPageData {
   /** True when no band filter was given (rejected and below-floor jobs are hidden). */
   readonly defaultBands: boolean;
   readonly hiddenCount: number;
+  /** New since the last visit, across all pages. */
+  readonly newCount: number;
   readonly istDay: (iso: string) => string;
+  /** Pagination: this page (1-based), the page count, the total shown across pages, and the href of a page. */
+  readonly page: number;
+  readonly pages: number;
+  readonly total: number;
+  readonly pageHref: (page: number) => string;
 }
 
 const ALL_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
@@ -58,7 +66,7 @@ function row(j: ListedJob, istDay: (iso: string) => string): Html {
 <div class="job-main">
 <h2 class="job-title"><a href="/jobs/${j.jobKey}">${j.title}</a>${j.isNew ? html` <span class="new">New since your last visit</span>` : ''}</h2>
 <p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span>${
-    j.alsoListedOn.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span class="muted">also listed on ${j.alsoListedOn.join(', ')}</span>` : ''
+    j.alsoListedOn.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : ''
   }</p>
 <p class="job-pills">${remotePill(j.remote)}${docsPill(j.docsState)}</p>
 ${historyLine(j, istDay)}
@@ -67,11 +75,20 @@ ${historyLine(j, istDay)}
 </li>`;
 }
 
+function pager(d: JobsPageData): Html | '' {
+  if (d.pages <= 1) return '';
+  return html`<nav class="pager" aria-label="Pages">${
+    d.page > 1 ? html`<a class="btn" href="${d.pageHref(d.page - 1)}" rel="prev">Previous</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Previous</span>`
+  }<span class="num">Page ${d.page} of ${d.pages}</span>${
+    d.page < d.pages ? html`<a class="btn" href="${d.pageHref(d.page + 1)}" rel="next">Next</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Next</span>`
+  }</nav>`;
+}
+
 export function jobsBody(d: JobsPageData): Html {
-  const newCount = d.jobs.filter((j) => j.isNew).length;
+  const newCount = d.newCount;
   return html`<div class="page-head">
 <h1>Jobs</h1>
-<p class="lede"><span class="num">${d.jobs.length}</span> job${d.jobs.length === 1 ? '' : 's'} shown${
+<p class="lede"><span class="num">${d.total}</span> job${d.total === 1 ? '' : 's'} shown${
     newCount > 0 ? html`, <span class="num">${newCount}</span> new since your last visit` : ''
   }. Best pay first, then fit.${
     d.defaultBands && d.hiddenCount > 0
@@ -83,6 +100,6 @@ ${filterForm(d.filter, d.defaultBands)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" aria-label="Jobs">${d.jobs.map((j) => row(j, d.istDay))}</ol>`
+    : html`<ol class="jobs" aria-label="Jobs">${d.jobs.map((j) => row(j, d.istDay))}</ol>${pager(d)}`
 }`;
 }

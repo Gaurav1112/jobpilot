@@ -4,14 +4,14 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
  * The dashboard's request rules (Task 13). It listens on 127.0.0.1 only; these rules stop other sites the user's
  * browser visits from reaching it.
  *
- * - **Host.** Every request must name a loopback host (`127.0.0.1`, `localhost`, `[::1]`), so a DNS-rebinding page
- *   cannot read the dashboard through its own domain.
+ * - **Host.** The raw Host header must be exactly `127.0.0.1:<port>`, `localhost:<port>` or `[::1]:<port>`, and an
+ *   absolute-form request target may not name another host, so a DNS-rebinding page cannot read the dashboard.
  * - **POST, both checks.** A POST must come from the dashboard itself (its `Origin`, or when a browser sends none its
  *   `Referer`, equals the request's own origin), AND carry the session's CSRF token (form field `_csrf`, or header
  *   `X-CSRF-Token`). htmx requests (`HX-Request: true`) get a fragment back; plain form posts (JavaScript off) get a
  *   303 redirect. Either way both checks apply.
  * - **Session.** A random session id in an HttpOnly, SameSite=Strict cookie; the token is HMAC-SHA256 of it under a
- *   per-process secret, so it is never stored and a restart invalidates every token.
+ *   random secret kept in the app DB (`app_settings`), so tokens are never stored and survive a restart.
  */
 
 export const SESSION_COOKIE = 'jp_sid';
@@ -25,12 +25,16 @@ export const PREVIEW_CSP = "default-src 'none'; style-src 'unsafe-inline'; objec
 /** Downloads and static files. */
 export const FILE_CSP = "default-src 'none'; frame-ancestors 'none'; sandbox";
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'] as const;
 
-/** Whether a URL host (`name` or `name:port`) is loopback. */
-export function isLoopbackHost(host: string): boolean {
-  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d{1,5}))?$/.exec(host.toLowerCase());
-  return m !== null && LOOPBACK.has(m[1] as string);
+/**
+ * The exact Host values the dashboard answers: each loopback name with the bound port, or the bare names when no port
+ * is configured (an in-process `app.request`). An unknown port (-1, not yet listening) allows nothing.
+ */
+export function allowedHosts(port: number | undefined): ReadonlySet<string> {
+  if (port === undefined) return new Set(LOOPBACK);
+  if (port < 1) return new Set();
+  return new Set(LOOPBACK.map((h) => `${h}:${port}`));
 }
 
 /** Whether the request came from a dashboard page: its Origin (or, without one, Referer) is `selfOrigin`. */

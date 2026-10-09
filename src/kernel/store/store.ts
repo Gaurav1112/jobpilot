@@ -58,8 +58,9 @@ export function eventHash(prevHash: string, e: Pick<EventRow, 'run_id' | 'at' | 
 export class Store {
   private constructor(readonly db: Database.Database) {}
 
-  static open(path: string): Store {
-    const db = new Database(path);
+  /** `timeoutMs`: how long a statement waits for another connection's lock (SQLite busy_timeout); default the driver's 5 s. */
+  static open(path: string, opts: { readonly timeoutMs?: number } = {}): Store {
+    const db = new Database(path, opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {});
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     try {

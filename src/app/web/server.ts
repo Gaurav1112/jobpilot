@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../../kernel/clock.js';
 import { verifyChain } from '../../kernel/store/audit.js';
 import { profileFor } from '../ats-profiles.js';
+import { DEFAULT_FX } from '../pack/defaults.js';
 import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
 import { assertNoForbidden, employerDisplay, ForbiddenTermError, type NamingRules } from '../pack/rules.js';
@@ -19,7 +21,7 @@ import { JOB_STATUSES } from '../store/schema.js';
 import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { html, type Html } from './html.js';
-import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, isLoopbackHost, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
+import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
 import { factRow, factsBody, type FactRow } from './views/facts.js';
 import { jobBody, noteSection, sentSection, statusSection, type Recommended } from './views/job.js';
 import { jobsBody, type ListedJob } from './views/jobs.js';
@@ -43,9 +45,21 @@ export interface DashboardDeps {
   /** JOBPILOT_HOME: the pack, the DB and the documents. */
   readonly home: string;
   readonly clock: Clock;
-  /** Default: a fresh per-process secret. */
+  /** Default: the secret kept in app_settings (`dashboard.csrf_secret`), created on first start. */
   readonly sessions?: Sessions;
+  /**
+   * The port the server listens on (a function when it is known only after listening). With a port, only
+   * `127.0.0.1:<port>`, `localhost:<port>` and `[::1]:<port>` are accepted as Host; without one, only the bare names.
+   */
+  readonly port?: number | (() => number | undefined);
+  /** How long a write waits for a run's lock before answering 503 (SQLite busy_timeout). Default 10 s. */
+  readonly busyTimeoutMs?: number;
 }
+
+export const BUSY_MESSAGE = "jobpilot is busy finishing today's run — try again in a moment";
+const CSRF_SECRET_KEY = 'dashboard.csrf_secret';
+const isBusy = (e: unknown): boolean =>
+  typeof e === 'object' && e !== null && typeof (e as { code?: unknown }).code === 'string' && ((e as { code: string }).code).startsWith('SQLITE_BUSY');
 
 export const DEFAULT_PORT = 4317;
 export const HIDDEN = '[hidden: contains a forbidden term]';
@@ -56,6 +70,7 @@ const JOB_KEY = /^[0-9a-f]{16}$/;
 const DOC_NAME = /^(resume|cover)\.(pdf|docx|html)$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const FX_STALE_DAYS = 30;
+const PAGE_SIZE = 100;
 
 const STATIC_DIR = join(import.meta.dirname, 'static');
 const require = createRequire(import.meta.url);
@@ -64,6 +79,7 @@ const require = createRequire(import.meta.url);
 function staticFiles(): Record<string, { body: string; type: string }> {
   return {
     'app.css': { body: readFileSync(join(STATIC_DIR, 'app.css'), 'utf8'), type: 'text/css; charset=utf-8' },
+    'app.js': { body: readFileSync(join(STATIC_DIR, 'app.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
     'htmx.min.js': { body: readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
   };
 }
@@ -124,9 +140,10 @@ export function redactor(naming: Pick<NamingRules, 'forbiddenTerms'>): { text: (
   return { text, deep };
 }
 
-const ATS_NAME: Readonly<Record<string, string>> = {
+/** The subject of "<X> reads PDF best", by ATS profile id. */
+const ATS_SENTENCE: Readonly<Record<string, string>> = {
   greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workday: 'Workday', icims: 'iCIMS', taleo: 'Taleo',
-  smartrecruiters: 'SmartRecruiters', careers: "The company's careers site", feed: 'Most applicant systems', unknown: 'Most applicant systems',
+  smartrecruiters: 'SmartRecruiters', careers: 'A careers site', feed: 'Most applicant systems', unknown: 'Most applicant systems',
 };
 
 const humanKey = (k: string): string => {
@@ -153,16 +170,18 @@ const asciiSlug = (s: string): string =>
 type Env = { Variables: { sid: string } };
 
 export function createDashboard(deps: DashboardDeps): Hono<Env> {
-  const sessions = deps.sessions ?? new Sessions();
-  const files = staticFiles();
   const paths = homePaths(deps.home);
+  const timeoutMs = deps.busyTimeoutMs ?? 10_000;
+  const sessions = deps.sessions ?? new Sessions(keptSecret(paths.db, timeoutMs));
+  const files = staticFiles();
   const app = new Hono<Env>();
+  const portOf = (): number | undefined => (typeof deps.port === 'function' ? deps.port() : deps.port);
 
-  const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 403 | 404 | 500 = 200) =>
+  const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 403 | 404 | 500 | 503 = 200) =>
     c.html(layout({ title, nav, banners, body }).value, status);
 
   const withStore = <T>(fn: (store: AppStore) => T): T => {
-    const store = AppStore.open(paths.db);
+    const store = AppStore.open(paths.db, { timeoutMs });
     try {
       return fn(store);
     } finally {
@@ -175,7 +194,8 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     if (ps.error !== undefined) out.push({ tone: 'critical', text: `Your pack could not be read: ${ps.error}` });
     if (ps.pack) {
       const age = daysBetween(ps.pack.fx.asOf, today);
-      if (age > FX_STALE_DAYS) out.push({ tone: 'warn', text: `Exchange rates are ${age} days old — update fx.yaml` });
+      if (ps.pack.fx.asOf === DEFAULT_FX.asOf) out.push({ tone: 'warn', text: 'Exchange rates are the built-in defaults; add fx.yaml' });
+      else if (age > FX_STALE_DAYS) out.push({ tone: 'warn', text: `Exchange rates are ${age} days old — update fx.yaml` });
       const ids = new Set(ps.pack.facts.map((f) => f.id));
       const unknown = Object.keys(overrides).filter((id) => !ids.has(id));
       if (unknown.length > 0) out.push({ tone: 'critical', text: `A status change you made names a fact that is no longer in facts.yaml (${unknown.join(', ')}); the next run will refuse to start until it is back.` });
@@ -185,12 +205,17 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
 
   // --- every request: loopback Host only, then the security headers --------------------------------------------
   app.use('*', async (c, next) => {
-    if (!isLoopbackHost(new URL(c.req.url).host)) return c.text('This dashboard only answers on 127.0.0.1.', 403);
+    // The raw Host header must be one of the dashboard's own names (with its port), and an absolute-form request
+    // target must not name another host.
+    const host = (c.req.header('host') ?? '').toLowerCase();
+    if (!allowedHosts(portOf()).has(host) || new URL(c.req.url).host.toLowerCase() !== host) return c.text('This dashboard only answers on 127.0.0.1.', 403);
     await next();
     const h = c.res.headers;
     if (!h.has('content-security-policy')) h.set('content-security-policy', PAGE_CSP);
     h.set('x-content-type-options', 'nosniff');
-    h.set('referrer-policy', 'no-referrer');
+    // same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` on a plain form post, which the
+    // origin check must refuse. Links out carry rel="noreferrer", so nothing leaks to other sites.
+    h.set('referrer-policy', 'same-origin');
     h.set('cross-origin-opener-policy', 'same-origin');
     h.set('cross-origin-resource-policy', 'same-origin');
     if (!h.has('cache-control')) h.set('cache-control', 'no-store');
@@ -242,6 +267,8 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     const minRaw = c.req.query('min')?.trim() ?? '';
     const min = /^\d{1,3}(\.\d+)?$/.test(minRaw) ? Number(minRaw) : undefined;
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+    const pageRaw = c.req.query('page') ?? '1';
+    const pageAsked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
     const floor = ps.pack?.offers.floor;
     const floorInr = floor ? floor.amount * (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
     const filter: JobFilter = {
@@ -260,17 +287,37 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     else if (nowMs - last > VISIT_GAP_MS) prev = last;
     setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
 
-    const { jobs, hidden, overrides } = withStore((s) => {
+    const { jobs, hidden, overrides, total, newCount, pageNo, pages } = withStore((s) => {
       const list = s.listJobs(filter);
-      const hist = s.histories(list.map((j) => j.jobKey));
+      const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
+      const page = Math.min(pageAsked, pages);
+      const slice = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+      const hist = s.histories(slice.map((j) => j.jobKey));
       const hiddenCount = bands.length === 0 ? s.listJobs({ ...filter, band: ALL.filter((b) => !DEFAULT_BANDS.includes(b)) }).length : 0;
       return {
-        jobs: list.map((j): ListedJob => ({ ...j, isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
+        jobs: slice.map((j): ListedJob => ({ ...j, isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
         hidden: hiddenCount,
         overrides: s.factOverrides(),
+        total: list.length,
+        newCount: list.filter((j) => Date.parse(j.firstSeen) > prev).length,
+        pageNo: page,
+        pages,
       };
     });
-    const body = jobsBody({ jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate });
+    const pageHref = (n: number): string => {
+      const qs = new URLSearchParams();
+      for (const v of statuses) qs.append('status', v);
+      for (const v of bands) qs.append('band', v);
+      if (min !== undefined) qs.set('min', String(min));
+      if (q !== '') qs.set('q', q);
+      if (n > 1) qs.set('page', String(n));
+      const t = qs.toString();
+      return t === '' ? '/' : `/?${t}`;
+    };
+    const body = jobsBody({
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
+      page: pageNo, pages, total, newCount, pageHref,
+    });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
   });
 
@@ -300,7 +347,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     const displays = new Map(groups.map((g) => [g.key, g.display ?? g.key]));
     const display = (k: string): string => r.text(displays.get(k) ?? k);
     const profile = profileFor(data.job.ats, data.job.url);
-    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, atsName: ATS_NAME[profile.id] ?? 'Most applicant systems' };
+    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, atsName: ATS_SENTENCE[profile.id] ?? 'Most applicant systems' };
     const answers = ps.pack ? Object.entries(ps.pack.answers).map(([k, v]) => [r.text(humanKey(k)), r.text(typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v))] as const) : null;
     const banners = commonBanners(ps, istDate(at), data.overrides);
     if (job.unplaced.length > 0) {
@@ -322,24 +369,23 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     const result = withStore((s) => {
       const job = s.getJob(key);
       if (!job) return undefined;
+      // The status first (its own transaction): a busy store answers 503 before any file is written.
+      const changed = s.setStatus(key, to as JobStatus, 'user', at);
       let notice: 'nodocs' | 'keepfail' | undefined;
-      let kept: ReturnType<typeof snapshotApplied> = [];
-      if (to === 'applied' && !s.hasSnapshot(key, day)) {
+      // A snapshot is "the documents you sent": made once, on a real transition INTO applied, for a job that has none.
+      if (changed && to === 'applied' && job.status !== 'applied' && s.snapshots(key).length === 0) {
         const docs = job.docs.filter((d) => d.kind === 'resume' || d.kind === 'cover');
         if (job.docsState !== 'ready' || docs.length === 0) notice = 'nodocs';
         else {
           try {
-            kept = snapshotApplied(paths.out, key, docs, day);
+            s.putSnapshot(key, day, snapshotApplied(paths.out, key, docs, day), at);
           } catch (e) {
+            if (isBusy(e)) throw e;
             notice = 'keepfail';
             console.error(`jobpilot dashboard: could not keep the applied documents of ${key}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
       }
-      s.tx(() => {
-        s.setStatus(key, to as JobStatus, 'user', at);
-        if (kept.length > 0) s.putSnapshot(key, day, kept, at);
-      });
       return { job: s.getJob(key), snapshots: s.snapshots(key), notice };
     });
     if (!result?.job) return c.text('No such job', 404);
@@ -363,7 +409,8 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
   });
 
   // --- files: only names the store recorded for this job --------------------------------------------------------------
-  const sendFile = (c: Context<Env>, read: ReadResult, name: string, downloadName: string) => {
+  /** `exact`: serve the bytes as they are (sent snapshots); otherwise a current preview gets its fact tooltips. */
+  const sendFile = (c: Context<Env>, read: ReadResult, name: string, downloadName: string, exact = false) => {
     if (!read.ok) {
       if (read.why === 'changed') return c.text('This file changed on disk after it was made, so it is not served. Run "jobpilot docs rebuild".', 409);
       if (read.why === 'absent') return c.text('This file is not on disk. Run "jobpilot docs rebuild".', 404);
@@ -374,7 +421,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     if (ext === 'html') {
       headers['content-security-policy'] = PREVIEW_CSP;
       headers['content-disposition'] = 'inline';
-      return c.body(withFactTooltips(Buffer.from(read.bytes).toString('utf8')), 200, headers);
+      return c.body(exact ? new Uint8Array(read.bytes) : withFactTooltips(Buffer.from(read.bytes).toString('utf8')), 200, headers);
     }
     headers['content-security-policy'] = FILE_CSP;
     headers['content-disposition'] = `attachment; filename="${downloadName}"`;
@@ -408,7 +455,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     });
     if (!found) return c.text('Not found', 404);
     const naming = packState(deps.home, now()).naming;
-    return sendFile(c, readRecorded(paths.out, found.f.path, found.f.sha256), name, `${found.f.kind}-${companySlug(found.job.company, naming, key)}-sent-${day}.${found.f.format}`);
+    return sendFile(c, readRecorded(paths.out, found.f.path, found.f.sha256), name, `${found.f.kind}-${companySlug(found.job.company, naming, key)}-sent-${day}.${found.f.format}`, true);
   });
 
   // --- facts ----------------------------------------------------------------------------------------------------------
@@ -480,6 +527,10 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));
   app.onError((err, c) => {
+    if (isBusy(err)) {
+      if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(BUSY_MESSAGE, 503, { 'retry-after': '5' });
+      return page(c, 'jobs', 'Busy', [], html`<h1>One moment</h1><p>${BUSY_MESSAGE}</p>`, 503);
+    }
     if (err instanceof NamingUnreadable) return page(c, 'jobs', 'Cannot show', [], html`<h1>Cannot show your data</h1><p>${err.message}</p>`, 500);
     console.error('jobpilot dashboard error:', err);
     return page(c, 'jobs', 'Error', [], html`<h1>Something went wrong</h1><p>${err instanceof Error ? err.message : String(err)}</p>`, 500);
@@ -487,8 +538,27 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
   return app;
 }
 
-/** Serves the dashboard on 127.0.0.1 only (never all interfaces). */
-export function serveDashboard(deps: DashboardDeps & { readonly port?: number }, onListen?: (url: string) => void): ServerType {
-  const app = createDashboard(deps);
-  return serve({ fetch: app.fetch, hostname: '127.0.0.1', port: deps.port ?? DEFAULT_PORT }, (info) => onListen?.(`http://127.0.0.1:${info.port}/`));
+/** The CSRF secret kept in app_settings: created once (random), so tokens survive a restart of the dashboard. */
+function keptSecret(db: string, timeoutMs: number): Buffer {
+  const store = AppStore.open(db, { timeoutMs });
+  try {
+    let hex = store.getSetting(CSRF_SECRET_KEY);
+    if (hex === undefined || !/^[0-9a-f]{64}$/.test(hex)) {
+      hex = randomBytes(32).toString('hex');
+      store.setSetting(CSRF_SECRET_KEY, hex);
+    }
+    return Buffer.from(hex, 'hex');
+  } finally {
+    store.close();
+  }
+}
+
+/** Serves the dashboard on 127.0.0.1 only (never all interfaces); Host must name this port. */
+export function serveDashboard(deps: Omit<DashboardDeps, 'port'> & { readonly port?: number }, onListen?: (url: string) => void): ServerType {
+  let bound: number | undefined = deps.port !== undefined && deps.port !== 0 ? deps.port : undefined;
+  const app = createDashboard({ ...deps, port: () => bound ?? -1 });
+  return serve({ fetch: app.fetch, hostname: '127.0.0.1', port: deps.port ?? DEFAULT_PORT }, (info) => {
+    bound = info.port;
+    onListen?.(`http://127.0.0.1:${info.port}/`);
+  });
 }

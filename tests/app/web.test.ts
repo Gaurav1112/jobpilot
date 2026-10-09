@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,6 +9,8 @@ import { compText, inr, inrRange } from '../../src/app/web/format.js';
 import { html } from '../../src/app/web/html.js';
 import { createDashboard, serveDashboard } from '../../src/app/web/server.js';
 import { Sessions } from '../../src/app/web/security.js';
+import * as htmlModule from '../../src/app/web/html.js';
+import Database from 'better-sqlite3';
 import { jobRow } from '../support/app-fixtures.js';
 
 /**
@@ -32,9 +34,29 @@ const K11 = 'bbbbbbbbbbbbbbbb';
 
 const sha = (b: Uint8Array | string): string => createHash('sha256').update(b).digest('hex');
 
+/** Snapshot folders are read-only (0555); make them writable again so the temp home can be removed. */
+function removeHome(dir: string): void {
+  const walk = (d: string): void => {
+    for (const e of readdirSync(d, { withFileTypes: true })) {
+      if (e.isDirectory() && !e.isSymbolicLink()) {
+        chmodSync(join(d, e.name), 0o755);
+        walk(join(d, e.name));
+      }
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  rmSync(dir, { recursive: true, force: true });
+}
+
 let home: string;
 let out: string;
-let app: ReturnType<typeof createDashboard>;
+type App = { request: (path: string, init?: RequestInit) => Promise<Response> };
+let app: App;
+let now = NOW;
+/** Every request carries the Host a browser sends to the dashboard (`localhost`, no port in these tests). */
+const wrap = (raw: ReturnType<typeof createDashboard>): App => ({
+  request: async (path, init = {}) => raw.request(path, { ...init, headers: { host: 'localhost', ...((init.headers as Record<string, string> | undefined) ?? {}) } }),
+});
 
 const store = (): AppStore => AppStore.open(join(home, 'jobpilot.db'));
 const withStore = <T>(fn: (s: AppStore) => T): T => {
@@ -112,13 +134,17 @@ async function startSession(): Promise<void> {
   expect(token).not.toBe('');
 }
 
+/** No Origin is set here: an htmx request adds it (`hx`), a no-JS form post sends only what `nojs` says. */
 const post = (path: string, form: Record<string, string>, headers: Record<string, string> = {}) =>
   app.request(path, {
     method: 'POST',
     body: new URLSearchParams(form).toString(),
-    headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'http://localhost', cookie, ...headers },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', cookie, ...headers },
   });
-const hx = { 'hx-request': 'true' };
+/** htmx posts with XMLHttpRequest, which always sends the page's Origin. */
+const hx = { 'hx-request': 'true', origin: 'http://localhost' };
+/** A plain form post with JS off, under `Referrer-Policy: same-origin`: the page's Referer (the real-browser test covers Origin). */
+const nojs = (page: string) => ({ referer: `http://localhost${page}` });
 const get = async (path: string): Promise<{ status: number; body: string; headers: Headers }> => {
   const r = await app.request(path, { headers: { cookie } });
   return { status: r.status, body: await r.text(), headers: r.headers };
@@ -131,17 +157,18 @@ beforeEach(async () => {
   out = join(home, 'out');
   mkdirSync(out);
   seed();
-  app = createDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) });
+  now = NOW;
+  app = wrap(createDashboard({ home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)) }));
   await startSession();
 });
-afterEach(() => rmSync(home, { recursive: true, force: true }));
+afterEach(() => removeHome(home));
 
 describe('dashboard: jobs list', () => {
   it('renders the rows comp-first (disclosed by max INR, then undisclosed, then review), hiding rejected, below-floor and duplicate listings', async () => {
     const { status, body } = await get('/');
     expect(status).toBe(200);
     expect(order(body)).toEqual([K2, K1, K3, K10, K9, K7, K11, K4]);
-    expect(body).toContain('also listed on himalayas');
+    expect(body).toContain('also listed on Himalayas');
     expect(body).toMatch(/2<\/span> not-eligible or below-floor jobs are hidden/);
   });
 
@@ -206,7 +233,8 @@ describe('dashboard: job page', () => {
     expect(body).toContain('<span class="term term-muted">distributed systems</span>');
     expect(body).toContain('Screening answers');
     expect(body).toContain('Notice period days');
-    expect(body).toContain('Also listed on himalayas');
+    expect(body).toContain('Also listed on Himalayas');
+    expect(body).toContain('via Greenhouse');
     expect(body).toMatch(/name="to" value="applied"/);
     expect(body).toContain('<textarea id="note" name="note"');
   });
@@ -224,7 +252,7 @@ describe('dashboard: job page', () => {
   });
 
   it('a duplicate listing points at the preferred one', async () => {
-    expect((await get(`/jobs/${K8}`)).body).toContain(`<a href="/jobs/${K1}">the same job on greenhouse</a>`);
+    expect((await get(`/jobs/${K8}`)).body).toContain(`<a href="/jobs/${K1}">the same job on Greenhouse</a>`);
   });
 
   it('404s an unknown or malformed job key', async () => {
@@ -256,7 +284,7 @@ describe('dashboard: HTML escaping', () => {
       const src = readFileSync(join(dir, f), 'utf8');
       // Every template literal must be tagged `html`; a `${` in an untagged one is raw interpolation.
       for (const where of untaggedTemplates(src)) offenders.push(`${f}:${where}`);
-      if (/Html\.of\(/.test(src)) offenders.push(`${f}: Html.of`);
+      if (/new\s+Html\s*\(/.test(src)) offenders.push(`${f}: new Html`);
       if (/\.innerHTML|dangerouslySetInnerHTML/.test(src)) offenders.push(`${f}: innerHTML`);
     }
     expect(offenders).toEqual([]);
@@ -350,24 +378,28 @@ describe('dashboard: POST security', () => {
   });
 
   it('without JavaScript a form POST with the token redirects back (303)', async () => {
-    const r = await post(`/jobs/${K1}/status`, { to: 'approved', _csrf: token });
+    const r = await post(`/jobs/${K1}/status`, { to: 'approved', _csrf: token }, nojs(`/jobs/${K1}`));
     expect(r.status).toBe(303);
     expect(r.headers.get('location')).toBe(`/jobs/${K1}#status`);
-    const n = await post(`/jobs/${K1}/note`, { note: 'ask about the team', _csrf: token });
+    const n = await post(`/jobs/${K1}/note`, { note: 'ask about the team', _csrf: token }, nojs(`/jobs/${K1}`));
     expect(n.status).toBe(303);
     expect(withStore((s) => s.getJob(K1)?.note)).toBe('ask about the team');
   });
 
   it('refuses an invalid status and requests for any non-loopback host', async () => {
     expect((await post(`/jobs/${K1}/status`, { to: 'hired', _csrf: token }, hx)).status).toBe(400);
-    expect((await app.request('http://evil.example/')).status).toBe(403);
-    expect((await app.request('http://127.0.0.1:4317/', { headers: { cookie } })).status).toBe(200);
+    expect((await app.request('http://evil.example/', { headers: { host: 'evil.example' } })).status).toBe(403);
+    expect((await app.request('/', { headers: { host: 'localhost.evil.example' } })).status).toBe(403);
+    expect((await app.request('/', { headers: { host: '' } })).status).toBe(403);
+    // absolute-form target: the URL names a host other than the Host header
+    expect((await app.request('http://127.0.0.1/', { headers: { host: 'evil.example' } })).status).toBe(403);
+    expect((await app.request('http://127.0.0.1/', { headers: { host: '127.0.0.1', cookie } })).status).toBe(200);
   });
 
   it('pages work with JavaScript off: no inline script or handler, every form posts with a token', async () => {
     for (const path of ['/', `/jobs/${K1}`, '/facts', '/runs']) {
       const { body } = await get(path);
-      expect(body.match(/<script\b[^>]*>/g)).toEqual(['<script src="/static/htmx.min.js" defer>']);
+      expect(body.match(/<script\b[^>]*>/g)).toEqual(['<script src="/static/htmx.min.js" defer>', '<script src="/static/app.js" defer>']);
       expect(body).not.toMatch(/<[^>]*\son[a-z]+=/i);
       expect(body).not.toMatch(/<[^>]*\sstyle=/i);
       for (const form of body.match(/<form[^>]*method="post"[\s\S]*?<\/form>/g) ?? []) expect(form).toContain(`name="_csrf" value="${token}"`);
@@ -407,26 +439,58 @@ describe('dashboard: applied snapshots', () => {
     expect(served.headers.get('content-disposition')).toBe('attachment; filename="resume-acme-robotics-sent-2026-10-09.pdf"');
   });
 
-  it('is idempotent: applying again the same day keeps one snapshot, and later renders never touch it', async () => {
+  /** A re-render: the current resume changes on disk and in job_docs. */
+  const rerender = (text: string): void => {
+    writeFileSync(join(out, K1, 'resume.pdf'), text);
+    withStore((s) => s.putDocs(K1, s.getJob(K1)?.docs.map((d) => (d.kind === 'resume' && d.format === 'pdf' ? { ...d, sha256: sha(text) } : d)) ?? []));
+  };
+
+  it('applied → applied on a later day: no new snapshot (it is not a transition into applied)', async () => {
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    rerender('a newer resume');
+    now = '2026-10-12T06:30:00.000Z';
+    const r = await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    expect(r.status).toBe(200);
+    const snaps = withStore((s) => s.snapshots(K1));
+    expect(snaps.map((x) => x.day)).toEqual([DAY]);
+    expect(existsSync(join(out, K1, 'applied-2026-10-12'))).toBe(false);
+    expect(readFileSync(join(out, K1, `applied-${DAY}`, 'resume.pdf'), 'utf8')).toBe(`resume.pdf of ${K1}`);
+  });
+
+  it('applied → interview → applied (same day or later): the job keeps its one snapshot, and later renders never touch it', async () => {
     await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
     await post(`/jobs/${K1}/status`, { to: 'interview', _csrf: token }, hx);
     await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
-    // a re-render replaces the current resume
-    writeFileSync(join(out, K1, 'resume.pdf'), 'a newer resume');
-    withStore((s) => s.putDocs(K1, s.getJob(K1)?.docs.map((d) => (d.kind === 'resume' && d.format === 'pdf' ? { ...d, sha256: sha('a newer resume') } : d)) ?? []));
+    rerender('a newer resume');
+    now = '2026-10-16T06:30:00.000Z';
     await post(`/jobs/${K1}/status`, { to: 'interview', _csrf: token }, hx);
     await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
     const snaps = withStore((s) => s.snapshots(K1));
-    expect(snaps).toHaveLength(1);
+    expect(snaps.map((x) => x.day)).toEqual([DAY]);
     expect(snaps[0]?.files).toHaveLength(6);
-    expect(readFileSync(join(out, K1, `applied-${DAY}`, 'resume.pdf'), 'utf8')).toBe(`resume.pdf of ${K1}`);
+    expect(readdirSync(join(out, K1)).filter((f) => f.startsWith('applied-'))).toEqual([`applied-${DAY}`]);
     const served = await app.request(`/jobs/${K1}/sent/${DAY}/resume.pdf`, { headers: { cookie } });
     expect(Buffer.from(await served.arrayBuffer()).toString()).toBe(`resume.pdf of ${K1}`);
+  });
+
+  it('the snapshot folder is read-only (0555) once written', async () => {
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    expect(statSync(join(out, K1, `applied-${DAY}`)).mode & 0o777).toBe(0o555);
+  });
+
+  it('a sent preview is served byte-exact (no tooltips added)', async () => {
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    const r = await app.request(`/jobs/${K1}/sent/${DAY}/resume.html`, { headers: { cookie } });
+    expect(Buffer.from(await r.arrayBuffer()).toString('utf8')).toBe(readFileSync(join(out, K1, `applied-${DAY}`, 'resume.html'), 'utf8'));
+    expect(r.headers.get('content-disposition')).toBe('inline');
   });
 
   it('a job without ready documents is marked applied with no snapshot, and says so', async () => {
     const r = await post(`/jobs/${K3}/status`, { to: 'applied', _csrf: token }, hx);
     expect(await r.text()).toContain('No documents were kept');
+    const n = await post(`/jobs/${K4}/status`, { to: 'applied', _csrf: token }, nojs(`/jobs/${K4}`));
+    expect(n.headers.get('location')).toBe(`/jobs/${K4}?notice=nodocs#status`);
+    expect((await get(`/jobs/${K4}?notice=nodocs`)).body).toContain('No documents were kept');
     expect(withStore((s) => s.snapshots(K3))).toEqual([]);
     expect(withStore((s) => s.getJob(K3)?.status)).toBe('applied');
   });
@@ -511,7 +575,7 @@ describe('dashboard: facts', () => {
     expect(row).toContain('Verified');
     expect(row).toContain('your change (facts.yaml says Not verified)');
     expect(withStore((s) => s.factOverrides())).toEqual({ 'f-nw-05': 'verified' });
-    const n = await post('/facts/f-nw-01/reject', { _csrf: token });
+    const n = await post('/facts/f-nw-01/reject', { _csrf: token }, nojs('/facts'));
     expect(n.status).toBe(303);
     expect(n.headers.get('location')).toBe('/facts#fact-f-nw-01');
     expect(withStore((s) => s.factOverrides())).toEqual({ 'f-nw-01': 'rejected', 'f-nw-05': 'verified' });
@@ -582,6 +646,108 @@ describe('dashboard: banners and headers', () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe('dashboard: fix round 1', () => {
+  it('C1: Referrer-Policy is same-origin in the header and the meta tag, so browsers send a same-origin Origin on form posts', async () => {
+    const { headers, body } = await get('/');
+    expect(headers.get('referrer-policy')).toBe('same-origin');
+    expect(body).toContain('<meta name="referrer" content="same-origin">');
+    expect(body).not.toContain('no-referrer"');
+    expect((await post(`/jobs/${K1}/status`, { to: 'approved', _csrf: token }, { origin: 'null' })).status).toBe(403);
+  });
+
+  it('I2: htmx errors are shown: app.js is served from the dashboard and the page has a live region for them', async () => {
+    const js = await get('/static/app.js');
+    expect(js.status).toBe(200);
+    expect(js.headers.get('content-type')).toContain('javascript');
+    expect(js.body).toContain('htmx:responseError');
+    expect(js.body).toContain('Your session expired, reload the page');
+    expect((await get('/')).body).toMatch(/<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden><\/p>/);
+  });
+
+  it('I2: the CSRF secret is kept in app_settings, so a token survives a restart', async () => {
+    const a = wrap(createDashboard({ home, clock: { now: () => now } }));
+    const first = await a.request(`/jobs/${K1}`);
+    const sid = /jp_sid=[0-9a-f]{32}/.exec(first.headers.get('set-cookie') ?? '')?.[0] ?? '';
+    const tok = /name="_csrf" value="([0-9a-f]{64})"/.exec(await first.text())?.[1] ?? '';
+    const secret = withStore((s) => s.getSetting('dashboard.csrf_secret'));
+    expect(secret).toMatch(/^[0-9a-f]{64}$/);
+    const restarted = wrap(createDashboard({ home, clock: { now: () => now } }));
+    const r = await restarted.request(`/jobs/${K1}/status`, {
+      method: 'POST', body: new URLSearchParams({ to: 'approved', _csrf: tok }).toString(),
+      headers: { 'content-type': 'application/x-www-form-urlencoded', cookie: sid, ...hx },
+    });
+    expect(r.status).toBe(200);
+    expect(withStore((s) => s.getSetting('dashboard.csrf_secret'))).toBe(secret);
+  });
+
+  it('I3: while a run holds the write lock, pages still read and a POST answers 503 with a plain message', async () => {
+    const busy = wrap(createDashboard({ home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)), busyTimeoutMs: 100 }));
+    const lock = new Database(join(home, 'jobpilot.db'));
+    lock.pragma('busy_timeout = 0');
+    lock.exec('BEGIN IMMEDIATE');
+    try {
+      expect((await busy.request('/', { headers: { cookie } })).status).toBe(200);
+      const r = await busy.request(`/jobs/${K1}/status`, {
+        method: 'POST', body: new URLSearchParams({ to: 'applied', _csrf: token }).toString(),
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie, ...hx },
+      });
+      expect(r.status).toBe(503);
+      expect(await r.text()).toBe("jobpilot is busy finishing today's run — try again in a moment");
+    } finally {
+      lock.exec('ROLLBACK');
+      lock.close();
+    }
+    expect(withStore((s) => s.getJob(K1)?.status)).toBe('new');
+    expect(existsSync(join(out, K1, `applied-${DAY}`))).toBe(false);
+  });
+
+  it('M1: with a port, only 127.0.0.1:<port>, localhost:<port> and [::1]:<port> are accepted', async () => {
+    const p = wrap(createDashboard({ home, clock: { now: () => now }, port: 4317 }));
+    expect((await p.request('http://127.0.0.1:4317/', { headers: { host: '127.0.0.1:4317' } })).status).toBe(200);
+    expect((await p.request('http://localhost:4317/', { headers: { host: 'localhost:4317' } })).status).toBe(200);
+    expect((await p.request('http://[::1]:4317/', { headers: { host: '[::1]:4317' } })).status).toBe(200);
+    expect((await p.request('http://127.0.0.1:1/', { headers: { host: '127.0.0.1:1' } })).status).toBe(403);
+    expect((await p.request('http://127.0.0.1/', { headers: { host: '127.0.0.1' } })).status).toBe(403);
+  });
+
+  it('M2: the built-in fx defaults get their own banner', async () => {
+    writeFileSync(join(home, 'pack/fx.yaml'), 'asOf: "1970-01-01"\ntoINR: { USD: 83, EUR: 90, GBP: 105, INR: 1 }\n');
+    const { body } = await get('/');
+    expect(body).toContain('Exchange rates are the built-in defaults; add fx.yaml');
+    expect(body).not.toContain('days old');
+  });
+
+  it('M4: the list is paginated, 100 a page, with the page in the query string', async () => {
+    withStore((s) => {
+      for (let i = 0; i < 205; i++) {
+        const key = (0xc000000000000000n + BigInt(i)).toString(16);
+        s.upsertJob(row(key, 1000 + i, { title: `Bulk ${i}`, company: 'Bulk Co', score: 40, dedupeKey: key }));
+      }
+    });
+    const p1 = await get('/');
+    expect(order(p1.body)).toHaveLength(100);
+    expect(p1.body).toContain('Page 1 of 3');
+    expect(p1.body).toContain('href="/?page=2"');
+    const p3 = await get('/?page=3&q=bulk');
+    expect(order(p3.body)).toHaveLength(5);
+    expect(p3.body).toContain('href="/?q=bulk&amp;page=2"');
+    expect(order((await get('/?page=99')).body)).toHaveLength(13);
+  });
+
+  it('M5: Html has no public factory', () => {
+    expect(Object.keys(htmlModule).sort()).toEqual(['Html', 'externalUrl', 'html']);
+    expect((htmlModule.Html as unknown as Record<string, unknown>)['of']).toBeUndefined();
+  });
+
+  it('names sources and ATSs properly and shows "New" once per row', async () => {
+    const { body } = await get('/');
+    const k3 = body.slice(body.indexOf(`data-job="${K3}"`), body.indexOf('</li>', body.indexOf(`data-job="${K3}"`)));
+    expect(k3.match(/>New</g) ?? []).toHaveLength(0);
+    expect(k3).toContain('Not started');
+    expect(k3).toContain('New since your last visit');
   });
 });
 
