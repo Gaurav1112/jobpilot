@@ -522,7 +522,11 @@ describe('fix round 1: review probes as regressions', () => {
     expect(why('Join our team')).toBe('has a first-person pronoun');
     expect(why("I'm hiring")).toBe('has a first-person pronoun');
     expect(why('Engineer I hold a PhD')).toBe('has a first-person pronoun');
-    expect(why('a b c d e f g h i j k l m n o p')).toBe('has a first-person pronoun');
+    expect(why('a b c d e f g h i j k l m n o p')).toBe('has more than 14 words'); // a lone i before no verb is not the pronoun
+    // Roman-numeral levels and ME (Middle East) are not pronouns; "I" is one only before a verb-like word.
+    for (const ok of ['Software Engineer I', 'Engineer I Payments', 'SDE I', 'Backend Engineer - ME', 'MY Region Lead']) expect(why(ok), ok).toBeNull();
+    for (const bad of ['I hold a PhD in Systems', 'Engineer I will relocate', "I've built systems", 'Contact me', 'My team', 'Hire Me'])
+      expect(why(bad), bad).toBe('has a first-person pronoun');
     expect(why('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen')).toBe('has more than 14 words');
     expect(why('Backend Engineer. Apply now')).toBe('has a sentence end followed by more text');
     expect(why('Backend Engineer at https://acme.example')).toBe('has a URL or email address');

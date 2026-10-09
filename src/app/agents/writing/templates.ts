@@ -108,15 +108,18 @@ export function sanitisePostingText(raw: string): string {
 const ABBREVIATIONS = new Set(['sr', 'jr', 'inc', 'co', 'ltd', 'corp', 'llc', 'plc', 'st', 'dr', 'no', 'vs', 'intl', 'dept', 'mgr', 'eng', 'sw', 'jun', 'sen']);
 /** Allowed characters: letters, marks, digits, whitespace and & , . / ( ) - + # ' : ; | – —. */
 const DISALLOWED = /[^\p{L}\p{M}\p{N}\s&,./()\-+#':;|–—]/u;
-const PRONOUN = /(?<![\p{L}\p{N}'])(?:i'm|my|me|we|our)(?![\p{L}\p{N}'])/iu;
-const LONE_I = /(?<![\p{L}\p{N}'])i(?![\p{L}\p{N}'])/giu;
+/** "I" is the pronoun (not a level, as in "Software Engineer I" or "SDE I") only before a verb-like word or as I'm, I've. */
+const PRONOUN_I = /(?<![\p{L}\p{N}'])i(?:'m|'ve|\s+(?:am|have|hold|will|was|can|worked|led|built|own|bring|believe))(?![\p{L}\p{N}'])/iu;
+/** we and our in any case; me and my only in lower or sentence case, never all caps (ME is the Middle East). */
+const PRONOUN_WORD = /(?<![\p{L}\p{N}'])(?:[wW][eE]|[oO][uU][rR]|[mM][ey])(?![\p{L}\p{N}'])/u;
 const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\p{L}{2,}/iu;
 
 /**
  * Why a sanitised posting slot may not go into a template, or null when it may. It is unsafe when it:
  * - is empty;
- * - holds a first-person pronoun (I, I'm, my, me, we, our). A capital "I" right after a word and before the end, a
- *   dash, comma, slash, bar, colon or bracket is a level ("Software Engineer I - SRE"), not the pronoun;
+ * - holds a first-person pronoun: "I" before a verb-like word (am, have, hold, will, was, can, worked, led, built,
+ *   own, bring, believe) or as I'm / I've, so a level ("Software Engineer I", "SDE I") is not one; "we" and "our" in
+ *   any case; "me" and "my" in lower or sentence case only, never all caps ("ME" is the Middle East);
  * - has more than 14 words;
  * - has a sentence end (. ! ?) followed by more text; a full stop after an abbreviation (Sr., Inc., ...) or a single
  *   letter is not a sentence end;
@@ -128,12 +131,8 @@ export function unsafePostingText(s: string): string | null {
   const bad = DISALLOWED.exec(s);
   if (bad !== null) return `has a character outside the allowed set (U+${(bad[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`;
   if (URL_OR_EMAIL.test(s)) return 'has a URL or email address';
-  if (PRONOUN.test(s)) return 'has a first-person pronoun';
-  for (const m of s.matchAll(LONE_I)) {
-    const at = m.index ?? 0;
-    const level = m[0] === 'I' && /\p{L}\s$/u.test(s.slice(0, at)) && /^\s*(?:$|[-–—,/|():;])/u.test(s.slice(at + 1));
-    if (!level) return 'has a first-person pronoun';
-  }
+  if (PRONOUN_I.test(s)) return 'has a first-person pronoun';
+  if (PRONOUN_WORD.test(s)) return 'has a first-person pronoun';
   if (s.split(/\s+/u).filter((w) => w !== '').length > 14) return 'has more than 14 words';
   for (const m of s.matchAll(/[.!?](?=\s+\S)/gu)) {
     const before = /([\p{L}]+)$/u.exec(s.slice(0, m.index ?? 0))?.[1] ?? '';
