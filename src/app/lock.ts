@@ -16,16 +16,26 @@ interface LockBody {
   readonly at: string;
   /** Unique per acquisition, so a lock is told apart from a later one of the same pid. */
   readonly token: string;
-  /** The holder's process start time (`ps -o lstart=`), so a reused pid is not mistaken for the holder. */
-  readonly started?: string;
+  /** The holder's process start time, epoch seconds (UTC), so a reused pid is not mistaken for the holder. */
+  readonly started?: number;
 }
 
 /** How the lock looks at other processes; tests inject a fake. */
 export interface ProcessProbe {
   /** Whether a process with this pid exists. */
   alive(pid: number): boolean;
-  /** That process's start time, or undefined when it cannot be read. */
-  startTime(pid: number): string | undefined;
+  /** That process's start time in epoch seconds, or undefined when it cannot be read or parsed. */
+  startTime(pid: number): number | undefined;
+}
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** `ps -o lstart=` output in the C locale and UTC (`Fri Oct  9 14:13:37 2026`) as epoch seconds; undefined if not that shape. */
+export function parseLstartUtc(text: string): number | undefined {
+  const m = /^[A-Z][a-z]{2} ([A-Z][a-z]{2}) +(\d{1,2}) (\d{2}):(\d{2}):(\d{2}) (\d{4})$/.exec(text.trim().replace(/\s+/g, ' '));
+  const month = m ? MONTHS.indexOf(m[1] as string) : -1;
+  if (!m || month < 0) return undefined;
+  return Date.UTC(Number(m[6]), month, Number(m[2]), Number(m[3]), Number(m[4]), Number(m[5])) / 1000;
 }
 
 /** The real probe: `kill(pid, 0)` (EPERM means it exists) and `ps -o lstart= -p <pid>` (macOS and Linux). */
@@ -40,8 +50,11 @@ export const systemProbe: ProcessProbe = {
   },
   startTime(pid) {
     try {
-      const out = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000 }).trim().replace(/\s+/g, ' ');
-      return out === '' ? undefined : out;
+      // The caller's locale and time zone must not matter (R-I1): ask for C and UTC, and compare epochs.
+      const out = execFileSync('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], {
+        encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5_000, env: { LC_ALL: 'C', LANG: 'C', TZ: 'UTC', PATH: '/bin:/usr/bin' },
+      });
+      return parseLstartUtc(out);
     } catch {
       return undefined;
     }
@@ -50,21 +63,22 @@ export const systemProbe: ProcessProbe = {
 
 /**
  * Whether the lock's holder is still running: its pid exists and, when the lock recorded a start time, that process
- * started then. A pid reused by another process (launchd restarts, a reboot) makes the lock stale. A start time that
- * cannot be read counts as a match (the lock is kept, never wrongly broken).
+ * started then (epoch seconds, within 1 s). A pid reused by another process (launchd restarts, a reboot) makes the
+ * lock stale. A start time that cannot be read or parsed, on either side, counts as a match: the lock is kept, never
+ * wrongly broken.
  */
 function holderAlive(b: Pick<LockBody, 'pid' | 'started'>, probe: ProcessProbe): boolean {
   if (!probe.alive(b.pid)) return false;
-  if (b.started === undefined) return true;
+  if (typeof b.started !== 'number') return true;
   const now = probe.startTime(b.pid);
-  return now === undefined || now === b.started;
+  return now === undefined || Math.abs(now - b.started) <= 1;
 }
 
 function readBody(path: string): LockBody | undefined {
   try {
     const b = JSON.parse(readFileSync(path, 'utf8')) as Partial<LockBody>;
     return typeof b.pid === 'number' && Number.isInteger(b.pid) && b.pid > 0
-      ? { pid: b.pid, command: String(b.command ?? '?'), at: String(b.at ?? '?'), token: String(b.token ?? ''), ...(typeof b.started === 'string' ? { started: b.started } : {}) }
+      ? { pid: b.pid, command: String(b.command ?? '?'), at: String(b.at ?? '?'), token: String(b.token ?? ''), ...(typeof b.started === 'number' && Number.isFinite(b.started) ? { started: b.started } : {}) }
       : undefined;
   } catch {
     return undefined;

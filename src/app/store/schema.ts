@@ -107,8 +107,10 @@ export const APP_MIGRATIONS: readonly string[] = [
   ALTER TABLE runs_summary ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE runs_summary ADD COLUMN problems TEXT NOT NULL DEFAULT '[]';
   `,
-  // m8: when a notification announced the job; a job is announced once.
+  // m8: when a notification announced the job; a job is announced once. Rows that exist when the column is added are
+  // the backlog the user has already seen, so they are stamped and never announced (R-I2).
   `
   ALTER TABLE jobs ADD COLUMN notified_at TEXT;
+  UPDATE jobs SET notified_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE notified_at IS NULL;
   `,
 ];

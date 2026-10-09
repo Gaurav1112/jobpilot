@@ -7,12 +7,15 @@ import type { AnyContract } from '../kernel/contract.js';
  * - `capabilities.pack: 'full'` (contact details, answers): only the renderer, which merges contact details into the
  *   documents and fills the cover's p4;
  * - `capabilities.files` with `access: 'read-write'`: only the renderer, which writes the documents;
- * - `capabilities.pdfText`: only the qa-gate, which checks the PDFs' text layer.
+ * - `capabilities.pdfText`: only the qa-gate, which checks the PDFs' text layer;
+ * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents.
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer'],
   filesWrite: ['renderer'],
   pdfText: ['qa-gate'],
+  /** The symbolic egress whose hosts come from the user's watchlist (review R-I3). */
+  careersEgress: ['src-careers-list', 'src-careers-job'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -25,6 +28,9 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
     }
     if (c.capabilities.files?.access === 'read-write' && !allowed(CAPABILITY_ALLOW_LIST.filesWrite, c.id)) {
       problems.push(`${c.id} declares writable files; only ${CAPABILITY_ALLOW_LIST.filesWrite.join(', ')} may write documents`);
+    }
+    if (c.egress.includes('pack:careers-hosts') && !allowed(CAPABILITY_ALLOW_LIST.careersEgress, c.id)) {
+      problems.push(`${c.id} declares egress pack:careers-hosts; only ${CAPABILITY_ALLOW_LIST.careersEgress.join(', ')} may contact the watchlist's careers sites`);
     }
     if (c.capabilities.pdfText && !allowed(CAPABILITY_ALLOW_LIST.pdfText, c.id)) {
       problems.push(`${c.id} declares capabilities.pdfText; only ${CAPABILITY_ALLOW_LIST.pdfText.join(', ')} may run pdftotext`);

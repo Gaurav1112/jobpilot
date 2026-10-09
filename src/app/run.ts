@@ -101,7 +101,8 @@ export interface RunOptions {
   readonly fetch: FetchLike;
   /** Needed when the watchlist has careers entries. The caller owns it (and closes it). */
   readonly browser?: BrowserProvider;
-  readonly notifier: Notifier;
+  /** Posts the notification. Absent (`--no-notify`): nothing is posted and no job is marked announced. */
+  readonly notifier?: Notifier;
   /**
    * Fetch again on the same day: the seeds carry `attempt` = this run's ordinal (`daily-<date>-<n>`, n >= 2), so every
    * source step runs again. Career listings are re-read; an unchanged career job page still replays (CareerLink is dateless).
@@ -113,16 +114,20 @@ export interface RunOptions {
   readonly pdftotext?: string;
   /** Test hook: runs after each step; throwing simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** Test hook: runs after the projection, before the notification; throwing simulates a crash there. */
+  readonly afterProject?: () => void;
 }
 
 /**
- * What the notification announces (m8): jobs this run saw first (their `first_seen` is this run's projection time),
- * whose documents are ready, and that no notification has announced before. Duplicate listings excluded.
+ * What the notification announces (R-I2): every job whose documents are ready and that no posted notification has
+ * announced yet, whenever it became ready (first seen today, made ready by a fact override or a rebuild, or left over
+ * by a run whose notification failed or crashed). The backlog that existed before announcements (rows present when
+ * the column was added, Desk imports) is stamped and never announced. Duplicate listings excluded.
  */
-function newMatches(app: AppStore, seenAt: string): { jobKey: string; score: number | null; company: string; title: string }[] {
+function newMatches(app: AppStore): { jobKey: string; score: number | null; company: string; title: string }[] {
   return app
     .listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] })
-    .filter((j) => j.docsState === 'ready' && j.firstSeen === seenAt && j.notifiedAt === null);
+    .filter((j) => j.docsState === 'ready' && j.notifiedAt === null);
 }
 
 /** The kept docs-rebuild counter, validated (review m6). */
@@ -152,8 +157,8 @@ function sourcesAllReplayed(counts: RunCounts): boolean {
  *    dated with today's IST date (and, with `refresh`, this run's ordinal as `attempt`).
  * 3. Run as `daily-<runDate>` (or `daily-<runDate>-<n>` when that one completed; a crashed one is resumed), project
  *    the outputs into the app tables.
- * 4. Name every problem; notify: `<N> new matches · top: … · <k> problems`, or `No new matches today`. A job is
- *    announced once: only jobs this run saw first, never notified before (`notified_at`).
+ * 4. Name every problem; notify: `<N> new matches · top: … · <k> problems`, or `No new matches today`. Every ready
+ *    job is announced once, by the first notification actually posted after it became ready (`notified_at`).
  * 5. Record the run summary, with its warnings and problems.
  * Same-day replay is the default: the seeds carry the date, so a second run that day fetches nothing (a hint says so).
  */
@@ -178,16 +183,21 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
       const problems = runProblems(app.kernel, runId, loaded.pack.naming);
-      const seenAt = app.kernel.events(runId).find((e) => e.kind === 'run_started')?.at ?? now;
-      const fresh = newMatches(app, seenAt);
+      o.afterProject?.();
+      const fresh = newMatches(app);
       const notification = notificationFor(fresh, loaded.pack.naming, problems.length);
-      let notified = true;
-      try {
-        await o.notifier(notification);
-        app.markNotified(fresh.map((j) => j.jobKey), now);
-      } catch (e) {
-        notified = false;
-        warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+      let notified = false;
+      if (o.notifier === undefined) {
+        if (fresh.length > 0) warnings.push(`not announced (--no-notify): ${fresh.length}`);
+      } else {
+        try {
+          await o.notifier(notification);
+          notified = true;
+        } catch (e) {
+          warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        // Only a posted notification announces: a failed one leaves the jobs for the next run.
+        if (notified) app.markNotified(fresh.map((j) => j.jobKey), now);
       }
       app.recordRun({ runId, at: now, counts, packHash: loaded.packHash, policyHash: k.policyHash, warnings, problems });
       return {

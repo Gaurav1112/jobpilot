@@ -112,6 +112,10 @@ const ListUrl = z.string().superRefine((s, ctx) => {
   if (u.port !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not name a port' });
   if (u.username !== '' || u.password !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not carry credentials' });
   if (/^[\d.]+$/.test(u.hostname) || u.hostname.startsWith('[')) ctx.addIssue({ code: 'custom', message: 'listUrl must name a host, not an IP address' });
+  const host = u.hostname.toLowerCase().replace(/\.+$/, '');
+  if (!host.includes('.') || /(^|\.)(localhost|local|internal)$/.test(host)) {
+    ctx.addIssue({ code: 'custom', message: `listUrl host ${host} is local or internal; it must be a public host name` });
+  }
   if (hostDenied(PRODUCT_POLICY_V1, u.hostname)) ctx.addIssue({ code: 'custom', message: `listUrl host ${u.hostname} is a job board jobpilot never contacts` });
 });
 

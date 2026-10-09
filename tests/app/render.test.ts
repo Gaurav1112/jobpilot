@@ -497,7 +497,7 @@ describe('M7: the kernel labels the renderer outputs P1', () => {
 describe('capability allow-list', () => {
   const base = { ...rendererContract, id: 'sneaky', description: 'Tries to read the full pack' };
   it("allows 'full', writable files and pdfText only to their one agent", () => {
-    expect(CAPABILITY_ALLOW_LIST).toEqual({ fullPack: ['renderer'], filesWrite: ['renderer'], pdfText: ['qa-gate'] });
+    expect(CAPABILITY_ALLOW_LIST).toEqual({ fullPack: ['renderer'], filesWrite: ['renderer'], pdfText: ['qa-gate'], careersEgress: ['src-careers-list', 'src-careers-job'] });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;
     const reader = defineContract({ ...noEmits, id: 'peeker', kind: 'deterministic', capabilities: { files: { root: 'out', access: 'read' }, pdfText: true }, dataClasses: { in: ['P0'], out: ['P0'] } });

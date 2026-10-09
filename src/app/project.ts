@@ -108,7 +108,7 @@ const inr = (v: number | null, p: Posting['comp'], fx: FxRates): number | null =
  * note are never written. Projecting a run twice is a no-op.
  */
 /** Named reasons a failed writing step's detail may carry; only these (never the free text, which may quote data) are shown. */
-const NAMED_REASON = /\b(?:unrenderable-glyph:U\+[0-9A-F]{4,6}|unsafe-posting-text)\b/;
+const NAMED_REASON = /\b(?:unrenderable-glyph:U\+[0-9A-F]{4,6}|unsafe-posting-text|G-NAMING: forbidden term #\d+)\b/;
 
 export function projectRun(kernel: Store, app: AppStore, runId: string, opts: ProjectOptions): ProjectResult {
   const run = kernel.getRun(runId);

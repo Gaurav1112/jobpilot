@@ -32,6 +32,17 @@ function deskCopy(extra: Record<string, unknown>): string {
 const acme = { company: 'Acme Robotics', title: 'Senior Backend Engineer', location: 'Remote - India', url: 'https://example.test/j', score: 70, why: '', posted: '2026-08-20' };
 
 describe('migrateDesk', () => {
+  it('R-I2: stamps notified_at on imported and attached rows, so the Desk backlog is never announced', () => {
+    const app = AppStore.on(Store.open(':memory:'));
+    // a run already found the greenhouse posting and has not announced it yet
+    app.upsertJob(jobRow({ jobKey: ghKey, dedupeKey: ghDedupe, source: 'greenhouse', sourceId: '4400001', docsState: 'ready' }));
+    expect(app.getJob(ghKey)?.notifiedAt).toBeNull();
+    migrateDesk(DESK, app, opts);
+    const rows = app.listJobs(ALL);
+    expect(rows.length).toBeGreaterThan(1);
+    for (const j of rows) expect(j.notifiedAt, j.jobKey).not.toBeNull();
+  });
+
   it('imports every row as its own job keyed by source id, with status, note, applied_at and a migration history entry', () => {
     const app = AppStore.on(Store.open(':memory:'));
     const r = migrateDesk(DESK, app, opts);

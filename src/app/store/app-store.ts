@@ -356,6 +356,8 @@ export class AppStore {
       } else {
         outcome = 'present';
       }
+      // A Desk row is a job the user already knows: it is never announced as new (R-I2).
+      if (outcome !== 'present') this.db.prepare(`UPDATE jobs SET notified_at = ? WHERE job_key = ? AND notified_at IS NULL`).run(r.statusAt, r.jobKey);
       this.relink(r.dedupeKey);
       return outcome;
     });

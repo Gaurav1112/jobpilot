@@ -422,4 +422,13 @@ describe('projector: documents on disk (Task 10 fix round 1, replay safety)', ()
     expect(app.getJob(posting(8).jobKey)).toMatchObject({ docsState: 'blocked', docsDetail: 'renderer failed: invalid_output (unrenderable-glyph:U+30A2)' });
     expect(app.getJob(posting(9).jobKey)).toMatchObject({ docsState: 'none', docsDetail: 'renderer failed: invalid_output' });
   });
+
+  it('r-m1: a forbidden term in the posting slots blocks the documents with its named reason', () => {
+    const b = new RunBuilder();
+    const sc = b.chain(posting(10), 'eligible', 80);
+    b.failed('renderer', sc, 'input_rejected', 'renderer: G-NAMING: forbidden term #1 appears in the posting title or company');
+    const app = AppStore.on(b.store);
+    projectRun(b.store, app, RUN, OPTS);
+    expect(app.getJob(posting(10).jobKey)).toMatchObject({ docsState: 'blocked', docsDetail: 'renderer failed: input_rejected (G-NAMING: forbidden term #1)' });
+  });
 });

@@ -405,6 +405,8 @@ describe('watchlist: careers entries', () => {
     for (const u of [
       'http://careers.example.com/jobs', 'https://careers.example.com:8443/jobs', 'https://u:p@careers.example.com/jobs', 'not a url', 'ftp://x.example/',
       'https://192.168.1.10/jobs', 'https://[::1]/jobs', 'https://www.glassdoor.co.in/Jobs', 'https://in.indeed.com/jobs', 'https://lnkd.in/x',
+      // r-m2: local and internal names
+      'https://localhost/jobs', 'https://careers.localhost/jobs', 'https://intranet/jobs', 'https://jobs.corp.local/x', 'https://hr.internal/jobs', 'https://LOCALHOST./jobs',
     ]) {
       expect(ok({ ...base, linkPattern: 'x', listUrl: u }), u).toBe(false);
     }

@@ -5,7 +5,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { srcLever } from '../../src/app/agents/sources/lever.js';
 import { renderer } from '../../src/app/agents/writing/renderer.js';
 import { appGuardrails } from '../../src/app/guardrails.js';
-import { LOCK_FILE, LockError, withLock, type ProcessProbe } from '../../src/app/lock.js';
+import { capabilityProblems } from '../../src/app/allow-list.js';
+import { LOCK_FILE, LockError, parseLstartUtc, withLock, type ProcessProbe } from '../../src/app/lock.js';
+import { spawn, spawnSync } from 'node:child_process';
 import { appleScriptString, notificationFor } from '../../src/app/notify.js';
 import { offlineProviders } from '../../src/app/offline.js';
 import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
@@ -80,6 +82,17 @@ describe('the daily pipeline wiring', () => {
     const sneaky = defineAgent(defineContract({ ...spec, id: 'eligibility', team: 'evaluation', emits: 'P1' }), async () => []);
     const agents = dailyAgents([ghEntry]).map((a) => (a.contract.id === 'eligibility' ? sneaky : a));
     expect(() => compileDaily(agents, appGuardrails())).toThrow(/capability allow-list.*eligibility declares capabilities\.pack 'full'/s);
+  });
+});
+
+describe('R-I3: only the careers agents may name the symbolic careers egress', () => {
+  it('refuses any other agent declaring pack:careers-hosts', () => {
+    const evil = defineAgent(defineContract({ ...srcLever.contract, id: 'src-lever', egress: ['pack:careers-hosts', 'api.lever.co'] }), async () => []);
+    const agents = dailyAgents([ghEntry, careersEntry]).map((a) => (a.contract.id === 'src-lever' ? evil : a));
+    expect(() => compileDaily(agents, appGuardrails())).toThrow(
+      /src-lever declares egress pack:careers-hosts; only src-careers-list, src-careers-job may contact the watchlist's careers sites/,
+    );
+    expect(capabilityProblems(dailyAgents([careersEntry]).map((a) => a.contract))).toEqual([]);
   });
 });
 
@@ -193,24 +206,56 @@ describe('the run lock', () => {
     expect(body.token).toMatch(/^[0-9a-f-]{36}$/);
   });
 
-  it('ruling 6: a lock is held only when both its pid and that process start time match (pid reuse is stale)', async () => {
+  it('ruling 6: a lock is held only when both its pid and that process start time match, within 1 s (pid reuse is stale)', async () => {
     home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
     const h = home;
-    const probe = (start: string): ProcessProbe => ({ alive: (pid) => pid === 4242 || pid === process.pid, startTime: (pid) => (pid === 4242 ? start : 'me-start') });
-    writeFileSync(join(h, LOCK_FILE), JSON.stringify({ pid: 4242, command: 'run', at: 'x', token: 'old', started: 'Mon Oct  5 07:00:00 2026' }));
-    // same pid, same start: held
-    await expect(withLock(h, 'run', async () => 1, probe('Mon Oct  5 07:00:00 2026'))).rejects.toThrow(/pid 4242, run/);
+    const probe = (start: number): ProcessProbe => ({ alive: (pid) => pid === 4242 || pid === process.pid, startTime: (pid) => (pid === 4242 ? start : 1_790_000_000) });
+    writeFileSync(join(h, LOCK_FILE), JSON.stringify({ pid: 4242, command: 'run', at: 'x', token: 'old', started: 1_791_000_000 }));
+    // same pid, same start (and within the 1 s tolerance): held
+    await expect(withLock(h, 'run', async () => 1, probe(1_791_000_000))).rejects.toThrow(/pid 4242, run/);
+    await expect(withLock(h, 'run', async () => 1, probe(1_791_000_001))).rejects.toThrow(/pid 4242, run/);
+    // a start time that cannot be read keeps the lock (fail closed)
+    await expect(withLock(h, 'run', async () => 1, { alive: () => true, startTime: () => undefined })).rejects.toThrow(LockError);
     // same pid, another start: the pid was reused, so the lock is stale and is taken over
-    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started: string }, probe('Fri Oct  9 06:00:00 2026'));
-    expect(body.started).toBe('me-start');
+    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started: number }, probe(1_791_000_005));
+    expect(body.started).toBe(1_790_000_000);
   });
 
-  it('records the real process start time of the holder', async () => {
+  it('R-I1: ps lstart is parsed in C/UTC into epoch seconds; the real probe records this process start', async () => {
+    expect(parseLstartUtc('Fri Oct  9 14:13:37 2026')).toBe(Date.UTC(2026, 9, 9, 14, 13, 37) / 1000);
+    expect(parseLstartUtc('金 10/ 9 19:43:55 2026')).toBeUndefined();
+    expect(parseLstartUtc('Fri  9 Oct 19:43:55 2026')).toBeUndefined();
     home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
     const h = home;
-    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started?: string });
-    expect(body.started).toMatch(/^\w{3} \w{3} +\d+ \d\d:\d\d:\d\d \d{4}$/);
+    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started: number });
+    const expected = Date.now() / 1000 - process.uptime();
+    expect(Math.abs(body.started - expected)).toBeLessThan(3);
   });
+
+  it('R-I1: a live holder recorded under one TZ and locale is refused under any other', async () => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
+    const h = home;
+    const lockTs = join(import.meta.dirname, '../../src/app/lock.ts');
+    const script = (body: string) => {
+      const f = join(h, `s-${Math.random().toString(16).slice(2)}.mts`);
+      writeFileSync(f, `import { withLock } from ${JSON.stringify(lockTs)};\n${body}`);
+      return f;
+    };
+    const holder = spawn(process.execPath, ['--import', 'tsx', script(`await withLock(${JSON.stringify(h)}, 'run', () => new Promise((r) => setTimeout(r, 60_000)));`)], {
+      env: { ...process.env, TZ: 'Asia/Kolkata', LC_ALL: 'en_GB.UTF-8', LANG: 'en_GB.UTF-8' }, stdio: 'ignore',
+    });
+    try {
+      for (let i = 0; i < 100 && !existsSync(join(h, LOCK_FILE)); i++) await new Promise((r) => setTimeout(r, 100));
+      expect(existsSync(join(h, LOCK_FILE))).toBe(true);
+      const check = script(`try { await withLock(${JSON.stringify(h)}, 'run', async () => 0); console.log('TOOK'); } catch (e) { console.log(e instanceof Error ? e.name : 'x'); }`);
+      for (const env of [{ TZ: 'UTC' }, { LC_ALL: 'ja_JP.UTF-8', LANG: 'ja_JP.UTF-8' }, { TZ: 'America/Los_Angeles', LC_ALL: 'de_DE.UTF-8' }]) {
+        const r = spawnSync(process.execPath, ['--import', 'tsx', check], { env: { ...process.env, ...env }, encoding: 'utf8' });
+        expect(r.stdout.trim(), JSON.stringify(env)).toBe('LockError');
+      }
+    } finally {
+      holder.kill('SIGKILL');
+    }
+  }, 60_000);
 
   it('takes over a stale lock whose process is gone', async () => {
     home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));

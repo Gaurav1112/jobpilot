@@ -234,6 +234,25 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     ]);
   });
 
+  it('R-I2: the notified_at migration stamps the rows that exist when it is added, so the backlog is not announced', () => {
+    const kernel = Store.open(':memory:');
+    const db = kernel.db;
+    db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
+    db.prepare(`INSERT INTO app_schema (id, version) VALUES (1, 0)`).run();
+    for (const [i, m] of APP_MIGRATIONS.slice(0, 3).entries()) {
+      db.exec(m);
+      db.prepare(`UPDATE app_schema SET version = ?`).run(i + 1);
+    }
+    db.prepare(
+      `INSERT INTO jobs (job_key, source, source_id, dedupe_key, company, title, url, ats, location, docs_state, first_seen, last_seen) VALUES ('0123456789abcdef', 'greenhouse', '1', 'dddddddddddddddd', 'Acme', 'Eng', 'https://x.example/1', 'greenhouse', 'Remote', 'ready', 'a', 'a')`,
+    ).run();
+    const s = AppStore.on(kernel);
+    expect(s.getJob('0123456789abcdef')?.notifiedAt).not.toBeNull();
+    // a row inserted afterwards by a run is not stamped
+    s.upsertJob(jobRow({ jobKey: '00000000000000ff', sourceId: '2', docsState: 'ready' }));
+    expect(s.getJob('00000000000000ff')?.notifiedAt).toBeNull();
+  });
+
   it('keeps warnings and problems with a run, and finds the latest run by prefix', () => {
     const s = AppStore.on(Store.open(':memory:'));
     const problem = { kind: 'failed', agent: 'src-greenhouse', item: 'Acme (greenhouse:acme)', reason: 'invalid_output: x' };

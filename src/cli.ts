@@ -13,20 +13,15 @@ import { demoEvalSpecs } from './demo/evals.js';
 import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
 import { exportedAgents } from './exported-agents.js';
-import { nodeFetch } from './kernel/providers.js';
-import type { PlaywrightBrowserProvider } from './app/browser/playwright-provider.js';
 import { loadRunPack, preparePipeline } from './app/kernel.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
-import { offlineProviders } from './app/offline.js';
 import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
-import { failureNotification, formatSummary, istMonth, nonceOf, rebuildDocs, runDaily } from './app/run.js';
-import { NamingSchema } from './app/pack/schema.js';
-import { parse as parseYaml } from 'yaml';
-import { readFileSync } from 'node:fs';
+import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
+import { runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
 
 const root = join(import.meta.dirname, '..');
@@ -235,48 +230,17 @@ function todaysPack() {
   return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce);
 }
 
-/** The pack's forbidden terms, if naming.yaml can be read at all (for a failure notification); else undefined. */
-function forbiddenTermsAt(packDir: string): readonly string[] | undefined {
-  try {
-    return NamingSchema.parse(parseYaml(readFileSync(join(packDir, 'naming.yaml'), 'utf8'))).forbiddenTerms;
-  } catch {
-    return undefined;
-  }
-}
-
 program
   .command('run')
   .description('Run the daily pipeline, project the results into the app tables and post the notification. Exit 0: clean; 1: some step failed or was quarantined (see problems); 2: the run could not run')
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--refresh', 'fetch every source again even if today\'s run already did (career listings are re-read; unchanged career job pages still replay)')
-  .option('--no-notify', 'do not post the macOS notification')
+  .option('--no-notify', 'do not post the macOS notification (nothing is marked announced)')
   .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean }) => {
-    const notifier = o.notify ? osascriptNotifier : async () => {};
-    let live: PlaywrightBrowserProvider | undefined;
-    try {
-      const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
-      // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
-      live = offline === undefined ? new (await import('./app/browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
-      const summary = await runDaily({
-        home: jobpilotHome(),
-        clock: systemClock,
-        fetch: offline?.fetch ?? nodeFetch,
-        browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
-        notifier,
-        ...(o.refresh ? { refresh: true } : {}),
-      });
-      console.log(formatSummary(summary));
-      process.exitCode = summary.exitCode;
-    } catch (e) {
-      // The run could not run at all (pack, pacing, lock, pdftotext, fixtures): loud, and a distinct exit code.
-      console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
-      process.exitCode = 2;
-      await notifier(failureNotification(e, forbiddenTermsAt(homePaths(jobpilotHome()).pack))).catch((n: unknown) =>
-        console.error(`error: the failure notification could not be posted: ${n instanceof Error ? n.message : String(n)}`),
-      );
-    } finally {
-      await live?.close();
-    }
+    process.exitCode = await runCommand(
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+    );
   });
 
 const pack = program.command('pack').description('User pack tools');
