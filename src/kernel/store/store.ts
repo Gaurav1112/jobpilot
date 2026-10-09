@@ -248,6 +248,23 @@ export class Store {
     });
   }
 
+  /**
+   * Review I1: forgets a done step whose files are no longer what its stored output references, so the executor runs it
+   * again (memo bypass for this step only). Its envelopes are dropped and it is marked failed, both with the
+   * hash-chained `replay-healed` event in one transaction; a crash before the re-execution leaves a failed step, which
+   * the next run executes anyway. Spend already recorded stays recorded.
+   */
+  forgetDoneStep(runId: string, stepKey: string, event: { at: string; kind: string; data: unknown; policyHash: string }): void {
+    this.tx(() => {
+      const res = this.db
+        .prepare(`UPDATE steps SET status = 'failed', error_code = 'invalid_output', detail = 'replay-healed: its files changed on disk' WHERE step_key = ? AND status = 'done'`)
+        .run(stepKey);
+      if (res.changes !== 1) throw new Error(`forgetDoneStep: step ${stepKey} is not done`);
+      this.db.prepare(`DELETE FROM envelopes WHERE step_key = ?`).run(stepKey);
+      this.appendEvent(runId, event.at, event.kind, event.data, event.policyHash);
+    });
+  }
+
   /** For seed envelopes, which have no agent behind them. */
   putSeed(stepKey: string, env: Envelope, pipelineVersion: string, seedHash: string): void {
     this.tx(() => {

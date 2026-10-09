@@ -15,7 +15,7 @@ import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
 import { type Cost, type Envelope, type GuardrailVerdict, makeEnvelopeId, nextObligations, ZERO_COST } from './envelope.js';
 import { classify, type ErrorCode, KernelError } from './errors.js';
-import { commitPending, discardPending, hasPending, openPending } from './files.js';
+import { commitPending, createFiles, discardPending, hasPending, openPending } from './files.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import { backoffDelay, computeStepKey } from './memo.js';
 import type { Policy } from './policy.js';
@@ -103,6 +103,42 @@ const messageOf = (err: unknown): string => {
     return 'unprintable error';
   }
 };
+
+const SHA256 = /^[0-9a-f]{64}$/;
+
+/**
+ * Review I1: the files a stored output references. A reference is any object, at any depth of a payload, with a string
+ * `path` and a 64-hex `sha256`: the shape `ctx.files.write` returns, which a writing agent records in its output.
+ */
+export function fileRefsOf(payloads: readonly unknown[]): { readonly path: string; readonly sha256: string }[] {
+  const out = new Map<string, string>();
+  const walk = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      for (const x of v) walk(x);
+      return;
+    }
+    if (typeof v !== 'object' || v === null) return;
+    const o = v as Record<string, unknown>;
+    if (typeof o['path'] === 'string' && typeof o['sha256'] === 'string' && SHA256.test(o['sha256'])) out.set(`${o['path']}\u0000${o['sha256']}`, o['path']);
+    for (const x of Object.values(o)) walk(x);
+  };
+  for (const p of payloads) walk(p);
+  return [...out.entries()].map(([k, path]) => ({ path, sha256: k.slice(path.length + 1) })).sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : a.sha256 < b.sha256 ? -1 : 1));
+}
+
+/** The referenced files that are not under the root with their recorded sha256 (absent, changed, or refused by G-FILES). */
+async function brokenFileRefs(staging: Staging, outputs: readonly Envelope[]): Promise<string[]> {
+  const { tool } = createFiles({ root: staging.root, rootName: 'out', maxBytes: staging.maxBytes, deny: (m) => new KernelError('policy_denied', m) }, 'read');
+  const broken = new Set<string>();
+  for (const ref of fileRefsOf(outputs.map((o) => o.payload))) {
+    try {
+      if ((await tool.read(ref.path)).sha256 !== ref.sha256) broken.add(ref.path);
+    } catch {
+      broken.add(ref.path);
+    }
+  }
+  return [...broken].sort();
+}
 
 /**
  * Spec §6.1: the same thirteen steps for every agent. Never throws: anything
@@ -193,11 +229,20 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       return { kind: 'quarantined', stepKey, verdicts: gin.verdicts };
     }
 
-    // 6 replay: a finished step is never executed again
+    // 6 replay: a finished step is never executed again, unless (review I1) it writes files and a file its stored
+    // output references is no longer in place with its recorded sha256 (an A -> B -> A pack history overwrote it, a
+    // commit failed, a user deleted it). Then this step alone bypasses the memo and runs again (`replay-healed`). A
+    // stage still pending (a crash between done and commit) is committed by the caller, so it is not checked here.
     const prior = deps.store.getStep(stepKey);
     if (prior?.status === 'done') {
-      event('step_replayed', { status: 'done' });
-      return { kind: 'done', stepKey, outputs: deps.store.envelopesOfStep(stepKey), replayed: true };
+      const outputs = deps.store.envelopesOfStep(stepKey);
+      const broken = staging === undefined || (await hasPending(staging.root, stepKey)) ? [] : await brokenFileRefs(staging, outputs);
+      if (broken.length === 0) {
+        event('step_replayed', { status: 'done' });
+        return { kind: 'done', stepKey, outputs, replayed: true };
+      }
+      const e = eventOf('replay-healed', { files: broken });
+      deps.store.forgetDoneStep(runId, stepKey, e);
     }
     if (prior?.status === 'quarantined') {
       event('step_replayed', { status: 'quarantined' });

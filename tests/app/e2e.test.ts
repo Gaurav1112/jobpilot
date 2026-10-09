@@ -198,7 +198,7 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     expect(nov.notification).toBe('No new matches today');
   });
 
-  it('docs rebuild re-runs only the renderer; the qa-gate replays when the bytes are identical', async () => {
+  it('a deleted document heals on the next run (I1); docs rebuild re-runs only the renderer and the qa-gate replays when the bytes are identical', async () => {
     const ready = jobs().filter((j) => j.docsState === 'ready');
     const target = ready[0] as JobView;
     const [doc] = docsOf(target.jobKey);
@@ -207,7 +207,12 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     now = '2026-11-02T03:00:00.000Z';
     const missing = await run();
     expect(missing.runId).toBe('daily-2026-11-02-2');
-    expect(jobs().find((j) => j.jobKey === target.jobKey)?.docsState).toBe('missing');
+    // review I1: the renderer's replay finds the deleted file and renders that job again; nothing else runs
+    expect(jobs().find((j) => j.jobKey === target.jobKey)?.docsState).toBe('ready');
+    expect(existsSync(join(home, 'out', doc!.path))).toBe(true);
+    expect(executed(missing)).toEqual(['renderer']);
+    expect((byAgent(missing)['renderer']?.done ?? 0) - (byAgent(missing)['renderer']?.replayed ?? 0)).toBe(1);
+    expect(missing.problems).toEqual([]);
 
     now = '2026-11-02T03:30:00.000Z';
     const r = await rebuildDocs({ home, clock, sleep: async () => {}, pdftotext: pdftotext as string });
@@ -220,8 +225,7 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     expect(executed(r)).toEqual(['renderer']);
     expect(byAgent(r)['qa-gate']?.replayed).toBe(3);
     expect(r.problems).toEqual([]);
-    expect(r.changes.find((c) => c.jobKey === target.jobKey)).toMatchObject({ from: 'missing', to: 'ready' });
-    expect(r.changes.filter((c) => c.jobKey !== target.jobKey).map((c) => `${c.from}->${c.to}`)).toEqual(['ready->ready', 'ready->ready']);
+    expect(r.changes.map((c) => `${c.from}->${c.to}`)).toEqual(['ready->ready', 'ready->ready', 'ready->ready']);
     expect(r.notRebuilt).toEqual([]);
     expect(existsSync(join(home, 'out', doc!.path))).toBe(true);
     const after = jobs().find((j) => j.jobKey === target.jobKey);

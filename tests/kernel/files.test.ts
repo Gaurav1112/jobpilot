@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -672,5 +672,83 @@ describe('executor: per-attempt stages (N4) and pack hashes (m9)', () => {
     await expect(run(full, { fullPack: { contact: {} }, fullPackHash: 'f' })).resolves.toMatchObject({ kind: 'done' });
     await expect(run(pub, { pack: { naming: {} }, packHash: 'p' })).resolves.toMatchObject({ kind: 'done' });
     await expect(run(pub, {})).resolves.toMatchObject({ kind: 'done' });
+  });
+});
+
+describe('I1: a replayed files step checks the files its stored output references, and heals them', () => {
+  const pHash = policyHash(PRODUCT_POLICY_V1);
+  const Ref = defineType('FileRefOut', 1, z.object({ files: z.array(z.object({ path: z.string(), sha256: z.string() }).strict()) }).strict());
+  const input: Envelope = {
+    envelopeId: 'seed', stepKey: 'seed-step', index: 0, type: 'FileIn@1',
+    producer: { agentId: 'supervisor', version: '1.0.0', contractHash: 'seed-hash' },
+    parents: [], payload: { n: 1 },
+    handoff: { guarantees: [], dataClass: 'P0', obligations: [], pins: { policyHash: pHash } },
+    guardrails: [], cost: ZERO_COST,
+  };
+  let runs = 0;
+  const agentOf = (access: 'read-write' | 'read' = 'read-write') =>
+    defineAgent(
+      defineContract<{ n: number }, { files: { path: string; sha256: string }[] }>({
+        ...(base as unknown as ContractSpec<{ n: number }, { files: { path: string; sha256: string }[] }>), id: access === 'read' ? 'ref-reader' : 'ref-writer', kind: access === 'read' ? 'deterministic' : 'io', produces: Ref, capabilities: { files: { root: 'out', access } },
+      }),
+      async (_i, ctx) => {
+        runs += 1;
+        if (access === 'read') return [{ files: [{ path: 'k/a.txt', sha256: sha('A') }] }];
+        const res = (await ctx.files!.write!('k/a.txt', bytes('A'))) as { path: string; sha256: string };
+        return [{ files: [{ path: res.path, sha256: res.sha256 }] }];
+      },
+    );
+  const exec = (store: Store, out: string, agent: ReturnType<typeof agentOf>) =>
+    executeStep(
+      {
+        store, policy: PRODUCT_POLICY_V1, policyHash: pHash, providers: providers(out), clock: fixedClock('2026-10-09T00:00:00Z'), guardrails: builtinGuardrails(),
+        contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(agent.contract)), sleep: async () => {},
+      },
+      'r', agent, input,
+    );
+  const kinds = (store: Store) => store.events('r').map((e) => e.kind);
+
+  it('replays when every referenced file is in place with its recorded sha256', async () => {
+    const out = root();
+    const store = Store.open(':memory:');
+    const agent = agentOf();
+    runs = 0;
+    expect(await exec(store, out, agent)).toMatchObject({ kind: 'done', replayed: false });
+    expect(await exec(store, out, agent)).toMatchObject({ kind: 'done', replayed: true });
+    expect(runs).toBe(1);
+    expect(kinds(store)).not.toContain('replay-healed');
+  });
+
+  it.each([
+    ['changed on disk (an A -> B -> A pack history overwrote it)', (p: string) => writeFileSync(p, 'B')],
+    ['deleted', (p: string) => rmSync(p)],
+  ])('re-executes the step when a referenced file is %s: event replay-healed, the bytes come back', async (_what, damage) => {
+    const out = root();
+    const store = Store.open(':memory:');
+    const agent = agentOf();
+    runs = 0;
+    const first = await exec(store, out, agent);
+    damage(join(out, 'k', 'a.txt'));
+    const second = await exec(store, out, agent);
+    expect(second).toMatchObject({ kind: 'done', replayed: false, stepKey: first.stepKey });
+    expect(runs).toBe(2);
+    expect(readFileSync(join(out, 'k', 'a.txt'), 'utf8')).toBe('A');
+    const healed = store.events('r').find((e) => e.kind === 'replay-healed');
+    expect(JSON.parse(healed!.data)).toMatchObject({ agent: 'ref-writer', stepKey: first.stepKey, files: ['k/a.txt'] });
+    expect(kinds(store).slice(-3)).toEqual(['replay-healed', 'step_done', 'files_committed']);
+    expect(store.getStep(first.stepKey)?.status).toBe('done');
+    expect(second.kind === 'done' && second.outputs.map((o) => o.payload)).toEqual(first.kind === 'done' && first.outputs.map((o) => o.payload));
+    // healed for good: the next replay finds the files and replays
+    expect(await exec(store, out, agent)).toMatchObject({ kind: 'done', replayed: true });
+  });
+
+  it('leaves a read-only files step alone: it wrote nothing to heal', async () => {
+    const out = root();
+    const store = Store.open(':memory:');
+    const agent = agentOf('read');
+    runs = 0;
+    await exec(store, out, agent);
+    expect(await exec(store, out, agent)).toMatchObject({ kind: 'done', replayed: true });
+    expect(runs).toBe(1);
   });
 });
