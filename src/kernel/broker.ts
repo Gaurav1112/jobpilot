@@ -1,5 +1,5 @@
 import type { Clock } from './clock.js';
-import type { AnyContract } from './contract.js';
+import { isSymbolicEgress, type AnyContract, type SymbolicEgress } from './contract.js';
 import type { DataClass } from './data-class.js';
 import type { Cost } from './envelope.js';
 import { KernelError } from './errors.js';
@@ -127,6 +127,29 @@ export interface IssueArgs {
   readonly pendingFiles?: PendingFiles;
   /** Shared per-host pacing of browser renders (`policy.minBrowserIntervalMs`), applied before `hostPacer`. */
   readonly browserPacer?: HostPacer;
+  /** The hosts behind each symbolic egress entry (`pack:careers-hosts`); a missing set resolves to no host. */
+  readonly egressSets?: EgressSets;
+}
+
+export type EgressSets = Readonly<Partial<Record<SymbolicEgress, readonly string[]>>>;
+
+/**
+ * A contract's egress with its symbolic entries replaced by their sets: exact, lower-cased host names, sorted and
+ * deduplicated. Anything in a set that is not a bare host name is dropped (fail closed).
+ */
+export function resolveEgress(egress: readonly string[], sets: EgressSets = {}): string[] {
+  const out = new Set<string>();
+  for (const e of egress) {
+    if (!isSymbolicEgress(e)) {
+      out.add(e);
+      continue;
+    }
+    for (const h of sets[e] ?? []) {
+      const n = normalizeHost(h);
+      if (/^[a-z0-9.-]+$/.test(n)) out.add(n);
+    }
+  }
+  return [...out].sort();
 }
 
 /** Freezes every object reachable from `v`, in place. Cycles are safe. Typed arrays and DataViews cannot be frozen, so they are skipped. */
@@ -169,6 +192,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   let maxCallUsd = 0;
   const prior = a.priorSpend ?? { agentUsd: 0, runUsd: 0 };
   const denied: string[] = [];
+  const egress = resolveEgress(a.contract.egress, a.egressSets);
   /** A policy denial is recorded before it is thrown, so an agent cannot hide it by catching. */
   const deny = (message: string): KernelError => {
     denied.push(message);
@@ -176,7 +200,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   };
 
   const checkHost = (host: string): void => {
-    if (!a.contract.egress.includes(host)) {
+    if (!egress.includes(normalizeHost(host))) {
       throw deny(`G-EGRESS: ${a.contract.id} may not contact ${host}`);
     }
     if (!egressAllowed(a.policy, host, a.inputClass)) {
@@ -300,7 +324,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         let page: BrowserPage;
         try {
           // A redirect may only land on an egress host the policy also allows for this data class.
-          const navigationHosts = a.contract.egress.filter((h) => egressAllowed(a.policy, h, a.inputClass));
+          const navigationHosts = egress.filter((h) => egressAllowed(a.policy, h, a.inputClass));
           page = await provider.render({
             url: u.href,
             navigationHosts,
@@ -324,7 +348,7 @@ export function issueContext(a: IssueArgs): AgentContext {
           throw deny(`G-EGRESS: render of ${u.hostname} ended on an invalid URL`);
         }
         if (final.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (redirect to ${final.protocol}//${final.hostname})`);
-        if (normalizeHost(final.hostname) !== normalizeHost(u.hostname) && !a.contract.egress.includes(final.hostname)) {
+        if (normalizeHost(final.hostname) !== normalizeHost(u.hostname) && !egress.includes(normalizeHost(final.hostname))) {
           throw deny(`G-EGRESS: redirect from ${u.hostname} to ${final.hostname} refused`);
         }
         checkUrl(final.href);

@@ -14,7 +14,8 @@ Every morning at 07:00 IST, with no prompt and no click, the user's Mac:
 4. for every job at or above the fit floor, builds a **job-specific resume and cover letter**
    from verified facts only, in the file format that job's ATS parses best;
 5. shows all of it on a local dashboard (`http://127.0.0.1:4317`), ranked comp-first;
-6. posts a macOS notification: "N new matches, top: score · company · title".
+6. posts a macOS notification: "N new matches · top: score company — title" ("1 new match"),
+   followed by " · k problems" when any step failed, was refused, skipped or quarantined.
 
 The user's only actions: open the dashboard, read, download the documents, apply on the
 company site, and set a status. Applying stays manual in v1, and submission is never
@@ -410,7 +411,8 @@ a CDN.
 |---|---|
 | `jobpilot pack import --career-ops <dir> --resume <file> --desk <dir>` | Builds the pack once |
 | `jobpilot pack check` | Validates the pack |
-| `jobpilot run [--offline-fixtures <dir>]` | Runs the daily pipeline, the projection and the notification |
+| `jobpilot run [--offline-fixtures <dir>] [--refresh]` | Runs the daily pipeline, the projection and the notification. A second run on the same day replays (the seeds carry the date); `--refresh` fetches again |
+| `jobpilot docs rebuild` | Re-renders the documents of the latest daily run from its stored plans |
 | `jobpilot serve [--port 4317]` | Serves the dashboard |
 | `jobpilot migrate desk <dir>` | Imports the Desk rows |
 | `jobpilot schedule install` / `jobpilot schedule uninstall` | Writes `~/Library/LaunchAgents/com.jobpilot.daily.plist` (07:00 daily) and `com.jobpilot.dashboard.plist` (RunAtLoad, KeepAlive), then `launchctl bootstrap` / `bootout` |

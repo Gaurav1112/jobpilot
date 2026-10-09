@@ -380,3 +380,27 @@ describe('evals stay offline for the browser too', () => {
     expect(report).toMatchObject({ pass: true });
   });
 });
+
+describe('symbolic egress (pack:careers-hosts)', () => {
+  const sym = defineContract({ ...spec, id: 'sym-reader', egress: ['pack:careers-hosts'] });
+
+  it('the meta-schema accepts only known symbolic names', () => {
+    expect(sym.egress).toEqual(['pack:careers-hosts']);
+    expect(() => defineContract({ ...spec, egress: ['pack:everything'] })).toThrow(/egress/);
+    expect(() => defineContract({ ...spec, egress: ['https://x.example'] })).toThrow(/egress/);
+    // the contract hash does not depend on which hosts the set resolves to
+    expect(contractHash(sym)).toBe(contractHash(defineContract({ ...spec, id: 'sym-reader', egress: ['pack:careers-hosts'] })));
+  });
+
+  it('resolves at call time from egressSets: exact hosts only, the deny list still applies, and nothing without a set', async () => {
+    const b = fakeBrowser({ [`${H}/jobs`]: page('<h1>Jobs</h1>'), ['https://jobs.linkedin.com/x']: page('<h1>x</h1>') });
+    const base = { contract: sym, policy: PRODUCT_POLICY_V1, inputClass: 'P0' as const, providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser: b }, clock: at, signal: new AbortController().signal };
+    const ok = issueContext({ ...base, egressSets: { 'pack:careers-hosts': [HOST, 'jobs.linkedin.com'] } });
+    await expect(ok.browser?.render(`${H}/jobs`)).resolves.toMatchObject({ status: 200 });
+    expect(b.calls[0]?.navigationHosts).toEqual([HOST]);
+    await expect(ok.browser?.render('https://sub.careers.example.com/jobs')).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/G-EGRESS/) });
+    await expect(ok.browser?.render('https://jobs.linkedin.com/x')).rejects.toMatchObject({ code: 'policy_denied' });
+    const none = issueContext(base);
+    await expect(none.browser?.render(`${H}/jobs`)).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/G-EGRESS/) });
+  });
+});

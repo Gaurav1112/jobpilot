@@ -4,16 +4,16 @@ import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
 import type { Store } from '../kernel/store/store.js';
 import type { RunReport } from '../kernel/supervisor.js';
-import { SUPERVISOR_ID } from '../kernel/wiring.js';
+import type { CoverPlan } from './types.js';
 import { diskDocCheck } from './docs-check.js';
 import { appKernel, loadRunPack, resolvePdftotext, type RunPack } from './kernel.js';
 import { withLock } from './lock.js';
 import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
-import { dailySeeds } from './pipeline.js';
-import { projectRun, runCounts, type AgentCounts, type ProjectResult, type RunCounts } from './project.js';
+import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
+import { runProblems, type Problem } from './problems.js';
+import { projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
 import { AppStore, type DocsState } from './store/app-store.js';
-import type { DiscoveryRequest } from './types.js';
 
 /** India Standard Time is UTC+05:30 all year. */
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
@@ -31,28 +31,40 @@ export const istMonth = (iso: string): string => istDate(iso).slice(0, 7);
 /** The app setting holding the docs-rebuild counter that goes into the full pack as `render.nonce`. */
 export const RENDER_NONCE_KEY = 'render.nonce';
 
+/** The source agents (team sourcing); a run whose source steps all replayed fetched nothing. */
+const SOURCE_PREFIX = 'src-';
+export const REFRESH_HINT = 'All sources were already fetched today; use --refresh to fetch again';
+
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 /**
  * The run id for `prefix` (`daily-<runDate>`): the first of `prefix`, `prefix-2`, `prefix-3`, … that is not a
- * completed run. A run that exists but never completed (a crash) is resumed under its own id, unless it ran under
- * another policy (the supervisor refuses to resume that): it is left as it is, named in `skipped`, and the next id
- * is used.
+ * completed run, with its ordinal `n` (1 for `prefix`). A run that exists but never completed (a crash) is resumed
+ * under its own id, unless it ran under another policy (the supervisor refuses to resume that): it is left as it is,
+ * named in `skipped`, and the next id is used.
  */
-export function pickRunId(store: Store, prefix: string, policyHash: string): { runId: string; resume: boolean; skipped: string[] } {
+export function pickRunId(store: Store, prefix: string, policyHash: string): { runId: string; n: number; resume: boolean; skipped: string[] } {
   const skipped: string[] = [];
   for (let n = 1; ; n++) {
     const runId = n === 1 ? prefix : `${prefix}-${n}`;
     const run = store.getRun(runId);
-    if (!run) return { runId, resume: false, skipped };
+    if (!run) return { runId, n, resume: false, skipped };
     if (run.status === 'completed') continue;
-    if (run.policy_hash === policyHash) return { runId, resume: true, skipped };
+    if (run.policy_hash === policyHash) return { runId, n, resume: true, skipped };
     skipped.push(runId);
   }
 }
 
 const skippedWarnings = (skipped: readonly string[]): string[] =>
   skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`);
+
+/** m5: incomplete daily runs of earlier dates are never resumed; say so on every run until they are dealt with. */
+function staleRunWarnings(store: Store, prefix: string, skipped: readonly string[]): string[] {
+  return store
+    .incompleteRuns()
+    .filter((r) => r.run_id.startsWith('daily-') && !r.run_id.startsWith(prefix) && !skipped.includes(r.run_id))
+    .map((r) => `run ${r.run_id} never completed and is from an earlier date; it will not be resumed`);
+}
 
 export interface RunOutcome {
   readonly runId: string;
@@ -63,18 +75,23 @@ export interface RunOutcome {
   /** True when a crashed run with this id was continued. */
   readonly resumed: boolean;
   readonly report: RunReport;
-  /** Per agent: done, replayed, failed, gone, skipped, quarantined (and pending). */
+  /** Per agent: done, replayed, failed, gone, input-rejected, skipped, quarantined (and pending). */
   readonly counts: RunCounts;
-  readonly projection: ProjectResult;
+  /** Every item the run did not carry through, named (review I1). */
+  readonly problems: readonly Problem[];
   readonly packHash: string;
   readonly fullPackHash: string;
   readonly policyHash: string;
   readonly warnings: string[];
+  /** 1 when any step failed or was quarantined (gone and input-rejected steps are failed steps); else 0. */
+  readonly exitCode: 0 | 1;
 }
 
 export interface DailySummary extends RunOutcome {
+  readonly projection: ProjectResult;
   readonly notification: string;
   readonly notified: boolean;
+  readonly refresh: boolean;
 }
 
 export interface RunOptions {
@@ -85,6 +102,11 @@ export interface RunOptions {
   /** Needed when the watchlist has careers entries. The caller owns it (and closes it). */
   readonly browser?: BrowserProvider;
   readonly notifier: Notifier;
+  /**
+   * Fetch again on the same day: the seeds carry `attempt` = this run's ordinal (`daily-<date>-<n>`, n >= 2), so every
+   * source step runs again. Career listings are re-read; an unchanged career job page still replays (CareerLink is dateless).
+   */
+  readonly refresh?: boolean;
   /** Default: real time. Tests pass a no-op; production must not. */
   readonly sleep?: (ms: number) => Promise<void>;
   /** Absolute path of pdftotext; default `resolvePdftotext()`. */
@@ -100,7 +122,8 @@ function newMatches(app: AppStore, runDate: string): { score: number | null; com
     .filter((j) => j.docsState === 'ready' && istDate(j.firstSeen) === runDate);
 }
 
-function nonceOf(app: AppStore): number | undefined {
+/** The kept docs-rebuild counter, validated (review m6). */
+export function nonceOf(app: AppStore): number | undefined {
   const v = app.getSetting(RENDER_NONCE_KEY);
   if (v === undefined) return undefined;
   const n = Number(v);
@@ -108,16 +131,13 @@ function nonceOf(app: AppStore): number | undefined {
   return n;
 }
 
-function finish(app: AppStore, runId: string, loaded: RunPack, policyHash: string, outDir: string, at: string, projectAt?: string) {
-  const projection = projectRun(app.kernel, app, runId, {
-    minFit: loaded.pack.targets.minFit,
-    fx: loaded.pack.fx,
-    docOnDisk: diskDocCheck(outDir),
-    ...(projectAt !== undefined ? { at: projectAt } : {}),
-  });
-  const counts = runCounts(app.kernel, runId);
-  app.recordRun({ runId, at, counts, packHash: loaded.packHash, policyHash });
-  return { projection, counts };
+const exitCodeOf = (report: RunReport): 0 | 1 => (report.queue.failed > 0 || report.queue.quarantined > 0 ? 1 : 0);
+
+/** Whether this run had source steps and every one of them was answered from the store. */
+function sourcesAllReplayed(counts: RunCounts): boolean {
+  const sources = Object.entries(counts.byAgent).filter(([a]) => a.startsWith(SOURCE_PREFIX));
+  const steps = sources.reduce((n, [, c]) => n + c.done + c.failed + c.quarantined, 0);
+  return steps > 0 && sources.every(([, c]) => c.replayed === c.done + c.quarantined && c.failed === 0);
 }
 
 /**
@@ -125,10 +145,12 @@ function finish(app: AppStore, runId: string, loaded: RunPack, policyHash: strin
  * 1. Load the pack with the user's fact overrides, `experience.asOf` = the IST month of `clock` and the kept
  *    `render.nonce`; hash it.
  * 2. Wire the pipeline (allow-list, wiring proof, pacing check) and seed one request per watchlist entry and feed,
- *    dated with today's IST date.
+ *    dated with today's IST date (and, with `refresh`, this run's ordinal as `attempt`).
  * 3. Run as `daily-<runDate>` (or `daily-<runDate>-<n>` when that one completed; a crashed one is resumed), project
- *    the outputs into the app tables, record the run summary.
- * 4. Notify: `<N> new matches · top: …` for jobs first seen today with ready documents, or `No new matches today`.
+ *    the outputs into the app tables.
+ * 4. Name every problem; notify: `<N> new matches · top: … · <k> problems`, or `No new matches today`.
+ * 5. Record the run summary, with its warnings and problems.
+ * Same-day replay is the default: the seeds carry the date, so a second run that day fetches nothing (a hint says so).
  */
 export function runDaily(o: RunOptions): Promise<DailySummary> {
   return withLock(o.home, 'run', async () => {
@@ -141,13 +163,17 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const runDate = istDate(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
       const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}) });
-      const { seeds, warnings } = dailySeeds(loaded.pack, runDate);
+      const prefix = `daily-${runDate}`;
+      const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
+      const warnings = [...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
+      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined);
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
-      const { runId, resume, skipped } = pickRunId(app.kernel, `daily-${runDate}`, k.policyHash);
-      warnings.push(...skippedWarnings(skipped));
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
-      const { projection, counts } = finish(app, runId, loaded, k.policyHash, paths.out, now);
-      const notification = notificationFor(newMatches(app, runDate), loaded.pack.naming);
+      const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });
+      const counts = runCounts(app.kernel, runId);
+      if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
+      const problems = runProblems(app.kernel, runId, loaded.pack.naming);
+      const notification = notificationFor(newMatches(app, runDate), loaded.pack.naming, problems.length);
       let notified = true;
       try {
         await o.notifier(notification);
@@ -155,9 +181,11 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
         notified = false;
         warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
       }
+      app.recordRun({ runId, at: now, counts, packHash: loaded.packHash, policyHash: k.policyHash, warnings, problems });
       return {
-        runId, runDate, asOf: loaded.asOf, resumed: resume, report, counts, projection,
+        runId, runDate, asOf: loaded.asOf, resumed: resume, report, counts, projection, problems,
         packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings, notification, notified,
+        refresh: o.refresh === true, exitCode: exitCodeOf(report),
       };
     } finally {
       app.close();
@@ -165,66 +193,69 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
   });
 }
 
+/**
+ * The text of the notification a run that could not finish posts (`jobpilot run failed: <reason>`): the first line
+ * of the error, unless it holds a forbidden term (checked when the pack's naming rules can be read) or they cannot be
+ * read at all, in which case the reason is left out.
+ */
+export function failureNotification(err: unknown, forbiddenTerms: readonly string[] | undefined): string {
+  const first = (err instanceof Error ? err.message : String(err)).split('\n')[0]?.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim() ?? '';
+  const reason = first.length > 180 ? `${first.slice(0, 179)}…` : first;
+  if (forbiddenTerms === undefined || reason === '') return 'jobpilot run failed; see the log';
+  const folded = reason.toLowerCase();
+  return forbiddenTerms.some((t) => folded.includes(t.toLowerCase())) ? 'jobpilot run failed; see the log' : `jobpilot run failed: ${reason}`;
+}
+
 export interface RebuildOptions {
   readonly home: string;
   readonly clock: Clock;
-  /** One job's documents, or `all`. */
-  readonly jobKey?: string;
-  readonly all?: boolean;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly pdftotext?: string;
 }
 
 export interface RebuildSummary extends RunOutcome {
-  /** The daily run whose seeds and pack the rebuild replays. */
+  /** The daily run whose cover plans were re-rendered. */
   readonly from: string;
   readonly nonce: number;
-  readonly job?: { readonly jobKey: string; readonly docsState: DocsState; readonly docsDetail: string | null };
-}
-
-/** The seed payloads of a run, in queue order, each once. */
-function seedsOf(store: Store, runId: string): DiscoveryRequest[] {
-  const seen = new Set<string>();
-  const seeds: DiscoveryRequest[] = [];
-  for (const q of store.queueItems(runId)) {
-    if (seen.has(q.envelope_id)) continue;
-    seen.add(q.envelope_id);
-    const env = store.getEnvelope(q.envelope_id);
-    if (env.producer.agentId === SUPERVISOR_ID) seeds.push(env.payload as DiscoveryRequest);
-  }
-  return seeds;
+  /** Every job the rebuild wrote, with its docs state before and after. */
+  readonly changes: readonly (DocsChange & { readonly company: string; readonly title: string })[];
+  /** Jobs whose documents are missing or blocked but that the latest daily run did not render: not rebuilt. */
+  readonly notRebuilt: readonly { readonly jobKey: string; readonly docsState: DocsState; readonly lastSeen: string }[];
 }
 
 const offline = (what: string) => new KernelError('policy_denied', `docs rebuild runs offline: ${what} is not fetched`);
 
 /**
- * `jobpilot docs rebuild <jobKey|--all>`: re-renders the documents of the latest daily run, for example after files
- * under `out/` were deleted or edited (`missing`). It raises `render.nonce` in the FULL pack only (nothing else in
- * the pack changes, and it refuses if the pack did change since that run), then replays that run's seeds under a new
- * run id `rebuild-<today>`: every source, normalizer, evaluation and planning step replays from the store, only the
- * renderer runs again (through the executor, so G-FILL, G-NAMING and the transactional commit apply), and the qa-gate
- * replays when the bytes come out identical. Nothing is fetched: a step that has to run again is refused offline.
- * The nonce is kept, so later daily runs replay the rebuilt renderer steps. The run is projected at the original
- * run's time. The nonce is pack-wide, so every job of that run is re-rendered; `jobKey` names the job to report on
- * (and must have documents).
+ * `jobpilot docs rebuild`: re-renders the documents of every job the latest daily run rendered, from the cover plans
+ * it stored, for example after files under `out/` were deleted or edited (`missing`). Review I3:
+ * - It runs only the renderer and the qa-gate (`jobpilot-rebuild@1.0.0`), seeded with the cover plans that run's
+ *   renderer finished. Nothing is fetched, evaluated or planned again, and no step that failed in that run is
+ *   re-attempted.
+ * - It raises `render.nonce` in the FULL pack only, so the renderer's step key changes and nothing else. It refuses
+ *   if the public pack or the policy changed since that run.
+ * - When the bytes come out identical, the qa-gate replays. The nonce is kept, so later daily runs replay the rebuilt
+ *   renderer steps.
+ * - The documents and docs state of each job come from its new QaReport. The summary lists every job with its state
+ *   before and after, plus every job with missing or blocked documents that was not in that run (not rebuilt).
  */
 export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
-  if ((o.jobKey === undefined) === (o.all !== true)) return Promise.reject(new Error('docs rebuild needs exactly one of a job key or --all'));
   return withLock(o.home, 'docs rebuild', async () => {
     const paths = homePaths(o.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();
     const app = AppStore.open(paths.db);
     try {
       const now = o.clock.now();
-      const latest = app.listRuns(100_000).find((r) => r.runId.startsWith('daily-'));
+      const latest = app.latestRun('daily-');
       if (!latest) throw new Error('there is no daily run to rebuild documents from; run `jobpilot run` first');
-      if (o.jobKey !== undefined) {
-        const job = app.getJob(o.jobKey);
-        if (!job) throw new Error(`unknown job ${o.jobKey}`);
-        if (job.docs.length === 0) throw new Error(`job ${o.jobKey} has no documents to rebuild (docs ${job.docsState})`);
+      const seenRun = app.kernel.getRun(latest.runId);
+      if (seenRun?.pipeline !== `${DAILY_PIPELINE.id}@${DAILY_PIPELINE.version}`) throw new Error(`run ${latest.runId} is not a ${DAILY_PIPELINE.id} run`);
+      // The cover plans whose renderer step finished in that run; nothing that failed there is tried again.
+      const plans = new Map<string, CoverPlan>();
+      let runDate: string | undefined;
+      for (const q of app.kernel.queueItems(latest.runId)) {
+        if (runDate === undefined && q.agent_id.startsWith(SOURCE_PREFIX)) runDate = (app.kernel.getEnvelope(q.envelope_id).payload as { runDate?: string }).runDate;
+        if (q.agent_id === 'renderer' && q.status === 'done') plans.set(q.envelope_id, app.kernel.getEnvelope(q.envelope_id).payload as CoverPlan);
       }
-      const seeds = seedsOf(app.kernel, latest.runId);
-      const runDate = seeds[0]?.runDate;
       if (runDate === undefined) throw new Error(`run ${latest.runId} has no seeds`);
       // The month that run measured experience to (its asOf came from the same clock reading as its run date).
       const asOf = runDate.slice(0, 7);
@@ -234,21 +265,30 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
         throw new Error(`the pack changed since ${latest.runId} (a pack file or a fact status); run \`jobpilot run\` to rebuild with the new pack`);
       }
       const k = appKernel({
-        store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, pdftotext,
+        store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, pdftotext, mode: 'rebuild',
         fetch: async (url) => Promise.reject(offline(new URL(url).hostname)),
-        browser: { render: async (req) => Promise.reject(offline(new URL(req.url).hostname)) },
       });
       if (k.policyHash !== latest.policyHash) throw new Error(`the policy changed since ${latest.runId}; run \`jobpilot run\` instead`);
       const { runId, resume, skipped } = pickRunId(app.kernel, `rebuild-${istDate(now)}`, k.policyHash);
-      const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
+      const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, [...plans.values()]);
       app.setSetting(RENDER_NONCE_KEY, String(nonce));
-      const seenAt = app.kernel.events(latest.runId).find((e) => e.kind === 'run_started')?.at;
-      const { projection, counts } = finish(app, runId, loaded, k.policyHash, paths.out, now, seenAt);
-      const job = o.jobKey === undefined ? undefined : app.getJob(o.jobKey);
+      const docChanges = projectDocs(app.kernel, app, runId, { docOnDisk: diskDocCheck(paths.out) });
+      const counts = runCounts(app.kernel, runId);
+      const problems = runProblems(app.kernel, runId, loaded.pack.naming);
+      const warnings = skippedWarnings(skipped);
+      app.recordRun({ runId, at: now, counts, packHash: loaded.packHash, policyHash: k.policyHash, warnings, problems });
+      const written = new Set(docChanges.map((c) => c.jobKey));
+      const changes = docChanges.map((c) => {
+        const j = app.getJob(c.jobKey);
+        return { ...c, company: j?.company ?? '?', title: j?.title ?? '?' };
+      });
+      const notRebuilt = app
+        .listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'], duplicates: true })
+        .filter((j) => (j.docsState === 'missing' || j.docsState === 'blocked') && !written.has(j.jobKey))
+        .map((j) => ({ jobKey: j.jobKey, docsState: j.docsState, lastSeen: j.lastSeen }));
       return {
-        runId, runDate, asOf, resumed: resume, report, counts, projection, from: latest.runId, nonce,
-        packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings: skippedWarnings(skipped),
-        ...(job ? { job: { jobKey: job.jobKey, docsState: job.docsState, docsDetail: job.docsDetail } } : {}),
+        runId, runDate, asOf, resumed: resume, report, counts, problems, from: latest.runId, nonce, changes, notRebuilt,
+        packHash: loaded.packHash, fullPackHash: loaded.fullPackHash, policyHash: k.policyHash, warnings, exitCode: exitCodeOf(report),
       };
     } finally {
       app.close();
@@ -256,21 +296,34 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
   });
 }
 
-const COLUMNS = ['done', 'replayed', 'failed', 'gone', 'skipped', 'quarantined'] as const satisfies readonly (keyof AgentCounts)[];
+const COLUMNS = ['done', 'replayed', 'failed', 'gone', 'inputRejected', 'skipped', 'quarantined'] as const satisfies readonly (keyof AgentCounts)[];
+const HEAD: Readonly<Record<(typeof COLUMNS)[number], string>> = {
+  done: 'done', replayed: 'replayed', failed: 'failed', gone: 'gone', inputRejected: 'rejected', skipped: 'skipped', quarantined: 'quarantined',
+};
 
-/** The run summary as the CLI prints it: per-agent counts, the projection, then the notification and warnings. */
-export function formatSummary(s: RunOutcome & { notification?: string; from?: string; job?: RebuildSummary['job'] }): string {
+/** The run summary as the CLI prints it: per-agent counts, the projection, problems, the notification and warnings. */
+export function formatSummary(s: RunOutcome & Partial<Pick<DailySummary, 'notification' | 'projection'>> & Partial<Pick<RebuildSummary, 'from' | 'changes' | 'notRebuilt'>>): string {
   const lines = [`run ${s.runId} for ${s.runDate} (experience as of ${s.asOf})${s.resumed ? ', resumed' : ''}${s.from ? `, rebuilt from ${s.from}` : ''}: ${s.report.status}`];
   const agents = Object.keys(s.counts.byAgent);
   const w = Math.max(5, ...agents.map((a) => a.length));
-  lines.push(`${'agent'.padEnd(w)}  ${COLUMNS.map((c) => c.padStart(c.length)).join('  ')}`);
-  const row = (name: string, c: AgentCounts) => `${name.padEnd(w)}  ${COLUMNS.map((k) => String(c[k]).padStart(k.length)).join('  ')}`;
+  lines.push(`${'agent'.padEnd(w)}  ${COLUMNS.map((c) => HEAD[c]).join('  ')}`);
+  const row = (name: string, c: AgentCounts) => `${name.padEnd(w)}  ${COLUMNS.map((k) => String(c[k]).padStart(HEAD[k].length)).join('  ')}`;
   for (const a of agents) lines.push(row(a, s.counts.byAgent[a] as AgentCounts));
   lines.push(row('total', s.counts.totals));
-  const d = s.projection.docs;
-  lines.push(`jobs: ${s.projection.jobs} written (${s.projection.inserted} new, ${s.projection.stale} stale skipped); docs ready ${d.ready}, blocked ${d.blocked}, missing ${d.missing}, below-floor ${d['below-floor']}, none ${d.none}`);
-  if (s.projection.unresolvedQuarantines > 0) lines.push(`unresolved quarantines: ${s.projection.unresolvedQuarantines}`);
-  if (s.job) lines.push(`job ${s.job.jobKey}: docs ${s.job.docsState}${s.job.docsDetail ? ` (${s.job.docsDetail})` : ''}`);
+  if (s.projection) {
+    const d = s.projection.docs;
+    lines.push(`jobs: ${s.projection.jobs} written (${s.projection.inserted} new, ${s.projection.stale} stale skipped); docs ready ${d.ready}, blocked ${d.blocked}, missing ${d.missing}, below-floor ${d['below-floor']}, none ${d.none}`);
+    if (s.projection.unresolvedQuarantines > 0) lines.push(`unresolved quarantines: ${s.projection.unresolvedQuarantines}`);
+  }
+  if (s.changes) {
+    lines.push(`documents rebuilt: ${s.changes.length} jobs`);
+    for (const c of s.changes) lines.push(`  ${c.jobKey}  ${c.from ?? 'none'} -> ${c.to}  ${c.company} — ${c.title}`);
+  }
+  for (const j of s.notRebuilt ?? []) lines.push(`  not rebuilt: ${j.jobKey} (docs ${j.docsState}), last seen ${j.lastSeen}`);
+  if (s.problems.length > 0) {
+    lines.push(`problems: ${s.problems.length}`);
+    for (const p of s.problems) lines.push(`  ${p.kind.padEnd(14)} ${p.agent}  ${p.item}: ${p.reason}`);
+  }
   if (s.notification !== undefined) lines.push(`notification: ${s.notification}`);
   lines.push(`pack ${s.packHash.slice(0, 12)}, full pack ${s.fullPackHash.slice(0, 12)}, policy ${s.policyHash.slice(0, 12)}`);
   for (const warning of s.warnings) lines.push(`warning: ${warning}`);

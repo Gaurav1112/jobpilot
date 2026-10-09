@@ -23,8 +23,10 @@ import { offlineProviders } from './app/offline.js';
 import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
-import { dailySeeds } from './app/pipeline.js';
-import { formatSummary, istMonth, rebuildDocs, RENDER_NONCE_KEY, runDaily } from './app/run.js';
+import { failureNotification, formatSummary, istMonth, nonceOf, rebuildDocs, runDaily } from './app/run.js';
+import { NamingSchema } from './app/pack/schema.js';
+import { parse as parseYaml } from 'yaml';
+import { readFileSync } from 'node:fs';
 import { AppStore } from './app/store/app-store.js';
 
 const root = join(import.meta.dirname, '..');
@@ -225,8 +227,7 @@ function todaysPack() {
   if (existsSync(paths.db)) {
     const app = AppStore.open(paths.db);
     try {
-      const v = app.getSetting(RENDER_NONCE_KEY);
-      nonce = v === undefined ? undefined : Number(v);
+      nonce = nonceOf(app);
     } finally {
       app.close();
     }
@@ -234,31 +235,49 @@ function todaysPack() {
   return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce);
 }
 
+/** The pack's forbidden terms, if naming.yaml can be read at all (for a failure notification); else undefined. */
+function forbiddenTermsAt(packDir: string): readonly string[] | undefined {
+  try {
+    return NamingSchema.parse(parseYaml(readFileSync(join(packDir, 'naming.yaml'), 'utf8'))).forbiddenTerms;
+  } catch {
+    return undefined;
+  }
+}
+
 program
   .command('run')
-  .description('Run the daily pipeline, project the results into the app tables and post the notification')
+  .description('Run the daily pipeline, project the results into the app tables and post the notification. Exit 0: clean; 1: some step failed or was quarantined (see problems); 2: the run could not run')
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
+  .option('--refresh', 'fetch every source again even if today\'s run already did (career listings are re-read; unchanged career job pages still replay)')
   .option('--no-notify', 'do not post the macOS notification')
-  .action(async (o: { offlineFixtures?: string; notify: boolean }) =>
-    guarded(async () => {
+  .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean }) => {
+    const notifier = o.notify ? osascriptNotifier : async () => {};
+    let live: PlaywrightBrowserProvider | undefined;
+    try {
       const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
       // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
-      const live: PlaywrightBrowserProvider | undefined =
-        offline === undefined ? new (await import('./app/browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
-      try {
-        const summary = await runDaily({
-          home: jobpilotHome(),
-          clock: systemClock,
-          fetch: offline?.fetch ?? nodeFetch,
-          browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
-          notifier: o.notify ? osascriptNotifier : async () => {},
-        });
-        console.log(formatSummary(summary));
-      } finally {
-        await live?.close();
-      }
-    }),
-  );
+      live = offline === undefined ? new (await import('./app/browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
+      const summary = await runDaily({
+        home: jobpilotHome(),
+        clock: systemClock,
+        fetch: offline?.fetch ?? nodeFetch,
+        browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
+        notifier,
+        ...(o.refresh ? { refresh: true } : {}),
+      });
+      console.log(formatSummary(summary));
+      process.exitCode = summary.exitCode;
+    } catch (e) {
+      // The run could not run at all (pack, pacing, lock, pdftotext, fixtures): loud, and a distinct exit code.
+      console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+      process.exitCode = 2;
+      await notifier(failureNotification(e, forbiddenTermsAt(homePaths(jobpilotHome()).pack))).catch((n: unknown) =>
+        console.error(`error: the failure notification could not be posted: ${n instanceof Error ? n.message : String(n)}`),
+      );
+    } finally {
+      await live?.close();
+    }
+  });
 
 const pack = program.command('pack').description('User pack tools');
 pack
@@ -268,14 +287,12 @@ pack
     guarded(() => {
       const loaded = todaysPack();
       const prepared = preparePipeline(loaded.pack);
-      const { warnings } = dailySeeds(loaded.pack, '2000-01-01');
       const careers = loaded.pack.watchlist.filter((w) => w.ats === 'careers').length;
       console.log(`pack ok: ${homePaths(jobpilotHome()).pack}`);
       console.log(`pack hash ${loaded.packHash}`);
       console.log(`full pack hash ${loaded.fullPackHash}`);
       console.log(`experience as of ${loaded.asOf}; ${loaded.pack.facts.length} facts; watchlist ${loaded.pack.watchlist.length} entries (${careers} careers); feeds ${loaded.pack.feeds.enabled.join(', ') || 'none'}`);
       console.log(`pipeline ${prepared.compiled.pipeline.id}@${prepared.compiled.pipeline.version}: ${prepared.registry.list().length} agents; policy ${prepared.policyHash.slice(0, 12)}`);
-      for (const w of warnings) console.log(`warning: ${w}`);
     }),
   );
 
@@ -348,13 +365,13 @@ for (const [verb, status] of [['verify', 'verified'], ['reject', 'rejected']] as
 
 const docs = program.command('docs').description('Document tools');
 docs
-  .command('rebuild [jobKey]')
-  .description('Re-render the documents of the latest daily run (only the renderer runs again; nothing is fetched)')
-  .option('--all', 'every job of the latest daily run')
-  .action((jobKey: string | undefined, o: { all?: boolean }) =>
+  .command('rebuild')
+  .description('Re-render the documents of every job in the latest daily run from stored plans; nothing is fetched or re-evaluated')
+  .action(() =>
     guarded(async () => {
-      const summary = await rebuildDocs({ home: jobpilotHome(), clock: systemClock, ...(jobKey !== undefined ? { jobKey } : {}), ...(o.all ? { all: true } : {}) });
+      const summary = await rebuildDocs({ home: jobpilotHome(), clock: systemClock });
       console.log(formatSummary(summary));
+      if (summary.exitCode !== 0) process.exitCode = summary.exitCode;
     }),
   );
 

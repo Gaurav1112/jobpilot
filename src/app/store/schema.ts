@@ -102,4 +102,9 @@ export const APP_MIGRATIONS: readonly string[] = [
     value TEXT NOT NULL
   );
   `,
+  // Task 11 fix round 1 (review I1): a run's warnings and problems are kept with its summary.
+  `
+  ALTER TABLE runs_summary ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';
+  ALTER TABLE runs_summary ADD COLUMN problems TEXT NOT NULL DEFAULT '[]';
+  `,
 ];

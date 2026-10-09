@@ -4,6 +4,7 @@ import { parse } from 'yaml';
 import type { ZodType } from 'zod';
 import { hashOf } from '../../kernel/canonical.js';
 import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
+import { FEED_SOURCES, knownFeeds } from '../feeds.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -148,6 +149,8 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     policyUser: readYaml(dir, 'policy.user.yaml', PolicyUserSchema, {}),
   };
   checkDates(pack);
+  // A feed with no source agent would be configuration the run silently never honours (review I2).
+  for (const f of pack.feeds.enabled) if (!Object.hasOwn(FEED_SOURCES, f)) throw new PackError(`feeds.yaml: unknown feed ${f} (known: ${knownFeeds().join(', ')})`);
   checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;

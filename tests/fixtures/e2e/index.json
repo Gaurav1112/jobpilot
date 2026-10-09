@@ -6,5 +6,7 @@
   "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=1": "himalayas-1.json",
   "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=2": "himalayas-2.json",
   "https://careers.example.com/jobs": "careers-listing.html",
-  "https://careers.example.com/jobs/lead-backend-engineer-payments": "careers-job.html"
+  "https://careers.example.com/jobs/lead-backend-engineer-payments": "careers-job.html",
+  "https://jobs.other.example/careers": "other-listing.html",
+  "https://jobs.other.example/careers/senior-java-engineer": "other-job.html"
 }

@@ -99,6 +99,15 @@ export class Store {
     this.db.prepare(`UPDATE runs SET status = 'completed', finished_at = ? WHERE run_id = ?`).run(at, runId);
   }
 
+  /** Runs that started but never completed (a crash, a kill), oldest first. */
+  incompleteRuns(): { run_id: string; pipeline: string; policy_hash: string }[] {
+    return this.db.prepare(`SELECT run_id, pipeline, policy_hash FROM runs WHERE status != 'completed' ORDER BY started_at, run_id`).all() as {
+      run_id: string;
+      pipeline: string;
+      policy_hash: string;
+    }[];
+  }
+
   getRun(runId: string): { run_id: string; pipeline: string; policy_hash: string; status: string } | undefined {
     return this.db.prepare(`SELECT run_id, pipeline, policy_hash, status FROM runs WHERE run_id = ?`).get(runId) as
       | { run_id: string; pipeline: string; policy_hash: string; status: string }

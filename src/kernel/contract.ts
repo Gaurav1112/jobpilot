@@ -5,6 +5,16 @@ import { ERROR_CODES, RETRYABLE, type ErrorCode } from './errors.js';
 import type { Predicate } from './predicates.js';
 import type { MessageType } from './types.js';
 
+/**
+ * Symbolic egress entries. A contract may name one instead of fixed hosts when its hosts are the user's data (the
+ * careers sites of the watchlist): the contract, and so its hash, stays the same whatever the hosts are, and the
+ * broker resolves the entry at call time from the `egressSets` the supervisor is given (exact hosts, still checked
+ * against the policy and its deny lists). A set that is not given resolves to no host at all.
+ */
+export const SYMBOLIC_EGRESS = ['pack:careers-hosts'] as const;
+export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
+export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
+
 export const AGENT_KINDS = ['deterministic', 'llm', 'io', 'io-session', 'human', 'effect'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
@@ -100,7 +110,9 @@ const Meta = z
         pdfText: z.literal(true).optional(),
       })
       .strict(),
-    egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
+    egress: z.array(
+      z.string().refine((e) => /^[a-z0-9.-]+$/.test(e) || isSymbolicEgress(e), `egress entries are bare host names or a known symbolic set (${SYMBOLIC_EGRESS.join(', ')})`),
+    ),
     dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }).strict(),
     redactor: z.boolean(),
     emits: z.enum(DATA_CLASSES).optional(),

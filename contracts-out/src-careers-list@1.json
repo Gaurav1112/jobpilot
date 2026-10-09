@@ -1,5 +1,5 @@
 {
-  "hash": "2841f99136c47c7525fc2367ef74fa8f49f0cff5d5fd5873ec4f91c67f103c92",
+  "hash": "581af3a5c5a4868d37011de857e3f3cbe2bea6ffd9c6ea6b50d1d351c8331ec7",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -28,6 +28,11 @@
               "careers"
             ],
             "type": "string"
+          },
+          "attempt": {
+            "maximum": 9007199254740991,
+            "minimum": 2,
+            "type": "integer"
           },
           "company": {
             "type": "string"
@@ -59,7 +64,7 @@
       ]
     },
     "egress": [
-      "careers.example.com"
+      "pack:careers-hosts"
     ],
     "guarantees": [],
     "guardrails": {

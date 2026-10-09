@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
-import { assertNoForbidden, citeable, ForbiddenTermError, loadPack } from '../../src/app/pack/load.js';
+import { assertNoForbidden, citeable, ForbiddenTermError, loadPack, PackError } from '../../src/app/pack/load.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
 import { compileRoleDeny, compileSafePattern } from '../../src/app/pack/regex.js';
 import { WatchEntrySchema } from '../../src/app/pack/schema.js';
@@ -201,8 +201,15 @@ describe('pack hash', () => {
     const d = copyFixture();
     const before = loadPack(d).hash;
     append(d, 'feeds.yaml', '');
-    writeFileSync(join(d, 'feeds.yaml'), 'enabled: [remoteok, other]\n');
+    writeFileSync(join(d, 'feeds.yaml'), 'enabled: [himalayas, jobicy]\n');
     expect(loadPack(d).hash).not.toBe(before);
+  });
+
+  it('refuses a feed that has no source agent (review I2)', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'feeds.yaml'), 'enabled: [himalayas, himalaya]\n');
+    expect(() => loadPack(d)).toThrow(PackError);
+    expect(() => loadPack(d)).toThrow('feeds.yaml: unknown feed himalaya (known: himalayas, jobicy)');
   });
 
   it('changes with fact overrides, and overrides replace statuses', () => {

@@ -229,9 +229,19 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     }
     s.recordRun({ runId: 'daily-2026-10-09', at: '2026-10-09T01:30:00.000Z', counts: { jobs: 10 }, packHash: 'p', policyHash: 'q' });
     expect(s.listRuns(2)).toEqual([
-      { runId: 'daily-2026-10-09', at: '2026-10-09T01:30:00.000Z', counts: { jobs: 10 }, packHash: 'p', policyHash: 'q' },
-      { runId: 'daily-2026-10-08', at: '2026-10-08T01:30:00.000Z', counts: { jobs: 8 }, packHash: 'p', policyHash: 'q' },
+      { runId: 'daily-2026-10-09', at: '2026-10-09T01:30:00.000Z', counts: { jobs: 10 }, packHash: 'p', policyHash: 'q', warnings: [], problems: [] },
+      { runId: 'daily-2026-10-08', at: '2026-10-08T01:30:00.000Z', counts: { jobs: 8 }, packHash: 'p', policyHash: 'q', warnings: [], problems: [] },
     ]);
+  });
+
+  it('keeps warnings and problems with a run, and finds the latest run by prefix', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    const problem = { kind: 'failed', agent: 'src-greenhouse', item: 'Acme (greenhouse:acme)', reason: 'invalid_output: x' };
+    s.recordRun({ runId: 'daily-2026-10-09', at: '2026-10-09T01:30:00.000Z', counts: {}, packHash: 'p', policyHash: 'q', warnings: ['w1'], problems: [problem] });
+    s.recordRun({ runId: 'rebuild-2026-10-10', at: '2026-10-10T01:30:00.000Z', counts: {}, packHash: 'p', policyHash: 'q' });
+    expect(s.latestRun('daily-')).toMatchObject({ runId: 'daily-2026-10-09', warnings: ['w1'], problems: [problem] });
+    expect(s.latestRun('rebuild-')?.runId).toBe('rebuild-2026-10-10');
+    expect(s.latestRun('nope-')).toBeUndefined();
   });
 });
 

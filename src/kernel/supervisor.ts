@@ -1,7 +1,7 @@
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
-import { createHostPacer, freezePack, type HostPacer } from './broker.js';
+import { createHostPacer, freezePack, type EgressSets, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
 import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
@@ -55,6 +55,8 @@ export interface SupervisorDeps {
   readonly fullPack?: unknown;
   /** Hash of `fullPack`, part of the step key of 'full' pack agents only. Default 'none'. */
   readonly fullPackHash?: string;
+  /** The hosts behind symbolic egress entries (`pack:careers-hosts`); the app derives them from the pack. */
+  readonly egressSets?: EgressSets;
 }
 
 export interface RunReport {
@@ -64,6 +66,8 @@ export interface RunReport {
   readonly replayed: number;
   /** Failed steps whose item no longer exists at its source (error code `gone`); they are inside `queue.failed`. */
   readonly gone: number;
+  /** Failed steps refused for their input alone (error code `input_rejected`); they are inside `queue.failed`. */
+  readonly inputRejected: number;
   readonly openObligations: readonly { readonly envelopeId: string; readonly ids: readonly string[] }[];
   readonly costUsd: number;
 }
@@ -113,6 +117,7 @@ export class Supervisor {
       ...(d.packHash !== undefined ? { packHash: d.packHash } : {}),
       ...(this.fullPack !== undefined ? { fullPack: this.fullPack } : {}),
       ...(d.fullPackHash !== undefined ? { fullPackHash: d.fullPackHash } : {}),
+      ...(d.egressSets !== undefined ? { egressSets: d.egressSets } : {}),
       contractHashOf: (id, v) => (id === SUPERVISOR_ID && v === d.compiled.pipeline.version ? d.compiled.seedHash : d.registry.contractHashOf(id, v)),
       ...(d.onInvoke ? { onInvoke: d.onInvoke } : {}),
     };
@@ -234,7 +239,7 @@ export class Supervisor {
       if (breakers.isOpen(agentKey) || (teamKey !== undefined && breakers.isOpen(teamKey))) {
         store.tx(() => {
           store.markQueue(runId, item.agent_id, item.envelope_id, 'skipped');
-          this.event(runId, 'step_skipped', { agent: item.agent_id, reason: 'breaker_open' });
+          this.event(runId, 'step_skipped', { agent: item.agent_id, envelopeId: item.envelope_id, reason: 'breaker_open' });
           this.reportOpen(runId, input);
         });
         continue;
@@ -252,7 +257,7 @@ export class Supervisor {
           // is pure, so later runs re-derive it, and a fixed tracker heals the pipeline.
           const persisted = executed.kind === 'done' && !executed.replayed;
           if (persisted) store.quarantineDoneStep(outcome.stepKey, JSON.stringify([trip]));
-          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, side: 'tracker', persisted, verdict: trip });
+          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, envelopeId: item.envelope_id, side: 'tracker', persisted, verdict: trip });
         }
         if (outcome.kind === 'done') {
           for (const out of outcome.outputs) {
@@ -267,9 +272,9 @@ export class Supervisor {
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 
-      // A gone item is that item's failure, not the service's: it neither trips nor resets a breaker.
-      if (outcome.kind === 'failed' && outcome.error === 'gone') {
-        // reported through the step_failed event and RunReport.gone
+      // A gone or input-rejected item is that item's failure, not the service's: it neither trips nor resets a breaker.
+      if (outcome.kind === 'failed' && (outcome.error === 'gone' || outcome.error === 'input_rejected')) {
+        // reported through the step_failed event and RunReport.gone / inputRejected
       } else if (outcome.kind === 'failed') {
         this.failure(agentKey, agent.contract.breaker.consecutiveFailures, runId);
         if (team && teamKey !== undefined) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
@@ -284,8 +289,9 @@ export class Supervisor {
       runId,
       status: 'completed',
       queue: store.queueCounts(runId),
-      replayed: events.filter((e) => e.kind === 'step_replayed').length,
+      replayed: replayedOf(events),
       gone: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'gone').length,
+      inputRejected: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'input_rejected').length,
       openObligations: openObligationsOf(events),
       costUsd: store.runCost(runId),
     };
@@ -349,6 +355,20 @@ function messageOf(err: unknown): string {
   } catch {
     return 'unprintable error';
   }
+}
+
+/**
+ * Queue items answered from the store: one per (agent, input envelope), so a step a crash interrupted after its
+ * replay (before its queue row was marked) is not counted twice when the run resumes (review m1).
+ */
+export function replayedOf(events: readonly EventRow[]): number {
+  const seen = new Set<string>();
+  for (const e of events) {
+    if (e.kind !== 'step_replayed') continue;
+    const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown; stepKey?: unknown };
+    seen.add(`${String(d.agent)}\u0000${String(d.envelopeId ?? `step:${String(d.stepKey)}:${e.seq}`)}`);
+  }
+  return seen.size;
 }
 
 /** The run's `obligation_open` events, one per envelope, in envelope order. */

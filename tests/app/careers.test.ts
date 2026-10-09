@@ -30,7 +30,7 @@ import type { AgentContext } from '../../src/kernel/agent.js';
 import { freezePack, issueContext } from '../../src/kernel/broker.js';
 import { challengeReason } from '../../src/kernel/challenge.js';
 import { fixedClock } from '../../src/kernel/clock.js';
-import type { AnyContract } from '../../src/kernel/contract.js';
+import { contractHash, type AnyContract } from '../../src/kernel/contract.js';
 import { fakeBrowser } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
@@ -56,14 +56,15 @@ const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ 
  * `links` is the list step, `jobs` every job step's posting or error, `out` the postings (rejecting on any error).
  */
 function run(routes: Record<string, Route>, opts: { pack?: unknown; maxListingPages?: number; maxLinks?: number; r?: DiscoveryRequest } = {}) {
-  const list = makeSrcCareersList([HOST], {
+  const list = makeSrcCareersList({
     ...(opts.maxListingPages !== undefined ? { maxListingPages: opts.maxListingPages } : {}),
     ...(opts.maxLinks !== undefined ? { maxLinks: opts.maxLinks } : {}),
   });
-  const job = makeSrcCareersJob([HOST]);
+  const job = makeSrcCareersJob();
   const browser = fakeBrowser(routes);
   const ctxFor = (contract: AnyContract) =>
     issueContext({
+      egressSets: { 'pack:careers-hosts': [HOST] },
       contract,
       policy: PRODUCT_POLICY_V1,
       inputClass: 'P0',
@@ -108,20 +109,20 @@ const jsonLdJob = (title: string, more: Record<string, unknown> = {}) => ({
 
 describe('src-careers contracts', () => {
   it('src-careers-list: io, reads the pack, at most 6 listing pages whose worst case fits the 30-minute cap', () => {
-    const { contract } = makeSrcCareersList([HOST]);
-    expect(contract).toMatchObject({ id: 'src-careers-list', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 6 }, pack: true }, egress: [HOST], timeoutMs: 1_650_000 });
+    const { contract } = makeSrcCareersList();
+    expect(contract).toMatchObject({ id: 'src-careers-list', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 6 }, pack: true }, egress: ['pack:careers-hosts'], timeoutMs: 1_650_000 });
     expect(contract.consumes.id).toBe('DiscoveryRequest@1');
     expect(contract.produces.id).toBe('CareerLink@1');
     expect(contract.retry.on).not.toContain('timeout');
     expect(CAREERS_LIST_MAX_PAGES).toBe(6);
     expect(CAREERS_MAX_LINKS).toBe(5000);
     // 6 x 275 s = 1,650 s; a seventh page would not fit, and the contract says so when it is built.
-    expect(() => makeSrcCareersList([HOST], { maxListingPages: 7 })).toThrow(/timeoutMs/);
+    expect(() => makeSrcCareersList({ maxListingPages: 7 })).toThrow(/timeoutMs/);
   });
 
   it('src-careers-job: io, one page, 75 s worst case plus 15 s, retries network and timeout only, no pack', () => {
-    const { contract } = makeSrcCareersJob([HOST]);
-    expect(contract).toMatchObject({ id: 'src-careers-job', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 1 } }, egress: [HOST], timeoutMs: 90_000 });
+    const { contract } = makeSrcCareersJob();
+    expect(contract).toMatchObject({ id: 'src-careers-job', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 1 } }, egress: ['pack:careers-hosts'], timeoutMs: 90_000 });
     expect(contract.capabilities.pack).toBeUndefined();
     expect(contract.retry.on).toEqual(['network', 'timeout']);
     expect(contract.consumes.id).toBe('CareerLink@1');
@@ -144,10 +145,10 @@ describe('src-careers contracts', () => {
       { ats: 'careers', listUrl: 'https://jobs.b.example/other' },
     ]);
     expect(hosts).toEqual(['careers.a.example', 'jobs.b.example']);
-    expect(makeSrcCareersList(['jobs.b.example', 'careers.a.example', 'jobs.b.example']).contract.egress).toEqual(hosts);
-    expect(makeSrcCareersJob(['jobs.b.example', 'careers.a.example']).contract.egress).toEqual(hosts);
-    expect(() => makeSrcCareersList([])).toThrow(/at least one careers host/);
-    expect(() => makeSrcCareersJob([])).toThrow(/at least one careers host/);
+    // The contracts name the set, not the hosts: their hashes never change with the watchlist (fix C1).
+    expect(makeSrcCareersList().contract.egress).toEqual(['pack:careers-hosts']);
+    expect(makeSrcCareersJob().contract.egress).toEqual(['pack:careers-hosts']);
+    expect(contractHash(makeSrcCareersList().contract)).toBe(contractHash(makeSrcCareersList().contract));
   });
 
   it('the fixture pack yields its careers host', () => {
@@ -320,9 +321,9 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
   });
 
   it('the job agent refuses a link off the listing host or outside its linkPattern, before rendering', async () => {
-    const job = makeSrcCareersJob([HOST, 'other.example.com']);
+    const job = makeSrcCareersJob();
     const browser = fakeBrowser({});
-    const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+    const ctx = issueContext({ egressSets: { 'pack:careers-hosts': [HOST, 'other.example.com'] }, contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
     await expect(job.run(linkOf('https://other.example.com/jobs/x'), ctx)).rejects.toMatchObject({ message: expect.stringMatching(/not on the listing's host/) });
     await expect(job.run(linkOf(`${H}/team/x`), ctx)).rejects.toMatchObject({ message: expect.stringMatching(/does not match linkPattern/) });
     expect(browser.calls).toHaveLength(0);
@@ -449,8 +450,8 @@ describe('src-careers through the supervisor', () => {
 
   const supervisor = (store: Store, browser: ReturnType<typeof fakeBrowser>, slept: number[]) => {
     const registry = new Registry();
-    registry.register(makeSrcCareersList([HOST]));
-    registry.register(makeSrcCareersJob([HOST]));
+    registry.register(makeSrcCareersList());
+    registry.register(makeSrcCareersJob());
     const guardrails = builtinGuardrails();
     const pack = { watchlist: [entry()] };
     return new Supervisor({
@@ -465,6 +466,7 @@ describe('src-careers through the supervisor', () => {
       sleep: async (ms) => void slept.push(ms),
       pack,
       packHash: 'pack-1',
+      egressSets: { 'pack:careers-hosts': [HOST] },
     });
   };
 
@@ -527,16 +529,16 @@ describe('src-careers through the supervisor', () => {
       ['/jobs/search', '^/jobs/', '/jobs/123', '/jobs/search?closed'],
     ];
     for (const [listPath, linkPattern, jobPath, target] of cases) {
-      const job = makeSrcCareersJob([HOST]);
+      const job = makeSrcCareersJob();
       const browser = fakeBrowser({ [`${H}${jobPath}`]: { ...closed, finalUrl: `${H}${target}` } });
-      const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+      const ctx = issueContext({ egressSets: { 'pack:careers-hosts': [HOST, 'other.example.com'] }, contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
       const link = linkOf(`${H}${jobPath}`, { listUrl: `${H}${listPath}`, linkPattern });
       await expect(job.run(link, ctx), `${listPath} ${target}`).rejects.toMatchObject({ code: 'gone', message: expect.stringMatching(/redirected to the listing/) });
     }
     // An on-pattern redirect that is not the listing stays a posting.
-    const job = makeSrcCareersJob([HOST]);
+    const job = makeSrcCareersJob();
     const browser = fakeBrowser({ [`${H}/jobs/123`]: { ...plainJob('Moved'), finalUrl: `${H}/jobs/moved-1` } });
-    const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+    const ctx = issueContext({ egressSets: { 'pack:careers-hosts': [HOST, 'other.example.com'] }, contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
     expect(titles((await job.run(linkOf(`${H}/jobs/123`, { listUrl: `${H}/jobs/` }), ctx)) as RawPosting[])).toEqual(['Moved']);
   });
 
@@ -573,8 +575,8 @@ describe('src-careers through the supervisor', () => {
       ...Object.fromEntries(betaLinks.map((p) => [`${BETA}${p}`, plainJob(`Beta ${p}`)])),
     });
     const registry = new Registry();
-    registry.register(makeSrcCareersList(['alpha.example.com', 'beta.example.com']));
-    registry.register(makeSrcCareersJob(['alpha.example.com', 'beta.example.com']));
+    registry.register(makeSrcCareersList());
+    registry.register(makeSrcCareersJob());
     const guardrails = builtinGuardrails();
     const watchlist = [
       entry({ company: 'Alpha', slug: 'alpha', listUrl: `${ALPHA}/jobs` }),
@@ -592,6 +594,7 @@ describe('src-careers through the supervisor', () => {
       sleep: async () => undefined,
       pack: { watchlist },
       packHash: 'pack-ab',
+      egressSets: { 'pack:careers-hosts': ['alpha.example.com', 'beta.example.com'] },
     });
     const r = await sup.start('run-ab', [
       { ats: 'careers', slug: 'alpha', company: 'Alpha', runDate: '2026-10-09' },
@@ -735,8 +738,8 @@ describe('src-careers with real chromium', async () => {
 
   /** src-careers-list, then src-careers-job on each link, over the real provider; the first failure is thrown. */
   const runReal = async (ctx: AgentContext): Promise<RawPosting[]> => {
-    const links = (await makeSrcCareersList(['127.0.0.1']).run(req(), ctx)) as CareerLink[];
-    const job = makeSrcCareersJob(['127.0.0.1']);
+    const links = (await makeSrcCareersList().run(req(), ctx)) as CareerLink[];
+    const job = makeSrcCareersJob();
     const out: RawPosting[] = [];
     for (const l of links) out.push(...((await job.run(l, ctx)) as RawPosting[]));
     return out;

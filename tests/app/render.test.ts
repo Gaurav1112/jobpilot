@@ -322,6 +322,15 @@ describe('renderer', () => {
     expect(existsSync(join(out, '.pending', KEY))).toBe(false);
   });
 
+  it('a glyph the font lacks in the posting title is input_rejected; the same glyph in the pack contact is invalid_output (I4)', async () => {
+    const fromPosting = await render(coverPlanOf(posting({ company: 'Acme 山田' })), fullPack(), tempOut()).catch((e: unknown) => e);
+    expect(fromPosting).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^renderer: unrenderable-glyph:U\+5C71 \(in the posting/) });
+    const fromPack = await render(coverPlanOf(), fullPack({ contact: { ...fullPack().contact, name: '山田 太郎' } }), tempOut()).catch((e: unknown) => e);
+    expect(fromPack).toMatchObject({ code: 'invalid_output' });
+    const named = await render(coverPlanOf(posting({ company: 'Initech Payments' })), fullPack(), tempOut()).catch((e: unknown) => e);
+    expect(named).toMatchObject({ code: 'input_rejected', message: 'renderer: G-NAMING: forbidden term #1 appears in the posting title or company' });
+  });
+
   withPdftotext('renders Łódź Systems, ₹ 12 LPA and a Greek name through the embedded font, with a text layer that passes QA', async () => {
     const pack = fullPack({ contact: { ...fullPack().contact, name: 'Αθηνά Ράο', city: 'Pune ₹ 12 LPA' } });
     const { rendered, out } = await render(coverPlanOf(posting({ company: 'Łódź Systems' })), pack);

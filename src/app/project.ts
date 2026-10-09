@@ -220,6 +220,79 @@ function inputOf(kernel: Store, stepKey: string): Envelope | undefined {
   }
 }
 
+/** A QaReport's documents and their state: `ready` only when QA passed and every file is on disk with its sha256. */
+export function docsOfQa(qa: QaReport, docOnDisk: DocCheck): { docsState: DocsState; docsDetail: string | null; docs: Doc[] } {
+  let docsState: DocsState = qa.ok ? 'ready' : 'blocked';
+  let docsDetail = qa.ok ? null : `qa failed: ${qa.checks.filter((c) => !c.ok).map((c) => `${c.id}: ${c.detail}`).join('; ')}`;
+  const docs = qa.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path, sha256: f.sha256, pages: f.pages, qaOk: qa.ok }));
+  if (qa.ok) {
+    const gone = qa.files.flatMap((f) => {
+      const s = docOnDisk(f.path, f.sha256);
+      return s === 'ok' ? [] : [`${f.path} ${s === 'absent' ? 'is not on disk' : 'changed on disk'}`];
+    });
+    if (gone.length > 0) {
+      docsState = 'missing';
+      docsDetail = `documents missing: ${gone.join('; ')}`;
+    }
+  }
+  return { docsState, docsDetail, docs };
+}
+
+export interface DocsChange {
+  readonly jobKey: string;
+  readonly from: DocsState | undefined;
+  readonly to: DocsState;
+}
+
+/**
+ * Projects a `docs rebuild` run (renderer and qa-gate only): each job's documents and docs state come from its new
+ * QaReport (`docsOfQa`); a quarantined renderer or qa-gate step blocks the job's documents with its verdict, and a
+ * failure with a named reason (an unrenderable glyph) blocks them with that reason. No other column is written.
+ * Returns every job written, with its docs state before and after.
+ */
+export function projectDocs(kernel: Store, app: AppStore, runId: string, opts: Pick<ProjectOptions, 'docOnDisk'>): DocsChange[] {
+  const events = kernel.events(runId);
+  const out = new Map<string, { docsState: DocsState; docsDetail: string | null; docs: Doc[] }>();
+  for (const e of events) {
+    const d = dataOf(e);
+    const stepKey = str(d['stepKey']);
+    if (stepKey === undefined) continue;
+    const done = e.kind === 'step_done' || (e.kind === 'step_replayed' && d['status'] === 'done');
+    if (done && d['agent'] === 'qa-gate') {
+      for (const env of kernel.envelopesOfStep(stepKey)) {
+        const key = jobKeyOf(env);
+        if (key !== null && env.type === 'QaReport@1') out.set(key, docsOfQa(env.payload as QaReport, opts.docOnDisk));
+      }
+      continue;
+    }
+    const input = inputOf(kernel, stepKey) ?? (str(d['envelopeId']) !== undefined ? safeEnvelope(kernel, str(d['envelopeId']) as string) : undefined);
+    const key = input ? jobKeyOf(input) : null;
+    if (key === null) continue;
+    if (e.kind === 'step_quarantined') out.set(key, { docsState: 'blocked', docsDetail: `${str(d['agent']) ?? '?'} quarantined: ${verdictText(d['verdict'])}`, docs: [] });
+    if (e.kind === 'step_failed') {
+      const reason = NAMED_REASON.exec(str(d['detail']) ?? '')?.[0];
+      if (reason !== undefined) out.set(key, { docsState: 'blocked', docsDetail: `${str(d['agent']) ?? '?'} failed: ${str(d['error']) ?? 'unknown'} (${reason})`, docs: [] });
+    }
+  }
+  const changes: DocsChange[] = [];
+  app.tx(() => {
+    for (const key of [...out.keys()].sort()) {
+      const r = out.get(key) as { docsState: DocsState; docsDetail: string | null; docs: Doc[] };
+      const from = app.getJob(key)?.docsState;
+      if (app.setDocs(key, r.docsState, r.docsDetail, r.docs)) changes.push({ jobKey: key, from, to: r.docsState });
+    }
+  });
+  return changes;
+}
+
+function safeEnvelope(kernel: Store, id: string): Envelope | undefined {
+  try {
+    return kernel.getEnvelope(id);
+  } catch {
+    return undefined;
+  }
+}
+
 function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { row: JobUpsert; docs: Doc[] } | undefined {
   // Unique envelopes, furthest stage first, then envelope id.
   const envs = [...new Map(g.envs.map((e) => [e.envelopeId, e])).values()].sort(
@@ -242,19 +315,7 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
   const writingQuarantine = g.quarantines.find((q) => q.inputRank >= WRITING_INPUT_RANK);
   const writingFailure = g.failures.find((f) => f.inputRank >= WRITING_INPUT_RANK);
   if (qa) {
-    docsState = qa.ok ? 'ready' : 'blocked';
-    docsDetail = qa.ok ? null : `qa failed: ${qa.checks.filter((c) => !c.ok).map((c) => `${c.id}: ${c.detail}`).join('; ')}`;
-    docs = qa.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path, sha256: f.sha256, pages: f.pages, qaOk: qa.ok }));
-    if (qa.ok) {
-      const gone = qa.files.flatMap((f) => {
-        const s = opts.docOnDisk(f.path, f.sha256);
-        return s === 'ok' ? [] : [`${f.path} ${s === 'absent' ? 'is not on disk' : 'changed on disk'}`];
-      });
-      if (gone.length > 0) {
-        docsState = 'missing';
-        docsDetail = `documents missing: ${gone.join('; ')}`;
-      }
-    }
+    ({ docsState, docsDetail, docs } = docsOfQa(qa, opts.docOnDisk));
   } else if (writingQuarantine) {
     docsState = 'blocked';
     docsDetail = writingQuarantine.detail;
@@ -307,6 +368,8 @@ export interface AgentCounts {
   failed: number;
   /** Failed steps whose item is gone at its source; included in `failed`. */
   gone: number;
+  /** Failed steps refused for their input alone (`input_rejected`); included in `failed`. */
+  inputRejected: number;
   quarantined: number;
   skipped: number;
   pending: number;
@@ -319,7 +382,7 @@ export interface RunCounts {
   readonly totals: AgentCounts;
 }
 
-const zero = (): AgentCounts => ({ done: 0, failed: 0, gone: 0, quarantined: 0, skipped: 0, pending: 0, replayed: 0 });
+const zero = (): AgentCounts => ({ done: 0, failed: 0, gone: 0, inputRejected: 0, quarantined: 0, skipped: 0, pending: 0, replayed: 0 });
 
 /** Per-agent outcome counts of one run, from its queue (outcomes) and events (gone, replayed), for `runs_summary`. */
 export function runCounts(kernel: Store, runId: string): RunCounts {
@@ -330,12 +393,21 @@ export function runCounts(kernel: Store, runId: string): RunCounts {
     return c;
   };
   for (const q of kernel.queueItems(runId)) of(q.agent_id)[q.status as QueueStatus] += 1;
+  // One per (agent, input envelope): a step re-tried after a crash in a resumed run is counted once (review m1).
+  const seen = new Set<string>();
   for (const e of kernel.events(runId)) {
     const d = dataOf(e);
     const agent = str(d['agent']);
     if (agent === undefined) continue;
-    if (e.kind === 'step_failed' && d['error'] === 'gone') of(agent).gone += 1;
-    if (e.kind === 'step_replayed') of(agent).replayed += 1;
+    const once = (kind: string): boolean => {
+      const k = `${kind}\u0000${agent}\u0000${str(d['envelopeId']) ?? `seq:${e.seq}`}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    };
+    if (e.kind === 'step_failed' && d['error'] === 'gone' && once('gone')) of(agent).gone += 1;
+    if (e.kind === 'step_failed' && d['error'] === 'input_rejected' && once('input_rejected')) of(agent).inputRejected += 1;
+    if (e.kind === 'step_replayed' && once('replayed')) of(agent).replayed += 1;
   }
   const byAgent: Record<string, AgentCounts> = {};
   const totals = zero();

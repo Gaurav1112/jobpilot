@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { diskDocCheck } from '../../src/app/docs-check.js';
+import { runProblems } from '../../src/app/problems.js';
 import { projectRun, runCounts } from '../../src/app/project.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 import { dedupeKey, jobKey } from '../../src/app/text/norm.js';
@@ -114,14 +115,14 @@ class RunBuilder {
     this.store.markRunning({ stepKey, agentId: agent, version: '1.0.0', contractHash: 'h', inputEnvelopeId: input.envelopeId });
     this.store.finishStep({
       runId: this.runId, stepKey, agentId: agent, status: 'failed', envelopes: [], cost: ZERO_COST, errorCode: error as 'gone', detail,
-      event: { at: AT, kind: 'step_failed', data: { agent, stepKey, error, detail }, policyHash: 'policy-hash' },
+      event: { at: AT, kind: 'step_failed', data: { agent, stepKey, envelopeId: input.envelopeId, error, detail }, policyHash: 'policy-hash' },
     });
     this.store.markQueue(this.runId, agent, input.envelopeId, 'failed');
   }
   skipped(agent: string, input: Envelope): void {
     this.store.enqueue(this.runId, 0, agent, input.envelopeId);
     this.store.markQueue(this.runId, agent, input.envelopeId, 'skipped');
-    this.store.appendEvent(this.runId, AT, 'step_skipped', { agent, reason: 'breaker_open' }, 'policy-hash');
+    this.store.appendEvent(this.runId, AT, 'step_skipped', { agent, envelopeId: input.envelopeId, reason: 'breaker_open' }, 'policy-hash');
   }
   /** Normalizer → eligibility → (scorer) chain for one posting; returns the last envelope. */
   chain(p: Posting, v: EligibilityVerdict['verdict'], score?: number, reasons: string[] = []): Envelope {
@@ -350,13 +351,23 @@ describe('runCounts', () => {
     b.failed('src-careers-job', b.input('CareerLink@1', { url: 'b' }), 'invalid_output');
     b.skipped('src-lever', seed);
     b.quarantinedOut('evidence-matcher', b.input('Scored@1', scored(posting(2), 70)), 'x');
+    b.failed('renderer', b.input('CoverPlan@1', { jobKey: posting(3).jobKey, resume: { evidence: { scored: { posting: posting(3) } } } }), 'input_rejected', 'renderer: unrenderable-glyph:U+5C71 (in the posting title or company)');
     b.store.appendEvent(RUN, AT, 'step_replayed', { agent: 'normalizer', stepKey: 's', status: 'done' }, 'policy-hash');
     const c = runCounts(b.store, RUN);
-    expect(c.byAgent['src-careers-job']).toEqual({ done: 0, failed: 2, gone: 1, quarantined: 0, skipped: 0, pending: 0, replayed: 0 });
-    expect(c.byAgent['src-lever']).toEqual({ done: 0, failed: 0, gone: 0, quarantined: 0, skipped: 1, pending: 0, replayed: 0 });
+    expect(c.byAgent['src-careers-job']).toEqual({ done: 0, failed: 2, gone: 1, inputRejected: 0, quarantined: 0, skipped: 0, pending: 0, replayed: 0 });
+    expect(c.byAgent['src-lever']).toEqual({ done: 0, failed: 0, gone: 0, inputRejected: 0, quarantined: 0, skipped: 1, pending: 0, replayed: 0 });
+    expect(c.byAgent['renderer']).toMatchObject({ failed: 1, inputRejected: 1 });
     expect(c.byAgent['evidence-matcher']).toMatchObject({ quarantined: 1 });
     expect(c.byAgent['normalizer']).toMatchObject({ done: 1, replayed: 1 });
-    expect(c.totals).toEqual({ done: 3, failed: 2, gone: 1, quarantined: 1, skipped: 1, pending: 0, replayed: 1 });
+    expect(c.totals).toEqual({ done: 3, failed: 3, gone: 1, inputRejected: 1, quarantined: 1, skipped: 1, pending: 0, replayed: 1 });
+    // review I1: every one of them is named, with its item and reason
+    expect(runProblems(b.store, RUN, { forbiddenTerms: ['Initech'] }).map((p) => `${p.kind} ${p.agent} | ${p.item} | ${p.reason}`)).toEqual([
+      `input_rejected renderer | ${posting(3).company} — ${posting(3).title} (job ${posting(3).jobKey}) | input_rejected: renderer: unrenderable-glyph:U+5C71 (in the posting title or company)`,
+      'failed src-careers-job | ? (careers:?) b | invalid_output: x',
+      'gone src-careers-job | ? (careers:?) a | gone: x',
+      'skipped src-lever | ? (?:?) | skipped: a breaker was open after earlier failures',
+      `quarantined evidence-matcher | ${posting(2).company} — ${posting(2).title} (job ${posting(2).jobKey}) | G-GROUND: x`,
+    ]);
     expect(Object.keys(c.byAgent)).toEqual([...Object.keys(c.byAgent)].sort());
   });
 });

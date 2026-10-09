@@ -142,6 +142,10 @@ export interface RunSummary {
   readonly counts: unknown;
   readonly packHash: string;
   readonly policyHash: string;
+  /** Run warnings (a crashed run left alone, a notifier failure, …). */
+  readonly warnings?: readonly string[];
+  /** The run's problems (`runProblems`): failed, gone, input-rejected, skipped and quarantined items. */
+  readonly problems?: readonly unknown[];
 }
 
 interface JobRowDb {
@@ -507,24 +511,57 @@ export class AppStore {
   recordRun(s: RunSummary): void {
     this.db
       .prepare(
-        `INSERT INTO runs_summary (run_id, at, counts, pack_hash, policy_hash) VALUES (?, ?, ?, ?, ?)
-         ON CONFLICT (run_id) DO UPDATE SET at = excluded.at, counts = excluded.counts, pack_hash = excluded.pack_hash, policy_hash = excluded.policy_hash`,
+        `INSERT INTO runs_summary (run_id, at, counts, pack_hash, policy_hash, warnings, problems) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (run_id) DO UPDATE SET at = excluded.at, counts = excluded.counts, pack_hash = excluded.pack_hash,
+           policy_hash = excluded.policy_hash, warnings = excluded.warnings, problems = excluded.problems`,
       )
-      .run(s.runId, s.at, JSON.stringify(s.counts), s.packHash, s.policyHash);
+      .run(s.runId, s.at, JSON.stringify(s.counts), s.packHash, s.policyHash, JSON.stringify(s.warnings ?? []), JSON.stringify(s.problems ?? []));
   }
 
   /** The latest `n` runs, newest first. */
   listRuns(n: number): RunSummary[] {
-    const rows = this.db.prepare(`SELECT * FROM runs_summary ORDER BY at DESC, run_id DESC LIMIT ?`).all(n) as {
-      run_id: string;
-      at: string;
-      counts: string;
-      pack_hash: string;
-      policy_hash: string;
-    }[];
-    return rows.map((r) => ({ runId: r.run_id, at: r.at, counts: JSON.parse(r.counts) as unknown, packHash: r.pack_hash, policyHash: r.policy_hash }));
+    const rows = this.db.prepare(`SELECT * FROM runs_summary ORDER BY at DESC, run_id DESC LIMIT ?`).all(n) as RunRowDb[];
+    return rows.map(runOf);
+  }
+
+  /** The newest recorded run whose id starts with `prefix` (`daily-`), if any. */
+  latestRun(prefix: string): RunSummary | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM runs_summary WHERE substr(run_id, 1, ?) = ? ORDER BY at DESC, run_id DESC LIMIT 1`)
+      .get(prefix.length, prefix) as RunRowDb | undefined;
+    return row ? runOf(row) : undefined;
+  }
+
+  /** Replaces a job's documents and their state (docs rebuild): no other column is touched. False when there is no such job. */
+  setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[]): boolean {
+    return this.tx(() => {
+      const r = this.db.prepare(`UPDATE jobs SET docs_state = ?, docs_detail = ? WHERE job_key = ?`).run(state, detail, jobKey);
+      if (r.changes === 0) return false;
+      this.putDocs(jobKey, docs);
+      return true;
+    });
   }
 }
+
+interface RunRowDb {
+  run_id: string;
+  at: string;
+  counts: string;
+  pack_hash: string;
+  policy_hash: string;
+  warnings: string;
+  problems: string;
+}
+
+const runOf = (r: RunRowDb): RunSummary => ({
+  runId: r.run_id,
+  at: r.at,
+  counts: JSON.parse(r.counts) as unknown,
+  packHash: r.pack_hash,
+  policyHash: r.policy_hash,
+  warnings: JSON.parse(r.warnings) as string[],
+  problems: JSON.parse(r.problems) as unknown[],
+});
 
 /** The furthest status in a group (STATUS_PRECEDENCE); the preferred row (first) wins a tie. */
 function groupStatus(rows: readonly JobRowDb[]): JobStatus {

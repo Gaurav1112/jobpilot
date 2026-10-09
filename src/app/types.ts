@@ -26,7 +26,19 @@ const Verdict = z.enum(['eligible', 'rejected', 'review']);
 export const DiscoveryRequest = defineType(
   'DiscoveryRequest',
   1,
-  z.object({ ats: Ats, slug: z.string(), company: z.string(), runDate: IsoDate }).strict(),
+  z
+    .object({
+      ats: Ats,
+      slug: z.string(),
+      company: z.string(),
+      runDate: IsoDate,
+      /**
+       * `jobpilot run --refresh` only: the run's ordinal on its date (`daily-<runDate>-<n>`, n >= 2), so the sources
+       * fetch again on the same day. Absent by default, so a normal run's step keys are unchanged; sources ignore it.
+       */
+      attempt: z.number().int().min(2).optional(),
+    })
+    .strict(),
 );
 export type DiscoveryRequest = z.infer<typeof DiscoveryRequest.schema>;
 

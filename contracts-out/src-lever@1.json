@@ -1,5 +1,5 @@
 {
-  "hash": "84a10774b7e4aa77eb4cc216ef821808837c3cbccf114fcc4a3a188c319ae08e",
+  "hash": "76baf47f96eac043d04df02a04b2ee24f2856ed17b97e58c40b021f87ac8422f",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -25,6 +25,11 @@
               "careers"
             ],
             "type": "string"
+          },
+          "attempt": {
+            "maximum": 9007199254740991,
+            "minimum": 2,
+            "type": "integer"
           },
           "company": {
             "type": "string"

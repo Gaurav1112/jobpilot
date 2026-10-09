@@ -1,4 +1,5 @@
 import type { AnyAgent } from '../kernel/agent.js';
+import type { EgressSets } from '../kernel/broker.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import type { Policy } from '../kernel/policy.js';
 import { Registry } from '../kernel/registry.js';
@@ -7,16 +8,20 @@ import { eligibility } from './agents/eligibility.js';
 import { normalizer } from './agents/normalizer.js';
 import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { srcAshby } from './agents/sources/ashby.js';
-import { CAREERS_RENDER_INTERVAL_MS, careersHosts, makeSrcCareersJob, makeSrcCareersList } from './agents/sources/careers.js';
+import { CAREERS_RENDER_INTERVAL_MS, careersHosts, srcCareersJob, srcCareersList } from './agents/sources/careers.js';
 import { SOURCE_TIMEOUT_MS } from './agents/sources/common.js';
 import { srcGreenhouse } from './agents/sources/greenhouse.js';
 import { HIMALAYAS_FEED, HIMALAYAS_MAX_PAGES, HIMALAYAS_TIMEOUT_MS, srcHimalayas } from './agents/sources/himalayas.js';
 import { JOBICY_FEED, JOBICY_MAX_REQUESTS, JOBICY_TIMEOUT_MS, srcJobicy } from './agents/sources/jobicy.js';
 import { LEVER_MAX_PAGES, LEVER_TIMEOUT_MS, srcLever } from './agents/sources/lever.js';
 import { writingAgents } from './agents/writing/index.js';
+import { coverWriter } from './agents/writing/cover-writer.js';
+import { qaGate } from './agents/writing/qa-gate.js';
+import { renderer } from './agents/writing/renderer.js';
 import { capabilityProblems } from './allow-list.js';
 import type { Feeds, WatchEntry } from './pack/schema.js';
-import { DiscoveryRequest, knownAts } from './types.js';
+import { CoverPlan, DiscoveryRequest, knownAts } from './types.js';
+import { FEED_SOURCES, knownFeeds } from './feeds.js';
 
 /**
  * The daily pipeline (spec §5), `jobpilot-daily@1.0.0`, seeded with one DiscoveryRequest@1 per watchlist entry and
@@ -34,8 +39,7 @@ import { DiscoveryRequest, knownAts } from './types.js';
  */
 export const DAILY_PIPELINE = { id: 'jobpilot-daily', version: '1.0.0' } as const;
 
-/** Feed name (feeds.yaml `enabled`) -> the source agent that fetches it. */
-export const FEED_SOURCES: Readonly<Record<string, string>> = { [HIMALAYAS_FEED]: srcHimalayas.contract.id, [JOBICY_FEED]: srcJobicy.contract.id };
+export { FEED_SOURCES } from './feeds.js';
 
 const API_SOURCES: readonly AnyAgent[] = [srcAshby, srcGreenhouse, srcHimalayas, srcJobicy, srcLever];
 const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as const;
@@ -43,13 +47,18 @@ const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as con
 type WatchLike = Pick<WatchEntry, 'ats'> & { readonly listUrl?: string | undefined };
 
 /**
- * Every agent of the daily run. The careers agents are built for the watchlist's careers hosts (their exact egress)
- * and left out when there are none: their factory refuses an empty host list.
+ * Every agent of the daily run. The careers agents are left out when the watchlist has no careers entries. Their
+ * egress is the symbolic `pack:careers-hosts`, resolved per run from `careersEgressSets(watchlist)`, so their
+ * contracts are the same whatever the watchlist holds.
  */
 export function dailyAgents(watchlist: readonly WatchLike[]): AnyAgent[] {
-  const hosts = careersHosts(watchlist);
-  const careers: AnyAgent[] = hosts.length === 0 ? [] : [makeSrcCareersList(hosts), makeSrcCareersJob(hosts)];
+  const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   return [...API_SOURCES, ...careers, normalizer, eligibility, scorerLexicon, ...writingAgents];
+}
+
+/** The hosts behind the careers agents' symbolic egress, for the supervisor. */
+export function careersEgressSets(watchlist: readonly WatchLike[]): EgressSets {
+  return { 'pack:careers-hosts': careersHosts(watchlist) };
 }
 
 /**
@@ -84,16 +93,40 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
   return { id: DAILY_PIPELINE.id, version: DAILY_PIPELINE.version, seed: { type: DiscoveryRequest, guarantees: [knownAts] }, teams, edges };
 }
 
+/** `jobpilot docs rebuild`: the renderer and the qa-gate only, seeded with stored cover plans. */
+export const REBUILD_PIPELINE = { id: 'jobpilot-rebuild', version: '1.0.0' } as const;
+export const rebuildAgents = (): AnyAgent[] => [renderer, qaGate];
+
+/**
+ * The rebuild wiring: `CoverPlan@1 ─► renderer ─► Rendered@1 ─► qa-gate`. Its seed carries exactly the handoff a
+ * cover-writer output carries (the cover-writer's guarantees, P0, no obligations), so a seeded cover plan gives the
+ * renderer the same input, and so the same step key, as in the daily run: with an unchanged full pack it would replay,
+ * and with the raised `render.nonce` it renders again. The next daily run then replays the rebuilt step.
+ */
+export function rebuildPipeline(): Pipeline {
+  const members = rebuildAgents();
+  return {
+    id: REBUILD_PIPELINE.id,
+    version: REBUILD_PIPELINE.version,
+    seed: { type: CoverPlan, guarantees: [...coverWriter.contract.guarantees], dataClass: 'P0' },
+    teams: [{ id: 'writing', lead: 'writing-lead', members: members.map((a) => a.contract.id), exitGuarantees: [], breaker: { consecutiveFailures: Math.max(...members.map((a) => a.contract.breaker.consecutiveFailures)) } }],
+    edges: [
+      { type: 'CoverPlan@1', to: 'renderer' },
+      { type: 'Rendered@1', to: 'qa-gate' },
+    ],
+  };
+}
+
 /**
  * Registers `agents` and proves the wiring. The app's capability allow-list is checked first: an agent holding the
  * 'full' pack, writable files or pdftotext without being the one agent each is for refuses the whole compile.
  */
-export function compileDaily(agents: readonly AnyAgent[], guardrails: GuardrailRegistry): { registry: Registry; compiled: CompiledPipeline } {
+export function compileDaily(agents: readonly AnyAgent[], guardrails: GuardrailRegistry, pipeline: Pipeline = dailyPipeline(agents)): { registry: Registry; compiled: CompiledPipeline } {
   const problems = capabilityProblems(agents.map((a) => a.contract));
   if (problems.length > 0) throw new Error(`capability allow-list refuses the pipeline:\n- ${problems.join('\n- ')}`);
   const registry = new Registry();
   for (const a of agents) registry.register(a);
-  return { registry, compiled: compileWiring(registry, dailyPipeline(agents), guardrails) };
+  return { registry, compiled: compileWiring(registry, pipeline, guardrails) };
 }
 
 /**
@@ -136,28 +169,30 @@ export function pacingProblems(policy: Pick<Policy, 'minHostIntervalMs' | 'minBr
 }
 
 /**
- * The run's seeds: one request per watchlist entry, then one per enabled feed that has a source agent, each dated
- * `runDate` (the IST date). Identical entries are sent once. A feed with no source agent is not fetched and is named
- * in `warnings`, never dropped silently.
+ * The run's seeds: one request per watchlist entry, then one per enabled feed, each dated `runDate` (the IST date).
+ * Identical entries are sent once. `attempt` (the run's ordinal on its date, from `run --refresh`) is set only when it
+ * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. An unknown feed cannot get here
+ * (`loadPack` refuses it) and throws.
  */
 export function dailySeeds(
   pack: { readonly watchlist: readonly Pick<WatchEntry, 'ats' | 'slug' | 'company'>[]; readonly feeds: Pick<Feeds, 'enabled'> },
   runDate: string,
-): { seeds: DiscoveryRequest[]; warnings: string[] } {
+  attempt?: number,
+): DiscoveryRequest[] {
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
+  const extra = attempt !== undefined && attempt >= 2 ? { attempt } : {};
   const add = (s: DiscoveryRequest) => {
     const k = `${s.ats}\u0000${s.slug}\u0000${s.company}`;
     if (!seen.has(k)) {
       seen.add(k);
-      seeds.push(s);
+      seeds.push({ ...s, ...extra });
     }
   };
   for (const w of pack.watchlist) add({ ats: w.ats, slug: w.slug, company: w.company, runDate });
-  const warnings: string[] = [];
   for (const feed of pack.feeds.enabled) {
-    if (Object.hasOwn(FEED_SOURCES, feed)) add({ ats: 'feed', slug: feed, company: feed, runDate });
-    else warnings.push(`feed ${feed} has no source agent; it was not fetched (known feeds: ${Object.keys(FEED_SOURCES).sort().join(', ')})`);
+    if (!Object.hasOwn(FEED_SOURCES, feed)) throw new Error(`feeds.yaml: unknown feed ${feed} (known: ${knownFeeds().join(', ')})`);
+    add({ ats: 'feed', slug: feed, company: feed, runDate });
   }
-  return { seeds, warnings };
+  return seeds;
 }

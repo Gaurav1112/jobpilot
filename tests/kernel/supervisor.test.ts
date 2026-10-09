@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defineAgent } from '../../src/kernel/agent.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
-import { KernelError } from '../../src/kernel/errors.js';
+import { RETRYABLE, KernelError } from '../../src/kernel/errors.js';
 import { fakeBrowser, fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
@@ -703,5 +703,35 @@ describe('v1 kernel extensions: supervisor', () => {
     const other = await build('invalid_output').start('run-bad', seeds);
     expect(other.queue.skipped).toBeGreaterThan(0);
     expect(other.gone).toBe(0);
+  });
+
+  it('input_rejected (a refusal decided by the input alone) never trips a breaker: five rejected jobs do not stop a sixth', async () => {
+    const Out = defineType('RejOut', 1, z.object({ n: z.number() }).strict());
+    const agent = defineAgent(
+      defineContract({ ...common, id: 'rej-src', description: 'Refuses low numbers', skills: ['x'], team: 'pace-src', kind: 'deterministic', consumes: Req, produces: Out, breaker: { consecutiveFailures: 3 } }),
+      async (req: { n: number }) => {
+        if (req.n <= 5) throw new KernelError('input_rejected', `item ${req.n} cannot be written`);
+        return [{ n: req.n }];
+      },
+    );
+    const registry = new Registry();
+    registry.register(agent);
+    const guardrails = builtinGuardrails();
+    const sup = new Supervisor({
+      store: Store.open(':memory:'),
+      registry,
+      compiled: compileWiring(registry, { id: 'rej', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'l', members: ['rej-src'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'rej-src' }] }, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: fakeFetch({}) },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async () => undefined,
+    });
+    const r = await sup.start('run-rej', Array.from({ length: 6 }, (_, i) => ({ n: i + 1 })));
+    expect(r.queue).toMatchObject({ done: 1, failed: 5, skipped: 0 });
+    expect(r.inputRejected).toBe(5);
+    expect(r.gone).toBe(0);
+    expect(RETRYABLE.has('input_rejected')).toBe(false);
   });
 });

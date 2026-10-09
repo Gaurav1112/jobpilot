@@ -1,5 +1,5 @@
 {
-  "hash": "51c9993144ef689439cec9390c66a9021160a4b3c781c08c5b5f814b178f746c",
+  "hash": "00315c7f235bdd17dad856e521d4f97a7e787968d8f95db847060348d7244514",
   "shape": {
     "breaker": {
       "consecutiveFailures": 10
@@ -64,7 +64,7 @@
       ]
     },
     "egress": [
-      "careers.example.com"
+      "pack:careers-hosts"
     ],
     "guarantees": [],
     "guardrails": {

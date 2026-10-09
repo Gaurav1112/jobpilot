@@ -14,6 +14,13 @@ export const ERROR_CODES = [
    * health of a service, not item-level data. It is still a failed step, reported as gone.
    */
   'gone',
+  /**
+   * A deterministic refusal decided by the step's input alone (a posting whose title the documents cannot carry, say):
+   * running the step again on the same input would always refuse again. Never retried, and, like `gone`, it neither
+   * trips nor resets a breaker, since it says nothing about the health of the agent. A refusal caused by the user's
+   * pack is not this: it hits every item, so it stays `invalid_output` and the breaker stops it.
+   */
+  'input_rejected',
   'unknown',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

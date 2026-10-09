@@ -13,7 +13,7 @@ import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
-import { compileDaily, dailyAgents, pacingProblems } from './pipeline.js';
+import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
 import { makeJobTracker } from './tracker.js';
 
 /** Where poppler's pdftotext usually lives when PATH does not say (a launchd job has a bare PATH). */
@@ -87,6 +87,8 @@ export interface AppKernelOptions {
   readonly pdftotext: string;
   /** Test hook (the supervisor's): runs after each step; throwing simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** `rebuild`: the renderer and qa-gate only (`docs rebuild`). Default `daily`. */
+  readonly mode?: 'daily' | 'rebuild';
 }
 
 export interface AppKernel {
@@ -103,11 +105,15 @@ export interface AppKernel {
  * tightened by `policy.user.yaml`) and the pacing check against the timeout arithmetic. Throws on any problem.
  * `jobpilot pack check` runs it too.
  */
-export function preparePipeline(pack: Pick<Pack, 'watchlist' | 'feeds' | 'policyUser'>): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
+export function preparePipeline(
+  pack: Pick<Pack, 'watchlist' | 'feeds' | 'policyUser'>,
+  mode: 'daily' | 'rebuild' = 'daily',
+): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
   const guardrails = appGuardrails();
-  const { registry, compiled } = compileDaily(dailyAgents(pack.watchlist), guardrails);
+  const { registry, compiled } = mode === 'daily' ? compileDaily(dailyAgents(pack.watchlist), guardrails) : compileDaily(rebuildAgents(), guardrails, rebuildPipeline());
   const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
-  const pacing = pacingProblems(policy, pack);
+  // A rebuild fetches nothing, so only the daily run's pacing matters.
+  const pacing = mode === 'daily' ? pacingProblems(policy, pack) : [];
   if (pacing.length > 0) throw new Error(`refusing to start:\n- ${pacing.join('\n- ')}`);
   return { registry, compiled, guardrails, policy, policyHash: policyHash(policy) };
 }
@@ -120,7 +126,7 @@ export function preparePipeline(pack: Pick<Pack, 'watchlist' | 'feeds' | 'policy
 export function appKernel(o: AppKernelOptions): AppKernel {
   const { pack } = o.loaded;
   if (!isAbsolute(o.pdftotext)) throw new Error(`pdftotext must be an absolute path, not ${o.pdftotext}`);
-  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack);
+  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily');
   if (registry.has('src-careers-list') && o.browser === undefined) throw new Error('the watchlist has careers entries but no browser provider was given');
   const supervisor = new Supervisor({
     store: o.store,
@@ -142,6 +148,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     packHash: o.loaded.packHash,
     fullPack: o.loaded.fullPack,
     fullPackHash: o.loaded.fullPackHash,
+    egressSets: careersEgressSets(pack.watchlist),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };

@@ -9,6 +9,7 @@ import { renderHtml } from '../../render/html.js';
 import { coverModel, type DocModel, modelText, normText, RENDER_FILES, renderedPath, resumeModel } from '../../render/model.js';
 import { renderPdf, uncoveredGlyph } from '../../render/pdf.js';
 import { CoverPlan, Rendered } from '../../types.js';
+import { postingSlots } from './grounded.js';
 
 /**
  * renderer (spec §5.4, Task 10): turns one grounded cover plan (with its resume plan) into the files the user uploads:
@@ -51,17 +52,36 @@ export function renderPackOf(pack: unknown): RenderPack {
 
 const fail = (message: string): KernelError => new KernelError('invalid_output', `renderer: ${message}`);
 
-/** The text checks every document passes before any byte is written. */
-function checkText(m: DocModel, pack: RenderPack): void {
+/**
+ * The text checks every document passes before any byte is written. A refusal caused by the posting's own title or
+ * company (the only posting text in the documents) is `input_rejected`: it is this job's, re-running would refuse
+ * again, and it must not trip the breaker for the other jobs. The same refusal from the pack (contact block, facts)
+ * hits every job, so it stays `invalid_output`.
+ */
+function checkText(m: DocModel, pack: RenderPack, slots: readonly string[]): void {
   const text = modelText(m);
+  const inPosting = uncoveredGlyph(slots);
+  if (inPosting !== null) {
+    throw new KernelError('input_rejected', `renderer: unrenderable-glyph:${inPosting} (in the posting title or company; the embedded font cannot draw it)`);
+  }
   const bad = uncoveredGlyph([text, m.title, m.author]);
   if (bad !== null) throw fail(`unrenderable-glyph:${bad} (the ${m.kind} has a character the embedded font cannot draw)`);
-  try {
-    assertNoForbidden(text, pack.naming);
-    assertNoForbidden(m.title, pack.naming);
-  } catch (e) {
-    if (e instanceof ForbiddenTermError) throw fail(`G-NAMING: forbidden term #${pack.naming.forbiddenTerms.indexOf(e.term) + 1} appears in the ${m.kind}`);
-    throw e;
+  const term = (s: string): number | undefined => {
+    try {
+      assertNoForbidden(s, pack.naming);
+      return undefined;
+    } catch (e) {
+      if (e instanceof ForbiddenTermError) return pack.naming.forbiddenTerms.indexOf(e.term) + 1;
+      throw e;
+    }
+  };
+  for (const s of slots) {
+    const n = term(s);
+    if (n !== undefined) throw new KernelError('input_rejected', `renderer: G-NAMING: forbidden term #${n} appears in the posting title or company`);
+  }
+  for (const s of [text, m.title]) {
+    const n = term(s);
+    if (n !== undefined) throw fail(`G-NAMING: forbidden term #${n} appears in the ${m.kind}`);
   }
 }
 
@@ -76,7 +96,8 @@ export const renderer = defineAgent(rendererContract, async (cover, ctx) => {
     throw fail(e instanceof Error ? e.message : String(e));
   }
   const docs = { resume: models.resume, cover: models.cover };
-  for (const m of [docs.resume, docs.cover]) checkText(m, pack);
+  const { title, company } = postingSlots(cover.resume.evidence.scored.posting);
+  for (const m of [docs.resume, docs.cover]) checkText(m, pack, [title, company]);
 
   const bytes = new Map<string, { data: Uint8Array; pages: number | null }>();
   for (const kind of ['resume', 'cover'] as const) {

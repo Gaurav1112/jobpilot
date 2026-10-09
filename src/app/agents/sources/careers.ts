@@ -27,11 +27,12 @@ import { sha256Hex } from './sha256.js';
  *   Task 8: a re-rendered link re-emits a RawPosting with the same sourceId; the projector must treat it as a newer
  *   version of that posting (upsert), not a duplicate.
  *
- * Wiring for Task 11: build both with `makeSrcCareersList(hosts)` / `makeSrcCareersJob(hosts)` where
- * `hosts = careersHosts(pack.watchlist)` (exact hosts, sorted, deduplicated), and route DiscoveryRequest@1 to
- * src-careers-list and CareerLink@1 to src-careers-job. The broker's pacing is per supervisor, so the 10 s between
- * renders of one host holds across the two agents' steps. Adding a careers entry changes both contracts' egress
- * (and hashes) on the next compile. Neither agent fills or submits anything.
+ * Wiring: route DiscoveryRequest@1 to src-careers-list and CareerLink@1 to src-careers-job. Both contracts declare the
+ * symbolic egress `pack:careers-hosts` (CAREERS_EGRESS), so their contract hashes do not depend on the watchlist: adding
+ * or removing a careers site never invalidates the stored outputs of the others (Task 11 fix C1). The supervisor is given
+ * `egressSets: {'pack:careers-hosts': careersHosts(pack.watchlist)}` and the broker resolves the entry at call time to
+ * those exact hosts, still checked against the policy. The broker's pacing is per supervisor, so the 10 s between
+ * renders of one host holds across the two agents' steps. Neither agent fills or submits anything.
  *
  * Completeness: every limit fails loudly (`invalid_output`) rather than returning a partial list: a listing still
  * loading at its settle cap, no job links, a load-more or scroll still adding jobs at its cap, pagination the browser
@@ -81,7 +82,7 @@ export function refreshEpoch(url: string, runDate: string): number {
   return Math.floor((dayNumber(runDate) + bucket) / CAREERS_REFRESH_DAYS);
 }
 
-/** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: the careers agents' egress. */
+/** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: what `pack:careers-hosts` resolves to. */
 export function careersHosts(watchlist: readonly { readonly ats: string; readonly listUrl?: string | undefined }[]): string[] {
   const hosts = new Set<string>();
   for (const w of watchlist) {
@@ -90,17 +91,11 @@ export function careersHosts(watchlist: readonly { readonly ats: string; readonl
   return [...hosts].sort();
 }
 
-const egressOf = (id: string, hosts: readonly string[]): string[] => {
-  const egress = [...new Set(hosts.map((h) => h.toLowerCase()))].sort();
-  if (egress.length === 0) throw new TypeError(`${id} needs at least one careers host`);
-  return egress;
-};
+/** The careers agents' egress: the symbolic set of the watchlist's careers hosts, resolved by the broker. */
+export const CAREERS_EGRESS = ['pack:careers-hosts'] as const;
 
-/** Builds `src-careers-list` for the given careers hosts (see `careersHosts`). */
-export function makeSrcCareersList(
-  hosts: readonly string[],
-  opts: { readonly maxListingPages?: number; readonly maxLinks?: number } = {},
-): Agent<DiscoveryRequest, CareerLink> {
+/** Builds `src-careers-list` (the options are for tests; the pipeline uses `srcCareersList`). */
+export function makeSrcCareersList(opts: { readonly maxListingPages?: number; readonly maxLinks?: number } = {}): Agent<DiscoveryRequest, CareerLink> {
   const maxListingPages = opts.maxListingPages ?? CAREERS_LIST_MAX_PAGES;
   const maxLinks = opts.maxLinks ?? CAREERS_MAX_LINKS;
   const contract = defineContract({
@@ -114,7 +109,7 @@ export function makeSrcCareersList(
     produces: CareerLink,
     requires: [knownAts],
     capabilities: { browser: { maxPages: maxListingPages }, pack: true },
-    egress: egressOf('src-careers-list', hosts),
+    egress: [...CAREERS_EGRESS],
     dataClasses: { in: ['P0'], out: ['P0'] },
     budget: { usdPerCall: 0, usdPerRun: 0 },
     // Every listing page at its worst; a page count that does not fit 30 minutes fails here, loudly.
@@ -125,8 +120,8 @@ export function makeSrcCareersList(
   return defineAgent(contract, (req, ctx) => (req.ats === 'careers' ? listLinks(req, ctx, maxListingPages, maxLinks) : Promise.resolve([])));
 }
 
-/** Builds `src-careers-job` for the given careers hosts (see `careersHosts`). */
-export function makeSrcCareersJob(hosts: readonly string[]): Agent<CareerLink, RawPosting> {
+/** Builds `src-careers-job`. */
+export function makeSrcCareersJob(): Agent<CareerLink, RawPosting> {
   const contract = defineContract({
     id: 'src-careers-job',
     version: '1.0.0',
@@ -137,7 +132,7 @@ export function makeSrcCareersJob(hosts: readonly string[]): Agent<CareerLink, R
     consumes: CareerLink,
     produces: RawPosting,
     capabilities: { browser: { maxPages: 1 } },
-    egress: egressOf('src-careers-job', hosts),
+    egress: [...CAREERS_EGRESS],
     dataClasses: { in: ['P0'], out: ['P0'] },
     budget: { usdPerCall: 0, usdPerRun: 0 },
     timeoutMs: CAREERS_JOB_TIMEOUT_MS,
@@ -147,6 +142,9 @@ export function makeSrcCareersJob(hosts: readonly string[]): Agent<CareerLink, R
   });
   return defineAgent(contract, (link, ctx) => renderJob(link, ctx));
 }
+
+export const srcCareersList = makeSrcCareersList();
+export const srcCareersJob = makeSrcCareersJob();
 
 // ---- URLs ----
 

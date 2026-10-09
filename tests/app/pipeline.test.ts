@@ -8,8 +8,8 @@ import { appGuardrails } from '../../src/app/guardrails.js';
 import { LOCK_FILE, LockError, withLock } from '../../src/app/lock.js';
 import { appleScriptString, notificationFor } from '../../src/app/notify.js';
 import { offlineProviders } from '../../src/app/offline.js';
-import { compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
-import { istDate, istMonth, pickRunId } from '../../src/app/run.js';
+import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
+import { failureNotification, istDate, istMonth, pickRunId } from '../../src/app/run.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { resolvePdftotext } from '../../src/app/kernel.js';
 import { defineAgent } from '../../src/kernel/agent.js';
@@ -53,8 +53,9 @@ describe('the daily pipeline wiring', () => {
     });
     const { compiled } = compileDaily(agents, appGuardrails());
     expect(compiled.routes.get('DiscoveryRequest@1')).toHaveLength(6);
-    // the careers egress is the watchlist's careers hosts
-    expect(agents.find((a) => a.contract.id === 'src-careers-list')?.contract.egress).toEqual(['careers.example.com']);
+    // the careers egress is the symbolic set; the supervisor resolves it to the watchlist's careers hosts
+    expect(agents.find((a) => a.contract.id === 'src-careers-list')?.contract.egress).toEqual(['pack:careers-hosts']);
+    expect(careersEgressSets([ghEntry, careersEntry])).toEqual({ 'pack:careers-hosts': ['careers.example.com'] });
   });
 
   it('leaves the careers agents out when the watchlist has no careers entries', () => {
@@ -104,14 +105,18 @@ describe('pacing against the timeout arithmetic (M5)', () => {
 });
 
 describe('seeds', () => {
-  it('one per watchlist entry and one per known enabled feed, dated with the run date; unknown feeds are warned about', () => {
-    const r = dailySeeds({ watchlist: [ghEntry, leverEntry, ghEntry], feeds: { enabled: ['himalayas', 'remoteok'] } }, '2026-10-09');
-    expect(r.seeds).toEqual([
+  it('one per watchlist entry and one per enabled feed, dated with the run date; refresh sets attempt', () => {
+    const r = dailySeeds({ watchlist: [ghEntry, leverEntry, ghEntry], feeds: { enabled: ['himalayas'] } }, '2026-10-09');
+    expect(r).toEqual([
       { ats: 'greenhouse', slug: 'example-gh', company: 'Example Greenhouse Co', runDate: '2026-10-09' },
       { ats: 'lever', slug: 'example-lv', company: 'Example Lever Co', runDate: '2026-10-09' },
       { ats: 'feed', slug: 'himalayas', company: 'himalayas', runDate: '2026-10-09' },
     ]);
-    expect(r.warnings).toEqual(['feed remoteok has no source agent; it was not fetched (known feeds: himalayas, jobicy)']);
+    expect(dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-09', 3)).toEqual([
+      { ats: 'greenhouse', slug: 'example-gh', company: 'Example Greenhouse Co', runDate: '2026-10-09', attempt: 3 },
+    ]);
+    expect(dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-09', 1)[0]).not.toHaveProperty('attempt');
+    expect(() => dailySeeds({ watchlist: [], feeds: { enabled: ['remoteok'] } }, '2026-10-09')).toThrow(/unknown feed remoteok/);
   });
 });
 
@@ -126,12 +131,12 @@ describe('IST dates', () => {
 describe('run ids', () => {
   it('daily-<date>, then -2, -3 after completed runs; a crashed run is resumed unless its policy differs', () => {
     const store = Store.open(':memory:');
-    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09', resume: false, skipped: [] });
+    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09', n: 1, resume: false, skipped: [] });
     store.startRun('daily-2026-10-09', 'jobpilot-daily@1.0.0', 'p1', '2026-10-09T01:30:00Z');
-    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09', resume: true, skipped: [] });
-    expect(pickRunId(store, 'daily-2026-10-09', 'p2')).toEqual({ runId: 'daily-2026-10-09-2', resume: false, skipped: ['daily-2026-10-09'] });
+    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09', n: 1, resume: true, skipped: [] });
+    expect(pickRunId(store, 'daily-2026-10-09', 'p2')).toEqual({ runId: 'daily-2026-10-09-2', n: 2, resume: false, skipped: ['daily-2026-10-09'] });
     store.finishRun('daily-2026-10-09', '2026-10-09T01:40:00Z');
-    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09-2', resume: false, skipped: [] });
+    expect(pickRunId(store, 'daily-2026-10-09', 'p1')).toEqual({ runId: 'daily-2026-10-09-2', n: 2, resume: false, skipped: [] });
     store.close();
   });
 });
@@ -163,6 +168,31 @@ describe('the run lock', () => {
     expect(existsSync(join(h, LOCK_FILE))).toBe(false);
   });
 
+  it('m2: a stale takeover is serialised by an exclusive takeover file; a dead takeover holder is cleared', async () => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
+    const dead = 2 ** 22 + 12345;
+    writeFileSync(join(home, LOCK_FILE), JSON.stringify({ pid: dead, command: 'run', at: 'x', token: 't1' }));
+    // another live process is taking over right now: refuse, never delete under it
+    writeFileSync(join(home, `${LOCK_FILE}.takeover`), JSON.stringify({ pid: process.pid, command: 'run', at: 'x', token: 't2' }));
+    await expect(withLock(home, 'run', async () => 1)).rejects.toThrow(/taking over a stale lock/);
+    expect(existsSync(join(home, LOCK_FILE))).toBe(true);
+    // a takeover holder that died is cleared, and the stale lock is taken over
+    writeFileSync(join(home, `${LOCK_FILE}.takeover`), JSON.stringify({ pid: dead, command: 'run', at: 'x', token: 't3' }));
+    expect(await withLock(home, 'run', async () => 'ran')).toBe('ran');
+    expect(existsSync(join(home, LOCK_FILE))).toBe(false);
+    expect(existsSync(join(home, `${LOCK_FILE}.takeover`))).toBe(false);
+  });
+
+  it('m2: the lock file appears whole (written aside, then linked), so a crash never leaves an empty lock', async () => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
+    const h = home;
+    // a temp file left by a crash before the link blocks nothing
+    writeFileSync(join(h, `${LOCK_FILE}.99999.tmp`), '');
+    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { pid: number; token: string });
+    expect(body.pid).toBe(process.pid);
+    expect(body.token).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
   it('takes over a stale lock whose process is gone', async () => {
     home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
     writeFileSync(join(home, LOCK_FILE), JSON.stringify({ pid: 2 ** 22 + 12345, command: 'run', at: '2026-10-01T00:00:00Z' }));
@@ -177,13 +207,31 @@ describe('the notification', () => {
     expect(notificationFor([job(72, 'Acme', 'Backend Engineer'), job(88, 'Example Co', 'Senior Backend Engineer')], naming)).toBe(
       '2 new matches · top: 88 Example Co — Senior Backend Engineer',
     );
+    expect(notificationFor([job(72, 'Acme', 'Backend Engineer')], naming)).toBe('1 new match · top: 72 Acme — Backend Engineer');
     expect(notificationFor([], naming)).toBe('No new matches today');
   });
-  it('never carries a forbidden term: the top match is left out', () => {
-    expect(notificationFor([job(90, 'Initech Global', 'Backend Engineer')], naming)).toBe('1 new matches');
+  it('appends the problem count', () => {
+    expect(notificationFor([job(72, 'Acme', 'Backend Engineer')], naming, 2)).toBe('1 new match · top: 72 Acme — Backend Engineer · 2 problems');
+    expect(notificationFor([], naming, 1)).toBe('No new matches today · 1 problem');
+  });
+  it('never carries a forbidden term: the top match is left out, and a term in the fixed words falls back', () => {
+    expect(notificationFor([job(90, 'Initech Global', 'Backend Engineer')], naming)).toBe('1 new match');
+    expect(notificationFor([job(90, 'Acme', 'Backend')], { forbiddenTerms: ['match'] })).toBe('jobpilot run finished');
+  });
+  it('folds line breaks and drops control characters (m3)', () => {
+    expect(notificationFor([job(80, 'Acme\nCorp', 'Back\u0000end\tEngineer')], naming)).toBe('1 new match · top: 80 Acme Corp — Backend Engineer');
+    expect(appleScriptString('a\u0000b\u0007c')).toBe('"abc"');
   });
   it('escapes text for an AppleScript string literal', () => {
     expect(appleScriptString('a "b" \\ c\nd')).toBe('"a \\"b\\" \\\\ c d"');
+  });
+});
+
+describe('the failure notification (I1)', () => {
+  it('names the first line of the error, unless it holds a forbidden term or the naming rules cannot be read', () => {
+    expect(failureNotification(new Error('refusing to start:\n- minHostIntervalMs 40000 ms breaks …'), ['Initech'])).toBe('jobpilot run failed: refusing to start:');
+    expect(failureNotification(new Error('pack: Initech appears'), ['Initech'])).toBe('jobpilot run failed; see the log');
+    expect(failureNotification(new Error('anything'), undefined)).toBe('jobpilot run failed; see the log');
   });
 });
 

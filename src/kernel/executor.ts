@@ -9,7 +9,7 @@
  *   Spend of a finished attempt is recorded before the retry sleep, so a crash between attempts loses none.
  */
 import type { AnyAgent } from './agent.js';
-import { type HostPacer, issueContext } from './broker.js';
+import { type EgressSets, type HostPacer, issueContext } from './broker.js';
 import type { Clock } from './clock.js';
 import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
@@ -45,6 +45,8 @@ export interface ExecutorDeps {
   readonly hostPacer?: HostPacer;
   /** Per-host browser render pacing (policy.minBrowserIntervalMs) shared by every step of one supervisor. */
   readonly browserPacer?: HostPacer;
+  /** The hosts behind symbolic egress entries (`pack:careers-hosts`), resolved by the broker at call time. */
+  readonly egressSets?: EgressSets;
   /**
    * Test hook: runs after a writing step is recorded done, before its staged files are committed. Throwing here
    * simulates a crash at that point: the step stays done and its files stay staged until a replay or a recovery.
@@ -150,7 +152,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
   let unrecorded: Cost = ZERO_COST;
   /** The largest single model call paid in this step, over all attempts. */
   let stepMaxCall = 0;
-  const eventOf = (kind: string, data: Record<string, unknown>) => ({ at: deps.clock.now(), kind, data: { agent: c.id, stepKey, ...data }, policyHash: deps.policyHash });
+  const eventOf = (kind: string, data: Record<string, unknown>) => ({ at: deps.clock.now(), kind, data: { agent: c.id, stepKey, envelopeId: input.envelopeId, ...data }, policyHash: deps.policyHash });
   /** A standalone event, for outcomes that write no step row. */
   const event = (kind: string, data: Record<string, unknown>): void => {
     const e = eventOf(kind, data);
@@ -245,6 +247,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         ...(agentPack !== undefined ? { pack: agentPack } : {}),
         ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
         ...(deps.browserPacer ? { browserPacer: deps.browserPacer } : {}),
+        ...(deps.egressSets ? { egressSets: deps.egressSets } : {}),
         ...(pendingFiles ? { pendingFiles } : {}),
       });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
