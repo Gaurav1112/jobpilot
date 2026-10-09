@@ -116,6 +116,8 @@ export interface RunOptions {
   readonly afterStep?: (count: number) => void;
   /** Test hook: runs after the projection, before the notification; throwing simulates a crash there. */
   readonly afterProject?: () => void;
+  /** Test hook: the code fingerprint in every step key (review I4); default `codeHash()` of this checkout. */
+  readonly codeHash?: string;
 }
 
 /**
@@ -172,7 +174,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const now = o.clock.now();
       const runDate = istDate(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}) });
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];

@@ -475,6 +475,34 @@ describe('v1 kernel extensions: executor', () => {
     expect(computeStepKey(plainContract, seedEnv(), pHash, 'pack-a')).toBe(computeStepKey(plainContract, seedEnv(), pHash));
   });
 
+  it('I4: computeStepKey includes the code hash for every contract; "none" (the default) leaves the key as before', () => {
+    const reader = packContract(true);
+    for (const c of [reader, plainContract]) {
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a')).not.toBe(computeStepKey(c, seedEnv(), pHash, 'p', 'code-b'));
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a')).toBe(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a'));
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'none')).toBe(computeStepKey(c, seedEnv(), pHash, 'p'));
+    }
+  });
+
+  it('I4: the executor keys every step on deps.codeHash, so a code change re-runs a step that would have replayed', async () => {
+    const agent = defineAgent(plainContract, async (req) => [{ id: `${req.prefix}-001`, text: 'x' }]);
+    const store = Store.open(':memory:');
+    const run = (codeHash: string | undefined) =>
+      executeStep(
+        { ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(agent.contract)), ...(codeHash !== undefined ? { codeHash } : {}) },
+        'r',
+        agent,
+        seedEnv(),
+      );
+    const a = await run('code-1');
+    expect(a).toMatchObject({ kind: 'done', replayed: false });
+    expect(await run('code-1')).toMatchObject({ kind: 'done', replayed: true, stepKey: a.stepKey });
+    const b = await run('code-2');
+    expect(b).toMatchObject({ kind: 'done', replayed: false });
+    expect(b.stepKey).not.toBe(a.stepKey);
+    expect(b.stepKey).toBe(computeStepKey(plainContract, seedEnv(), pHash, 'none', 'code-2'));
+  });
+
   it('passes the frozen pack to a pack agent and keys its step on packHash; a non-pack agent sees no pack', async () => {
     const seen: unknown[] = [];
     const mk = (c: ReturnType<typeof packContract>) =>

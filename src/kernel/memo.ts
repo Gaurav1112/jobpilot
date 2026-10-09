@@ -9,8 +9,12 @@ import type { Envelope } from './envelope.js';
  *
  * `packHash` is hashed only when the contract declares `capabilities.pack`, so a
  * pack edit re-runs only the agents that read the pack; every other key is unchanged.
+ *
+ * `codeHash` (review I4) fingerprints the implementation behind every agent (the app passes a hash of its sources and
+ * fonts). It is in every key when given, so a code change re-runs every step once instead of presenting the stored
+ * output of old code as current. 'none' (the default, kernel and demo) leaves the key exactly as before.
  */
-export function computeStepKey(contract: AnyContract, input: Envelope, policyHash: string, packHash = 'none'): string {
+export function computeStepKey(contract: AnyContract, input: Envelope, policyHash: string, packHash = 'none', codeHash = 'none'): string {
   return hashOf({
     agent: `${contract.id}@${contractMajor(contract)}`,
     inputType: input.type,
@@ -18,6 +22,7 @@ export function computeStepKey(contract: AnyContract, input: Envelope, policyHas
     handoff: { guarantees: input.handoff.guarantees, dataClass: input.handoff.dataClass, obligations: input.handoff.obligations },
     policyHash,
     ...(contract.capabilities.pack ? { packHash } : {}),
+    ...(codeHash !== 'none' ? { codeHash } : {}),
   });
 }
 

@@ -10,6 +10,7 @@ import type { Store } from '../kernel/store/store.js';
 import { Supervisor } from '../kernel/supervisor.js';
 import type { CompiledPipeline } from '../kernel/wiring.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
+import { codeHash } from './code-hash.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
@@ -89,6 +90,8 @@ export interface AppKernelOptions {
   readonly afterStep?: (count: number) => void;
   /** `rebuild`: the renderer and qa-gate only (`docs rebuild`). Default `daily`. */
   readonly mode?: 'daily' | 'rebuild';
+  /** The code fingerprint in every step key (review I4); default `codeHash()`, the hash of this checkout's sources and fonts. */
+  readonly codeHash?: string;
 }
 
 export interface AppKernel {
@@ -149,6 +152,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     fullPack: o.loaded.fullPack,
     fullPackHash: o.loaded.fullPackHash,
     egressSets: careersEgressSets(pack.watchlist),
+    codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };

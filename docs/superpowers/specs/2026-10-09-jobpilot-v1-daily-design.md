@@ -27,6 +27,14 @@ automatic without a per-job approval token (sub-project 7, not in this build).
 
 - The same pack, the same postings and the same code produce the same rows and the same
   document text. Memoised step keys replay unchanged postings at $0 on the next day.
+- **The code is part of every step key** (final review I4). The app computes `codeHash` once
+  per process: sha256 over the sorted contents of `src/**/*.ts` and `assets/fonts/*`, first 16
+  hex characters, passed to the supervisor (`SupervisorDeps.codeHash`; kernel and demo tests
+  default to `'none'`, which leaves their keys unchanged). Trade-off, accepted: any code change,
+  even a comment, re-runs every step once on the next run (sources fetch again, every posting
+  is re-normalised, re-judged and re-rendered). In exchange a fix to the normalizer, eligibility
+  or the scorer reaches every posting already seen, and stored outputs of old code are never
+  presented as current. Same code still replays at $0.
 - **No hallucination by construction.** A resume bullet is the verbatim `claim` of a citeable
   fact. A skill appears only if it is in some citeable fact's `tech`. The summary is a fixed
   template whose slots are filled from facts and the pack. G-GROUND checks all three on every

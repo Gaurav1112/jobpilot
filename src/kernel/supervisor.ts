@@ -57,6 +57,11 @@ export interface SupervisorDeps {
   readonly fullPackHash?: string;
   /** The hosts behind symbolic egress entries (`pack:careers-hosts`); the app derives them from the pack. */
   readonly egressSets?: EgressSets;
+  /**
+   * Fingerprint of the agents' implementation (review I4), in every step key: a code change re-runs every step once.
+   * Default 'none' (kernel and demo), which leaves the keys as before.
+   */
+  readonly codeHash?: string;
 }
 
 export interface RunReport {
@@ -118,6 +123,7 @@ export class Supervisor {
       ...(this.fullPack !== undefined ? { fullPack: this.fullPack } : {}),
       ...(d.fullPackHash !== undefined ? { fullPackHash: d.fullPackHash } : {}),
       ...(d.egressSets !== undefined ? { egressSets: d.egressSets } : {}),
+      ...(d.codeHash !== undefined ? { codeHash: d.codeHash } : {}),
       contractHashOf: (id, v) => (id === SUPERVISOR_ID && v === d.compiled.pipeline.version ? d.compiled.seedHash : d.registry.contractHashOf(id, v)),
       ...(d.onInvoke ? { onInvoke: d.onInvoke } : {}),
     };

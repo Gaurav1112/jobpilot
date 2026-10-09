@@ -41,6 +41,8 @@ export interface ExecutorDeps {
   readonly fullPack?: unknown;
   /** Hash of `fullPack`; part of the step key of 'full' pack agents only. Default 'none'. */
   readonly fullPackHash?: string;
+  /** Fingerprint of the agents' implementation (review I4); in every step key. Default 'none'. */
+  readonly codeHash?: string;
   /** Per-host request pacing shared by every step of one supervisor. */
   readonly hostPacer?: HostPacer;
   /** Per-host browser render pacing (policy.minBrowserIntervalMs) shared by every step of one supervisor. */
@@ -145,7 +147,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
   const full = c.capabilities.pack === 'full';
   const agentPack = full ? deps.fullPack : deps.pack;
-  const stepKey = computeStepKey(c, input, deps.policyHash, (full ? deps.fullPackHash : deps.packHash) ?? 'none'); // 5
+  const stepKey = computeStepKey(c, input, deps.policyHash, (full ? deps.fullPackHash : deps.packHash) ?? 'none', deps.codeHash ?? 'none'); // 5
   /** Every cent paid in this step, summed over all attempts. */
   let stepSpent: Cost = ZERO_COST;
   /** The part of stepSpent not yet in the cost ledger: earlier attempts are recorded before their retry sleep. */
