@@ -28,7 +28,7 @@ describe('jobpilot daily commands', () => {
   it('lists the commands in --help', () => {
     const r = cli('--help');
     expect(r.status).toBe(0);
-    for (const c of ['run', 'pack', 'migrate', 'facts', 'docs', 'serve']) expect(r.stdout).toMatch(new RegExp(`^  ${c}\\b`, 'm'));
+    for (const c of ['run', 'pack', 'migrate', 'facts', 'docs', 'serve', 'schedule']) expect(r.stdout).toMatch(new RegExp(`^  ${c}\\b`, 'm'));
   });
 
   it('serve refuses a port that is not 1-65535', () => {

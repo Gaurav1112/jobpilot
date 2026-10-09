@@ -25,6 +25,7 @@ import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
+import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 
 const root = join(import.meta.dirname, '..');
@@ -419,6 +420,50 @@ program
         console.error(`error: ${e.message}`);
         process.exit(1);
       });
+    }),
+  );
+
+const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run and the always-on dashboard (macOS)');
+const scheduleOpts = () => ({ node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid?.() ?? 501 });
+schedule
+  .command('install')
+  .description('Write both launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
+  .action(() =>
+    guarded(() => {
+      const r = installSchedule(scheduleOpts());
+      for (const p of r.plists) console.log(`wrote ${p}`);
+      console.log(`daily run: 07:00 IST (Mac local ${String(r.localTime.hour).padStart(2, '0')}:${String(r.localTime.minute).padStart(2, '0')}); next run ${r.nextRun}`);
+      console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
+      console.log(`logs: ${r.logs.join(', ')}`);
+    }),
+  );
+schedule
+  .command('uninstall')
+  .description('Unload both jobs and delete their plists')
+  .action(() =>
+    guarded(() => {
+      for (const p of uninstallSchedule(scheduleOpts())) console.log(`removed ${p}`);
+    }),
+  );
+schedule
+  .command('status')
+  .description('Whether each job is loaded, its state and last exit code, and where its plist and log are')
+  .action(() =>
+    guarded(() => {
+      for (const s of scheduleStatus(scheduleOpts())) {
+        console.log(`${s.label}: ${s.loaded ? `loaded, state ${s.state ?? 'unknown'}, last exit code ${s.lastExitCode ?? 'none yet'}` : 'not loaded'}`);
+        console.log(`  plist ${s.plistPath}`);
+        console.log(`  log   ${s.logPath}`);
+      }
+    }),
+  );
+schedule
+  .command('run-now')
+  .description('Start the daily job now through launchd (a manual test of the scheduled command)')
+  .action(() =>
+    guarded(() => {
+      runNow(scheduleOpts());
+      console.log('started com.jobpilot.daily; follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
 
