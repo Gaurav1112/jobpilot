@@ -1,13 +1,14 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { finish, getBoard, idOf, isRecord, omit, sourceContract, type Parsed } from './common.js';
+import { checkParsed, finish, getBoard, idOf, isRecord, omit, sourceContract, type Parsed } from './common.js';
 
 /**
  * Himalayas search API, narrowed server-side to backend roles open to India
  * (`q=backend&country=IN&sort=recent`), pages 1 to HIMALAYAS_MAX_PAGES (20 jobs a page),
- * stopping at the first empty page. `country=IN` also returns jobs restricted elsewhere, so a
- * job is kept only when `locationRestrictions` is empty (worldwide) or names India, Asia or APAC.
+ * stopping at the first empty page. An error on any page fails the whole step (idempotent GETs,
+ * retried as a unit). `country=IN` also returns jobs restricted elsewhere, so a
+ * job is kept only when `locationRestrictions` is empty (worldwide) or names India, Asia, APAC, Worldwide or Anywhere.
  *
  * There is no job id; `guid` (the job's himalayas.app URL) is the sourceId.
  * `raw` drops `expiryDate`: it moved between two fetches of the same job on 2026-10-09, so it is
@@ -16,20 +17,22 @@ import { finish, getBoard, idOf, isRecord, omit, sourceContract, type Parsed } f
  */
 export const HIMALAYAS_HOST = 'himalayas.app';
 export const HIMALAYAS_FEED = 'himalayas';
+/** 3 pages = at most 60 jobs, far below `totalCount` (842 for this query live); with `sort=recent` and a daily run that is enough. */
 export const HIMALAYAS_MAX_PAGES = 3;
+export const HIMALAYAS_TIMEOUT_MS = 60_000;
 const DROPPED = ['expiryDate'] as const;
 
 export const himalayasUrl = (page: number): string =>
   `https://${HIMALAYAS_HOST}/jobs/api/search?q=backend&country=IN&sort=recent&page=${page}`;
 
-const ELIGIBLE = /^(india|asia|apac|asia[- ]pacific)$/i;
+const ELIGIBLE = /^(india|asia|apac|asia[- ]pacific|worldwide|anywhere)$/i;
 
 /** Live restrictions are country-name strings; the docs say `{alpha2, name, slug}` objects. Both are accepted. */
 export function indiaEligible(restrictions: readonly unknown[]): boolean {
   if (restrictions.length === 0) return true;
   return restrictions.some((r) => {
     if (typeof r === 'string') return ELIGIBLE.test(r.trim());
-    if (isRecord(r)) return r.alpha2 === 'IN' || (typeof r.name === 'string' && ELIGIBLE.test(r.name.trim()));
+    if (isRecord(r)) return (typeof r.alpha2 === 'string' && r.alpha2.toUpperCase() === 'IN') || (typeof r.name === 'string' && ELIGIBLE.test(r.name.trim()));
     return false;
   });
 }
@@ -47,10 +50,10 @@ export function himalayasParse(json: unknown): Parsed {
     if (!indiaEligible(job.locationRestrictions)) return;
     postings.push({ source: 'himalayas', sourceId: id, company: job.companyName, slug: HIMALAYAS_FEED, raw: omit(job, DROPPED) });
   });
-  return { postings, skipped };
+  return checkParsed('himalayas', json.jobs.length, { postings, skipped });
 }
 
-export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HOST, 'Fetches India-eligible backend jobs from the Himalayas feed');
+export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HOST, 'Fetches India-eligible backend jobs from the Himalayas feed', HIMALAYAS_TIMEOUT_MS);
 
 export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) => {
   if (req.ats !== 'feed' || req.slug !== HIMALAYAS_FEED) return [];

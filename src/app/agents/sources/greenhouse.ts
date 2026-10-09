@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
+import { checkParsed, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
 
 /**
  * Greenhouse Job Board API: the whole board in one response (no paging).
@@ -25,7 +25,7 @@ export function greenhouseParse(json: unknown, req: DiscoveryRequest): Parsed {
     }
     postings.push({ source: 'greenhouse', sourceId: id, company: req.company, slug: req.slug, raw: job });
   });
-  return { postings, skipped };
+  return checkParsed('greenhouse', json.jobs.length, { postings, skipped });
 }
 
 export const srcGreenhouseContract = sourceContract('src-greenhouse', GREENHOUSE_HOST, 'Fetches one Greenhouse job board');

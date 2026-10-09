@@ -1,4 +1,4 @@
-import type { AgentContext } from '../../../kernel/broker.js';
+import type { AgentContext } from '../../../kernel/agent.js';
 import { defineContract, type Contract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../types.js';
@@ -15,7 +15,8 @@ export const SOURCE_RETRY = {
   backoffMs: [2000, 8000],
 };
 
-export function sourceContract(id: string, host: string, description: string): Contract<DiscoveryRequest, RawPosting> {
+/** `timeoutMs` bounds the whole step, every page included; size it to the adapter's page cap. */
+export function sourceContract(id: string, host: string, description: string, timeoutMs = SOURCE_TIMEOUT_MS): Contract<DiscoveryRequest, RawPosting> {
   return defineContract({
     id,
     version: '1.0.0',
@@ -30,7 +31,7 @@ export function sourceContract(id: string, host: string, description: string): C
     egress: [host],
     dataClasses: { in: ['P0'], out: ['P0'] },
     budget: { usdPerCall: 0, usdPerRun: 0 },
-    timeoutMs: SOURCE_TIMEOUT_MS,
+    timeoutMs,
     retry: { max: SOURCE_RETRY.max, on: [...SOURCE_RETRY.on], backoffMs: [...SOURCE_RETRY.backoffMs] },
   });
 }
@@ -43,9 +44,9 @@ export interface Parsed {
 
 export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** A non-empty string, or a finite number rendered as a string; anything else is not an id. */
+/** A non-blank string (trimmed), or a finite number rendered as a string; anything else is not an id. */
 export function idOf(v: unknown): string | undefined {
-  if (typeof v === 'string' && v.trim() !== '') return v;
+  if (typeof v === 'string' && v.trim() !== '') return v.trim();
   if (typeof v === 'number' && Number.isFinite(v)) return String(v);
   return undefined;
 }
@@ -55,6 +56,18 @@ export function omit(job: Record<string, unknown>, keys: readonly string[]): Rec
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(job)) if (!keys.includes(k)) out[k] = v;
   return out;
+}
+
+/**
+ * A response with jobs in it where every job failed to parse is schema drift, not an empty board:
+ * fail the step (`invalid_output`, not retryable) rather than report "no jobs today".
+ * A partial skip stays silent for now: the agent can only return postings.
+ */
+export function checkParsed(source: string, total: number, parsed: Parsed): Parsed {
+  if (total > 0 && parsed.skipped.length === total) {
+    throw new KernelError('invalid_output', `${source}: all ${total} jobs failed to parse`);
+  }
+  return parsed;
 }
 
 /**

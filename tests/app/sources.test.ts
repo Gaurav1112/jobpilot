@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ashbyParse, srcAshby } from '../../src/app/agents/sources/ashby.js';
 import { greenhouseParse, srcGreenhouse } from '../../src/app/agents/sources/greenhouse.js';
-import { himalayasParse, indiaEligible, srcHimalayas } from '../../src/app/agents/sources/himalayas.js';
+import { HIMALAYAS_MAX_PAGES, himalayasParse, indiaEligible, srcHimalayas } from '../../src/app/agents/sources/himalayas.js';
 import { jobicyParse, srcJobicy } from '../../src/app/agents/sources/jobicy.js';
-import { leverParse, srcLever } from '../../src/app/agents/sources/lever.js';
+import { LEVER_MAX_PAGES, leverParse, srcLever } from '../../src/app/agents/sources/lever.js';
 import type { DiscoveryRequest, RawPosting } from '../../src/app/types.js';
 import { RawPosting as RawPostingType } from '../../src/app/types.js';
 import type { Agent } from '../../src/kernel/agent.js';
@@ -62,22 +62,94 @@ const EMPTY_HM = JSON.stringify({ jobs: [] });
 
 describe('source contracts', () => {
   it.each([
-    [srcGreenhouse, 'src-greenhouse', 'boards-api.greenhouse.io'],
-    [srcLever, 'src-lever', 'api.lever.co'],
-    [srcAshby, 'src-ashby', 'api.ashbyhq.com'],
-    [srcHimalayas, 'src-himalayas', 'himalayas.app'],
-    [srcJobicy, 'src-jobicy', 'jobicy.com'],
-  ])('%#: id, team, kind, egress, timeout, retry', (agent, id, host) => {
+    [srcGreenhouse, 'src-greenhouse', 'boards-api.greenhouse.io', 30_000],
+    [srcLever, 'src-lever', 'api.lever.co', 180_000],
+    [srcAshby, 'src-ashby', 'api.ashbyhq.com', 30_000],
+    [srcHimalayas, 'src-himalayas', 'himalayas.app', 60_000],
+    [srcJobicy, 'src-jobicy', 'jobicy.com', 30_000],
+  ])('%#: id, team, kind, egress, timeout, retry', (agent, id, host, timeoutMs) => {
     const c = agent.contract;
     expect(c.id).toBe(id);
     expect(c.team).toBe('sourcing');
     expect(c.kind).toBe('io');
     expect(c.capabilities).toEqual({ http: true });
     expect(c.egress).toEqual([host]);
-    expect(c.timeoutMs).toBe(30_000);
+    expect(c.timeoutMs).toBe(timeoutMs);
     expect(c.retry).toEqual({ max: 2, on: ['rate_limit', 'overloaded', 'network', 'timeout'], backoffMs: [2000, 8000] });
     expect(c.consumes.name).toBe('DiscoveryRequest');
     expect(c.produces.name).toBe('RawPosting');
+  });
+});
+
+describe('fix round 1', () => {
+  it('src-lever timeout leaves at least 9 s per page at the page cap', () => {
+    expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
+    expect(srcHimalayas.contract.timeoutMs / HIMALAYAS_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
+  });
+
+  it('a non-empty response where every job fails to parse → invalid_output, not []', async () => {
+    const bad = JSON.stringify({ jobs: [{ nope: 1 }, { nope: 2 }] });
+    const cases: [Agent<DiscoveryRequest, RawPosting>, DiscoveryRequest, Record<string, { body: string }>, string][] = [
+      [srcGreenhouse, req('greenhouse', 'gitlab'), { [GH]: { body: bad } }, 'greenhouse: all 2 jobs failed to parse'],
+      [srcLever, req('lever', 'veeva'), { [LV(0)]: { body: '[{"nope":1},{"nope":2}]' } }, 'lever: all 2 jobs failed to parse'],
+      [srcAshby, req('ashby', 'confluent'), { [AB]: { body: bad } }, 'ashby: all 2 jobs failed to parse'],
+      [srcHimalayas, req('feed', 'himalayas'), { [HM(1)]: { body: bad } }, 'himalayas: all 2 jobs failed to parse'],
+      [srcJobicy, req('feed', 'jobicy'), { [JB('apac')]: { body: bad }, [JB('anywhere')]: { body: bad } }, 'jobicy: all 2 jobs failed to parse'],
+    ];
+    for (const [agent, r, routes, message] of cases) {
+      await expect(run(agent, r, serve(routes)), agent.contract.id).rejects.toMatchObject({ code: 'invalid_output', message });
+    }
+  });
+
+  it('an empty board is still [] (not a parse failure)', async () => {
+    await expect(run(srcGreenhouse, req('greenhouse', 'gitlab'), serve({ [GH]: { body: '{"jobs":[]}' } }))).resolves.toEqual([]);
+    await expect(run(srcLever, req('lever', 'veeva'), serve({ [LV(0)]: { body: '[]' } }))).resolves.toEqual([]);
+  });
+
+  it('an object-shaped board answering a top-level [] → invalid_output', async () => {
+    await expect(run(srcGreenhouse, req('greenhouse', 'gitlab'), serve({ [GH]: { body: '[]' } }))).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(run(srcAshby, req('ashby', 'confluent'), serve({ [AB]: { body: '[]' } }))).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+
+  it('ids are trimmed; a blank id is malformed', () => {
+    const parsed = greenhouseParse({ jobs: [{ id: ' 3 ', title: 't' }, { id: '   ', title: 'u' }, { id: 4, title: 'v' }] }, req('greenhouse', 'g'));
+    expect(parsed.postings.map((p) => p.sourceId)).toEqual(['3', '4']);
+    expect(parsed.skipped).toHaveLength(1);
+  });
+
+  it('lever: a full page followed by an empty page stops after two requests', async () => {
+    const full = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `id-${String(i).padStart(3, '0')}`, text: 't' })));
+    const rec = serve({ [LV(0)]: { body: full }, [LV(100)]: { body: '[]' } });
+    await expect(run(srcLever, req('lever', 'veeva'), rec)).resolves.toHaveLength(100);
+    expect(rec.urls).toEqual([LV(0), LV(100)]);
+  });
+
+  it('lever: an API that ignores skip stays bounded at the page cap', async () => {
+    const full = JSON.stringify(Array.from({ length: 100 }, (_, i) => ({ id: `id-${i}`, text: 't' })));
+    const fetch: FetchLike = async () => ({ status: 200, text: async () => full });
+    const urls: string[] = [];
+    const rec: Recorder = { fetch: async (u, init) => (urls.push(u), fetch(u, init)), urls, headers: [] };
+    await expect(run(srcLever, req('lever', 'veeva'), rec)).resolves.toHaveLength(100);
+    expect(urls).toHaveLength(LEVER_MAX_PAGES);
+  });
+
+  it('himalayas: an error on page 2 fails the whole step (idempotent GETs, retried as a unit)', async () => {
+    const rec = serve({ [HM(1)]: { body: fixture('himalayas') }, [HM(2)]: { status: 400, body: 'bad' } });
+    await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).rejects.toMatchObject({ code: 'invalid_output' });
+  });
+
+  it('himalayas: worldwide or anywhere restrictions, and lower-case alpha2, are eligible', () => {
+    expect(indiaEligible(['Worldwide'])).toBe(true);
+    expect(indiaEligible(['Anywhere'])).toBe(true);
+    expect(indiaEligible([{ alpha2: 'in' }])).toBe(true);
+  });
+
+  it('jobicy: a job in both answers keeps the apac copy', async () => {
+    const job = (geo: string) => ({ id: 7, jobTitle: 'Backend Engineer', companyName: 'Acme', jobGeo: geo });
+    const rec = serve({ [JB('apac')]: { body: JSON.stringify({ jobs: [job('APAC')] }) }, [JB('anywhere')]: { body: JSON.stringify({ jobs: [job('Anywhere')] }) } });
+    const out = await run(srcJobicy, req('feed', 'jobicy'), rec);
+    expect(out).toHaveLength(1);
+    expect((out[0]!.raw as { jobGeo: string }).jobGeo).toBe('APAC');
   });
 });
 

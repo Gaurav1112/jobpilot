@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
+import { checkParsed, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
 
 /**
  * Jobicy remote-jobs API: two requests per step, `geo=apac` then `geo=anywhere`, each with
@@ -28,7 +28,7 @@ export function jobicyParse(json: unknown): Parsed {
     }
     postings.push({ source: 'jobicy', sourceId: id, company: job.companyName, slug: JOBICY_FEED, raw: job });
   });
-  return { postings, skipped };
+  return checkParsed('jobicy', json.jobs.length, { postings, skipped });
 }
 
 export const srcJobicyContract = sourceContract('src-jobicy', JOBICY_HOST, 'Fetches APAC or worldwide backend jobs from the Jobicy feed');

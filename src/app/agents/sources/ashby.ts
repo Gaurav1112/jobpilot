@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
+import { checkParsed, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
 
 /**
  * Ashby posting API: the whole board in one response, compensation included.
@@ -25,7 +25,7 @@ export function ashbyParse(json: unknown, req: DiscoveryRequest): Parsed {
     }
     postings.push({ source: 'ashby', sourceId: id, company: req.company, slug: req.slug, raw: job });
   });
-  return { postings, skipped };
+  return checkParsed('ashby', json.jobs.length, { postings, skipped });
 }
 
 export const srcAshbyContract = sourceContract('src-ashby', ASHBY_HOST, 'Fetches one Ashby job board');
