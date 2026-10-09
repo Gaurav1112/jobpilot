@@ -6,7 +6,8 @@ import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
 import { assertNoForbidden, citeable, ForbiddenTermError, loadPack } from '../../src/app/pack/load.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
-import { compileRoleDeny } from '../../src/app/pack/regex.js';
+import { compileRoleDeny, compileSafePattern } from '../../src/app/pack/regex.js';
+import { WatchEntrySchema } from '../../src/app/pack/schema.js';
 
 const FIXTURE = resolve(import.meta.dirname, '../fixtures/pack');
 const tmp: string[] = [];
@@ -54,7 +55,7 @@ describe('loadPack', () => {
     expect(statuses.has('rejected')).toBe(true);
     expect(pack.facts.some((f) => f.kind === 'cert')).toBe(true);
     expect(pack.roles.map((r) => r.employer)).toEqual(['Northwind Labs', 'Contoso Retail', 'Fabrikam']);
-    expect(pack.watchlist.map((w) => w.ats).sort()).toEqual(['ashby', 'greenhouse', 'lever']);
+    expect(pack.watchlist.map((w) => w.ats).sort()).toEqual(['ashby', 'careers', 'greenhouse', 'lever']);
     expect(pack.naming.forbiddenTerms).toEqual(['Initech']);
     const raw = pack.facts.find((f) => f.employer.startsWith('Initech'));
     expect(raw).toBeDefined();
@@ -269,5 +270,47 @@ describe('load hardening', () => {
     const d = copyFixture();
     writeFileSync(join(d, 'policy.user.yaml'), 'x: .nan\n');
     expect(() => loadPack(d)).toThrow(/policy\.user\.yaml/);
+  });
+});
+
+describe('watchlist: careers entries', () => {
+  const base = { company: 'Example Careers Co', ats: 'careers', slug: 'example-careers', hiresInIndia: true, allRemote: false };
+  const ok = (v: unknown) => WatchEntrySchema.safeParse(v).success;
+
+  it('the fixture carries one careers entry with an https listUrl', () => {
+    const careers = loadPack(FIXTURE).pack.watchlist.filter((w) => w.ats === 'careers');
+    expect(careers).toHaveLength(1);
+    expect(careers[0]?.listUrl).toMatch(/^https:\/\//);
+  });
+
+  it('accepts an https listUrl, with or without a safe linkPattern', () => {
+    expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs' })).toBe(true);
+    expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs', linkPattern: '^/jobs/\\d+' })).toBe(true);
+  });
+
+  it('requires listUrl for careers, and https with no port or credentials', () => {
+    expect(ok(base)).toBe(false);
+    for (const u of ['http://careers.example.com/jobs', 'https://careers.example.com:8443/jobs', 'https://u:p@careers.example.com/jobs', 'not a url', 'ftp://x.example/']) {
+      expect(ok({ ...base, listUrl: u }), u).toBe(false);
+    }
+  });
+
+  it('requires a kebab slug for careers', () => {
+    expect(ok({ ...base, slug: 'Example Careers', listUrl: 'https://careers.example.com/jobs' })).toBe(false);
+  });
+
+  it('rejects an unsafe or invalid linkPattern', () => {
+    for (const p of ['(a+)+$', '(', 'a'.repeat(201)]) expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs', linkPattern: p }), p).toBe(false);
+  });
+
+  it('rejects listUrl or linkPattern on an API entry', () => {
+    const gh = { company: 'X', ats: 'greenhouse', slug: 'x', hiresInIndia: true, allRemote: false };
+    expect(ok(gh)).toBe(true);
+    expect(ok({ ...gh, listUrl: 'https://x.example/jobs' })).toBe(false);
+    expect(ok({ ...gh, linkPattern: 'jobs' })).toBe(false);
+  });
+
+  it('compileSafePattern is the neutral name of the roleDeny compiler', () => {
+    expect(compileSafePattern).toBe(compileRoleDeny);
   });
 });

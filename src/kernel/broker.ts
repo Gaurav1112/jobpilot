@@ -4,7 +4,7 @@ import type { DataClass } from './data-class.js';
 import type { Cost } from './envelope.js';
 import { KernelError } from './errors.js';
 import { egressAllowed, normalizeHost, type Policy } from './policy.js';
-import type { FetchResponse, LlmResponse, Providers } from './providers.js';
+import type { BrowserPage, FetchResponse, LlmResponse, Providers } from './providers.js';
 
 export interface HttpTool {
   getText(url: string): Promise<{ status: number; body: string }>;
@@ -69,6 +69,17 @@ async function readCapped(res: FetchResponse, maxBytes: number): Promise<string>
   return text;
 }
 
+/** Read-only page rendering. The only option is the URL: the broker fixes everything else. */
+export interface BrowserTool {
+  render(url: string): Promise<BrowserPage>;
+}
+
+/**
+ * A page that matches this, or answers 403 or 429, is a CAPTCHA or bot wall: the render fails with
+ * `challenged`, which is never retried. jobpilot stops; it does not try to get past it.
+ */
+export const CHALLENGE_PATTERN = /captcha|cf-challenge|are you a robot|access denied/i;
+
 export interface LlmTool {
   complete(req: { system: string; prompt: string }): Promise<LlmResponse>;
 }
@@ -83,6 +94,8 @@ export interface AgentContext {
   readonly signal: AbortSignal;
   readonly http?: HttpTool;
   readonly llm?: LlmTool;
+  /** Present only when the contract declares `capabilities.browser`. */
+  readonly browser?: BrowserTool;
   /** The user's pack, deep-frozen; present only when the contract declares `capabilities.pack`. */
   readonly pack?: Readonly<unknown>;
   spent(): Cost;
@@ -105,6 +118,8 @@ export interface IssueArgs {
   readonly pack?: unknown;
   /** Shared per-host pacing; without one, requests are not paced (unit tests, evals). */
   readonly hostPacer?: HostPacer;
+  /** Shared per-host pacing of browser renders (`policy.minBrowserIntervalMs`), applied before `hostPacer`. */
+  readonly browserPacer?: HostPacer;
 }
 
 /** Freezes every object reachable from `v`, in place. Cycles are safe. Typed arrays and DataViews cannot be frozen, so they are skipped. */
@@ -172,18 +187,24 @@ export function issueContext(a: IssueArgs): AgentContext {
 
   if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = a.pack;
 
+  /** https only, no explicit port, no credentials, and an egress host the policy allows. */
+  const checkUrl = (url: string): URL => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      throw deny('G-EGRESS: invalid URL');
+    }
+    if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${u.protocol}//${u.hostname})`);
+    if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
+    if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
+    checkHost(u.hostname);
+    return u;
+  };
+
   if (a.contract.capabilities.http) {
     const getText = async (url: string): Promise<{ status: number; body: string }> => {
-      let u: URL;
-      try {
-        u = new URL(url);
-      } catch {
-        throw deny('G-EGRESS: invalid URL');
-      }
-      if (u.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (${u.protocol}//${u.hostname})`);
-      if (u.port !== '') throw deny(`G-EGRESS: explicit ports are not allowed (${u.hostname})`);
-      if (u.username !== '' || u.password !== '') throw deny('G-EGRESS: credentials in URLs are not allowed');
-      checkHost(u.hostname);
+      const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       await a.hostPacer?.wait(u.hostname);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
@@ -214,6 +235,54 @@ export function issueContext(a: IssueArgs): AgentContext {
           throw new KernelError('invalid_output', `response from ${new URL(url).hostname} is not valid JSON`);
         }
         return { status, json };
+      },
+    };
+  }
+
+  const browserCap = a.contract.capabilities.browser;
+  if (browserCap) {
+    let pages = 0;
+    ctx.browser = {
+      async render(url) {
+        const u = checkUrl(url);
+        if (pages >= browserCap.maxPages) {
+          throw new KernelError('budget_exceeded', `G-BUDGET: page budget of ${browserCap.maxPages} pages reached in this step`);
+        }
+        const provider = a.providers.browser;
+        if (!provider) throw deny('no browser provider is configured');
+        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new renders');
+        pages += 1;
+        await a.browserPacer?.wait(u.hostname);
+        await a.hostPacer?.wait(u.hostname);
+        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new renders');
+        let page: BrowserPage;
+        try {
+          // A redirect may only land on an egress host the policy also allows for this data class.
+          const navigationHosts = a.contract.egress.filter((h) => egressAllowed(a.policy, h, a.inputClass));
+          page = await provider.render({ url: u.href, navigationHosts, deniedHosts: [...a.policy.deniedEgressHosts], signal: a.signal });
+        } catch (e) {
+          throw mapProviderError(e);
+        }
+        // The landing page is checked like the request: a redirect may not leave egress or drop to http.
+        let final: URL;
+        try {
+          final = new URL(page.finalUrl);
+        } catch {
+          throw deny(`G-EGRESS: render of ${u.hostname} ended on an invalid URL`);
+        }
+        if (final.protocol !== 'https:') throw deny(`G-EGRESS: only https is allowed (redirect to ${final.protocol}//${final.hostname})`);
+        if (normalizeHost(final.hostname) !== normalizeHost(u.hostname) && !a.contract.egress.includes(final.hostname)) {
+          throw deny(`G-EGRESS: redirect from ${u.hostname} to ${final.hostname} refused`);
+        }
+        checkUrl(final.href);
+        if (Buffer.byteLength(page.html, 'utf8') > a.policy.maxResponseBytes) {
+          throw new KernelError('invalid_output', `response exceeds ${a.policy.maxResponseBytes} bytes`);
+        }
+        if (page.status === 403 || page.status === 429 || CHALLENGE_PATTERN.test(page.html)) {
+          throw new KernelError('challenged', `G-CHALLENGE: ${final.hostname} answered ${page.status} with a bot wall or CAPTCHA; stopping without retry`);
+        }
+        if (page.status >= 500) throw new KernelError('overloaded', `${page.status} from ${final.hostname}`);
+        return { status: page.status, finalUrl: page.finalUrl, html: page.html, text: page.text, jsonLd: [...page.jsonLd] };
       },
     };
   }

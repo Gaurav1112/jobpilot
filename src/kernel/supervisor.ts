@@ -80,6 +80,8 @@ export class Supervisor {
   private readonly sleep: (ms: number) => Promise<void>;
   /** One per supervisor: every step's requests to a host share its spacing. */
   private readonly hostPacer: HostPacer;
+  /** One per supervisor: browser renders of a host are also spaced by policy.minBrowserIntervalMs. */
+  private readonly browserPacer: HostPacer;
   /** One frozen deep copy of each pack, made once; the caller's objects are left alone. */
   private readonly pack: unknown;
   private readonly fullPack: unknown;
@@ -87,6 +89,7 @@ export class Supervisor {
   constructor(private readonly d: SupervisorDeps) {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+    this.browserPacer = createHostPacer(d.policy.minBrowserIntervalMs, d.clock, this.sleep);
     this.pack = d.pack === undefined ? undefined : freezePack(d.pack);
     this.fullPack = d.fullPack === undefined ? undefined : freezePack(d.fullPack);
   }
@@ -102,6 +105,7 @@ export class Supervisor {
       guardrails: d.guardrails,
       sleep: this.sleep,
       hostPacer: this.hostPacer,
+      browserPacer: this.browserPacer,
       ...(this.pack !== undefined ? { pack: this.pack } : {}),
       ...(d.packHash !== undefined ? { packHash: d.packHash } : {}),
       ...(this.fullPack !== undefined ? { fullPack: this.fullPack } : {}),

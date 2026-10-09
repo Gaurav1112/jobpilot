@@ -17,6 +17,12 @@ export interface Capabilities {
    * pack edit re-runs only the agents that read it.
    */
   readonly pack?: true | 'full';
+  /**
+   * Read-only page rendering as `ctx.browser.render(url)`, at most `maxPages` renders per step, to the exact
+   * `egress` hosts only. There is deliberately nothing else here: no stealth, proxy, user-agent, header or
+   * fingerprint option exists (G-NO-EVASION), and the strict meta-schema rejects any extra key.
+   */
+  readonly browser?: { readonly maxPages: number };
 }
 
 export interface ObligationSpec {
@@ -81,6 +87,7 @@ const Meta = z
         http: z.literal(true).optional(),
         llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
         pack: z.union([z.literal(true), z.literal('full')]).optional(),
+        browser: z.object({ maxPages: z.number().int().positive().max(500) }).strict().optional(),
       })
       .strict(),
     egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
@@ -97,7 +104,7 @@ const Meta = z
       .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
       .strict()
       .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
-    timeoutMs: z.number().int().positive().max(900_000),
+    timeoutMs: z.number().int().positive().max(1_800_000),
     retry: z
       .object({
         max: z.number().int().min(0).max(5),
@@ -154,6 +161,7 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
       ...(capabilities.http ? { http: capabilities.http } : {}),
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
       ...(capabilities.pack ? { pack: capabilities.pack } : {}),
+      ...(capabilities.browser ? { browser: { maxPages: capabilities.browser.maxPages } } : {}),
     },
     egress: [...c.egress],
     dataClasses: { in: [...c.dataClasses.in], out: [...c.dataClasses.out] },
@@ -172,7 +180,12 @@ function checkKindCapabilities(c: AnyContract): void {
   const httpKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
   if (c.capabilities.http && !httpKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.http`);
   if (c.capabilities.http && c.egress.length === 0) problems.push('capabilities.http requires at least one egress host');
-  if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm) problems.push('egress requires capabilities.http or capabilities.llm');
+  const browserKinds: readonly AgentKind[] = ['io', 'io-session'];
+  if (c.capabilities.browser && !browserKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.browser`);
+  if (c.capabilities.browser && c.egress.length === 0) problems.push('capabilities.browser requires at least one egress host');
+  if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm && !c.capabilities.browser) {
+    problems.push('egress requires capabilities.http, capabilities.llm or capabilities.browser');
+  }
   if ((c.kind === 'deterministic' || c.kind === 'human') && c.egress.length > 0) problems.push(`kind ${c.kind} may not declare egress`);
   if (c.kind === 'deterministic' && c.budget.usdPerCall > 0) problems.push('kind deterministic has no spend, so budget must be 0');
   if (c.emits !== undefined && !c.dataClasses.out.includes(c.emits)) problems.push(`emits ${c.emits} is not in dataClasses.out`);

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isAgentCode, scanAgentSource } from './support/agent-scan.js';
+import { APP_ALLOWED, isAgentCode, scanAgentSource } from './support/agent-scan.js';
 
 const root = join(import.meta.dirname, '..');
 const SOURCE_EXT = /\.(ts|mts|cts|tsx|js|mjs|cjs)$/;
@@ -57,13 +57,13 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
     .filter((d) => existsSync(d))
     .flatMap(walk)
     .filter((f) => isAgentCode(rel(f)))
-    // Not agent code, but agent code may import it, so it must pass the same scan.
-    .concat([join(root, 'src/app/types.ts')]);
+    // Not agent code, but agent code may import them, so they must pass the same scan.
+    .concat(APP_ALLOWED.map((f) => join(root, f)));
   const AT = 'src/agents/jobs/score.ts';
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
     expect(agentFiles.map(rel)).toEqual(
-      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts']),
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts']),
     );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
   });

@@ -5,7 +5,7 @@ import { canonicalJson } from '../kernel/canonical.js';
 import { fixedClock } from '../kernel/clock.js';
 import { classify, KernelError } from '../kernel/errors.js';
 import type { Policy } from '../kernel/policy.js';
-import type { FetchLike, Providers } from '../kernel/providers.js';
+import type { BrowserProvider, FetchLike, Providers } from '../kernel/providers.js';
 import { exactMatch } from './metrics.js';
 
 export interface EvalCase {
@@ -72,15 +72,23 @@ const offlineFetch: FetchLike = async () => {
   throw new KernelError('policy_denied', 'evals are offline');
 };
 
+/** Evals never open a browser either: whatever provider the caller passes, agents get this one. */
+const offlineBrowser: BrowserProvider = {
+  async render() {
+    throw new KernelError('policy_denied', 'evals are offline');
+  },
+};
+
 const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
 
 /**
  * Runs each case through the agent with the same broker it gets in production; schema failures count as wrong.
- * Evals are forced offline: `env.providers.fetch` is ignored and every HTTP request fails with `policy_denied`.
+ * Evals are forced offline: `env.providers.fetch` and `env.providers.browser` are ignored, and every HTTP request
+ * or browser render fails with `policy_denied`.
  */
 export async function runEval(spec: EvalSpec, env: { providers: Providers; policy: Policy }): Promise<EvalReport> {
   const c = spec.agent.contract;
-  const providers: Providers = { ...env.providers, fetch: offlineFetch };
+  const providers: Providers = { ...env.providers, fetch: offlineFetch, browser: offlineBrowser };
   if (spec.cases.length === 0) throw new Error(`eval ${c.id}: no cases`);
   if (!(spec.min > 0 && spec.min <= 1)) throw new Error(`eval ${c.id}: min must be in (0, 1]`);
   const pairs: { id: string; expected: unknown; actual: unknown }[] = [];

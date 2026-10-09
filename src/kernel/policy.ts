@@ -18,6 +18,8 @@ export interface Policy {
   readonly maxResponseBytes: number;
   /** Minimum gap between two requests to the same host within one supervisor, in ms. A user may only raise it. */
   readonly minHostIntervalMs: number;
+  /** Minimum gap between two browser renders on the same host within one supervisor, in ms, on top of minHostIntervalMs. A user may only raise it. */
+  readonly minBrowserIntervalMs: number;
   readonly maxSubmitsPerDay: number;
   readonly requireApprovalForEffects: boolean;
   /** Agent ids allowed to lower a data class (declared `redactor: true`). */
@@ -40,7 +42,8 @@ function deepFreeze<T>(value: T): T {
 /** The product safety floor. A user policy may tighten it, never loosen it. */
 export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   version: 'product.v1',
-  deniedEgressHosts: [],
+  // Job boards whose terms forbid automated access: no agent may reach them, by http or browser, whatever a contract lists.
+  deniedEgressHosts: ['glassdoor.com', 'indeed.com', 'linkedin.com', 'naukri.com'],
   deniedSubmitHosts: ['linkedin.com', 'naukri.com', 'indeed.com'],
   egressClasses: { 'api.anthropic.com': ['P0'] },
   defaultEgressClasses: ['P0'],
@@ -48,6 +51,7 @@ export const PRODUCT_POLICY_V1: Policy = deepFreeze<Policy>({
   maxPayloadBytes: 262_144,
   maxResponseBytes: 16_777_216,
   minHostIntervalMs: 1000,
+  minBrowserIntervalMs: 10_000,
   maxSubmitsPerDay: 10,
   requireApprovalForEffects: true,
   redactors: [],
@@ -64,6 +68,7 @@ const UserPolicy = z
     maxSubmitsPerDay: z.number().int().nonnegative().optional(),
     maxResponseBytes: z.number().int().positive().optional(),
     minHostIntervalMs: z.number().int().nonnegative().optional(),
+    minBrowserIntervalMs: z.number().int().nonnegative().optional(),
     requireApprovalForEffects: z.boolean().optional(),
     redactors: z.array(z.string().regex(/^[a-z][a-z0-9-]*$/)).optional(),
   })
@@ -103,6 +108,9 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
   if (user.minHostIntervalMs !== undefined && user.minHostIntervalMs < product.minHostIntervalMs) {
     violations.push(`minHostIntervalMs may only be raised (product ${product.minHostIntervalMs}, user ${user.minHostIntervalMs})`);
   }
+  if (user.minBrowserIntervalMs !== undefined && user.minBrowserIntervalMs < product.minBrowserIntervalMs) {
+    violations.push(`minBrowserIntervalMs may only be raised (product ${product.minBrowserIntervalMs}, user ${user.minBrowserIntervalMs})`);
+  }
   if (user.requireApprovalForEffects === false && product.requireApprovalForEffects) {
     violations.push('requireApprovalForEffects cannot be turned off');
   }
@@ -131,6 +139,7 @@ export function mergePolicy(product: Policy, userRaw: unknown): Policy {
     maxSubmitsPerDay: user.maxSubmitsPerDay ?? product.maxSubmitsPerDay,
     maxResponseBytes: user.maxResponseBytes ?? product.maxResponseBytes,
     minHostIntervalMs: user.minHostIntervalMs ?? product.minHostIntervalMs,
+    minBrowserIntervalMs: user.minBrowserIntervalMs ?? product.minBrowserIntervalMs,
     redactors: [...new Set(user.redactors ?? product.redactors)].sort(),
   });
 }

@@ -1,8 +1,9 @@
 import type { AgentContext } from './broker.js';
 import type { Contract } from './contract.js';
 
-/** Re-exported so agent code can name its context type without importing the broker. */
+/** Re-exported so agent code can name its context and page types without importing the broker or providers. */
 export type { AgentContext };
+export type { BrowserPage } from './providers.js';
 
 export interface Agent<I = unknown, O = unknown> {
   readonly contract: Contract<I, O>;

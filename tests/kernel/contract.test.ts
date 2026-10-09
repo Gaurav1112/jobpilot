@@ -36,9 +36,9 @@ describe('defineContract', () => {
     expect(() => defineContract({ ...base, description: 'Parses and scores a posting' })).toThrow(/split it/);
   });
 
-  it('allows a step timeout up to 15 minutes (a fully paged source board), not beyond', () => {
-    expect(defineContract({ ...base, timeoutMs: 900_000 }).timeoutMs).toBe(900_000);
-    expect(() => defineContract({ ...base, timeoutMs: 900_001 })).toThrow(/timeoutMs/);
+  it('allows a step timeout up to 30 minutes (a 60-page career site at 10 s + 20 s per page), not beyond', () => {
+    expect(defineContract({ ...base, timeoutMs: 1_800_000 }).timeoutMs).toBe(1_800_000);
+    expect(() => defineContract({ ...base, timeoutMs: 1_800_001 })).toThrow(/timeoutMs/);
   });
 
   it('rejects non-semver versions and non-kebab ids', () => {
@@ -138,7 +138,7 @@ describe('defineContract', () => {
 
   it('requires egress for http and http or llm for egress', () => {
     expect(() => defineContract({ ...base, kind: 'io', capabilities: { http: true } })).toThrow(/capabilities.http requires at least one egress host/);
-    expect(() => defineContract({ ...base, kind: 'io', egress: ['example.com'] })).toThrow(/egress requires capabilities.http or capabilities.llm/);
+    expect(() => defineContract({ ...base, kind: 'io', egress: ['example.com'] })).toThrow(/egress requires capabilities.http, capabilities.llm or capabilities.browser/);
   });
 
   it('accepts a valid io contract and a valid llm contract', () => {

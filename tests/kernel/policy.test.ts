@@ -70,7 +70,7 @@ describe('policy hardening', () => {
 
   it('normalises user host entries before merging', () => {
     const p = mergePolicy(PRODUCT_POLICY_V1, { deniedEgressHosts: ['Tracker.Example.'] });
-    expect(p.deniedEgressHosts).toEqual(['tracker.example']);
+    expect(p.deniedEgressHosts).toEqual(['glassdoor.com', 'indeed.com', 'linkedin.com', 'naukri.com', 'tracker.example']);
   });
 
   it('survives prototype-named hosts', () => {

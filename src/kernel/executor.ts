@@ -42,6 +42,8 @@ export interface ExecutorDeps {
   readonly fullPackHash?: string;
   /** Per-host request pacing shared by every step of one supervisor. */
   readonly hostPacer?: HostPacer;
+  /** Per-host browser render pacing (policy.minBrowserIntervalMs) shared by every step of one supervisor. */
+  readonly browserPacer?: HostPacer;
 }
 
 export type StepOutcome =
@@ -192,6 +194,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         priorSpend,
         ...(agentPack !== undefined ? { pack: agentPack } : {}),
         ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
+        ...(deps.browserPacer ? { browserPacer: deps.browserPacer } : {}),
       });
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {

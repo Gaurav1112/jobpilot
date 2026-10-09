@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { definePredicate } from '../kernel/predicates.js';
 import { defineType } from '../kernel/types.js';
 
-const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed']);
+const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers']);
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
 const JobKey = z.string().regex(/^[0-9a-f]{16}$/, 'expected 16 lowercase hex chars');
@@ -198,7 +198,7 @@ export type QaReport = z.infer<typeof QaReport.schema>;
 // score floor, so the scoring agent checks it directly (see Task 7).
 export const knownAts = definePredicate<DiscoveryRequest>(
   'req.known-ats',
-  'ats is one of greenhouse, lever, ashby, feed',
+  'ats is one of greenhouse, lever, ashby, feed, careers',
   (r) => Ats.safeParse(r.ats).success,
 );
 export const hasTitleUrl = definePredicate<Posting>(

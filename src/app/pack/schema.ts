@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { compileRoleDeny } from './regex.js';
+import { compileSafePattern } from './regex.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
 const Currency = z.enum(['INR', 'USD', 'EUR', 'GBP']);
@@ -45,7 +45,7 @@ export const TargetsSchema = z.strictObject({
 
 const RegexSource = z.string().superRefine((s, ctx) => {
   try {
-    compileRoleDeny(s);
+    compileSafePattern(s);
   } catch (e) {
     ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'not a valid regular expression' });
   }
@@ -84,13 +84,45 @@ export const FxSchema = z.strictObject({
 
 export const AnswersSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));
 
-export const WatchEntrySchema = z.strictObject({
-  company: z.string().min(1),
-  ats: z.enum(['greenhouse', 'lever', 'ashby']),
-  slug: z.string().min(1),
-  hiresInIndia: z.boolean(),
-  allRemote: z.boolean(),
+/** An https URL with no explicit port and no credentials: the only kind the broker will render. */
+const ListUrl = z.string().superRefine((s, ctx) => {
+  let u: URL;
+  try {
+    u = new URL(s);
+  } catch {
+    ctx.addIssue({ code: 'custom', message: 'listUrl is not a valid URL' });
+    return;
+  }
+  if (u.protocol !== 'https:') ctx.addIssue({ code: 'custom', message: 'listUrl must be https' });
+  if (u.port !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not name a port' });
+  if (u.username !== '' || u.password !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not carry credentials' });
 });
+
+/**
+ * One employer to watch. API boards (`greenhouse`, `lever`, `ashby`) are found by `slug`. A `careers` entry is a
+ * career site without a public API, rendered by `src-careers`: `slug` is a kebab id, `listUrl` the https page that
+ * lists every job, and `linkPattern` an optional regex (safety-checked, flags 'iu') tested against each same-host
+ * link's path plus query to pick the job links. The careers hosts also become `src-careers`'s exact egress.
+ */
+export const WatchEntrySchema = z
+  .strictObject({
+    company: z.string().min(1),
+    ats: z.enum(['greenhouse', 'lever', 'ashby', 'careers']),
+    slug: z.string().min(1),
+    listUrl: ListUrl.optional(),
+    linkPattern: RegexSource.optional(),
+    hiresInIndia: z.boolean(),
+    allRemote: z.boolean(),
+  })
+  .superRefine((w, ctx) => {
+    if (w.ats === 'careers') {
+      if (w.listUrl === undefined) ctx.addIssue({ code: 'custom', path: ['listUrl'], message: 'listUrl is required when ats is careers' });
+      if (!/^[a-z][a-z0-9-]*$/.test(w.slug)) ctx.addIssue({ code: 'custom', path: ['slug'], message: 'a careers slug must be a kebab id' });
+    } else {
+      if (w.listUrl !== undefined) ctx.addIssue({ code: 'custom', path: ['listUrl'], message: `listUrl is only for ats careers, not ${w.ats}` });
+      if (w.linkPattern !== undefined) ctx.addIssue({ code: 'custom', path: ['linkPattern'], message: `linkPattern is only for ats careers, not ${w.ats}` });
+    }
+  });
 export const WatchlistFile = z.strictObject({ watchlist: z.array(WatchEntrySchema) });
 
 export const FeedsSchema = z.strictObject({ enabled: z.array(z.string()) });

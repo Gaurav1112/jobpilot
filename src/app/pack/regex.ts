@@ -39,9 +39,15 @@ export function unsafeRegexReason(source: string): string | null {
   return null;
 }
 
-/** The one way to compile a roleDeny pattern: fixed flags 'iu', safety-checked. Throws on unsafe or invalid input. */
-export function compileRoleDeny(pattern: string): RegExp {
+/**
+ * The one way to compile a user-supplied pattern (roleDeny, a careers linkPattern): fixed flags 'iu',
+ * safety-checked. Throws on unsafe or invalid input. This module imports nothing, so agent code may use it.
+ */
+export function compileSafePattern(pattern: string): RegExp {
   const reason = unsafeRegexReason(pattern);
   if (reason !== null) throw new Error(reason);
   return new RegExp(pattern, 'iu');
 }
+
+/** The roleDeny name for `compileSafePattern`. */
+export const compileRoleDeny = compileSafePattern;

@@ -6,6 +6,8 @@ export const ERROR_CODES = [
   'invalid_output',
   'policy_denied',
   'budget_exceeded',
+  /** A CAPTCHA or bot wall answered a browser render. Never retried: jobpilot does not evade. */
+  'challenged',
   'unknown',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

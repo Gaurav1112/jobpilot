@@ -1,0 +1,5 @@
+[
+  { "path": "/jobs/backend-engineer", "title": "Senior Backend Engineer" },
+  { "path": "/jobs/data-engineer?utm_source=list#apply", "title": "Data Engineer" },
+  { "path": "https://elsewhere.example/jobs/not-ours", "title": "Not ours" }
+]

@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><title>Careers at Example Careers Co</title></head>
+<body>
+  <nav><a href="/about">About us</a> <a href="/listing.html">Open roles</a></nav>
+  <main>
+    <h1>Open roles</h1>
+    <p id="status">Loading roles…</p>
+    <ul id="jobs"></ul>
+    <img src="/logo.png" alt="logo">
+  </main>
+  <script>
+    // The listing is built by JavaScript after load, from a JSON call, so only a real browser sees the links.
+    fetch('/api/jobs.json')
+      .then((r) => r.json())
+      .then((jobs) => {
+        const ul = document.getElementById('jobs');
+        for (const j of jobs) {
+          const li = document.createElement('li');
+          const a = document.createElement('a');
+          a.href = j.path;
+          a.textContent = j.title;
+          li.appendChild(a);
+          ul.appendChild(li);
+        }
+        document.getElementById('status').textContent = jobs.length + ' roles';
+      });
+  </script>
+</body>
+</html>
