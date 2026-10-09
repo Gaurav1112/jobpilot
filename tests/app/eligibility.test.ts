@@ -90,22 +90,42 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   it('4. employment: with no (or no known) structured type, only employment phrases in the title or first 1500 chars reject', () => {
     const text = (descriptionText: string, title = 'Senior Backend Engineer') => decide({ employmentType: null, title, descriptionText });
     expect(text('This is a contract role for 9 months.')).toEqual(rejected('employment:contract'));
-    expect(text('Hired on a contract basis.')).toEqual(rejected('employment:contract'));
-    expect(text('A contract position with our client.')).toEqual(rejected('employment:contract'));
+    expect(text('You will be hired on a contract basis.')).toEqual(rejected('employment:contract'));
     expect(text('You will join as a contract employee.')).toEqual(rejected('employment:contract'));
     expect(text('This is a 6-month contract.')).toEqual(rejected('employment:contract'));
     expect(text('A 12 month contract, extendable.')).toEqual(rejected('employment:contract'));
+    expect(text('The position is a contract engagement.')).toEqual(rejected('employment:contract'));
     expect(text('Contract-to-hire after 6 months.')).toEqual(rejected('employment:contract-to-hire'));
     expect(text('C2H opportunity.')).toEqual(rejected('employment:c2h'));
-    expect(text('Hourly rate: negotiable.')).toEqual(rejected('employment:hourly'));
+    expect(text('Hourly rate of $40.')).toEqual(rejected('employment:hourly'));
+    expect(text('Hourly rate: ₹2,500.')).toEqual(rejected('employment:hourly'));
     expect(text('We pay $60 per hour.')).toEqual(rejected('employment:hourly'));
-    expect(text('A temporary position covering parental leave.')).toEqual(rejected('employment:temporary'));
-    expect(text('A temporary role for the migration.')).toEqual(rejected('employment:temporary'));
-    expect(text('A paid internship for students.')).toEqual(rejected('employment:intern'));
+    expect(text('Pay: $40/hour.')).toEqual(rejected('employment:hourly'));
+    expect(text('This is a temporary assignment covering parental leave.')).toEqual(rejected('employment:temporary'));
+    expect(text('This is an hourly engagement.')).toEqual(rejected('employment:hourly'));
+    expect(text('This is an internship for students.')).toEqual(rejected('employment:intern'));
+    expect(text('This internship lasts six months.')).toEqual(rejected('employment:intern'));
     expect(text('Build services.', 'Backend Intern')).toEqual(rejected('role:\\bintern(ship)?\\b')); // the role rule comes first
-    expect(text('We hire freelance developers.')).toEqual(rejected('employment:freelance'));
-    expect(decide({ employmentType: 'Regular', descriptionText: 'A contract role.' })).toEqual(rejected('employment:contract'));
-    expect(text(`${'x'.repeat(1500)} contract role`)).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(text('This is a freelance role.')).toEqual(rejected('employment:freelance'));
+    expect(text('Work with us on a freelance basis.')).toEqual(rejected('employment:freelance'));
+    expect(text('A freelance contract for six months.')).toEqual(rejected('employment:freelance'));
+    expect(decide({ employmentType: 'Regular', descriptionText: 'This is a contract role.' })).toEqual(rejected('employment:contract'));
+    expect(text(`${'x'.repeat(1500)} this is a contract role`)).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('final fix I7: employment words that do not describe the role never reject', () => {
+    for (const d of [
+      "Acme is the world's largest freelance marketplace, connecting businesses with talent.",
+      'We run internships every summer and hire graduates.',
+      "Our payroll product computes each worker's hourly rate and overtime.",
+      'Our customers pay $15 per hour for on-demand GPU capacity.',
+      'Our CLM platform helps legal teams manage every contract position and clause.',
+      'We help companies fill temporary roles fast.',
+      'Hourly rate: negotiable.',
+      'A contract position with our client.',
+      'We hire freelance developers.',
+      'A six-month internship in our platform team.',
+    ]) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   it('4. employment: the reviewer\'s six false rejections are eligible (I1)', () => {

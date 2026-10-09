@@ -22,7 +22,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    `employment:<canonical>` (contract, temporary, intern, part-time). When no part is known (null, or "Regular"):
  *    "full-time" or "permanent" in the type, title or first 1500 characters passes; else "intern" in the title, or the
  *    first EMPLOYMENT_PHRASES phrase there, rejects as `employment:<word>` (contract-to-hire, c2h, contract, hourly,
- *    temporary, intern, freelance). A bare deny word is not an employment phrase.
+ *    temporary, intern, freelance). A bare deny word is not an employment phrase, and (final fix I7) a phrase counts
+ *    only when it describes this role ("this is a contract role", "freelance basis", "hourly rate of $40", "this
+ *    internship"); a word about the employer's product or customers never does. "internship" counts in the title.
  * 5. remote from India, by the decision table:
  *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
  *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
@@ -94,22 +96,36 @@ export function canonicalEmployment(value: string): string | null {
 
 /** Full-time stated in the type, title or text: it passes like a structured full-time type. */
 const FULL_TIME_TEXT = /\b(?:full[\s_-]?time|permanent)\b/i;
-/** A pay figure per hour ("$60 per hour", "₹900/hr"): "events per hour" is not employment. */
-const PAY_PER_HOUR = /(?:[$€£₹]|\b(?:usd|inr|eur|gbp|rs\.?)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:\/\s*|per\s+)(?:hour|hr)\b/i;
+/** A money figure: a currency sign or code before digits. */
+const MONEY = '(?:[$€£₹]|\\b(?:usd|inr|eur|gbp|rs\\.?)\\s*)\\s*\\d[\\d,]*(?:\\.\\d+)?';
+/** A duration before the employment word: "6-month", "12 month", "short-term". */
+const TERM = '(?:\\d+[\\s-]months?[\\s-]|(?:short|long)[\\s-]term\\s+)?';
+const KIND = '(contract|freelance|hourly|temporary)';
 /**
- * Employment phrases, in order (task 7 fix round 1, I1): a bare deny word is not enough ("first 6 months", "hourly
- * batch jobs", "temporary credentials", "contract testing", "smart contract" all pass).
+ * Employment phrases, in order. Final fix I7: a phrase counts only when it describes this role ("this is a contract
+ * role", "the position is a temporary engagement", "you will be hired on a contract basis", "freelance basis", "hourly
+ * rate of $40", "we pay $60 per hour", "this internship"). A word about the employer's product or customers ("the
+ * world's largest freelance marketplace", "we run internships", "each worker's hourly rate", "customers pay $15 per
+ * hour for GPUs", "every contract position and clause", "fill temporary roles") never rejects. Group 1, when present,
+ * names the kind; else the entry's own label is the reason.
  */
 const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
   ['contract-to-hire', /\bcontract[\s-]to[\s-]hire\b/i],
   ['c2h', /\bc2h\b/i],
-  ['contract', /\bcontract (?:role|position|basis|employee)s?\b/i],
+  ['', new RegExp(`\\bthis is (?:a|an) ${TERM}${KIND}\\b`, 'i')],
+  ['', new RegExp(`\\b(?:role|position|job|engagement) is (?:on )?(?:a |an )?${TERM}${KIND}\\b`, 'i')],
+  ['', /\b(?:hired|engaged|employed|join|joining|work|working)\b[^.;\n]{0,30}?\b(?:on|as) (?:a |an )?(contract|freelance) (?:basis|employee|contractor|engagement)\b/i],
   ['contract', /\b\d+[\s-]months?[\s-]contract\b/i],
-  ['hourly', /\bhourly rate\b/i],
-  ['hourly', PAY_PER_HOUR],
-  ['temporary', /\btemporary (?:position|role)s?\b/i],
-  ['intern', /\binternships?\b/i],
-  ['freelance', /\bfreelance\b/i],
+  ['freelance', /\bfreelance (?:role|position|contract|basis|engagement)s?\b/i],
+  ['hourly', new RegExp(`\\bhourly rate(?:\\s+(?:of|is))?\\s*:?\\s*(?:up to\\s*)?${MONEY}`, 'i')],
+  [
+    'hourly',
+    new RegExp(
+      `\\b(?:we pay|we offer|you(?:'ll| will)? (?:earn|be paid|get|receive)|pay(?: rate)?\\s*(?:is|of|:)|rate\\s*(?:is|of|:)|compensation\\s*(?:is|of|:)|salary\\s*(?:is|of|:))\\s*(?:up to\\s*)?${MONEY}\\s*(?:\\/\\s*|per\\s+)(?:hour|hr)\\b`,
+      'i',
+    ),
+  ],
+  ['intern', /\bthis (?:is an )?internship\b/i],
 ];
 
 /** Title phrases where a contract word is not employment ("Smart Contract Engineer", "Contract Testing"). */
@@ -151,9 +167,12 @@ function employmentReason(p: Posting, pack: EligibilityPack): string | null {
   if (known.length > 0) return `employment:${known[0]}`;
   const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, HEAD)].join('\n');
   if (FULL_TIME_TEXT.test(text)) return null;
-  if (/\bintern\b/i.test(p.title)) return 'employment:intern';
-  const phrase = EMPLOYMENT_PHRASES.find(([, re]) => re.test(text));
-  return phrase === undefined ? null : `employment:${phrase[0]}`;
+  if (/\binterns?(?:hips?)?\b/i.test(p.title)) return 'employment:intern';
+  for (const [label, re] of EMPLOYMENT_PHRASES) {
+    const m = re.exec(text);
+    if (m !== null) return `employment:${label !== '' ? label : (m[1] ?? '').toLowerCase()}`;
+  }
+  return null;
 }
 
 /** "not hybrid", "no office", "remote or hybrid", "onsite/remote": negations and alternatives never reject. */
