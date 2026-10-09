@@ -1,7 +1,8 @@
-import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { ensureHome, setWarningSink } from '../../src/app/home.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppStore, type JobUpsert } from '../../src/app/store/app-store.js';
 import { AT, jobRow, LATER } from '../support/app-fixtures.js';
 import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
@@ -316,22 +317,102 @@ describe('AppStore.listJobs comp-first sort (spec §7)', () => {
   });
 });
 
-describe('AppStore: owner-only files (Task 13 fix round 3, M10)', () => {
-  it('creates the DB and its WAL files 0600 and the home 0700, and tightens looser ones on open', () => {
+describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', () => {
+  let warnings: string[] = [];
+  beforeEach(() => {
+    warnings = [];
+    setWarningSink((m) => warnings.push(m));
+  });
+  afterEach(() => setWarningSink(undefined));
+
+  it('a fresh home (and out/) is created 0700; its DB and WAL files 0600', () => {
     const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
     tmp.push(d);
-    chmodSync(d, 0o755);
-    const path = join(d, 'jobpilot.db');
+    const home = join(d, 'a', 'home');
+    ensureHome(home);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+    expect(statSync(join(home, 'out')).mode & 0o777).toBe(0o700);
+    const path = join(home, 'jobpilot.db');
     const a = AppStore.open(path);
     a.upsertJob(jobRow());
     for (const f of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(f)) expect(statSync(f).mode & 0o777, f).toBe(0o600);
-    expect(statSync(d).mode & 0o777).toBe(0o700);
     a.close();
-    chmodSync(path, 0o644);
+    expect(warnings).toEqual([]);
+  });
+
+  it('never chmods an existing home: an open one gets one warning per process, not per open', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
     chmodSync(d, 0o755);
+    for (let i = 0; i < 3; i++) {
+      ensureHome(d);
+      AppStore.open(join(d, 'jobpilot.db')).close();
+    }
+    expect(statSync(d).mode & 0o777).toBe(0o755);
+    expect(warnings).toEqual([`JOBPILOT_HOME ${d} is readable by other users; run chmod 700 ${d}`]);
+  });
+
+  it('a symlinked home pointing at a 2775 folder is left unchanged', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
+    const target = join(d, 'shared');
+    mkdirSync(target);
+    chmodSync(target, 0o2775);
+    const before = statSync(target).mode & 0o7777;
+    const home = join(d, 'home-link');
+    symlinkSync(target, home);
+    ensureHome(home);
+    AppStore.open(join(home, 'jobpilot.db')).close();
+    expect(statSync(target).mode & 0o7777).toBe(before);
+    expect(lstatSync(home).isSymbolicLink()).toBe(true);
+    expect(warnings).toHaveLength(1);
+  });
+
+  it('"." as the home leaves the working directory unchanged', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
+    chmodSync(d, 0o755);
+    const cwd = process.cwd();
+    process.chdir(d);
+    try {
+      ensureHome('.');
+      AppStore.open('jobpilot.db').close();
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(statSync(d).mode & 0o777).toBe(0o755);
+    expect(warnings).toEqual(['JOBPILOT_HOME . is readable by other users; run chmod 700 .']);
+  });
+
+  it.skipIf(!existsSync('/private/tmp') || statSync('/private/tmp').uid === process.getuid?.())('a home the user does not own: a warning, never a throw', () => {
+    const path = join('/private/tmp', `jp-nonowned-${process.pid}-${Date.now()}.db`);
+    const before = statSync('/private/tmp').mode;
+    try {
+      const a = AppStore.open(path);
+      a.upsertJob(jobRow());
+      a.close();
+      expect(statSync('/private/tmp').mode).toBe(before);
+      expect(warnings).toEqual(['JOBPILOT_HOME /private/tmp is readable by other users; run chmod 700 /private/tmp']);
+    } finally {
+      for (const f of [path, `${path}-wal`, `${path}-shm`]) rmSync(f, { force: true });
+    }
+  });
+
+  it('tightens an existing DB file the user owns, and never follows a symlinked DB for chmod', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
+    const path = join(d, 'jobpilot.db');
+    AppStore.open(path).close();
+    chmodSync(path, 0o644);
     AppStore.open(path).close();
     expect(statSync(path).mode & 0o777).toBe(0o600);
-    expect(statSync(d).mode & 0o777).toBe(0o700);
+    const real = join(d, 'elsewhere.db');
+    AppStore.open(real).close();
+    chmodSync(real, 0o644);
+    const link = join(d, 'link.db');
+    symlinkSync(real, link);
+    AppStore.open(link).close();
+    expect(statSync(real).mode & 0o777).toBe(0o644);
   });
 });
 

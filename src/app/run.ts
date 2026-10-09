@@ -1,4 +1,3 @@
-import { mkdirSync } from 'node:fs';
 import type { Clock } from '../kernel/clock.js';
 import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
@@ -14,7 +13,7 @@ import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
 import { runProblems, type Problem } from './problems.js';
 import { projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
 import { AppStore, type DocsState } from './store/app-store.js';
-import { tightenMode } from '../kernel/store/store.js';
+import { ensureHome } from './home.js';
 
 /** India Standard Time is UTC+05:30 all year. */
 const IST_OFFSET_MS = (5 * 60 + 30) * 60_000;
@@ -166,8 +165,7 @@ function sourcesAllReplayed(counts: RunCounts): boolean {
 export function runDaily(o: RunOptions): Promise<DailySummary> {
   return withLock(o.home, 'run', async () => {
     const paths = homePaths(o.home);
-    mkdirSync(paths.out, { recursive: true, mode: 0o700 });
-    tightenMode(paths.out, 0o700);
+    ensureHome(paths.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();
     const app = AppStore.open(paths.db);
     try {

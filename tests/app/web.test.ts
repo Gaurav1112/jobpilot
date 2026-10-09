@@ -8,6 +8,7 @@ import { AppStore, type Doc, type JobUpsert } from '../../src/app/store/app-stor
 import { compText, inr, inrRange } from '../../src/app/web/format.js';
 import { html } from '../../src/app/web/html.js';
 import { createDashboard, serveDashboard } from '../../src/app/web/server.js';
+import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { Sessions } from '../../src/app/web/security.js';
 import * as htmlModule from '../../src/app/web/html.js';
 import Database from 'better-sqlite3';
@@ -872,12 +873,11 @@ describe('dashboard: fix round 3', () => {
 
   it('M11: status saved but the snapshot hit a busy lock: a success answer that points at Keep a copy', async () => {
     let lock: InstanceType<typeof Database> | undefined;
-    const hooked = wrap(createDashboard({
-      home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)), busyTimeoutMs: 100,
-      testHooks: { beforeSnapshot: () => {
+    const hooked = wrap(createTestDashboard({ home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)), busyTimeoutMs: 100 }, {
+      beforeSnapshot: () => {
         lock = new Database(join(home, 'jobpilot.db'));
         lock.exec('BEGIN IMMEDIATE');
-      } },
+      },
     }));
     try {
       const r = await hooked.request(`/jobs/${K1}/status`, {
@@ -895,6 +895,13 @@ describe('dashboard: fix round 3', () => {
     // the files a failed attempt left are accepted by Keep a copy
     expect((await post(`/jobs/${K1}/keep`, { _csrf: token }, hx)).status).toBe(200);
     expect(withStore((s) => s.snapshots(K1)[0]?.files)).toHaveLength(6);
+  });
+
+  it('M12: test hooks are not part of the production deps or entry points', () => {
+    const server = readFileSync(join(root, 'src/app/web/server.ts'), 'utf8');
+    const deps = server.slice(server.indexOf('export interface DashboardDeps'), server.indexOf('}', server.indexOf('export interface DashboardDeps')));
+    expect(deps).not.toContain('testHooks');
+    for (const f of ['src/cli.ts', 'src/app/web/server.ts']) expect(readFileSync(join(root, f), 'utf8')).not.toMatch(/from '[^']*server-testing/);
   });
 
   it('an over-long note tells htmx why', async () => {

@@ -54,8 +54,11 @@ export interface DashboardDeps {
   readonly port?: number | (() => number | undefined);
   /** How long a write waits for a run's lock before answering 503 (SQLite busy_timeout). Default 10 s. */
   readonly busyTimeoutMs?: number;
-  /** Tests only: runs just before an applied snapshot is recorded (to hold a lock there). */
-  readonly testHooks?: { readonly beforeSnapshot?: () => void };
+}
+
+/** Tests only (reached through `server-testing.ts`): runs just before an applied snapshot is recorded. */
+export interface DashboardTestHooks {
+  readonly beforeSnapshot?: () => void;
 }
 
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
@@ -175,6 +178,11 @@ const asciiSlug = (s: string): string =>
 type Env = { Variables: { sid: string } };
 
 export function createDashboard(deps: DashboardDeps): Hono<Env> {
+  return buildDashboard(deps, {});
+}
+
+/** @internal The dashboard with test hooks; production code calls `createDashboard`. */
+export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): Hono<Env> {
   const paths = homePaths(deps.home);
   const timeoutMs = deps.busyTimeoutMs ?? 10_000;
   const sessions = deps.sessions ?? new Sessions(keptSecret(paths.db, timeoutMs));
@@ -405,7 +413,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
         else {
           try {
             const files = snapshotApplied(paths.out, key, docs, day);
-            deps.testHooks?.beforeSnapshot?.();
+            hooks.beforeSnapshot?.();
             s.putSnapshot(key, day, files, at);
           } catch (e) {
             // The status is already saved: a busy store is a success with a pointer to Keep a copy, never a 503.
