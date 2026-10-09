@@ -38,6 +38,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       `country-list`: structured remote or a location that says remote, with a non-empty country list naming none
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
+ *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
+ *       worldwide → `location-outside-india`, whatever remote words it has; with the same guard (the description
+ *       names India or such a region → `review`).
  *    c. eligible when: India is a country and something structured or the location or title says remote; or the
  *       watchlist entry is all-remote; or structured remote, the countries name apac, asia, south asia or worldwide,
  *       and the watchlist says hiresInIndia; or the location says remote and India. Remote with no country, region or
@@ -304,6 +307,12 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
     return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'remote-excludes-india:country-list';
+  }
+  // Final fix L1 (LIVE RUN 1): the posting names places and none is India or a region with India, whether or not
+  // anything says remote ("UK; Lithuania; Bulgaria; Serbia", "Redwood City, US; New York, US" with a remote-friendly
+  // JD). Same guard: a description that names India or such a region as a place makes it unclear instead.
+  if (countries.length > 0 && !indiaInScope(countries)) {
+    return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'location-outside-india';
   }
 
   const entry = watchEntry(p, pack);

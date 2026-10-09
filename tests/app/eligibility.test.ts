@@ -282,8 +282,8 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ ...us, descriptionText: 'Open across APAC.' })).toEqual(review);
     expect(decide({ ...us, ats: 'lever', slug: 'example-lv', descriptionText: 'Our team is spread across Asia.' })).toEqual(review);
     expect(decide({ ...us, descriptionText: 'Anywhere except India.' })).toEqual(rejected('remote-excludes-india:country-list'));
-    // a location that does not say remote is not this rule
-    expect(decide({ remote: remote(null, ['canada'], []), locationText: 'Toronto, Canada', descriptionText: 'Join us.' })).toEqual(rejected('onsite'));
+    // a location that does not say remote is not this rule (final fix L1: it is location-outside-india)
+    expect(decide({ remote: remote(null, ['canada'], []), locationText: 'Toronto, Canada', descriptionText: 'Join us.' })).toEqual(rejected('location-outside-india'));
     // an Indian city in the list keeps it in scope
     expect(decide({ remote: remote(null, ['india', 'united states'], ['location:remote']), locationText: 'Remote, US; Bengaluru' })).toEqual(ELIGIBLE_UNDISCLOSED);
   });
@@ -300,6 +300,30 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     }
     // feeds look the watchlist up by company
     expect(decide({ ats: 'feed', source: 'himalayas', slug: 'himalayas', company: 'example greenhouse co', remote: remote('remote', ['worldwide']) })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('final fix L1: a location naming only countries outside India rejects, whatever remote words the JD has', () => {
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    // LIVE RUN 1: Tide (UK, Lithuania, Bulgaria, Serbia) and Celonis (Redwood City, US / New York, US); the JD says remote
+    const tide = { locationText: 'UK; Lithuania; Bulgaria; Serbia', remote: remote(null, ['bulgaria', 'lithuania', 'serbia', 'united kingdom']), descriptionText: 'We are a remote-friendly team building banking for small businesses.' };
+    const celonis = { locationText: 'Redwood City, US; New York, US', remote: remote(null, ['united states']), descriptionText: 'Remote work is supported. Build process mining services.' };
+    expect(decide(tide)).toEqual(rejected('location-outside-india'));
+    expect(decide(celonis)).toEqual(rejected('location-outside-india'));
+    // allRemote and hiresInIndia boards do not rescue it
+    expect(decide({ ...celonis, ats: 'lever', slug: 'example-lv' })).toEqual(rejected('location-outside-india'));
+    expect(decide({ ...celonis, slug: 'example-gh' })).toEqual(rejected('location-outside-india'));
+    // guard: the JD names India or a region with India as a place it hires: review instead
+    expect(decide({ ...tide, descriptionText: 'Remote-friendly. We also hire in India.' })).toEqual(review);
+    expect(decide({ ...celonis, descriptionText: 'Remote across APAC is possible.' })).toEqual(review);
+    // but not when the JD excludes India
+    expect(decide({ ...celonis, descriptionText: 'Remote anywhere except India.' })).toEqual(rejected('location-outside-india'));
+    // India, APAC, Asia, South Asia or worldwide among the countries keeps the posting in scope
+    for (const c of [['india', 'united states'], ['apac', 'united kingdom'], ['asia'], ['south asia'], ['worldwide', 'united states']]) {
+      expect(decide({ locationText: 'x', remote: remote(null, c), descriptionText: 'We are remote-first.' }).reasons, c.join()).not.toContain('location-outside-india');
+    }
+    // the existing exclusion rules come first
+    expect(decide({ ...celonis, descriptionText: 'Remote, US only.' })).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(decide({ ...tide, locationText: 'London, UK (hybrid)' })).toEqual(rejected('hybrid'));
   });
 
   it('final fix I6: remote with no country, region or worldwide is review whatever hiresInIndia says, unless allRemote', () => {
@@ -446,7 +470,7 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   });
 
   it('every reason and note is one of the fixed codes', () => {
-    const CODE = /^(closed|onsite|hybrid|remote-unclear|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
+    const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
     const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify']);
     const spec = appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.agent.contract.id === 'eligibility')!;
     for (const k of spec.cases) {
