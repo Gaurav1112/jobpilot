@@ -20,10 +20,11 @@
  *    and/or/&; after it is one of `, / | ; ) .`, the end of the text or line, or and/or; and the same segment (bounded
  *    by a newline or a sentence-ending `.`) holds another lexicon term or a known language word (LANGUAGE_WORDS)
  *    ("Kotlin, Swift, Java, and React"; not "companies can react faster", not "spring, summer");
- * 3. a skill phrase comes right before it: experience in/with, proficient/proficiency in, knowledge of, using,
- *    written in, familiar/familiarity with ("deep knowledge of Go");
+ * 3. a skill phrase comes right before it: experience in/with, proficient/proficiency in, knowledge of, use, uses,
+ *    using, built with, written in, familiar/familiarity with ("deep knowledge of Go", "we use Go");
  * 4. (fix round 3) a known tech term is directly beside it, joined by one connector (`, / & + |`, and/or, or a line
- *    break with an optional bullet): "Go and Postgres", "Flink/Spark", "Ruby/Rails", "Go\nPostgres";
+ *    break with an optional bullet): "Go and Postgres", "Flink/Spark", "Ruby/Rails", "Go\nPostgres"; (fix round 4)
+ *    only when the word is also delimited on its other side (a list edge) or capitalised mid-sentence;
  * 5. (fix round 3) it is the single item after a heading label: "Backend: Go", "Tech stack: React";
  * 6. (fix round 3) a skill noun follows it: skills, experience, expertise, developer(s), engineer(s).
  * On a bullet line (`-`, `•`, `*`, `·` or `1.`), the list segment is the whole contiguous bullet block, so one item per
@@ -104,7 +105,7 @@ function plainHas(text: string, term: string): boolean {
 
 const LIST_BEFORE = /(?:^|\n)[ \t]*(?:[-*•·][ \t]*|\d+[.)][ \t]*)?$|[,/|;(:][ \t]*$|(?<![\p{L}\p{N}_])(?:and|or|&)[ \t]+$/iu;
 const LIST_AFTER = /^[ \t]*(?:[,/|;).]|\n|$)|^[ \t]+(?:and|or)(?![\p{L}\p{N}_])/iu;
-const SKILL_BEFORE = /(?<![\p{L}\p{N}_])(?:experience (?:in|with)|proficien(?:t|cy) in|knowledge of|using|written in|familiar(?:ity)? with)[ \t]+$/iu;
+const SKILL_BEFORE = /(?<![\p{L}\p{N}_])(?:experience (?:in|with)|proficien(?:t|cy) in|knowledge of|use|uses|using|built with|written in|familiar(?:ity)? with)[ \t]+$/iu;
 /** A heading label right before a single item: "Backend: Go", "Tech stack: React". */
 const LABEL_BEFORE = /(?<![\p{L}\p{N}_])(?:tech(?:nolog(?:y|ies))?(?: stack)?|stack|languages?|backend|frontend|skills?|tools?)[ \t]*:[ \t]*$/iu;
 /** A connector between two neighbouring terms: `,` `/` `&` `+` `|`, and/or, or a line break (optionally a bullet). */
@@ -125,13 +126,27 @@ function anchoredRe(term: string): readonly [RegExp, RegExp] {
   return r;
 }
 
-/** A known tech term directly beside the word, joined by one connector ("Go and Postgres", "Flink/Spark", "Go\nPostgres"). */
-function besideTech(before: string, after: string, others: readonly string[]): boolean {
+/** The word's other side is a list edge: text or line start, a bullet, `,` `/` `|` `;` `(` or `:` before it. */
+const EDGE_BEFORE = /(?:^|\n)[ \t]*(?:[-*•·][ \t]*|\d+[.)][ \t]*)?$|[,/|;(:][ \t]*$/u;
+/** ... or text or line end, `,` `/` `|` `;` `)` `:` or a sentence end after it. */
+const EDGE_AFTER = /^[ \t]*(?:[,/|;):.]|\n|$)/u;
+/** Capitalised in the middle of a sentence ("We use Go", "with React"): a name, not the English word. */
+const midSentenceCapital = (word: string, before: string): boolean => /^\p{Lu}/u.test(word) && !/(?:^|[.!?][ \t]+|\n[ \t]*(?:[-*•·][ \t]*|\d+[.)][ \t]*)?)$/u.test(before);
+
+/**
+ * A known tech term directly beside the word, joined by one connector ("Go and Postgres", "Flink/Spark", "Go\nPostgres").
+ * Fix round 4: it counts only when the word is also delimited on its other side (a list edge) or capitalised in the
+ * middle of a sentence, so "Kubernetes, node pools", "spring and Kotlin" and "Python and go beyond" do not count.
+ */
+function besideTech(written: string, before: string, after: string, others: readonly string[]): boolean {
+  const capital = midSentenceCapital(written, before);
   const a = CONNECTOR_AFTER.exec(after);
   const next = a === null ? null : after.slice(a[0].length, a[0].length + 40);
   const b = CONNECTOR_BEFORE.exec(before);
   const prev = b === null ? null : before.slice(Math.max(0, before.length - b[0].length - 40), before.length - b[0].length);
-  return others.some((n) => (next !== null && anchoredRe(n)[0].test(next)) || (prev !== null && anchoredRe(n)[1].test(prev)));
+  const techAfter = next !== null && others.some((n) => anchoredRe(n)[0].test(next));
+  const techBefore = prev !== null && others.some((n) => anchoredRe(n)[1].test(prev));
+  return (techAfter && (capital || EDGE_BEFORE.test(before))) || (techBefore && (capital || EDGE_AFTER.test(after)));
 }
 
 /** A segment ends at a newline or a sentence-ending dot (one followed by space or the end), not the dot in "Node.js". */
@@ -186,7 +201,7 @@ function ambiguousHas(text: string, word: string, neighbours: readonly string[])
     if (word === 'go' && (/^-\p{L}/u.test(after) || /^\/no[- ]?go\b/i.test(after) || /\bno[- ]?$/i.test(before))) continue;
     if (SKILL_BEFORE.test(before)) return true;
     if (LABEL_BEFORE.test(before) && LIST_AFTER.test(after)) return true;
-    if (besideTech(before, after, others)) return true;
+    if (besideTech(m[0], before, after, others)) return true;
     if (LIST_BEFORE.test(before) && LIST_AFTER.test(after)) {
       const segment = segmentAround(text, start, end);
       if (others.some((n) => plainHas(segment, n))) return true;

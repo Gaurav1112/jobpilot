@@ -133,7 +133,8 @@ function titleDenyWord(title: string, words: readonly string[]): string | undefi
   const parts = t.split(/\s+[-–—|]\s+|\s*[,:]\s*/);
   const last = parts.length > 1 ? (parts[parts.length - 1] ?? '') : '';
   const standalone = (w: string): boolean =>
-    bracketed.some((b) => hasTerm(b, w)) ||
+    // fix round 4: the bracket holds just the word, optionally with "role" or "position" ("(Contract Role)")
+    bracketed.some((b) => sameWords(b.replace(/\s+(?:role|position)\s*$/i, ''), w)) ||
     sameWords(last, w) ||
     new RegExp(`^\\s*${titleWordRe(w)}\\s+(?!(?:${DOMAIN_WORD})\\b)(?:[\\p{L}\\p{N}+#./]+\\s+){0,2}(?:${ROLE_WORD})\\b`, 'iu').test(t);
   return [...words].filter((w) => w.trim() !== '').sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find(standalone);
@@ -157,7 +158,12 @@ function employmentReason(p: Posting, pack: EligibilityPack): string | null {
 /** "not hybrid", "no office", "remote or hybrid", "onsite/remote": negations and alternatives never reject. */
 const NEGATED_OR_ALTERNATIVE =
   /\b(?:not|no|non)[\s-]+(?:an?\s+)?(?:hybrid|on-?site|in[- ]office|office)\b|\bremote\s*(?:\/|\bor\b|\band\/or\b)\s*(?:hybrid|on-?site|in[- ]office)\b|\b(?:hybrid|on-?site|in[- ]office)\s*(?:\/|\bor\b|\band\/or\b)\s*remote\b/gi;
-const withoutAlternatives = (s: string): string => s.replace(NEGATED_OR_ALTERNATIVE, ' ');
+/**
+ * Fix round 4: "no need", "no requirement", "not required", "never", "without" negate the rest of their clause; a
+ * clause that ends in "is/are not required" is negated whole.
+ */
+const NEGATED_CLAUSE = /\b(?:no need|no requirement|not required|never|without)\b[^.;\n]*|[^.;\n]*\b(?:is|are)\s+not\s+required\b/gi;
+const withoutAlternatives = (s: string): string => s.replace(NEGATED_CLAUSE, ' ').replace(NEGATED_OR_ALTERNATIVE, ' ');
 /** In the title or location a bare word is the arrangement. */
 const HYBRID_WORD = /\bhybrid\b/i;
 const ONSITE_WORD = /\bon-?site\b|\bin[- ]office\b/i;
@@ -266,7 +272,12 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (rule !== undefined) {
     // The posting's own India scope wins over a JD phrase (fix round 3, C-R1): a remote location naming India (or a
     // region with India) can only go to review on a description phrase, never be rejected.
-    const ownIndiaScope = (structured === 'remote' || REMOTE_WORD.test(p.locationText)) && (indiaInScope(countries) || /\bindia\b/i.test(p.locationText));
+    // Fix round 4: India in the countries also counts when the description says remote (remote-first, fully remote),
+    // even if the location ("Bengaluru, India") does not. Documented: "Remote - Worldwide" is a scope with India too,
+    // so it also goes to review on a JD phrase.
+    const ownIndiaScope =
+      ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && (indiaInScope(countries) || /\bindia\b/i.test(p.locationText))) ||
+      (countries.includes('india') && REMOTE_WORD.test(p.descriptionText));
     return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
   }
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that

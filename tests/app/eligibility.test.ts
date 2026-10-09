@@ -179,6 +179,14 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'Experience with hybrid cloud and an onsite interview loop.',
     ]) expect(decide({ descriptionText: t }), t).toEqual(ELIGIBLE_UNDISCLOSED);
     expect(decide({ locationText: 'Remote or Hybrid - India' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // fix round 4: more negations
+    for (const t of [
+      'No need for five days in the office; we are remote.',
+      'There is no requirement to work from the office.',
+      'Working from our office is not required.',
+      'You will never need to work from the office.',
+      'Fully remote, without any days in the office.',
+    ]) expect(decide({ descriptionText: t }), t).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   // Remote with no country named: JD exclusion phrases may reject it (no India scope of its own to protect).
@@ -343,6 +351,15 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ title: 'Backend Engineer, Contracts Platform' })).toEqual(ELIGIBLE_UNDISCLOSED); // "contracts" is not the word
   });
 
+  it('4. employment: a bracket rejects only when it holds just the word, optionally with role or position (fix round 4)', () => {
+    expect(decide({ title: 'Backend Engineer (Contract)' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Backend Engineer (Contractor)' })).toEqual(rejected('employment:contractor'));
+    expect(decide({ title: 'Backend Engineer (Contract Role)' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Backend Engineer (Contract Position)' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Backend Engineer (Contract Intelligence)' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ title: 'Backend Engineer (Contracts, Billing)' })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
   it('4. employment: a title word counts only as a standalone qualifier (fix round 3)', () => {
     expect(decide({ title: 'Backend Engineer (6 months)' })).toEqual(rejected('employment:6 months'));
     expect(decide({ title: 'Backend Engineer [Contract]' })).toEqual(rejected('employment:contract'));
@@ -354,6 +371,16 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'Senior Engineer, Freelancer Marketplace', 'Backend Engineer - Hourly Billing', 'Senior Backend Engineer, Temporary Storage',
       'Backend Engineer - Fixed-Term Deposits', 'Contract Management Engineer', 'Backend Contractor Platform Engineer',
     ]) expect(decide({ title: t }), t).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('5.2 India in the countries plus a remote JD is India scope too: a JD phrase goes to review (fix round 4)', () => {
+    const blr = { remote: remote(null, ['india'], []), locationText: 'Bengaluru, India' };
+    expect(decide({ ...blr, descriptionText: 'You must be located in the US. We are remote-first.' })).toEqual(REVIEW_UNDISCLOSED);
+    expect(decide({ ...blr, descriptionText: 'You must be located in the US. This role is fully remote.' })).toEqual(REVIEW_UNDISCLOSED);
+    // without any remote word it is not protected: the phrase rejects
+    expect(decide({ ...blr, descriptionText: 'You must be located in the US.' })).toEqual(rejected('remote-excludes-india:must-reside'));
+    // documented: Remote - Worldwide is a scope with India, so a JD phrase goes to review too
+    expect(decide({ remote: remote('remote', ['worldwide']), locationText: 'Remote - Worldwide', descriptionText: 'US only.' })).toEqual(REVIEW_UNDISCLOSED);
   });
 
   it('5.2 must-reside is candidate-directed only; US forms case-sensitive (fix rounds 2 and 3)', () => {

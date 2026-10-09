@@ -149,6 +149,22 @@ describe('lexicon: termsIn', () => {
     for (const [t, want] of cases) expect(termsIn(t, lex), t).toEqual(want);
   });
 
+  it('adjacency needs the ambiguous word delimited on its other side or capitalised mid-sentence; use / built with are skill phrases (fix round 4)', () => {
+    const lex = [...pack.lexicon.strong, ...pack.lexicon.medium, ...pack.lexicon.gap];
+    const cases: [string, string[]][] = [
+      ['We use Go and Postgres.', ['go', 'postgres']],
+      ['we use go and postgres.', ['go', 'postgres']],
+      ['Services built with spring.', ['spring']],
+      ['We hire every spring and Kotlin is our language.', []],
+      ['Kubernetes, node pools', ['kubernetes']],
+      ['Learn Python and go beyond.', ['python']],
+      ['Our stack uses Java and Go.', ['go', 'java']],
+      ['Spring, Hibernate, JPA', ['spring']],
+      ['Ruby/Rails, Go', ['go', 'ruby']],
+    ];
+    for (const [t, want] of cases) expect(termsIn(t, lex), t).toEqual(want);
+  });
+
   it('the careers fixture gets medium:go back (fix round 3, I-R2)', () => {
     // The recorded careers JSON-LD job (tests/fixtures/careers/job-jsonld.html) normalises to this description.
     const p = posting({ title: 'Senior Backend Engineer', descriptionText: 'Build payment services.\n\n- Go\n- Postgres' });
