@@ -424,7 +424,10 @@ program
   );
 
 const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run and the always-on dashboard (macOS)');
-const scheduleOpts = () => ({ node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid?.() ?? 501 });
+const scheduleOpts = () => {
+  if (process.getuid === undefined) throw new Error('schedule needs a POSIX user id (macOS)');
+  return { node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid() };
+};
 schedule
   .command('install')
   .description('Write both launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')

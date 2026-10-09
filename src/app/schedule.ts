@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { checkHome, fileWarning, warnOnce } from './home.js';
 import { homePaths } from './pack/paths.js';
 
 export const DAILY_LABEL = 'com.jobpilot.daily';
@@ -104,7 +105,6 @@ export interface ScheduleOpts extends PlistOpts {
   readonly agentsDir?: string;
 }
 export interface InstallOpts extends ScheduleOpts {
-  readonly nodeVersion?: string;
   readonly localOffsetMinutes?: number;
   readonly now?: Date;
 }
@@ -112,8 +112,37 @@ export interface InstallOpts extends ScheduleOpts {
 const agentsDirOf = (o: { agentsDir?: string | undefined }): string => o.agentsDir ?? join(homedir(), 'Library', 'LaunchAgents');
 const plistPathOf = (o: { agentsDir?: string | undefined }, label: string): string => join(agentsDirOf(o), `${label}.plist`);
 
-function mkdirPrivate(dir: string): void {
-  mkdirSync(dir, { recursive: true, mode: 0o700 });
+const ownedByMe = (uid: number): boolean => process.getuid === undefined || uid === process.getuid();
+
+/**
+ * The home is the user's choice: created 0700 only when new, never chmod-ed (an existing one gets the shared warning).
+ * `logs/` is jobpilot's own: a real, owned directory is tightened to 0700; a symlink or someone else's gets a warning.
+ */
+function prepareLogsDir(home: string, logs: string): void {
+  if (existsSync(home)) checkHome(home);
+  else mkdirSync(home, { recursive: true, mode: 0o700 });
+  let st;
+  try {
+    st = lstatSync(logs);
+  } catch {
+    mkdirSync(logs, { mode: 0o700 });
+    return;
+  }
+  if (st.isDirectory() && ownedByMe(st.uid)) chmodSync(logs, 0o700);
+  else warnOnce(fileWarning(logs));
+}
+
+/** Creates the log file 0600; an existing owned regular file is tightened, a symlink or foreign file only warned about. */
+function prepareLogFile(file: string): void {
+  let st;
+  try {
+    st = lstatSync(file);
+  } catch {
+    closeSync(openSync(file, 'a', 0o600));
+    return;
+  }
+  if (st.isFile() && ownedByMe(st.uid)) chmodSync(file, 0o600);
+  else warnOnce(fileWarning(file));
 }
 
 export interface InstallResult {
@@ -124,7 +153,10 @@ export interface InstallResult {
 }
 
 export function installSchedule(o: InstallOpts, run: Runner = realRunner): InstallResult {
-  const nodeVersion = o.nodeVersion ?? process.versions.node;
+  // The binary that goes into the plist is the one that is checked.
+  const v = run(o.node, ['--version']);
+  const nodeVersion = /^v?(\d+\.\d+\.\d+)/.exec(v.stdout.trim())?.[1];
+  if (v.status !== 0 || nodeVersion === undefined) throw new Error(`could not run "${o.node} --version": ${(v.stderr || v.stdout).trim() || `exit ${v.status}`}`);
   if (Number(nodeVersion.split('.')[0]) < 24) throw new Error(`jobpilot needs Node 24 or newer; ${o.node} is ${nodeVersion}. Install it with a Node 24 binary (not the Volta shim) and run again`);
   const now = o.now ?? new Date();
   const offset = o.localOffsetMinutes ?? -now.getTimezoneOffset();
@@ -133,13 +165,9 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   const dash = plistDashboard(o);
 
   const logsDir = homePaths(o.home).logs;
-  mkdirPrivate(o.home);
-  mkdirPrivate(logsDir);
+  prepareLogsDir(o.home, logsDir);
   const logs = ['daily.log', 'dashboard.log'].map((n) => join(logsDir, n));
-  for (const l of logs) {
-    closeSync(openSync(l, 'a', 0o600));
-    chmodSync(l, 0o600);
-  }
+  for (const l of logs) prepareLogFile(l);
   mkdirSync(agentsDirOf(o), { recursive: true });
 
   const plists: string[] = [];
@@ -158,11 +186,17 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   return { plists, logs, localTime, nextRun: nextRunIst(now, 7, 0) };
 }
 
+/** True when a failed bootout only means the job was not loaded. */
+const notLoaded = (r: { status: number; stdout: string; stderr: string }): boolean =>
+  r.status === 3 || r.status === 113 || /not loaded|no such process|could not find service|not found/i.test(`${r.stderr}\n${r.stdout}`);
+
 export function uninstallSchedule(o: ScheduleOpts, run: Runner = realRunner): string[] {
   const removed: string[] = [];
   for (const label of [DAILY_LABEL, DASHBOARD_LABEL]) {
     const p = plistPathOf(o, label);
-    run('launchctl', ['bootout', `gui/${o.uid}`, p]);
+    // By label, so a job still loaded after its plist file went missing is unloaded too.
+    const r = run('launchctl', ['bootout', `gui/${o.uid}/${label}`]);
+    if (r.status !== 0 && !notLoaded(r)) throw new Error(`launchctl bootout ${label} failed (${r.status}): ${(r.stderr || r.stdout).trim()}; the plist was left in place`);
     rmSync(p, { force: true });
     removed.push(p);
   }

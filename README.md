@@ -54,6 +54,7 @@ What the flags mean:
 | `--available-from`, `--notice-period` | Standard application answers |
 | `--floor-inr <amount>` | Minimum base salary per year in INR. Equity, bonus and total comp never count |
 | `--education-text`, `--claimable-title`, `--extra-watchlist`, `--fx-file` | Optional extras |
+| `--allow-unplaced` | Go ahead even when citeable facts sit under an employer that no resume role names (normally an error) |
 | `--dry-run` | Check every input and print the summary without writing anything |
 | `--force` | Replace an existing pack (the old one is moved to `pack.bak-<time>`) |
 

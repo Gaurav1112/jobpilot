@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { setWarningSink } from '../../src/app/home.js';
 import {
   DAILY_LABEL, DASHBOARD_LABEL, escapeXml, installSchedule, istToLocal, nextRunIst, plistDaily, plistDashboard,
   runNow, scheduleStatus, uninstallSchedule, type Runner,
@@ -14,14 +15,17 @@ let tmp: string;
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), 'jobpilot-sched-'));
 });
-afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+afterEach(() => {
+  setWarningSink(undefined);
+  rmSync(tmp, { recursive: true, force: true });
+});
 
 function fake(replies: Record<string, { status: number; stdout?: string; stderr?: string }> = {}) {
   const calls: string[][] = [];
   const run: Runner = (cmd, args) => {
     calls.push([cmd, ...args]);
     const key = args[0] ?? '';
-    const r = replies[key] ?? { status: 0 };
+    const r = replies[key] ?? (key === '--version' ? { status: 0, stdout: 'v24.15.0\n' } : { status: 0 });
     return { status: r.status, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
   };
   return { calls, run };
@@ -63,15 +67,12 @@ describe('plist text', () => {
     expect(x).not.toContain('a&b');
   });
 
-  it('is valid per plutil when available', () => {
-    const f = join(tmp, 'p.plist');
-    const w = spawnSync('/bin/sh', ['-c', 'command -v plutil']);
-    if (w.status !== 0) return;
+  const hasPlutil = spawnSync('/bin/sh', ['-c', 'command -v plutil']).status === 0;
+  it.skipIf(!hasPlutil)('is valid per plutil', () => {
     for (const x of [plistDaily({ ...base, hour: 7, minute: 0 }), plistDashboard(base)]) {
       const r = spawnSync('plutil', ['-lint', '-'], { input: x, encoding: 'utf8' });
       expect(r.status, r.stdout + r.stderr).toBe(0);
     }
-    void f;
   });
 
   it('rejects relative paths and bad times', () => {
@@ -87,6 +88,8 @@ describe('time zone', () => {
     expect(istToLocal(7, 0, 0)).toEqual({ hour: 1, minute: 30 });
     expect(istToLocal(7, 0, -300)).toEqual({ hour: 20, minute: 30 });
     expect(istToLocal(7, 0, 540)).toEqual({ hour: 10, minute: 30 });
+    expect(istToLocal(7, 0, -240)).toEqual({ hour: 21, minute: 30 });
+    expect(istToLocal(7, 0, 345)).toEqual({ hour: 7, minute: 15 });
   });
   it('next run is the next 07:00 IST instant', () => {
     expect(nextRunIst(new Date('2026-10-09T01:29:00Z'), 7, 0)).toBe('2026-10-09 07:00 IST');
@@ -95,12 +98,12 @@ describe('time zone', () => {
 });
 
 describe('install / uninstall / status', () => {
-  const opts = () => ({ ...base, home: join(tmp, 'home'), agentsDir: join(tmp, 'LaunchAgents'), uid: 501, nodeVersion: '24.15.0', localOffsetMinutes: 330, now: new Date('2026-10-09T00:00:00Z') });
+  const opts = () => ({ ...base, home: join(tmp, 'home'), agentsDir: join(tmp, 'LaunchAgents'), uid: 501, localOffsetMinutes: 330, now: new Date('2026-10-09T00:00:00Z') });
 
   it('refuses node below 24 and writes nothing', () => {
-    const f = fake();
-    expect(() => installSchedule({ ...opts(), nodeVersion: '20.19.0' }, f.run)).toThrow(/24/);
-    expect(f.calls).toEqual([]);
+    const f = fake({ '--version': { status: 0, stdout: 'v20.19.0\n' } });
+    expect(() => installSchedule(opts(), f.run)).toThrow(/24/);
+    expect(f.calls).toEqual([[base.node, '--version']]);
     expect(existsSync(join(tmp, 'LaunchAgents'))).toBe(false);
   });
 
@@ -114,6 +117,7 @@ describe('install / uninstall / status', () => {
     expect(statSync(join(o.home, 'logs')).mode & 0o777).toBe(0o700);
     for (const n of ['daily.log', 'dashboard.log']) expect(statSync(join(o.home, 'logs', n)).mode & 0o777).toBe(0o600);
     expect(f.calls).toEqual([
+      [base.node, '--version'],
       ['launchctl', 'bootout', 'gui/501', d], ['launchctl', 'bootstrap', 'gui/501', d], ['launchctl', 'enable', `gui/501/${DAILY_LABEL}`],
       ['launchctl', 'bootout', 'gui/501', s], ['launchctl', 'bootstrap', 'gui/501', s], ['launchctl', 'enable', `gui/501/${DASHBOARD_LABEL}`],
     ]);
@@ -130,6 +134,45 @@ describe('install / uninstall / status', () => {
     expect(r.localTime).toEqual({ hour: 1, minute: 30 });
   });
 
+  it.each([[-300, 20, 30], [345, 7, 15]])('local hour for UTC offset %i minutes is %i:%i', (offset, hour, minute) => {
+    const o = { ...opts(), localOffsetMinutes: offset };
+    installSchedule(o, fake().run);
+    const x = readFileSync(join(o.agentsDir, `${DAILY_LABEL}.plist`), 'utf8');
+    expect(x).toMatch(new RegExp(`<key>Hour</key>\\s*<integer>${hour}</integer>\\s*<key>Minute</key>\\s*<integer>${minute}</integer>`));
+  });
+
+  it('never chmods an existing home (one warning), tightens an existing logs dir and log files', () => {
+    const warnings: string[] = [];
+    setWarningSink((m) => warnings.push(m));
+    const o = opts();
+    mkdirSync(join(o.home, 'logs'), { recursive: true });
+    chmodSync(o.home, 0o755);
+    chmodSync(join(o.home, 'logs'), 0o755);
+    writeFileSync(join(o.home, 'logs', 'daily.log'), 'old\n', { mode: 0o644 });
+    chmodSync(join(o.home, 'logs', 'daily.log'), 0o644);
+    installSchedule(o, fake().run);
+    installSchedule(o, fake().run);
+    expect(statSync(o.home).mode & 0o777).toBe(0o755);
+    expect(warnings.filter((w) => w.includes('JOBPILOT_HOME'))).toHaveLength(1);
+    expect(statSync(join(o.home, 'logs')).mode & 0o777).toBe(0o700);
+    expect(statSync(join(o.home, 'logs', 'daily.log')).mode & 0o777).toBe(0o600);
+    expect(readFileSync(join(o.home, 'logs', 'daily.log'), 'utf8')).toBe('old\n');
+  });
+
+  it('warns about a symlinked logs dir and leaves it untouched', () => {
+    const warnings: string[] = [];
+    setWarningSink((m) => warnings.push(m));
+    const o = opts();
+    const target = join(tmp, 'elsewhere');
+    mkdirSync(target, { mode: 0o755 });
+    chmodSync(target, 0o755);
+    mkdirSync(o.home, { mode: 0o700 });
+    symlinkSync(target, join(o.home, 'logs'));
+    installSchedule(o, fake().run);
+    expect(statSync(target).mode & 0o777).toBe(0o755);
+    expect(warnings.some((w) => w.includes('elsewhere'))).toBe(true);
+  });
+
   it('fails loudly when bootstrap fails', () => {
     const f = fake({ bootstrap: { status: 5, stderr: 'Bootstrap failed: 5: Input/output error' } });
     expect(() => installSchedule(opts(), f.run)).toThrow(/bootstrap.*Input\/output/s);
@@ -140,21 +183,26 @@ describe('install / uninstall / status', () => {
     installSchedule(o, fake().run);
     const f = fake();
     uninstallSchedule(o, f.run);
-    expect(f.calls.map((c) => c[1])).toEqual(['bootout', 'bootout']);
+    expect(f.calls).toEqual([['launchctl', 'bootout', `gui/501/${DAILY_LABEL}`], ['launchctl', 'bootout', `gui/501/${DASHBOARD_LABEL}`]]);
     expect(existsSync(join(o.agentsDir, `${DAILY_LABEL}.plist`))).toBe(false);
     expect(existsSync(join(o.agentsDir, `${DASHBOARD_LABEL}.plist`))).toBe(false);
     expect(() => uninstallSchedule(o, fake({ bootout: { status: 3 } }).run)).not.toThrow();
+    installSchedule(o, fake().run);
+    expect(() => uninstallSchedule(o, fake({ bootout: { status: 5, stderr: 'Input/output error' } }).run)).toThrow(/bootout/);
+    expect(existsSync(join(o.agentsDir, `${DAILY_LABEL}.plist`))).toBe(true);
   });
 
   it('status parses state and last exit code, and reports not loaded', () => {
     const o = opts();
-    const print = '\tstate = not running\n\tlast exit code = 0\n\truns = 3\n';
+    const print = `${DAILY_LABEL} = {\n\tactive count = 0\n\tstate = not running\n\n\tenvironment = {\n\t\tTZ => Asia/Kolkata\n\t}\n\truns = 3\n\tlast exit code = 0\n}\n`;
     const f = fake({ print: { status: 0, stdout: print } });
     const st = scheduleStatus(o, f.run);
     expect(st[0]).toMatchObject({ label: DAILY_LABEL, loaded: true, state: 'not running', lastExitCode: 0 });
     expect(st[0]?.logPath).toBe(join(o.home, 'logs', 'daily.log'));
     expect(st[0]?.plistPath).toBe(join(o.agentsDir, `${DAILY_LABEL}.plist`));
     expect(f.calls[0]).toEqual(['launchctl', 'print', `gui/501/${DAILY_LABEL}`]);
+    const never = scheduleStatus(o, fake({ print: { status: 0, stdout: '\tstate = running\n\tlast exit code = (never exited)\n' } }).run);
+    expect(never[0]).toMatchObject({ state: 'running', lastExitCode: null });
     const none = scheduleStatus(o, fake({ print: { status: 113, stderr: 'Could not find service' } }).run);
     expect(none.every((s) => !s.loaded && s.state === null)).toBe(true);
   });
