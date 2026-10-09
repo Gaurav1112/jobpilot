@@ -43,7 +43,7 @@ describe('AppStore schema', () => {
 describe('AppStore.upsertJob', () => {
   it('inserts a new job with status new, an empty note, first_seen and last_seen', () => {
     const s = AppStore.on(Store.open(':memory:'));
-    expect(s.upsertJob(jobRow())).toEqual({ jobKey: '0123456789abcdef', inserted: true });
+    expect(s.upsertJob(jobRow())).toEqual({ jobKey: '0123456789abcdef', inserted: true, stale: false });
     const j = s.getJob('0123456789abcdef');
     expect(j).toMatchObject({ status: 'new', note: '', firstSeen: AT, lastSeen: AT, score: 70, docsState: 'none' });
     expect(j?.sources).toEqual([{ source: 'greenhouse', sourceId: '1001' }]);
@@ -54,7 +54,7 @@ describe('AppStore.upsertJob', () => {
     s.upsertJob(jobRow());
     s.setStatus('0123456789abcdef', 'applied', 'user', AT);
     s.setNote('0123456789abcdef', 'spoke to the recruiter');
-    expect(s.upsertJob(jobRow({ title: 'Staff Backend Engineer', score: 81, at: LATER }))).toEqual({ jobKey: '0123456789abcdef', inserted: false });
+    expect(s.upsertJob(jobRow({ title: 'Staff Backend Engineer', score: 81, at: LATER }))).toEqual({ jobKey: '0123456789abcdef', inserted: false, stale: false });
     expect(s.getJob('0123456789abcdef')).toMatchObject({
       status: 'applied',
       note: 'spoke to the recruiter',
@@ -70,9 +70,18 @@ describe('AppStore.upsertJob', () => {
     s.upsertJob(jobRow());
     // A retitled career page re-emits the same sourceId, so the same job key; its dedupe key changes.
     const r = s.upsertJob(jobRow({ dedupeKey: 'eeeeeeeeeeeeeeee', title: 'Principal Engineer', at: LATER }));
-    expect(r).toEqual({ jobKey: '0123456789abcdef', inserted: false });
+    expect(r).toEqual({ jobKey: '0123456789abcdef', inserted: false, stale: false });
     expect(s.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'rejected', 'below-floor'] })).toHaveLength(1);
     expect(s.getJob('0123456789abcdef')).toMatchObject({ title: 'Principal Engineer', dedupeKey: 'eeeeeeeeeeeeeeee' });
+  });
+
+  it('skips an observation older than last_seen: last_seen never moves backwards (fix round 2)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ at: LATER, title: 'Newer' }));
+    expect(s.upsertJob(jobRow({ at: AT, title: 'Older' }))).toEqual({ jobKey: '0123456789abcdef', inserted: false, stale: true });
+    expect(s.getJob('0123456789abcdef')).toMatchObject({ title: 'Newer', lastSeen: LATER });
+    expect(s.upsertJob(jobRow({ at: LATER, title: 'Same time' }))).toEqual({ jobKey: '0123456789abcdef', inserted: false, stale: false });
+    expect(s.getJob('0123456789abcdef')?.title).toBe('Same time');
   });
 
   it('refuses a known (source, sourceId) under another job key', () => {
@@ -144,6 +153,18 @@ describe('AppStore cross-source duplicates (fix round 1)', () => {
     expect(s.getJob(GH)).toMatchObject({ status: 'applied', note: 'via the feed' });
     expect(s.getJob(HM)).toMatchObject({ status: 'applied', note: 'via the feed' });
     expect(s.getJob(GH)?.history).toEqual([{ from: 'new', to: 'applied', at: AT, by: 'user' }]);
+    // Fix round 2: every row whose shown status changed records it, so each row's status has its own history.
+    expect(s.getJob(HM)?.history).toEqual([{ from: 'new', to: 'applied', at: AT, by: 'user' }]);
+  });
+
+  it('a row that leaves its group keeps a history for the status it shows (fix round 2)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow({ jobKey: GH, sourceId: '1' }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1' }));
+    s.setStatus(GH, 'approved', 'user', AT);
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', dedupeKey: 'eeeeeeeeeeeeeeee', at: LATER }));
+    expect(s.getJob(HM)).toMatchObject({ duplicateOf: null, status: 'approved' });
+    expect(s.getJob(HM)?.history.at(-1)).toMatchObject({ to: 'approved' });
   });
 });
 
@@ -158,6 +179,21 @@ describe('AppStore status, note, docs, overrides and runs', () => {
       { from: 'new', to: 'approved', at: AT, by: 'user' },
       { from: 'approved', to: 'new', at: LATER, by: 'user' },
     ]);
+  });
+
+  it('status_history is append-only: UPDATE, DELETE, INSERT OR REPLACE and REPLACE INTO are refused (fix round 2)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(jobRow());
+    s.setStatus('0123456789abcdef', 'approved', 'user', AT);
+    const db = s.kernel.db;
+    const before = JSON.stringify(db.prepare(`SELECT * FROM status_history`).all());
+    expect(() => db.prepare(`UPDATE status_history SET "to" = 'offer'`).run()).toThrow(/append-only/);
+    expect(() => db.prepare(`DELETE FROM status_history`).run()).toThrow(/append-only/);
+    expect(() => db.prepare(`INSERT OR REPLACE INTO status_history (seq, job_key, "from", "to", at, by) VALUES (1, '0123456789abcdef', 'new', 'offer', ?, 'user')`).run(AT)).toThrow(/append-only/);
+    expect(() => db.prepare(`REPLACE INTO status_history (seq, job_key, "from", "to", at, by) VALUES (1, '0123456789abcdef', 'new', 'offer', ?, 'user')`).run(AT)).toThrow(/append-only/);
+    expect(JSON.stringify(db.prepare(`SELECT * FROM status_history`).all())).toBe(before);
+    s.setStatus('0123456789abcdef', 'applied', 'user', LATER);
+    expect(s.getJob('0123456789abcdef')?.history).toHaveLength(2);
   });
 
   it('refuses an unknown status and an unknown job', () => {

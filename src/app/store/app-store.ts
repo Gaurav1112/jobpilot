@@ -118,7 +118,7 @@ export interface JobView {
 export interface JobDetail extends JobView {
   readonly sources: { source: string; sourceId: string }[];
   readonly docs: Doc[];
-  /** The group's status history: the preferred row's and its duplicates', by time. */
+  /** This row's status history; a group status change is recorded on every row of the group. */
   readonly history: { from: JobStatus | null; to: JobStatus; at: string; by: 'user' | 'migration' }[];
 }
 
@@ -302,12 +302,15 @@ export class AppStore {
 
   /**
    * Inserts the job, or updates its run-owned columns and `last_seen` (never `status`, `note`, `applied_at` or
-   * `first_seen`), then re-links its dedupe group (and its old one, when the dedupe key changed).
+   * `first_seen`), then re-links its dedupe group (and its old one, when the dedupe key changed). An observation older
+   * than the row's `last_seen` is `stale` and changes nothing: an older run never overwrites newer data, and
+   * `last_seen` never moves backwards. The same time again (re-projecting one run) is applied.
    */
-  upsertJob(r: JobUpsert): { jobKey: string; inserted: boolean } {
+  upsertJob(r: JobUpsert): { jobKey: string; inserted: boolean; stale: boolean } {
     return this.tx(() => {
       const cur = this.row(r.jobKey);
       this.assertIdentity(r, cur);
+      if (cur && r.at < cur.last_seen) return { jobKey: r.jobKey, inserted: false, stale: true };
       if (cur) {
         this.db
           .prepare(`UPDATE jobs SET ${RUN_COLUMNS.map((c) => `${c} = ?`).join(', ')}, last_seen = ? WHERE job_key = ?`)
@@ -317,14 +320,15 @@ export class AppStore {
         this.insert(r, undefined);
       }
       this.relink(r.dedupeKey);
-      return { jobKey: r.jobKey, inserted: !cur };
+      return { jobKey: r.jobKey, inserted: !cur, stale: false };
     });
   }
 
   /**
    * Migration only. A new posting is inserted with the Desk's status, note and applied_at and a `migration` history
-   * entry (`inserted`). A posting a run found first, whose status the user never set (no history), takes them too
-   * (`attached`). A posting with history is left alone (`present`): a re-run, or the user's own word.
+   * entry (`inserted`). A posting a run found first, whose group's status nobody ever set (no history on any row of
+   * its cross-source group), takes them too (`attached`). Otherwise it is left alone (`present`): a re-run, or the
+   * user's own word.
    */
   importJob(r: JobImport): 'inserted' | 'attached' | 'present' {
     assertStatus(r.status);
@@ -336,7 +340,7 @@ export class AppStore {
         this.insert(r, { status: r.status, note: r.note, appliedAt: r.appliedAt });
         this.history(r.jobKey, null, r.status, r.statusAt, 'migration');
         outcome = 'inserted';
-      } else if (this.db.prepare(`SELECT 1 FROM status_history WHERE job_key = ? LIMIT 1`).get(r.jobKey) === undefined) {
+      } else if (!this.groupHasHistory(r.jobKey)) {
         this.db
           .prepare(`UPDATE jobs SET status = ?, note = ?, applied_at = ? WHERE job_key = ?`)
           .run(r.status, cur.note === '' ? r.note : cur.note, cur.applied_at ?? r.appliedAt, r.jobKey);
@@ -348,6 +352,13 @@ export class AppStore {
       this.relink(r.dedupeKey);
       return outcome;
     });
+  }
+
+  /** Whether any row of the job's group has a status history entry (the user, or an earlier import, decided). */
+  private groupHasHistory(jobKey: string): boolean {
+    const { top, dups } = this.group(jobKey);
+    const keys = [top, ...dups].map((r) => r.job_key);
+    return this.db.prepare(`SELECT 1 FROM status_history WHERE job_key IN (${keys.map(() => '?').join(', ')}) LIMIT 1`).get(...keys) !== undefined;
   }
 
   /** Recomputes `duplicate_of` for one dedupe group. */
@@ -379,8 +390,9 @@ export class AppStore {
   }
 
   /**
-   * Sets the user status of the job's whole group (the preferred row and its duplicates), with one history entry on
-   * the preferred row. Returns false (and records nothing) when the group already shows that status everywhere.
+   * Sets the user status of the job's whole group (the preferred row and its duplicates). Every row shows the group's
+   * status, so when that changes each row gets its own history entry, and a row that later leaves the group still has
+   * the history of the status it carries. Returns false (and records nothing) when every row already has `to`.
    */
   setStatus(jobKey: string, to: JobStatus, by: 'user' | 'migration', at: string): boolean {
     assertStatus(to);
@@ -390,8 +402,10 @@ export class AppStore {
       if (rows.every((r) => r.status === to)) return false;
       const shown = groupStatus(rows);
       const set = this.db.prepare(`UPDATE jobs SET status = ? WHERE job_key = ?`);
-      for (const r of rows) set.run(to, r.job_key);
-      this.history(top.job_key, shown, to, at, by);
+      for (const r of rows) {
+        set.run(to, r.job_key);
+        if (shown !== to) this.history(r.job_key, shown, to, at, by);
+      }
       return true;
     });
   }
@@ -428,10 +442,7 @@ export class AppStore {
         qa_ok: number;
       }[]
     ).map((d) => ({ kind: d.kind, format: d.format, path: d.path, sha256: d.sha256, pages: d.pages, qaOk: d.qa_ok === 1 }));
-    const keys = [top, ...dups].map((r) => r.job_key);
-    const history = this.db
-      .prepare(`SELECT "from", "to", at, by FROM status_history WHERE job_key IN (${keys.map(() => '?').join(', ')}) ORDER BY at, seq`)
-      .all(...keys) as JobDetail['history'];
+    const history = this.db.prepare(`SELECT "from", "to", at, by FROM status_history WHERE job_key = ? ORDER BY seq`).all(jobKey) as JobDetail['history'];
     return { ...view(row, top, dups), sources: [{ source: row.source, sourceId: row.source_id }], docs, history };
   }
 

@@ -7,6 +7,8 @@ import { JOB_STATUSES } from './store/schema.js';
 import { dedupeKey, jobKey } from './text/norm.js';
 
 export const NOTE_REMOVED = '[note removed: contained a forbidden term]';
+/** Replaces a location or url that holds a forbidden term. */
+export const REDACTED = '[redacted: contained a forbidden term]';
 
 /** Application Desk doc id prefix → jobpilot source name. The rest of the id is the source id. */
 export const DESK_PREFIXES: Readonly<Record<string, string>> = {
@@ -33,6 +35,11 @@ export interface DeskReport {
   readonly notesSanitised: number;
   /** `why` texts dropped for holding a forbidden term. */
   readonly whyRemoved: number;
+  /** Rows refused because the company or title holds a forbidden term; each is also in `skipped`. */
+  readonly refused: number;
+  /** Locations and urls replaced by `REDACTED`. */
+  readonly locationsRedacted: number;
+  readonly urlsRedacted: number;
   readonly skipped: { file: string; reason: string }[];
   /** Imported rows (inserted or attached) by their Desk status, and by source. */
   readonly byStatus: Record<string, number>;
@@ -116,8 +123,10 @@ function forbidden(text: string, naming: Naming): boolean {
  * sourceId)`, so a later run that re-finds the posting upserts the same row. The dedupe key (company, title,
  * location) links a cross-source duplicate to its preferred row; same-source rows always stay separate jobs. A status
  * the user set on the dashboard is never overridden (`AppStore.importJob`). Idempotent: a `(source, sourceId)` already
- * imported is left alone. A note holding a forbidden term is replaced by `NOTE_REMOVED`, a `why` holding one is
- * dropped, and a company or title holding one skips the row; all are counted.
+ * imported is left alone. Every text field is checked with `assertNoForbidden` (which folds case, marks and
+ * Cyrillic/Greek homoglyphs): a company or title hit refuses the row loudly (`refused`, with a `skipped` reason); a
+ * location or url hit replaces that field with `REDACTED` (the dedupe key is computed from the redacted location); a
+ * note hit replaces the note with `NOTE_REMOVED`; a `why` hit drops it. All are counted.
  */
 export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming: Naming }): DeskReport {
   const jobsDir = join(dir, 'jobs');
@@ -131,6 +140,9 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
   const imported: string[] = [];
   let alreadyPresent = 0;
   let notesSanitised = 0;
+  let refused = 0;
+  let locationsRedacted = 0;
+  let urlsRedacted = 0;
   let whyRemoved = 0;
 
   for (const file of files) {
@@ -147,6 +159,7 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
     }
     if (forbidden(`${row.company}\n${row.title}`, opts.naming)) {
       skipped.push({ file, reason: 'company or title contains a forbidden term' });
+      refused += 1;
       continue;
     }
     const source = DESK_PREFIXES[prefix] as string;
@@ -154,6 +167,16 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
     if (note !== '' && forbidden(note, opts.naming)) {
       note = NOTE_REMOVED;
       notesSanitised += 1;
+    }
+    let location = row.location;
+    if (location !== '' && forbidden(location, opts.naming)) {
+      location = REDACTED;
+      locationsRedacted += 1;
+    }
+    let url = row.url;
+    if (forbidden(url, opts.naming)) {
+      url = REDACTED;
+      urlsRedacted += 1;
     }
     let why = row.why;
     if (why !== '' && forbidden(why, opts.naming)) {
@@ -165,15 +188,15 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
     const key = jobKey(source, sourceId);
     const outcome = app.importJob({
       jobKey: key,
-      dedupeKey: dedupeKey(row.company, row.title, row.location),
+      dedupeKey: dedupeKey(row.company, row.title, location),
       source,
       sourceId,
       company: row.company,
       title: row.title,
-      url: row.url,
+      url,
       // The `ats` column keeps the source name: an ATS jobpilot reads (greenhouse, lever, ashby) or a board it never fetches.
       ats: source,
-      location: row.location,
+      location,
       remote: null,
       compMinInr: null,
       compMaxInr: null,
@@ -206,7 +229,7 @@ export function migrateDesk(dir: string, app: AppStore, opts: { readonly naming:
     bySource[source] = (bySource[source] ?? 0) + 1;
   }
   const duplicates = imported.filter((k) => app.getJob(k)?.duplicateOf !== null).length;
-  return { read: files.length, inserted, attached, duplicates, alreadyPresent, notesSanitised, whyRemoved, skipped, byStatus: sorted(byStatus), bySource: sorted(bySource) };
+  return { read: files.length, inserted, attached, duplicates, alreadyPresent, notesSanitised, whyRemoved, refused, locationsRedacted, urlsRedacted, skipped, byStatus: sorted(byStatus), bySource: sorted(bySource) };
 }
 
 const sorted = (r: Record<string, number>): Record<string, number> => Object.fromEntries(Object.entries(r).sort(([a], [b]) => (a < b ? -1 : 1)));

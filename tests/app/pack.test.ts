@@ -197,6 +197,26 @@ describe('assertNoForbidden', () => {
       expect(() => assertNoForbidden(`at ${t} now`, n)).toThrow(ForbiddenTermError);
     }
   });
+  it('folds Turkish dotted and dotless i, and Cyrillic and Greek homoglyphs (Task 8 fix round 2)', () => {
+    for (const t of [
+      '\u0130nitech', // İnitech
+      'In\u0131tech', // dotless ı
+      '\u0406nitech', // Cyrillic capital І
+      'Init\u0435ch', // Cyrillic е
+      'In\u0456t\u0435\u0441h', // Cyrillic і е с
+      '\u0399NITECH', // Greek capital Ι
+      'INIT\u0395CH', // Greek capital Ε
+      '\u0399\u039d\u0399\u03a4\u0395CH', // Greek Ι Ν Ι Τ Ε
+    ]) {
+      expect(() => assertNoForbidden(`worked at ${t} once`, naming), t).toThrow(ForbiddenTermError);
+    }
+    const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Acme Corp'] };
+    for (const t of ['\u0410\u0441m\u0435 \u0421\u043erp', 'A\u0441me C\u043er\u0440', '\u0391cme \u039f'.replace('\u039f', 'Corp')]) {
+      expect(() => assertNoForbidden(t, n), t).toThrow(ForbiddenTermError);
+    }
+    expect(() => assertNoForbidden('reinitechnology and \u0456nitiative', naming)).not.toThrow();
+  });
+
   it('sees through zero-width characters and Unicode normalisation', () => {
     const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech', 'café', 'Straße'] };
     expect(() => assertNoForbidden('Init\u200bech', n)).toThrow(ForbiddenTermError);

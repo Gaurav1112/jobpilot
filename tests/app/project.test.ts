@@ -93,11 +93,13 @@ class RunBuilder {
     this.store.markQueue(this.runId, agent, input.envelopeId, 'quarantined');
   }
   /** An input-side trip writes no step row; only the tracker's transition names the job. */
-  quarantinedIn(agent: string, input: Envelope, jobKey: string): void {
+  /** `prior`: the tracker events the job went through before the trip, so the transition's from-state is right. */
+  quarantinedIn(agent: string, input: Envelope, jobKey: string, prior: readonly string[]): void {
     const stepKey = `step-${(this.n += 1)}`;
     this.store.enqueue(this.runId, 5, agent, input.envelopeId);
     this.store.appendEvent(this.runId, AT, 'step_quarantined', { agent, stepKey, side: 'in', verdict: { id: 'G-NAMING', verdict: 'trip', detail: 'forbidden term' } }, 'policy-hash');
     const t = makeJobTracker({ minFit: 60 });
+    prior.forEach((ev, i) => this.store.applyTransition(jobKey, t.kind, `${stepKey}-prior-${i}`, ev, t.machine, 'done'));
     this.store.applyTransition(jobKey, t.kind, stepKey, 'blocked', t.machine, 'quarantined');
     this.store.markQueue(this.runId, agent, input.envelopeId, 'quarantined');
   }
@@ -214,9 +216,42 @@ describe('projectRun', () => {
     const b = new RunBuilder();
     const app = AppStore.on(b.store);
     const sc = b.chain(posting(7), 'eligible', 70);
-    b.quarantinedIn('evidence-matcher', sc, posting(7).jobKey);
+    b.quarantinedIn('evidence-matcher', sc, posting(7).jobKey, ['normalized', 'scored']);
     projectRun(b.store, app, RUN, OPTS);
     expect(app.getJob(posting(7).jobKey)).toMatchObject({ docsState: 'blocked', docsDetail: 'evidence-matcher quarantined: G-NAMING: forbidden term' });
+  });
+
+  it('an input-side trip at eligibility or the scorer leaves docs none, with the detail (fix round 2)', () => {
+    const b = new RunBuilder();
+    const app = AppStore.on(b.store);
+    const raw = b.input('RawPosting@1', {});
+    const [post] = b.done('normalizer', raw, [{ type: 'Posting@1', payload: posting(13) }]) as [Envelope];
+    b.quarantinedIn('eligibility', post, posting(13).jobKey, ['normalized']);
+    const ev = b.chain(posting(14), 'eligible');
+    b.quarantinedIn('scorer-lexicon', ev, posting(14).jobKey, ['normalized']);
+    projectRun(b.store, app, RUN, OPTS);
+    expect(app.getJob(posting(13).jobKey)).toMatchObject({ docsState: 'none', docsDetail: 'eligibility quarantined: G-NAMING: forbidden term' });
+    expect(app.getJob(posting(14).jobKey)).toMatchObject({ docsState: 'none', docsDetail: 'scorer-lexicon quarantined: G-NAMING: forbidden term' });
+  });
+
+  it('never lets an older run overwrite newer data: project A, then B, then A again (fix round 2)', () => {
+    const b = new RunBuilder();
+    const app = AppStore.on(b.store);
+    b.write(b.chain(posting(3), 'eligible', 75), true);
+    projectRun(b.store, app, RUN, OPTS);
+    const run2 = 'daily-2026-10-16';
+    const at2 = '2026-10-16T01:30:00.000Z';
+    b.store.startRun(run2, 'daily@1', 'policy-hash', at2);
+    b.store.appendEvent(run2, at2, 'run_started', {}, 'policy-hash');
+    const newer = posting(3, { title: 'Staff Backend Engineer' });
+    const [post] = b.done('normalizer', b.input('RawPosting@1', {}), [{ type: 'Posting@1', payload: newer }], run2) as [Envelope];
+    const [ev] = b.done('eligibility', post, [{ type: 'EligibilityVerdict@1', payload: verdict(newer, 'eligible') }], run2) as [Envelope];
+    b.done('scorer-lexicon', ev, [{ type: 'Scored@1', payload: scored(newer, 50) }], run2);
+    projectRun(b.store, app, run2, OPTS);
+    const afterB = JSON.stringify(app.getJob(posting(3).jobKey));
+    expect(projectRun(b.store, app, RUN, OPTS)).toMatchObject({ jobs: 0, stale: 1 });
+    expect(JSON.stringify(app.getJob(posting(3).jobKey))).toBe(afterB);
+    expect(app.getJob(posting(3).jobKey)).toMatchObject({ title: 'Staff Backend Engineer', lastSeen: at2, docsState: 'below-floor', docs: [] });
   });
 
   it('a later run upserts the same (source, sourceId) as a newer version and keeps the user status', () => {

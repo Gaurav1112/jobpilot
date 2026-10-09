@@ -20,6 +20,8 @@ export interface ProjectResult {
   readonly jobs: number;
   /** Of those, rows that did not exist before. */
   readonly inserted: number;
+  /** Jobs skipped because the row was last seen after this run (an older run projected late); not in `jobs`. */
+  readonly stale: number;
   readonly docs: Record<DocsState, number>;
   /** Quarantines the projector could not tie to a job (an input-side trip with no tracker transition). */
   readonly unresolvedQuarantines: number;
@@ -31,6 +33,8 @@ const RANK: Readonly<Record<string, number>> = {
 };
 /** A quarantine of a step whose input is at least this far along blocks the job's documents (the writing team). */
 const WRITING_INPUT_RANK = RANK['Scored@1'] as number;
+/** Job tracker states a writing step's input leaves from: a scored job, or one further along. */
+const WRITING_STATES: ReadonlySet<string> = new Set(['SCORED', 'PLANNED', 'RENDERED']);
 
 interface Quarantine {
   readonly agent: string;
@@ -93,7 +97,8 @@ const inr = (v: number | null, p: Posting['comp'], fx: FxRates): number | null =
  *
  * The job key is the posting's identity (`jobKey(source, sourceId)`), so a re-emitted posting upserts its row (a newer
  * version) and a Desk row with that source id is the same row; cross-source listings are linked by the store through
- * the dedupe key. Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
+ * the dedupe key. A job whose row was last seen after this run's time is skipped (`stale`), so projecting an older run
+ * never overwrites newer data or docs. Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
  * note are never written. Projecting a run twice is a no-op.
  */
 export function projectRun(kernel: Store, app: AppStore, runId: string, opts: ProjectOptions): ProjectResult {
@@ -143,8 +148,13 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   for (const [stepKey, q] of [...quarantined].sort(([a], [b]) => cmp(a, b))) {
     const input = inputOf(kernel, stepKey);
     let key = input ? jobKeyOf(input) : null;
+    let inputRank = input ? (RANK[input.type] ?? 0) : 0;
     if (key === null && !input) {
-      key = kernel.transitionsOfStep(stepKey).find((t) => t.kind === JOB_TRACKER_KIND)?.entity_id ?? null;
+      // An input-side trip: the tracker's transition names the job, and the state it left says how far the job got,
+      // so a trip at eligibility or the scorer is not mistaken for a writing step.
+      const t = kernel.transitionsOfStep(stepKey).find((x) => x.kind === JOB_TRACKER_KIND);
+      key = t?.entity_id ?? null;
+      inputRank = t !== undefined && WRITING_STATES.has(t.from_state) ? WRITING_INPUT_RANK : 0;
     }
     if (key === null) {
       if (!input) unresolvedQuarantines += 1;
@@ -152,7 +162,7 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
     }
     const g = group(key);
     if (input) g.envs.push(input);
-    g.quarantines.push({ agent: q.agent, inputRank: input ? (RANK[input.type] ?? 0) : WRITING_INPUT_RANK, detail: `${q.agent} quarantined: ${verdictText(q.verdict)}` });
+    g.quarantines.push({ agent: q.agent, inputRank, detail: `${q.agent} quarantined: ${verdictText(q.verdict)}` });
   }
   for (const [stepKey, f] of [...failed].sort(([a], [b]) => cmp(a, b))) {
     const input = inputOf(kernel, stepKey);
@@ -167,19 +177,25 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   const docs: Record<DocsState, number> = { ready: 0, blocked: 0, 'below-floor': 0, none: 0 };
   let jobs = 0;
   let inserted = 0;
+  let stale = 0;
   app.tx(() => {
     for (const key of [...groups.keys()].sort()) {
       const g = groups.get(key) as JobGroup;
       const r = rowOf(key, g, at, opts);
       if (!r) continue;
       const res = app.upsertJob(r.row);
+      if (res.stale) {
+        // An older run than the row's last sighting: it must not overwrite newer data or docs.
+        stale += 1;
+        continue;
+      }
       app.putDocs(res.jobKey, r.docs);
       jobs += 1;
       if (res.inserted) inserted += 1;
       docs[r.row.docsState] += 1;
     }
   });
-  return { jobs, inserted, docs, unresolvedQuarantines };
+  return { jobs, inserted, stale, docs, unresolvedQuarantines };
 }
 
 function inputOf(kernel: Store, stepKey: string): Envelope | undefined {

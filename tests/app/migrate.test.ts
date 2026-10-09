@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { migrateDesk, NOTE_REMOVED } from '../../src/app/migrate-desk.js';
+import { migrateDesk, NOTE_REMOVED, REDACTED } from '../../src/app/migrate-desk.js';
 import { loadPack } from '../../src/app/pack/load.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 import { dedupeKey, jobKey } from '../../src/app/text/norm.js';
@@ -116,7 +116,7 @@ describe('migrateDesk', () => {
     const app = AppStore.on(Store.open(':memory:'));
     migrateDesk(DESK, app, opts);
     const r = app.upsertJob(jobRow({ jobKey: ghKey, dedupeKey: ghDedupe, source: 'greenhouse', sourceId: '4400001', score: 77, verdict: 'eligible', at: '2026-10-09T01:30:00.000Z' }));
-    expect(r).toEqual({ jobKey: ghKey, inserted: false });
+    expect(r).toEqual({ jobKey: ghKey, inserted: false, stale: false });
     expect(app.getJob(ghKey)).toMatchObject({ status: 'applied', note: 'Referred by a former colleague', score: 77, verdict: 'eligible', lastSeen: '2026-10-09T01:30:00.000Z', firstSeen: '2026-08-21T03:45:00.000Z' });
   });
 
@@ -135,6 +135,23 @@ describe('migrateDesk', () => {
     app.setNote(ghKey, 'not for me');
     expect(migrateDesk(DESK, app, opts)).toMatchObject({ alreadyPresent: 1 });
     expect(app.getJob(ghKey)).toMatchObject({ status: 'skipped', note: 'not for me' });
+  });
+
+  it('refuses a row whose company or title holds a forbidden term, even as a confusable, and redacts a location or url (fix round 2)', () => {
+    const d = deskCopy({
+      'gh-5500001.json': { ...acme, company: '\u0130nitech Labs', source: 'Greenhouse', found_at: '2026-09-01T09:00:00+05:30', status: 'new', note: '' },
+      'gh-5500002.json': { ...acme, title: 'Engineer, \u0406nitech platform', source: 'Greenhouse', found_at: '2026-09-01T09:00:00+05:30', status: 'new', note: '' },
+      'gh-5500003.json': { ...acme, title: 'Platform Engineer', location: 'Initech campus, Pune', url: 'https://example.test/initech/jobs/3', source: 'Greenhouse', found_at: '2026-09-01T09:00:00+05:30', status: 'new', note: '' },
+      'ih-77001.json': { ...acme, title: 'SDE 3', source: 'Instahyre', found_at: '2026-09-02T09:00:00+05:30', status: 'new', note: '' },
+    });
+    const app = AppStore.on(Store.open(':memory:'));
+    const r = migrateDesk(d, app, opts);
+    expect(r).toMatchObject({ read: 11, inserted: 8, refused: 2, locationsRedacted: 1, urlsRedacted: 1 });
+    expect(r.skipped.filter((x) => x.reason === 'company or title contains a forbidden term').map((x) => x.file)).toEqual(['gh-5500001.json', 'gh-5500002.json']);
+    expect(app.getJob(jobKey('greenhouse', '5500001'))).toBeUndefined();
+    const redacted = app.getJob(jobKey('greenhouse', '5500003'));
+    expect(redacted).toMatchObject({ location: REDACTED, url: REDACTED, dedupeKey: dedupeKey('Acme Robotics', 'Platform Engineer', REDACTED) });
+    expect(app.getJob(jobKey('instahyre', '77001'))).toMatchObject({ source: 'instahyre', ats: 'instahyre' });
   });
 
   it('reports unreadable files and a missing jobs directory', () => {

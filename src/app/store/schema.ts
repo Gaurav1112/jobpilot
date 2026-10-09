@@ -77,6 +77,10 @@ export const APP_MIGRATIONS: readonly string[] = [
   CREATE INDEX status_history_by_job ON status_history (job_key, seq);
   CREATE TRIGGER status_history_append_only_u BEFORE UPDATE ON status_history BEGIN SELECT RAISE(ABORT, 'status_history is append-only'); END;
   CREATE TRIGGER status_history_append_only_d BEFORE DELETE ON status_history BEGIN SELECT RAISE(ABORT, 'status_history is append-only'); END;
+  -- INSERT OR REPLACE / REPLACE INTO on an existing seq would delete the old row without firing the delete trigger.
+  CREATE TRIGGER status_history_append_only_r BEFORE INSERT ON status_history
+    WHEN NEW.seq IS NOT NULL AND EXISTS (SELECT 1 FROM status_history WHERE seq = NEW.seq)
+    BEGIN SELECT RAISE(ABORT, 'status_history is append-only'); END;
   CREATE TABLE fact_overrides (
     fact_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
