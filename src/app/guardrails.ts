@@ -10,6 +10,7 @@ import {
   displayRoles,
   firstSeenOf,
   groupOf,
+  hasOngoingRole,
   headlineOf,
   isGapKey,
   keyOfDisplay,
@@ -123,7 +124,9 @@ export function resumeProblems(plan: ResumePlan, pack: WritingPack, prefix = '',
     const d = firstDiff(evidence, plan.evidence);
     if (d !== undefined) say(`evidence is not what the posting and the pack give (at ${d})`);
   }
-  if (!pack.targets.claimableTitles.includes(plan.headline)) say('headline is not a claimable title');
+  // With an ongoing role the headline is a claimable title; with none it is the most recent role's title (past tense).
+  const claimable = hasOngoingRole(pack) ? pack.targets.claimableTitles : displayRoles(pack).slice(0, 1).map((r) => r.title);
+  if (!claimable.includes(plan.headline)) say('headline is not a claimable title');
   const headline = attempt(problems, `${prefix}headline`, () => headlineOf(posting.title, pack));
   if (headline !== undefined && plan.headline !== headline) say('headline is not the computed claimable title');
   const roles = attempt(problems, `${prefix}roles`, () => displayRoles(pack));

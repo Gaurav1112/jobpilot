@@ -149,9 +149,10 @@ describe('G-GROUND', () => {
     const head = clone(resume);
     head.headline = 'Principal Engineer';
     expect(onResume(G_GROUND, head).detail).toMatch(/headline is not a claimable title; headline is not the computed claimable title/);
+    const two = freezePack({ ...pack, targets: { ...pack.targets, claimableTitles: ['Senior Backend Engineer', 'Software Engineer'] } }) as WritingPack;
     const other = clone(resume);
-    other.headline = 'Software Engineer'; // claimable, but not the choice for this posting
-    expect(onResume(G_GROUND, other).detail).toMatch(/^headline is not the computed claimable title/);
+    other.headline = 'Software Engineer'; // claimable in this pack, but not the choice for this posting
+    expect(resumeProblems(other, two)[0]).toMatch(/^headline is not the computed claimable title/);
   });
 
   it('re-derives the evidence instead of trusting it', () => {
@@ -423,6 +424,26 @@ describe('fix round 1: review probes as regressions', () => {
     const clean = planFor({ title: 'Senior Backend Engineer (Java)', company: 'Acme &amp; Sons <i>Payments</i>' });
     expect(clean.c.paragraphs[0]!.text).toContain('at Acme & Sons Payments.');
     expect(onCover(G_GROUND, clean.c, env('ResumePlan@1', clean.r, resumePlanner.contract)).verdict).toBe('pass');
+  });
+
+  it('round 2 I-R1: G-GROUND recomputes which p1 variant applies, and its article', () => {
+    const ended = freezePack({ ...pack, roles: pack.roles.map((r) => (r.end === 'present' ? { ...r, end: '2026-06' } : r)), targets: { ...pack.targets, claimableTitles: [] } }) as WritingPack;
+    const { r, c } = planFor({ title: 'Software Engineer' }, ended);
+    expect(coverProblems(c, ended, ended)).toEqual([]);
+    const present = clone(c);
+    present.paragraphs[0]!.text = present.paragraphs[0]!.text.replace('I most recently worked as a Senior Backend Engineer,', 'I am a Senior Backend Engineer');
+    expect(coverProblems(present, ended, ended).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
+    const past = clone(cover);
+    past.paragraphs[0]!.text = past.paragraphs[0]!.text.replace('I am a Senior Backend Engineer', 'I most recently worked as a Senior Backend Engineer,');
+    expect(coverProblems(past, pack, pack).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
+    const article = clone(cover);
+    article.paragraphs[0]!.text = article.paragraphs[0]!.text.replace('I am a ', 'I am an ');
+    expect(coverProblems(article, pack, pack).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
+    // a past role's title is not claimable by default, so it may not be the headline
+    const old = clone(resume);
+    old.headline = 'Software Engineer II';
+    expect(problems(old).join('; ')).toMatch(/headline is not a claimable title/);
+    expect(r.headline).toBe('Senior Backend Engineer');
   });
 
   it('C2: a Principal Engineer posting never makes the candidate a Principal Engineer', () => {

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { ZodType } from 'zod';
 import { hashOf } from '../../kernel/canonical.js';
+import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -59,7 +60,11 @@ function withKey(g: LexiconGroup): LexiconGroup {
 }
 
 export interface LoadOptions {
-  /** The experience month (YYYY-MM), overriding experience.yaml: the daily run passes the current IST month. */
+  /**
+   * The experience month (YYYY-MM), overriding experience.yaml. Task 11's daily run must pass the current IST month
+   * taken from its injected clock, and only that (never a value from the pack or the command line): an asOf in the
+   * future inflates the years claim, and nothing here can bound it.
+   */
   readonly asOf?: string;
 }
 
@@ -78,11 +83,23 @@ function checkDates(pack: Pick<Pack, 'roles' | 'facts' | 'experience'>): void {
 
 const monthKey = (ym: string): number => Number(ym.slice(0, 4)) * 12 + Number(ym.slice(5, 7));
 
-/** The distinct role titles, newest role first (start descending, ongoing before ended). */
-export function roleTitlesNewestFirst(roles: readonly { title: string; start: string; end: string }[]): string[] {
-  const end = (e: string) => (e === 'present' ? Number.MAX_SAFE_INTEGER : monthKey(e));
-  const sorted = [...roles].sort((a, b) => monthKey(b.start) - monthKey(a.start) || end(b.end) - end(a.end));
+/**
+ * The default claimable titles (fix round 2, I-R1): the distinct titles of the ongoing roles (end `present`), newest
+ * first. A past role's title is not claimable by default, since "I am a ..." states it as current; with no ongoing
+ * role the list is empty and the documents use the most recent role's title in the past tense.
+ */
+export function ongoingRoleTitles(roles: readonly { title: string; start: string; end: string }[]): string[] {
+  const sorted = roles.filter((r) => r.end === 'present').sort((a, b) => monthKey(b.start) - monthKey(a.start));
   return [...new Set(sorted.map((r) => r.title))];
+}
+
+/** Every claimable title must be a safe template slot already in its sanitised form, since documents use it verbatim. */
+function checkClaimable(titles: readonly string[]): void {
+  titles.forEach((t, i) => {
+    const clean = sanitisePostingText(t);
+    const why = clean !== t ? 'it changes when sanitised (markup, entities, control characters or spacing)' : unsafePostingText(clean);
+    if (why !== null) throw new PackError(`targets.yaml: claimableTitles entry ${i} is not a safe title (${why})`);
+  });
 }
 
 /**
@@ -120,7 +137,7 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     experience,
     eligibility: readYaml(dir, 'eligibility.yaml', EligibilitySchema),
     lexicon: { strong: lexicon.strong.map(withKey), medium: lexicon.medium.map(withKey), gap: lexicon.gap.map(withKey) },
-    targets: { ...targets, claimableTitles: targets.claimableTitles ?? roleTitlesNewestFirst(roles) },
+    targets: { ...targets, claimableTitles: targets.claimableTitles ?? ongoingRoleTitles(roles) },
     filters: readYaml(dir, 'filters.yaml', FiltersSchema),
     naming: readYaml(dir, 'naming.yaml', NamingSchema),
     offers: readYaml(dir, 'offers.yaml', OffersSchema, { floor: null }),
@@ -131,6 +148,7 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     policyUser: readYaml(dir, 'policy.user.yaml', PolicyUserSchema, {}),
   };
   checkDates(pack);
+  checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
   return { pack, hash: hashOf(publicPack) };

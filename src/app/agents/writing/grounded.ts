@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import { KernelError } from '../../../kernel/errors.js';
-import { hasTerm, literalIn, tagsBack, termsIn, type TermGroup } from '../../lexicon.js';
+import { hasTerm, LANGUAGE_WORDS, lexiconTerms, tagsBack, termsIn, type TermGroup } from '../../lexicon.js';
 import { citeable, employerDisplay } from '../../pack/rules.js';
 import { isCalendarDate, type CoverPlan, type Evidence, type Posting, type ResumePlan, type Scored } from '../../types.js';
 import {
+  articleFor,
   asSentence,
   COVER_P1,
+  COVER_P1_PAST,
   COVER_P2_LEAD,
   COVER_P3_TAIL,
   COVER_P3_TAIL_ONE,
@@ -45,9 +47,10 @@ import {
  *   counted. Overlapping roles are not double-counted and gaps are not counted.
  * - **firstSeen** (document metadata only, read by no rule) = the posting's `postedAt` date when it is a real calendar
  *   date, else the first day of the asOf month.
- * - **Headline** = the `targets.claimableTitles` entry (titles the candidate truthfully holds; default: the role
- *   titles) with the most of its words in the sanitised posting title (`hasTerm`), used verbatim. A tie goes to the
- *   entry that is the most recent role's title (roles newest first), then to list order (fix C2).
+ * - **Headline** = the `targets.claimableTitles` entry (titles the candidate truthfully holds; default: the ongoing
+ *   roles' titles) with the most of its words in the sanitised posting title (`hasTerm`), used verbatim. A tie goes to
+ *   the entry that is the most recent role's title (roles newest first), then to list order (fix C2). With no ongoing
+ *   role it is the most recent role's title, and p1 uses the past-tense `COVER_P1_PAST` (fix round 2, I-R1).
  * - **Placement** (fix I3). A ranked fact is placed in a role at its display employer whose dates contain the fact's
  *   whole period (role end 'present' and fact end 'present' are asOf). If several do, the one whose title equals
  *   `fact.role`, else the newest. A fact no role contains is never a bullet: it is listed in `unplaced`.
@@ -61,8 +64,9 @@ import {
  *   role (none ongoing: no employer slot, no "Currently at").
  * - **Cover** (only placed facts are cited): p1 is `COVER_P1` with the sanitised posting title and company; p2 is
  *   `COVER_P2_LEAD` then the two top-ranked placed facts; p3 the third, then `COVER_P3_TAIL` (or `COVER_P3_TAIL_ONE`
- *   for one term) listing the display of each covered key whose key or display appears literally (`literalIn`) in a
- *   cited claim, so "appears in the work above" is literally true; p4 is `COVER_P4` with its placeholders left for the
+ *   for one term) listing the display of each covered key whose key or display a cited claim names (`hasTerm`, with
+ *   its ambiguous-word rules, no synonyms), so "appears in the work above" is true; p1 takes "a" or "an" from
+ *   `articleFor`; p4 is `COVER_P4` with its placeholders left for the
  *   renderer. A paragraph with nothing to say is omitted.
  */
 
@@ -238,8 +242,16 @@ export function buildEvidence(scored: Scored, pack: WritingPack): Evidence {
 /** The role titles, newest role first (the tie-break order of the headline). */
 const recentTitles = (pack: WritingPack): string[] => [...new Set(displayRoles(pack).map((r) => r.title))];
 
-/** The headline: see the module rules. */
+/** Whether some role is ongoing (end 'present'): picks the present or the past-tense p1. */
+export const hasOngoingRole = (pack: WritingPack): boolean => pack.roles.some((r) => r.end === 'present');
+
+/** The headline: see the module rules. With no ongoing role it is the most recent role's title. */
 export function headlineOf(postingTitle: string, pack: WritingPack): string {
+  if (!hasOngoingRole(pack)) {
+    const latest = displayRoles(pack)[0];
+    if (latest === undefined) throw new Error('roles.yaml has no role, so no headline can be chosen');
+    return latest.title;
+  }
   const title = sanitisePostingText(postingTitle);
   const recent = recentTitles(pack);
   const recency = (t: string): number => {
@@ -378,15 +390,17 @@ export function planCover(resume: ResumePlan, pack: WritingPack): CoverPlan {
     })
     .slice(0, 3);
   const slots = postingSlots(posting);
-  const paragraphs: CoverPlan['paragraphs'] = [{ text: fill(COVER_P1, { ...slots, targetTitle: headline, years }), factIds: [] }];
+  const p1 = hasOngoingRole(pack) ? COVER_P1 : COVER_P1_PAST;
+  const paragraphs: CoverPlan['paragraphs'] = [{ text: fill(p1, { ...slots, article: articleFor(headline), targetTitle: headline, years }), factIds: [] }];
   const lead = top.slice(0, 2);
   if (lead.length > 0) paragraphs.push({ text: [COVER_P2_LEAD, ...lead.map((f) => asSentence(f.claim))].join(' '), factIds: lead.map((f) => f.id) });
   const third = top[2];
-  // Only covered keys whose key or display a cited claim's text holds literally, so "appears in the work above" is
-  // true for a reader of the letter (a synonym such as "payments" does not list "fintech").
-  const listed = evidence.covered
-    .filter((k) => !isGapKey(k, pack) && top.some((f) => literalIn(f.claim, k) || literalIn(f.claim, termDisplay(k, pack))))
-    .map((k) => termDisplay(k, pack));
+  // Only covered keys whose key or display a cited claim's text names, so "appears in the work above" is true for a
+  // reader of the letter: no synonym (a claim saying "payments" does not list "fintech"), and the ambiguous-word rules
+  // of `hasTerm` ("go live", "teams react quickly" and "spring hiring" do not name Go, React or Spring).
+  const neighbours = [...LANGUAGE_WORDS, ...lexiconTerms(allGroups(pack))];
+  const names = (claim: string, k: string) => hasTerm(claim, k, neighbours) || hasTerm(claim, termDisplay(k, pack), neighbours);
+  const listed = evidence.covered.filter((k) => !isGapKey(k, pack) && top.some((f) => names(f.claim, k))).map((k) => termDisplay(k, pack));
   const tail = listed.length === 0 ? [] : [fill(listed.length === 1 ? COVER_P3_TAIL_ONE : COVER_P3_TAIL, { coveredList: joinList(listed) })];
   const p3 = [...(third !== undefined ? [asSentence(third.claim)] : []), ...tail];
   if (p3.length > 0) paragraphs.push({ text: p3.join(' '), factIds: third !== undefined ? [third.id] : [] });

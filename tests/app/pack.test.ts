@@ -146,11 +146,27 @@ describe('loadPack', () => {
     expect(loadPack(FIXTURE, {}, { asOf: '2025-01' }).pack.facts.find((f) => f.id === 'f-ce-02')?.period).toBe('2022-09..2025-09');
   });
 
-  it('defaults targets.claimableTitles to the distinct role titles, newest role first (Task 9 fix C2)', () => {
-    expect(loadPack(FIXTURE).pack.targets.claimableTitles).toEqual(['Senior Backend Engineer', 'Software Engineer II', 'Software Engineer']);
+  it('defaults targets.claimableTitles to the titles of ongoing roles only (Task 9 fix C2, round 2 I-R1)', () => {
+    expect(loadPack(FIXTURE).pack.targets.claimableTitles).toEqual(['Senior Backend Engineer']);
+    const ended = copyFixture();
+    const roles = join(ended, 'roles.yaml');
+    writeFileSync(roles, readFileSync(roles, 'utf8').replace('end: present', 'end: "2026-06"'));
+    expect(loadPack(ended).pack.targets.claimableTitles).toEqual([]); // no ongoing role: the past-tense variant is used
     const d = copyFixture();
     append(d, 'targets.yaml', '\nclaimableTitles: [Backend Engineer, Senior Backend Engineer]\n');
     expect(loadPack(d).pack.targets.claimableTitles).toEqual(['Backend Engineer', 'Senior Backend Engineer']);
+  });
+
+  it('rejects an unsafe claimable title, as the posting slots are checked (round 2 m3)', () => {
+    for (const bad of ['Engineer. I hold a PhD', 'Engineer <b>x</b>', 'Lead '.repeat(16)]) {
+      const d = copyFixture();
+      append(d, 'targets.yaml', `\nclaimableTitles: [${JSON.stringify(bad)}]\n`);
+      expect(() => loadPack(d), bad).toThrow(/targets\.yaml: claimableTitles entry 0 is not a safe title/);
+    }
+    const r = copyFixture();
+    const roles = join(r, 'roles.yaml');
+    writeFileSync(roles, readFileSync(roles, 'utf8').replace('title: Senior Backend Engineer', 'title: "Senior Backend Engineer!"'));
+    expect(() => loadPack(r)).toThrow(/claimableTitles entry 0 is not a safe title/); // the default list is checked too
   });
 
   it('keeps an optional lexicon display name (Task 9 fix I5)', () => {

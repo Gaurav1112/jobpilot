@@ -12,7 +12,37 @@ export const SUMMARY_TEMPLATE = '{title} with {years}+ years building {top1}, {t
  * since the years count every role, backend or not. `{title}` and `{company}` are sanitised posting text
  * (`sanitisePostingText`), and a slot that fails `unsafePostingText` blocks the job's documents.
  */
-export const COVER_P1 = 'I am applying for the {title} role at {company}. I am a {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
+export const COVER_P1 = 'I am applying for the {title} role at {company}. I am {article} {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
+/**
+ * Cover paragraph 1 when no role is ongoing (fix round 2, I-R1): the most recent role's title, in the past tense, so a
+ * past title is never stated as the current one.
+ */
+export const COVER_P1_PAST = 'I am applying for the {title} role at {company}. I most recently worked as {article} {targetTitle}, with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
+
+/** Words that start with a vowel letter but a consonant sound ("a unit", "a European", "a one-off"). */
+const A_BEFORE = ['uni', 'use', 'usu', 'uti', 'ure', 'ubi', 'uk', 'eu', 'one', 'once'];
+/** Words that start with a silent h ("an hour", "an honest", "an heir"). */
+const AN_BEFORE = ['hour', 'honest', 'honor', 'honour', 'heir'];
+/** Letters whose spoken name starts with a vowel sound (an SDE, an MLE, an HR ...); U ("you") is not one. */
+const VOWEL_SOUND_LETTERS = 'AEFHILMNORSX';
+
+/**
+ * "a" or "an" for a title, by the sound of its first word:
+ * - an all-capital acronym (SDE, MLE, UX) is read letter by letter: "an" when its first letter's name starts with a
+ *   vowel sound (A E F H I L M N O R S X), else "a" (a UX Engineer);
+ * - a number: "an" for 8, 11, 18 and 80-89 ... (eight, eleven, eighteen), else "a";
+ * - a word: "an" before a silent h (hour, honest, honor, heir); "a" before a vowel letter that sounds like a consonant
+ *   (uni-, use-, usu-, uti-, ure-, ubi-, uk-, eu-, one, once); otherwise "an" before a vowel letter and "a" before a consonant.
+ */
+export function articleFor(title: string): 'a' | 'an' {
+  const word = title.trim().split(/[\s-]+/)[0] ?? '';
+  if (/^[A-Z][A-Z0-9]+$/.test(word) && !/^[AEIOU][a-z]/.test(word)) return VOWEL_SOUND_LETTERS.includes(word[0] as string) ? 'an' : 'a';
+  if (/^\d/.test(word)) return /^(8|11|18)(\D|$)|^8\d/.test(word) ? 'an' : 'a';
+  const w = word.toLowerCase();
+  if (AN_BEFORE.some((p) => w.startsWith(p))) return 'an';
+  if (A_BEFORE.some((p) => w.startsWith(p))) return 'a';
+  return /^[aeiou]/.test(w) ? 'an' : 'a';
+}
 /** Cover paragraph 2: this lead-in, then the two top-ranked facts verbatim, each its own sentence. */
 export const COVER_P2_LEAD = 'Relevant work:';
 /** Cover paragraph 3: the third fact verbatim, then this sentence (two or more listed terms). */
@@ -108,8 +138,11 @@ export function sanitisePostingText(raw: string): string {
 const ABBREVIATIONS = new Set(['sr', 'jr', 'inc', 'co', 'ltd', 'corp', 'llc', 'plc', 'st', 'dr', 'no', 'vs', 'intl', 'dept', 'mgr', 'eng', 'sw', 'jun', 'sen']);
 /** Allowed characters: letters, marks, digits, whitespace and & , . / ( ) - + # ' : ; | – —. */
 const DISALLOWED = /[^\p{L}\p{M}\p{N}\s&,./()\-+#':;|–—]/u;
-/** "I" is the pronoun (not a level, as in "Software Engineer I" or "SDE I") only before a verb-like word or as I'm, I've. */
-const PRONOUN_I = /(?<![\p{L}\p{N}'])i(?:'m|'ve|\s+(?:am|have|hold|will|was|can|worked|led|built|own|bring|believe))(?![\p{L}\p{N}'])/iu;
+/** "I" is the pronoun (not a level, as in "Software Engineer I" or "SDE I") only before a verb-like word or as I'm, I've, I'll, I'd. */
+const PRONOUN_I =
+  /(?<![\p{L}\p{N}'])i(?:'m|'ve|'ll|'d|\s+(?:am|have|hold|will|was|can|worked|led|built|own|bring|believe|know|designed|developed|managed|love|enjoy))(?![\p{L}\p{N}'])/iu;
+/** Greek and Cyrillic letters that read as I (Ι ι І і Ӏ ӏ), folded to I for the pronoun check only. */
+const I_LOOKALIKES = /[ΙιІіӀӏ]/gu;
 /** we and our in any case; me and my only in lower or sentence case, never all caps (ME is the Middle East). */
 const PRONOUN_WORD = /(?<![\p{L}\p{N}'])(?:[wW][eE]|[oO][uU][rR]|[mM][ey])(?![\p{L}\p{N}'])/u;
 const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\p{L}{2,}/iu;
@@ -117,10 +150,11 @@ const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\
 /**
  * Why a sanitised posting slot may not go into a template, or null when it may. It is unsafe when it:
  * - is empty;
- * - holds a first-person pronoun: "I" before a verb-like word (am, have, hold, will, was, can, worked, led, built,
- *   own, bring, believe) or as I'm / I've, so a level ("Software Engineer I", "SDE I") is not one; "we" and "our" in
- *   any case; "me" and "my" in lower or sentence case only, never all caps ("ME" is the Middle East);
- * - has more than 14 words;
+ * - holds a first-person pronoun: "I" (or a Greek or Cyrillic lookalike of it) before a verb-like word (am, have,
+ *   hold, will, was, can, worked, led, built, own, bring, believe, know, designed, developed, managed, love, enjoy) or
+ *   as I'm / I've / I'll / I'd, so a level ("Software Engineer I", "SDE I") is not one; "we" and "our" in any case;
+ *   "me" and "my" in lower or sentence case only, never all caps ("ME" is the Middle East);
+ * - has more than 14 words, or a word longer than 40 characters;
  * - has a sentence end (. ! ?) followed by more text; a full stop after an abbreviation (Sr., Inc., ...) or a single
  *   letter is not a sentence end;
  * - holds a URL or an email address;
@@ -131,9 +165,11 @@ export function unsafePostingText(s: string): string | null {
   const bad = DISALLOWED.exec(s);
   if (bad !== null) return `has a character outside the allowed set (U+${(bad[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`;
   if (URL_OR_EMAIL.test(s)) return 'has a URL or email address';
-  if (PRONOUN_I.test(s)) return 'has a first-person pronoun';
+  if (PRONOUN_I.test(s.replace(I_LOOKALIKES, 'I'))) return 'has a first-person pronoun';
   if (PRONOUN_WORD.test(s)) return 'has a first-person pronoun';
-  if (s.split(/\s+/u).filter((w) => w !== '').length > 14) return 'has more than 14 words';
+  const words = s.split(/\s+/u).filter((w) => w !== '');
+  if (words.length > 14) return 'has more than 14 words';
+  if (words.some((w) => [...w].length > 40)) return 'has a word longer than 40 characters';
   for (const m of s.matchAll(/[.!?](?=\s+\S)/gu)) {
     const before = /([\p{L}]+)$/u.exec(s.slice(0, m.index ?? 0))?.[1] ?? '';
     if (m[0] === '.' && (before.length === 1 || ABBREVIATIONS.has(before.toLowerCase()))) continue;

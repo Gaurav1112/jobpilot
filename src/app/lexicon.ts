@@ -55,7 +55,7 @@ export const LANGUAGE_WORDS: readonly string[] = [
 const SKILL_NOUN = 'skills?|experience|expertise|developers?|engineers?';
 const QUALIFIERS: Readonly<Record<string, string>> = {
   go: 'lang|language|programming|developers?|engineers?|services?|microservices?|code|backend|modules?|runtime|stack|routines?|apis?',
-  react: 'js|\\.js|native|hooks|redux|components?|query|router',
+  react: 'js|\\.js|native|hooks|redux|components?|query|router|front[- ]?ends?',
   spark: 'streaming|sql|jobs?|clusters?|applications?|pipelines?',
   spring: 'boot|framework|cloud|mvc|data|batch|security|webflux',
   node: 'js|\\.js',
