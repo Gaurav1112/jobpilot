@@ -4,7 +4,7 @@ import { defineType } from '../kernel/types.js';
 
 const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers']);
 /** A real calendar date: month 1-12, day within that month (leap years included). */
-const isCalendarDate = (s: string): boolean => {
+export const isCalendarDate = (s: string): boolean => {
   const [y, m, d] = s.split('-').map(Number) as [number, number, number];
   const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
@@ -86,6 +86,8 @@ export const Posting = defineType(
         .strict(),
       employmentType: z.string().nullable(),
       descriptionText: z.string(),
+      // Deliberately lenient (shape only): it is source data, and one source's impossible date must not fail the
+      // whole board. The normalizer (Task 6) sets a date that is not a real calendar date to null.
       postedAt: IsoDateOrDateTime.nullable(),
       comp: z
         .object({

@@ -377,6 +377,17 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
     expect(titleKeyOf('Ｅｎｇｉｎｅｅｒ')).toBe('engineer'); // NFKC
     expect(titleKeyOf('Senior Backend Engineer')).not.toBe(titleKeyOf('Backend Engineer'));
     expect(titleKeyOf('x'.repeat(500))).toHaveLength(200);
+    // m-6: only a whole "title" class token is a title element; subtitle, entitled, title-less words are not.
+    expect(titleKeyOf('<span class="subtitle">Bengaluru</span><h3>Senior Engineer</h3>')).toBe('senior engineer');
+    expect(titleKeyOf('<span class="entitled">Bengaluru</span>Senior Engineer')).toBe('bengaluru senior engineer');
+    expect(titleKeyOf('<div class="card job-title">Data Engineer</div><span>Pune</span>')).toBe('data engineer');
+    expect(titleKeyOf('<div class="posting_title">QA Engineer</div><span>Pune</span>')).toBe('qa engineer');
+    // m-7: combining marks stay, so Devanagari is intact; unit letters left by "3d" or "2h" go.
+    expect(titleKeyOf('सीनियर इंजीनियर')).toBe('सीनियर इंजीनियर');
+    expect(titleKeyOf('सीनियर इंजीनियर')).not.toBe(titleKeyOf('जूनियर इंजीनियर'));
+    expect(titleKeyOf('Backend Engineer · 3d')).toBe('backend engineer');
+    expect(titleKeyOf('Backend Engineer 2h ago')).toBe('backend engineer');
+    expect(titleKeyOf('Backend Engineer 1w')).toBe(titleKeyOf('Backend Engineer 3d'));
   });
 
   it('refresh: every link advances exactly once in any 7 consecutive run dates, spread evenly over the week', () => {
@@ -504,6 +515,29 @@ describe('src-careers through the supervisor', () => {
     const browser = fakeBrowser({ ...page((p) => (p === seven[3] ? 'Senior Role (retitled)' : `Role ${p.slice(-2)}`)), ...jobPages });
     await supervisor(store, browser, []).start('day-8', [req('careers', 'example-careers', '2026-10-17')]);
     expect(browser.calls.map((c) => c.url)).toContain(`${H}${seven[3]}`);
+  });
+
+  it('a redirect to the listing is gone even when the listing path itself matches linkPattern', async () => {
+    const closed = { html: '<html><body><h1>Join our team</h1><p>All jobs</p></body></html>', text: 'Join our team' };
+    const cases: [string, string, string, string][] = [
+      ['/jobs/', '^/jobs/', '/jobs/123', '/jobs/'],
+      ['/jobs', '^/jobs/', '/jobs/123', '/jobs/'],
+      ['/careers/', '^/careers/', '/careers/eng-1', '/careers/'],
+      ['/jobs/', '^/jobs/', '/jobs/123', '/jobs/?expired=1'],
+      ['/jobs/search', '^/jobs/', '/jobs/123', '/jobs/search?closed'],
+    ];
+    for (const [listPath, linkPattern, jobPath, target] of cases) {
+      const job = makeSrcCareersJob([HOST]);
+      const browser = fakeBrowser({ [`${H}${jobPath}`]: { ...closed, finalUrl: `${H}${target}` } });
+      const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+      const link = linkOf(`${H}${jobPath}`, { listUrl: `${H}${listPath}`, linkPattern });
+      await expect(job.run(link, ctx), `${listPath} ${target}`).rejects.toMatchObject({ code: 'gone', message: expect.stringMatching(/redirected to the listing/) });
+    }
+    // An on-pattern redirect that is not the listing stays a posting.
+    const job = makeSrcCareersJob([HOST]);
+    const browser = fakeBrowser({ [`${H}/jobs/123`]: { ...plainJob('Moved'), finalUrl: `${H}/jobs/moved-1` } });
+    const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+    expect(titles((await job.run(linkOf(`${H}/jobs/123`, { listUrl: `${H}/jobs/` }), ctx)) as RawPosting[])).toEqual(['Moved']);
   });
 
   it('a site redirecting every job to /maintenance trips the job breaker (it is not gone)', async () => {

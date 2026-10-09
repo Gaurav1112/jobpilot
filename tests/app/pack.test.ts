@@ -317,3 +317,14 @@ describe('watchlist: careers entries', () => {
     expect(compileSafePattern).toBe(compileRoleDeny);
   });
 });
+
+describe('fx asOf is a real calendar date', () => {
+  it('rejects an impossible date', async () => {
+    const { FxSchema } = await import('../../src/app/pack/schema.js');
+    const fx = (asOf: string) => FxSchema.safeParse({ asOf, toINR: { USD: 85, EUR: 92, GBP: 108, INR: 1 } }).success;
+    expect(fx('2026-10-01')).toBe(true);
+    expect(fx('2028-02-29')).toBe(true);
+    expect(fx('2026-02-30')).toBe(false);
+    expect(fx('2026-13-01')).toBe(false);
+  });
+});

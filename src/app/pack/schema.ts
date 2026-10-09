@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
+import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
@@ -74,7 +75,7 @@ export const OffersSchema = z.strictObject({
 });
 
 export const FxSchema = z.strictObject({
-  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD'),
+  asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').refine(isCalendarDate, 'not a real calendar date'),
   toINR: z.strictObject({
     USD: z.number().positive(),
     EUR: z.number().positive(),

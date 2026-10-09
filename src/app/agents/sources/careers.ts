@@ -266,7 +266,8 @@ function titleElementText(inner: string): string | undefined {
   if (h) found.push({ at: h.index, html: h[2] ?? '' });
   for (const m of inner.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*)>/gi)) {
     const attrs = m[2] ?? '';
-    if (!/title/i.test(attr(attrs, 'class') ?? '') && (attr(attrs, 'itemprop') ?? '').toLowerCase() !== 'title') continue;
+    // A whole "title" word in the class (title, job-title, posting_title), never subtitle or entitled.
+    if (!/(^|[-_\s])title($|[-_\s])/i.test(attr(attrs, 'class') ?? '') && (attr(attrs, 'itemprop') ?? '').toLowerCase() !== 'title') continue;
     const close = new RegExp(`</${m[1]}\\s*>`, 'i').exec(inner.slice((m.index ?? 0) + m[0].length));
     if (close) found.push({ at: m.index ?? 0, html: inner.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + close.index) });
     break;
@@ -278,14 +279,18 @@ function titleElementText(inner: string): string | undefined {
 
 /**
  * A stable key for a job link's title, used only to notice a retitle (never shown). The title element inside the
- * anchor when there is one, else the anchor text; then NFKC, lower-case, digits and punctuation dropped, the
+ * anchor when there is one, else the anchor text; then NFKC, lower-case, numbers (with a unit letter such as the d
+ * of 3d) and punctuation dropped (letters and combining marks kept), the
  * relative-time and badge words dropped, whitespace collapsed, at most 200 characters. Its only failure mode is a
  * missed retitle, which the weekly refresh catches.
  */
 export function titleKeyOf(innerHtml: string): string {
-  const text = (titleElementText(innerHtml) ?? htmlToText(innerHtml)).normalize('NFKC').toLowerCase();
+  // Tags become spaces, so adjacent inline elements (<span>Pune</span>Engineer) stay separate words.
+  const spaced = (h: string): string => h.replace(/<[^>]+>/g, (t) => ` ${t} `);
+  const text = (titleElementText(spaced(innerHtml)) ?? htmlToText(spaced(innerHtml))).normalize('NFKC').toLowerCase();
   return text
-    .replace(/[^\p{L}\s]+/gu, ' ')
+    .replace(/\d+[a-z]?(?!\p{L})/gu, ' ') // a number with its unit letter: 3d, 2h, 1w
+    .replace(/[^\p{L}\p{M}\s]+/gu, ' ') // combining marks stay, so Devanagari and similar scripts are intact
     .split(/\s+/)
     .filter((w) => w !== '' && !BADGE_WORDS.has(w))
     .join(' ')
@@ -543,9 +548,12 @@ async function renderJob(link: CareerLink, ctx: AgentContext): Promise<RawPostin
   // the job closed, so it is invalid_output and counts towards the breaker.
   const final = new URL(page.finalUrl);
   const target = `${final.pathname}${final.search}`;
-  if (withoutFragment(final) !== withoutFragment(u) && !compileSafePattern(link.linkPattern).test(target)) {
+  // The listing and root checks come first: the listing path often matches linkPattern itself (`/jobs/` and `^/jobs/`).
+  if (withoutFragment(final) !== withoutFragment(u)) {
     if (samePath(final.pathname, list.pathname)) throw gone(`job page ${link.url} redirected to the listing (${target}): the job closed`);
     if (samePath(final.pathname, '/')) throw gone(`job page ${link.url} redirected to the site root (${target}): the job closed`);
+  }
+  if (withoutFragment(final) !== withoutFragment(u) && !compileSafePattern(link.linkPattern).test(target)) {
     throw loud(`job page ${link.url} redirected to ${target}, outside linkPattern ${link.linkPattern}; if the site moved its job pages (a locale prefix, for example), widen linkPattern`);
   }
   if (!page.settled) throw loud(`job page still loading: ${link.url}`);

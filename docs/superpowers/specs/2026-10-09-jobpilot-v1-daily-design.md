@@ -120,14 +120,16 @@ DiscoveryRequest@1 (ats careers) ──► src-careers-list ──► CareerLink
     the links re-render each day, and no link is more than 7 days stale.
   - `titleKey` makes a retitled job re-render the next day. It comes from the title element inside the anchor
     (`h1`–`h6`, a class containing "title", or `itemprop=title`), or else the anchor's text, normalised: NFKC,
-    lower-cased, with digits, punctuation and relative-time or badge words ("posted", "ago", "new", "days",
-    "featured", and so on, but not "remote") removed. So "Posted 3 days ago" does not cause a re-render.
+    lower-cased, with numbers (and a unit letter, as in "3d"), punctuation and relative-time or badge words
+    ("posted", "ago", "new", "days", "featured", and so on, but not "remote") removed. Letters and combining
+    marks are kept, so Devanagari and other scripts stay intact. So "Posted 3 days ago" does not cause a re-render.
   - Task 8: a re-rendered link re-emits a RawPosting with the same `sourceId`. The projector must treat it as a newer
     version of that posting (an upsert), not as a duplicate.
 - A job that is gone fails its own step with the kernel code `gone`, which is non-retryable and never counts
   towards a breaker. It is still a failed step, counted as `gone` in the run report. Gone means any of:
   - the page answers 404 or 410;
-  - a redirect leaves the job pages for the listing's path (any query, such as `?page=2`) or the site root `/`.
+  - a redirect lands on the listing's path (any query, such as `?page=2`) or the site root `/`. This is checked
+    first, so it holds even when the listing path matches `linkPattern` (`/jobs/` and `^/jobs/`).
 
   Any other redirect outside `linkPattern` (a login wall, maintenance, a locale prefix) is `invalid_output`, which
   counts towards the breaker. Its message names the target and suggests widening `linkPattern`.
