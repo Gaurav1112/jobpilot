@@ -246,7 +246,14 @@ export const Rendered = defineType(
       jobKey: JobKey,
       files: z.array(RenderedFile),
       recommended: z.enum(['pdf', 'docx']),
+      /** The cover plan as rendered: identical to the input except that p4's placeholders are filled (G-FILL). */
       plan: CoverPlan.schema,
+      /**
+       * The exact text of each document (`render/model.ts` `modelText`): contact details included, one line per
+       * block, bullets as "• claim". G-FILL re-renders it from the plan and the full pack; the qa-gate compares the
+       * DOCX and PDF text layers with it.
+       */
+      text: z.object({ resume: z.string(), cover: z.string() }).strict(),
     })
     .strict(),
 );

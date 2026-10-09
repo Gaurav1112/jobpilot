@@ -1,3 +1,5 @@
+import { execFile } from 'node:child_process';
+
 export interface FetchResponse {
   readonly status: number;
   /** When present the broker reads this stream and stops at the size cap; otherwise it measures text(). */
@@ -100,11 +102,34 @@ export interface BrowserProvider {
   render(req: BrowserRenderRequest): Promise<BrowserPage>;
 }
 
+/**
+ * Extracts the text layer of the PDF at an absolute path the broker has already confined (`pdftotext -layout`).
+ * Tests inject a fake; production uses `pdftotextProvider`.
+ */
+export type PdfTextProvider = (absPath: string, signal: AbortSignal) => Promise<string>;
+
 /** The only doors to the outside world. Agents never see these directly, only broker tools. */
 export interface Providers {
   readonly fetch: FetchLike;
   readonly llm?: LlmProvider;
   readonly browser?: BrowserProvider;
+  /**
+   * The absolute directory behind each named file root (`capabilities.files.root`). `out` is the documents folder:
+   * the app passes `outDir()`. A root that is not configured makes every file call a policy denial.
+   */
+  readonly fileRoots?: { readonly out?: string };
+  readonly pdfText?: PdfTextProvider;
+}
+
+/**
+ * `pdftotext -layout <abs> -` (poppler) as a PdfTextProvider. Pass an absolute binary path when the process PATH may
+ * not include it (a scheduled run under launchd, say); the default resolves `pdftotext` on PATH.
+ */
+export function pdftotextProvider(binary = 'pdftotext'): PdfTextProvider {
+  return (absPath, signal) =>
+    new Promise((resolve, reject) => {
+      execFile(binary, ['-layout', absPath, '-'], { signal, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }, (err, stdout) => (err ? reject(err) : resolve(stdout)));
+    });
 }
 
 export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers } });

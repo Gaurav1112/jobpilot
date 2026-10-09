@@ -23,6 +23,14 @@ export interface Capabilities {
    * fingerprint option exists (G-NO-EVASION), and the strict meta-schema rejects any extra key.
    */
   readonly browser?: { readonly maxPages: number };
+  /**
+   * Files under one named root (`out`: the documents folder the app configures as `providers.fileRoots.out`), as
+   * `ctx.files.read(relPath)` and, with `access: 'read-write'`, `ctx.files.write(relPath, bytes)`. Paths are relative,
+   * with no `..`, NUL, backslash or symlink; nothing is ever written into an `applied-*` directory.
+   */
+  readonly files?: { readonly root: 'out'; readonly access: 'read' | 'read-write' };
+  /** `ctx.pdfText(relPath)`: the text layer of a PDF under the files root (`pdftotext -layout`). Needs `files`. */
+  readonly pdfText?: true;
 }
 
 export interface ObligationSpec {
@@ -88,6 +96,8 @@ const Meta = z
         llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
         pack: z.union([z.literal(true), z.literal('full')]).optional(),
         browser: z.object({ maxPages: z.number().int().positive().max(500) }).strict().optional(),
+        files: z.object({ root: z.literal('out'), access: z.enum(['read', 'read-write']) }).strict().optional(),
+        pdfText: z.literal(true).optional(),
       })
       .strict(),
     egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
@@ -162,6 +172,8 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
       ...(capabilities.pack ? { pack: capabilities.pack } : {}),
       ...(capabilities.browser ? { browser: { maxPages: capabilities.browser.maxPages } } : {}),
+      ...(capabilities.files ? { files: { root: capabilities.files.root, access: capabilities.files.access } } : {}),
+      ...(capabilities.pdfText ? { pdfText: capabilities.pdfText } : {}),
     },
     egress: [...c.egress],
     dataClasses: { in: [...c.dataClasses.in], out: [...c.dataClasses.out] },
@@ -189,6 +201,14 @@ function checkKindCapabilities(c: AnyContract): void {
   if ((c.kind === 'deterministic' || c.kind === 'human') && c.egress.length > 0) problems.push(`kind ${c.kind} may not declare egress`);
   if (c.kind === 'deterministic' && c.budget.usdPerCall > 0) problems.push('kind deterministic has no spend, so budget must be 0');
   if (c.emits !== undefined && !c.dataClasses.out.includes(c.emits)) problems.push(`emits ${c.emits} is not in dataClasses.out`);
+  const writeKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
+  if (c.capabilities.files?.access === 'read-write' && !writeKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not write files`);
+  if (c.capabilities.pdfText && !c.capabilities.files) problems.push('capabilities.pdfText requires capabilities.files');
+  // M7: contact details make an output P1 whatever the agent returns, so a 'full' pack agent must say so and may not redact.
+  if (c.capabilities.pack === 'full' && (c.emits === undefined || DATA_CLASSES.indexOf(c.emits) < DATA_CLASSES.indexOf('P1'))) {
+    problems.push("capabilities.pack 'full' requires emits P1 or higher");
+  }
+  if (c.capabilities.pack === 'full' && c.redactor) problems.push("capabilities.pack 'full' may not be a redactor");
   if (problems.length > 0) throw new TypeError(`contract ${c.id}: ${problems.join('; ')}`);
 }
 

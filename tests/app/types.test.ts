@@ -38,7 +38,7 @@ const resume: ResumePlan = {
 };
 const cover: CoverPlan = { jobKey: posting.jobKey, resume, paragraphs: [{ text: 'Dear', factIds: ['f1'] }] };
 const files = [{ kind: 'resume' as const, format: 'pdf' as const, path: 'o/r.pdf', sha256: 'a'.repeat(64), pages: 1 }];
-const rendered: Rendered = { jobKey: posting.jobKey, files, recommended: 'pdf', plan: cover };
+const rendered: Rendered = { jobKey: posting.jobKey, files, recommended: 'pdf', plan: cover, text: { resume: 'Asha Rao', cover: 'Asha Rao' } };
 const qa: QaReport = { jobKey: posting.jobKey, ok: true, checks: [{ id: 'pages', ok: true, detail: '1' }], files };
 
 const cases: [string, { schema: { safeParse(v: unknown): { success: boolean } } }, unknown][] = [

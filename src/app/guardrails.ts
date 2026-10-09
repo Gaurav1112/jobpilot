@@ -25,10 +25,14 @@ import {
   yearsOf,
   type WritingPack,
 } from './agents/writing/grounded.js';
-import { renderSummary, unsafePostingText } from './agents/writing/templates.js';
+import { renderSummary, RENDER_PLACEHOLDERS, unsafePostingText } from './agents/writing/templates.js';
+import { RenderPack, renderModels } from './agents/writing/renderer.js';
+import { profileFor } from './ats-profiles.js';
+import { hasBrace } from './render/fill.js';
+import { modelText, RENDER_FILES, renderedPath } from './render/model.js';
 import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, citeable, ForbiddenTermError } from './pack/rules.js';
-import { CoverPlan, ResumePlan } from './types.js';
+import { CoverPlan, Rendered, ResumePlan } from './types.js';
 
 /**
  * The app guardrails (spec §5.5, Task 9 and its fix round 1). All run on the out side and read the public pack from
@@ -277,7 +281,7 @@ export const G_GROUND: Guardrail = {
 
 /** Every string in `v` (values and object keys) with its path. */
 /** The embedded source posting, by exact path: source data, not generated text (G-NAMING scope, fix round 1). */
-export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set(['scored.posting', 'evidence.scored.posting', 'resume.evidence.scored.posting']);
+export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set(['scored.posting', 'evidence.scored.posting', 'resume.evidence.scored.posting', 'plan.resume.evidence.scored.posting']);
 
 /** A copy of `v` without the values at `SOURCE_POSTING_PATHS`. */
 function withoutSourcePosting(v: unknown, path = ''): unknown {
@@ -354,7 +358,68 @@ export const G_NO_GAP_CLAIM: Guardrail = {
   },
 };
 
-export const APP_GUARDRAILS: readonly Guardrail[] = [G_GROUND, G_NAMING, G_NO_GAP_CLAIM];
+/**
+ * G-FILL (out of the renderer, Task 10). The renderer is the only agent that reads the full pack, so this guardrail,
+ * which gets that pack as `ctx.fullPack`, re-derives everything it added and never trusts the payload:
+ * - the input is a CoverPlan@1 and the output's `jobKey`, `plan.jobKey` and `plan.resume` equal the input's;
+ * - every paragraph but the last is unchanged (text and fact ids), and the last is the p4 fill re-rendered from
+ *   `answers.yaml` (`available_from`, `notice_period`; the availability sentence dropped when either is missing);
+ * - no placeholder brace remains in any paragraph or document text;
+ * - `text.resume` and `text.cover` equal the document text re-rendered from the plan and the contact details, so the
+ *   qa-gate compares the files with kernel-checked text and G-NAMING sees every rendered line, contact block included;
+ * - `recommended` is the ATS profile's format, and `files` lists exactly the six expected files in order, with page
+ *   counts on PDFs only.
+ * Details never quote an answer, a contact detail or a claim.
+ */
+export const G_FILL: Guardrail = {
+  id: 'G-FILL',
+  sides: ['out'],
+  check(ctx: GuardrailContext): GuardrailVerdict {
+    if (!ctx.output) return trip('G-FILL', 'no output to check');
+    if (ctx.fullPack === undefined || ctx.fullPack === null) return trip('G-FILL', 'no full pack, so the fill cannot be re-derived');
+    const pack = RenderPack.safeParse(ctx.fullPack);
+    if (!pack.success) return trip('G-FILL', 'the full pack lacks contact, answers or naming');
+    if (ctx.input.type !== CoverPlan.id) return trip('G-FILL', `G-FILL checks the renderer's output for a ${CoverPlan.id} input, not ${ctx.input.type}`);
+    const input = CoverPlan.schema.safeParse(ctx.input.payload);
+    const out = Rendered.schema.safeParse(ctx.output.payload);
+    if (!input.success) return trip('G-FILL', `the input is not a valid ${CoverPlan.id}`);
+    if (!out.success) return trip('G-FILL', `not a valid ${Rendered.id}`);
+    const cover = input.data;
+    const r = out.data;
+    const problems: string[] = [];
+    if (r.jobKey !== cover.jobKey || r.plan.jobKey !== cover.jobKey) problems.push('jobKey is not the input plan\'s');
+    if (!same(r.plan.resume, cover.resume)) problems.push(`plan.resume differs from the input resume plan (at ${firstDiff(r.plan.resume, cover.resume) ?? '?'})`);
+    let expected: ReturnType<typeof renderModels> | undefined;
+    try {
+      expected = renderModels(cover, pack.data);
+    } catch (e) {
+      problems.push(`the fill cannot be re-derived: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    const last = cover.paragraphs.length - 1;
+    if (r.plan.paragraphs.length !== cover.paragraphs.length) problems.push(`plan has ${r.plan.paragraphs.length} paragraphs, the input ${cover.paragraphs.length}`);
+    r.plan.paragraphs.forEach((p, i) => {
+      if (hasBrace(p.text)) problems.push(`paragraphs[${i}] still holds a placeholder brace`);
+      if (i < last && !same(p, cover.paragraphs[i])) problems.push(`paragraphs[${i}] changed; only the last paragraph is filled`);
+      if (i === last && expected !== undefined && !same(p, expected.plan.paragraphs[last])) problems.push(`paragraphs[${i}] is not the p4 fill from answers.yaml`);
+    });
+    for (const k of ['resume', 'cover'] as const) {
+      if (hasBrace(r.text[k]) || RENDER_PLACEHOLDERS.some((ph) => r.text[k].includes(ph))) problems.push(`text.${k} still holds a placeholder brace`);
+      if (expected !== undefined && r.text[k] !== modelText(expected[k])) problems.push(`text.${k} is not the document rendered from the plan and the contact details`);
+    }
+    const profile = profileFor(cover.resume.ats, cover.resume.evidence.scored.posting.url);
+    if (r.recommended !== profile.recommended) problems.push(`recommended is ${r.recommended}, the ${profile.id} profile gives ${profile.recommended}`);
+    const want = RENDER_FILES.map((f) => ({ kind: f.kind, format: f.format, path: renderedPath(cover.jobKey, f.kind, f.format) }));
+    const got = r.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path }));
+    if (!same(want, got)) problems.push(`files are not the six expected documents in order (at ${firstDiff(want, got) ?? '?'})`);
+    r.files.forEach((f, i) => {
+      const okPages = f.format === 'pdf' ? f.pages !== null && Number.isInteger(f.pages) && f.pages >= 1 : f.pages === null;
+      if (!okPages) problems.push(`files[${i}].pages ${f.format === 'pdf' ? 'must be a page count' : 'must be null'}`);
+    });
+    return report('G-FILL', problems);
+  },
+};
+
+export const APP_GUARDRAILS: readonly Guardrail[] = [G_GROUND, G_NAMING, G_NO_GAP_CLAIM, G_FILL];
 
 /** The kernel's built-in guardrails plus the app's: the registry the app pipeline compiles and runs with. */
 export function appGuardrails(): GuardrailRegistry {

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { APP_ALLOWED, isAgentCode, scanAgentSource } from './support/agent-scan.js';
+import { APP_ALLOWED, isAgentCode, RENDER_LIBS, scanAgentSource, scanRenderLib } from './support/agent-scan.js';
 
 const root = join(import.meta.dirname, '..');
 const SOURCE_EXT = /\.(ts|mts|cts|tsx|js|mjs|cjs)$/;
@@ -73,9 +73,24 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
     expect(agentFiles.map(rel)).toEqual(
-      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts', 'src/app/comp/floor.ts', 'src/app/lexicon.ts', 'src/app/agents/eligibility.ts', 'src/app/agents/scorer-lexicon.ts', 'src/app/pack/rules.ts', 'src/app/agents/writing/evidence-matcher.ts', 'src/app/agents/writing/resume-planner.ts', 'src/app/agents/writing/cover-writer.ts', 'src/app/agents/writing/grounded.ts', 'src/app/agents/writing/templates.ts']),
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts', 'src/app/comp/floor.ts', 'src/app/lexicon.ts', 'src/app/agents/eligibility.ts', 'src/app/agents/scorer-lexicon.ts', 'src/app/pack/rules.ts', 'src/app/agents/writing/evidence-matcher.ts', 'src/app/agents/writing/resume-planner.ts', 'src/app/agents/writing/cover-writer.ts', 'src/app/agents/writing/grounded.ts', 'src/app/agents/writing/templates.ts', 'src/app/agents/writing/renderer.ts', 'src/app/agents/writing/qa-gate.ts', 'src/app/render/model.ts', 'src/app/render/fill.ts', 'src/app/render/html.ts', 'src/app/ats-profiles.ts']),
     );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
+  });
+
+  it('lets agent code import the render libraries, which are held to their own narrower rule', () => {
+    const f = 'src/app/agents/writing/x.ts';
+    for (const ok of ["import { renderPdf } from '../../render/pdf.js'", "import { renderDocx } from '../../render/docx.js'", "import { modelText } from '../../render/model.js'"]) {
+      expect(scanAgentSource(f, ok), ok).toEqual([]);
+    }
+    expect(scanAgentSource(f, "import PDFDocument from 'pdfkit'")).toEqual([`${f}:1: import of pdfkit`]);
+    expect(scanAgentSource(f, "import { readFileSync } from '../../render/fs.js'")).toHaveLength(1);
+    for (const lib of RENDER_LIBS) expect(scanRenderLib(lib, readFileSync(join(root, lib), 'utf8')), lib).toEqual([]);
+    const lib = 'src/app/render/pdf.ts';
+    for (const bad of ["import { writeFileSync } from 'node:fs'", "import x from 'node:child_process'", 'const t = Date.now()', 'const d = new Date()', 'Math.random()', 'await fetch(u)', "process.env['X']", "await import('node:fs')"]) {
+      expect(scanRenderLib(lib, bad), bad).not.toEqual([]);
+    }
+    expect(scanRenderLib(lib, "const d = new Date(`${m.date}T00:00:00.000Z`)")).toEqual([]);
   });
 
   it('flags every bypass found in review', () => {

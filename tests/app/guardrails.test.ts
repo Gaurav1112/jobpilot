@@ -266,11 +266,11 @@ describe('app guardrail registration', () => {
   const registry = new Registry();
   for (const a of [evidenceMatcher, resumePlanner, coverWriter]) registry.register(a);
 
-  it('registers the three app guardrails beside the built-ins', () => {
-    expect(APP_GUARDRAILS.map((g) => g.id)).toEqual(['G-GROUND', 'G-NAMING', 'G-NO-GAP-CLAIM']);
+  it('registers the four app guardrails beside the built-ins', () => {
+    expect(APP_GUARDRAILS.map((g) => g.id)).toEqual(['G-GROUND', 'G-NAMING', 'G-NO-GAP-CLAIM', 'G-FILL']);
     for (const g of APP_GUARDRAILS) expect(g.sides).toEqual(['out']);
     const reg = appGuardrails();
-    for (const id of ['G-SCHEMA', 'G-POST', 'G-GROUND', 'G-NAMING', 'G-NO-GAP-CLAIM']) expect(reg.has(id), id).toBe(true);
+    for (const id of ['G-SCHEMA', 'G-POST', 'G-GROUND', 'G-NAMING', 'G-NO-GAP-CLAIM', 'G-FILL']) expect(reg.has(id), id).toBe(true);
   });
 
   it('lets the wiring compiler accept contracts that list them, and only with them registered', () => {

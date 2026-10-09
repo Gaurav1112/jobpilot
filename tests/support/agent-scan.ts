@@ -30,7 +30,40 @@ export const APP_ALLOWED = [
   'src/app/lexicon.ts',
   // The pure pack rules (citeable, the forbidden-term check, employer display names) the writing team applies.
   'src/app/pack/rules.ts',
+  // Task 10: the pure document model, the cover p4 fill, the HTML preview and the ATS profiles.
+  'src/app/render/model.ts',
+  'src/app/render/fill.ts',
+  'src/app/render/html.ts',
+  'src/app/ats-profiles.ts',
 ];
+
+/**
+ * Trusted render libraries (Task 10) agent code may import but which are not scanned as agent code: they wrap pdfkit
+ * and docx, and use node:crypto (the PDF trailer ID) and node:zlib (the DOCX zip). In exchange they are held to their
+ * own rule (`scanRenderLib`): imports only from `RENDER_LIB_IMPORTS`, no file, network, process, clock or randomness.
+ * They return bytes; only the broker's files capability writes them.
+ */
+export const RENDER_LIBS = ['src/app/render/pdf.ts', 'src/app/render/docx.ts'];
+export const RENDER_LIB_IMPORTS = ['pdfkit', 'docx', 'node:crypto', 'node:zlib', './model.js'];
+const RENDER_LIB_FORBIDDEN = /\b(fetch|process|globalThis|require|eval|Function|XMLHttpRequest|WebSocket|Date\.now|Math\.random|performance|setTimeout|setInterval)\b|new Date\(\s*\)/;
+
+/** Problems in a render library's source: a disallowed import, or a forbidden global, clock or randomness. */
+export const scanRenderLib = (file: string, text: string): string[] => {
+  const problems: string[] = [];
+  const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  sf.forEachChild((node) => {
+    const spec = declarationSpecifier(node);
+    if (spec !== undefined && !RENDER_LIB_IMPORTS.includes(spec)) problems.push(`${file}: import of ${spec}`);
+    if (ts.isImportEqualsDeclaration(node)) problems.push(`${file}: import-equals`);
+  });
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  code.split('\n').forEach((line, i) => {
+    const m = RENDER_LIB_FORBIDDEN.exec(line);
+    if (m) problems.push(`${file}:${i + 1}: ${m[0]}`);
+  });
+  if (/\bimport\s*\(/.test(code)) problems.push(`${file}: dynamic import`);
+  return problems;
+};
 
 /** The only kernel modules agent code may import: definitions, never providers, broker, store, executor or fakes. */
 const KERNEL_ALLOWED = ['agent', 'contract', 'errors', 'types', 'predicates', 'data-class'].map((m) => `src/kernel/${m}.ts`);
@@ -46,7 +79,7 @@ const FORBIDDEN_GLOBALS = new Set([
 export const allowedSpecifier = (file: string, spec: string): boolean => {
   if (!spec.startsWith('.')) return PACKAGES_ALLOWED.includes(spec);
   const target = posix.join(posix.dirname(file), spec.replace(/[?#].*$/s, '')).replace(/\.js$/, '.ts');
-  return KERNEL_ALLOWED.includes(target) || APP_ALLOWED.includes(target) || isAgentCode(target);
+  return KERNEL_ALLOWED.includes(target) || APP_ALLOWED.includes(target) || RENDER_LIBS.includes(target) || isAgentCode(target);
 };
 
 /** The module specifier of an import/export declaration, if it has a string one. */

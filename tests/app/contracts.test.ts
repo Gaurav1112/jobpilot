@@ -10,7 +10,7 @@ describe('contracts-out', () => {
   it('matches the code for every exported agent', () => {
     const r = new Registry();
     for (const a of exportedAgents) r.register(a);
-    expect(r.list().map((a) => a.contract.id)).toEqual(['cover-writer', 'demo-scorer', 'demo-source', 'evidence-matcher', 'resume-planner']);
+    expect(r.list().map((a) => a.contract.id)).toEqual(['cover-writer', 'demo-scorer', 'demo-source', 'evidence-matcher', 'qa-gate', 'renderer', 'resume-planner']);
     expect(checkDrift(r, join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
   });
 });

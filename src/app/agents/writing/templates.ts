@@ -61,7 +61,10 @@ export const COVER_P3_TAIL_ONE = 'The role asks for {coveredList}; it appears in
  * `answers.yaml` keys `available_from` and `notice_period`; when either key is missing it omits the first sentence
  * ("I am available ... {notice}.") and keeps "Thank you for your time." G-GROUND checks the placeholders are intact.
  */
-export const COVER_P4 = 'I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.';
+export const COVER_P4_AVAILABILITY = 'I am available from {availableFrom}, with a notice period of {notice}.';
+/** The sentence of `COVER_P4` that stays when an answer is missing. */
+export const COVER_P4_THANKS = 'Thank you for your time.';
+export const COVER_P4 = `${COVER_P4_AVAILABILITY} ${COVER_P4_THANKS}`;
 
 /** The words of `COVER_P4` the renderer fills, as they appear in the plan. */
 export const RENDER_PLACEHOLDERS = ['{availableFrom}', '{notice}'] as const;

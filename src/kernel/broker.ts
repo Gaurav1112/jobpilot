@@ -6,6 +6,9 @@ import { KernelError } from './errors.js';
 import { egressAllowed, normalizeHost, type Policy } from './policy.js';
 import { challengeReason } from './challenge.js';
 import type { BrowserPage, FetchResponse, LlmResponse, Providers } from './providers.js';
+import { createFiles, type FilesTool, type WritableFilesTool } from './files.js';
+
+export type { FilesTool, WritableFilesTool } from './files.js';
 
 export interface HttpTool {
   getText(url: string): Promise<{ status: number; body: string }>;
@@ -93,6 +96,13 @@ export interface AgentContext {
   readonly browser?: BrowserTool;
   /** The user's pack, deep-frozen; present only when the contract declares `capabilities.pack`. */
   readonly pack?: Readonly<unknown>;
+  /**
+   * Files under the contract's root; present only when the contract declares `capabilities.files`. `write` exists
+   * only with `access: 'read-write'` (see `files.ts` for the confinement rules).
+   */
+  readonly files?: FilesTool & Partial<Pick<WritableFilesTool, 'write'>>;
+  /** The text layer of a PDF under the files root; present only when the contract declares `capabilities.pdfText`. */
+  readonly pdfText?: (relPath: string) => Promise<string>;
   spent(): Cost;
   /** The largest single model call paid in this context. */
   maxCall(): number;
@@ -181,6 +191,30 @@ export function issueContext(a: IssueArgs): AgentContext {
   };
 
   if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = a.pack;
+
+  const filesCap = a.contract.capabilities.files;
+  if (filesCap) {
+    const files = createFiles({ root: a.providers.fileRoots?.[filesCap.root], rootName: filesCap.root, maxBytes: a.policy.maxResponseBytes, deny }, filesCap.access);
+    ctx.files = files.tool;
+    if (a.contract.capabilities.pdfText) {
+      ctx.pdfText = async (relPath) => {
+        // Confined exactly like a read: the provider only ever sees a regular file under the root.
+        const abs = await files.locate(relPath);
+        const provider = a.providers.pdfText;
+        if (!provider) throw deny('no pdfText provider is configured');
+        if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new pdfText calls');
+        let text: string;
+        try {
+          text = await provider(abs, a.signal);
+        } catch (e) {
+          throw new KernelError('invalid_output', `pdfText of ${relPath} failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        if (typeof text !== 'string') throw new KernelError('invalid_output', `pdfText of ${relPath} returned no text`);
+        if (Buffer.byteLength(text, 'utf8') > a.policy.maxResponseBytes) throw new KernelError('invalid_output', `pdfText of ${relPath} exceeds ${a.policy.maxResponseBytes} bytes`);
+        return text;
+      };
+    }
+  }
 
   /** https only, no explicit port, no credentials, and an egress host the policy allows. */
   const checkUrl = (url: string): URL => {

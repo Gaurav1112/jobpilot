@@ -450,6 +450,8 @@ describe('v1 kernel extensions: executor', () => {
       description: 'Reads the pack to make items',
       kind: 'deterministic',
       capabilities: { pack },
+      // A 'full' pack agent read contact details, so it must declare P1 outputs (M7).
+      ...(pack === 'full' ? { emits: 'P1' as const, dataClasses: { in: ['P0' as const], out: ['P1' as const] } } : {}),
       egress: [],
       budget: { usdPerCall: 0, usdPerRun: 0 },
       obligations: { adds: [], discharges: [] },

@@ -129,6 +129,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       contractHashOf: deps.contractHashOf,
       input,
       ...(deps.pack !== undefined && deps.pack !== null ? { pack: deps.pack } : {}),
+      ...(full && deps.fullPack !== undefined && deps.fullPack !== null ? { fullPack: deps.fullPack } : {}),
     };
     const hash = contractHash(c);
     const running = { stepKey, agentId: c.id, version: c.version, contractHash: hash, inputEnvelopeId: input.envelopeId };
@@ -234,8 +235,9 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
 
       // 10-11 schema, data class, postconditions on every output
       // Taint only rises: outputs carry the input's class or the contract's `emits`, whichever is higher.
-      // Only a redactor the policy allows may set its own (G-DATACLASS checks it).
-      const dataClass = c.redactor ? maxClass(c.dataClasses.out) : maxClass([input.handoff.dataClass, c.emits ?? 'P0']);
+      // Only a redactor the policy allows may set its own (G-DATACLASS checks it). A 'full' pack agent read contact
+      // details, so its outputs are at least P1 whatever it returns or declares (M7; defineContract also requires it).
+      const dataClass = c.redactor ? maxClass(c.dataClasses.out) : maxClass([input.handoff.dataClass, c.emits ?? 'P0', full ? 'P1' : 'P0']);
       const outputs: Envelope[] = [];
       for (const [i, payload] of result.items.entries()) {
         const gout = deps.guardrails.run('out', { ...gctx, side: 'out', output: { payload, dataClass } });

@@ -209,7 +209,7 @@ describe('v1 kernel extensions: contract', () => {
 
   it('accepts capabilities.pack as true or full, and keeps it in the frozen contract', () => {
     expect(defineContract({ ...base, capabilities: { pack: true } }).capabilities).toEqual({ pack: true });
-    expect(defineContract({ ...base, capabilities: { pack: 'full' } }).capabilities).toEqual({ pack: 'full' });
+    expect(defineContract({ ...base, capabilities: { pack: 'full' }, emits: 'P1', dataClasses: { in: ['P0'], out: ['P1'] } }).capabilities).toEqual({ pack: 'full' });
     expect(() => defineContract({ ...base, capabilities: { pack: 'some' } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities\.pack/);
   });
 });
