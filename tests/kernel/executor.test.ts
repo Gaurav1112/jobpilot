@@ -5,6 +5,7 @@ import { contractHash, defineContract } from '../../src/kernel/contract.js';
 import { type Envelope, ZERO_COST } from '../../src/kernel/envelope.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { executeStep, type ExecutorDeps } from '../../src/kernel/executor.js';
+import { freezePack } from '../../src/kernel/broker.js';
 import type { AnyAgent } from '../../src/kernel/agent.js';
 import type { LlmProvider } from '../../src/kernel/providers.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
@@ -485,7 +486,7 @@ describe('v1 kernel extensions: executor', () => {
     const store = Store.open(':memory:');
     const run = (a: AnyAgent, packHash: string) =>
       executeStep(
-        { ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(a.contract)), pack: { name: 'Asha Rao' }, packHash },
+        { ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(a.contract)), pack: freezePack({ name: 'Asha Rao' }), packHash },
         'r',
         a,
         seedEnv(),
@@ -513,9 +514,9 @@ describe('v1 kernel extensions: executor', () => {
         {
           ...deps(store, [], []),
           contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(full.contract)),
-          pack: { name: 'Asha Rao' },
+          pack: freezePack({ name: 'Asha Rao' }),
           packHash,
-          fullPack: { name: 'Asha Rao', email: 'asha@example.test' },
+          fullPack: freezePack({ name: 'Asha Rao', email: 'asha@example.test' }),
           fullPackHash,
         },
         'r',
@@ -537,7 +538,7 @@ describe('v1 kernel extensions: executor', () => {
     guardrails.add({ id: 'G-PACK-SEEN', sides: ['in'], check: (g) => (seen.push(g.pack), { id: 'G-PACK-SEEN', verdict: 'pass' }) });
     const store = Store.open(':memory:');
     const out = await executeStep(
-      { ...deps(store, [], []), guardrails, contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(reader.contract)), pack: { name: 'Asha Rao' }, packHash: 'p' },
+      { ...deps(store, [], []), guardrails, contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(reader.contract)), pack: freezePack({ name: 'Asha Rao' }), packHash: 'p' },
       'r',
       reader,
       seedEnv(),

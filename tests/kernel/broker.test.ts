@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
+import { createHostPacer, freezePack, issueContext } from '../../src/kernel/broker.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
@@ -358,7 +358,9 @@ describe('v1 kernel extensions: broker', () => {
   const packer = defineContract({ ...common, id: 'packer', description: 'Reads the user pack only', kind: 'deterministic', capabilities: { pack: true }, budget: { usdPerCall: 0, usdPerRun: 0 } });
 
   it('gives ctx.pack only to a contract that declares capabilities.pack, deep-frozen', () => {
-    const pack = { profile: { name: 'Asha Rao', skills: ['go'] } };
+    const raw = { profile: { name: 'Asha Rao', skills: ['go'] } };
+    const pack = freezePack(raw);
+    expect(Object.isFrozen(raw)).toBe(false);
     expect(issueWith(plain, { fetch: fakeFetch({}) }, { pack }).pack).toBeUndefined();
     const ctx = issueWith(packer, { fetch: fakeFetch({}) }, { pack });
     expect(ctx.pack).toEqual(pack);

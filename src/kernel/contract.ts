@@ -84,16 +84,18 @@ const Meta = z
       })
       .strict(),
     egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
-    dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
+    dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }).strict(),
     redactor: z.boolean(),
     emits: z.enum(DATA_CLASSES).optional(),
     obligations: z.object({
       adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
       discharges: z.array(z.string().regex(dotted)),
-    }),
-    guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }),
+    })
+    .strict(),
+    guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }).strict(),
     budget: z
       .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
+      .strict()
       .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
     timeoutMs: z.number().int().positive().max(600_000),
     retry: z
@@ -102,10 +104,11 @@ const Meta = z
         on: z.array(z.enum(ERROR_CODES)),
         backoffMs: z.array(z.number().int().nonnegative()),
       })
+      .strict()
       .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
       .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
       .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
-    breaker: z.object({ consecutiveFailures: z.number().int().min(1) }),
+    breaker: z.object({ consecutiveFailures: z.number().int().min(1) }).strict(),
   })
   .strict();
 

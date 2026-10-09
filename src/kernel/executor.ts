@@ -9,7 +9,7 @@
  *   Spend of a finished attempt is recorded before the retry sleep, so a crash between attempts loses none.
  */
 import type { AnyAgent } from './agent.js';
-import { deepFreeze, type HostPacer, issueContext } from './broker.js';
+import { type HostPacer, issueContext } from './broker.js';
 import type { Clock } from './clock.js';
 import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
@@ -32,11 +32,11 @@ export interface ExecutorDeps {
   readonly sleep: (ms: number) => Promise<void>;
   /** Called right before agent.run; tests count real invocations with it. */
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
-  /** The public pack, for contracts with `capabilities.pack: true` (and for guardrails). */
+  /** The public pack, for contracts with `capabilities.pack: true` (and for guardrails). Must already be frozen (`freezePack`); the Supervisor does this. */
   readonly pack?: unknown;
   /** Hash of `pack`; part of the step key of pack agents only. Default 'none'. */
   readonly packHash?: string;
-  /** The full pack (with P1 contact details), for contracts with `capabilities.pack: 'full'`. */
+  /** The full pack (with P1 contact details), for contracts with `capabilities.pack: 'full'`. Must already be frozen (`freezePack`). */
   readonly fullPack?: unknown;
   /** Hash of `fullPack`; part of the step key of 'full' pack agents only. Default 'none'. */
   readonly fullPackHash?: string;
@@ -126,7 +126,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
       policyHash: deps.policyHash,
       contractHashOf: deps.contractHashOf,
       input,
-      ...(deps.pack !== undefined && deps.pack !== null ? { pack: deepFreeze(deps.pack) } : {}),
+      ...(deps.pack !== undefined && deps.pack !== null ? { pack: deps.pack } : {}),
     };
     const hash = contractHash(c);
     const running = { stepKey, agentId: c.id, version: c.version, contractHash: hash, inputEnvelopeId: input.envelopeId };

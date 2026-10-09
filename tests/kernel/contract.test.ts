@@ -208,3 +208,15 @@ describe('v1 kernel extensions: contract', () => {
     expect(() => defineContract({ ...base, capabilities: { pack: 'some' } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities\.pack/);
   });
 });
+
+describe('v1 kernel extensions: nested strictness', () => {
+  const bad = (spec: unknown) => () => defineContract(spec as ContractSpec<{ n: number }, { n: number }>);
+  it('rejects unknown keys inside budget, retry, breaker, dataClasses, obligations, guardrails', () => {
+    expect(bad({ ...base, budget: { usdPerCall: 0, usdPerRun: 0, usdPerRUN: 1 } })).toThrow(/budget/);
+    expect(bad({ ...base, retry: { max: 0, on: [], backoffMs: [], maxx: 3 } })).toThrow(/retry/);
+    expect(bad({ ...base, breaker: { consecutiveFailures: 5, cooldown: 1 } })).toThrow(/breaker/);
+    expect(bad({ ...base, dataClasses: { in: ['P0'], out: ['P0'], emits: 'P1' } })).toThrow(/dataClasses/);
+    expect(bad({ ...base, obligations: { adds: [], discharges: [], waives: [] } })).toThrow(/obligations/);
+    expect(bad({ ...base, guardrails: { in: [], out: [], bypass: ['G-SIZE'] } })).toThrow(/guardrails/);
+  });
+});

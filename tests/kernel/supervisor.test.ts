@@ -425,10 +425,10 @@ describe('supervisor end to end', () => {
     const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: (env) => { if (env.type === 'DemoScore@1') throw new Error('keyOf exploded'); return null; } };
     const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken] }).start('run-1', [seed]);
     expect(r.queue).toMatchObject({ pending: 0, done: 1, quarantined: 5, failed: 0 });
-    const trips = store.events('run-1').filter((e) => e.kind === 'step_quarantined').map((e) => JSON.parse(e.data) as { agent: string; stepKey: string; verdict: { id: string; verdict: string; detail: string } });
+    const trips = store.events('run-1').filter((e) => e.kind === 'step_quarantined').map((e) => JSON.parse(e.data) as { agent: string; stepKey: string; persisted: boolean; verdict: { id: string; verdict: string; detail: string } });
     expect(trips).toHaveLength(5);
     for (const t of trips) {
-      expect(t).toMatchObject({ agent: 'demo-scorer', verdict: { id: 'G-TRACKER', verdict: 'trip', detail: expect.stringContaining('keyOf exploded') } });
+      expect(t).toMatchObject({ agent: 'demo-scorer', persisted: true, verdict: { id: 'G-TRACKER', verdict: 'trip', detail: expect.stringContaining('keyOf exploded') } });
       expect(store.getStep(t.stepKey)).toMatchObject({ status: 'quarantined' });
       expect(JSON.parse(store.getStep(t.stepKey)!.detail!)).toEqual([t.verdict]);
       expect(store.envelopesOfStep(t.stepKey)).toEqual([]);
@@ -440,6 +440,38 @@ describe('supervisor end to end', () => {
     const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken], onInvoke: inv.onInvoke }).start('run-2', [seed]);
     expect(r2.queue).toMatchObject({ done: 1, quarantined: 5 });
     expect(inv.calls).toEqual([]);
+  });
+  /** demoTracker, except keyOf now throws on DemoItem@1: a tracker code change, so a replayed step trips. */
+  const itemBreaker: Tracker = { ...demoTracker, keyOf: (env) => { if (env.type === 'DemoItem@1') throw new Error('keyOf regressed'); return demoTracker.keyOf(env); } };
+
+  it('G-TRACKER on a replayed step is run-local: earlier runs keep their history, a fixed tracker heals', async () => {
+    const store = Store.open(':memory:');
+    await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
+    const steps = store.dump('steps', 'step_key');
+    const envelopes = store.dump('envelopes', 'envelope_id');
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [itemBreaker] }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ pending: 0, done: 0, quarantined: 1 });
+    const trip = store.events('run-2').find((e) => e.kind === 'step_quarantined');
+    expect(JSON.parse(trip!.data)).toMatchObject({ side: 'tracker', persisted: false, verdict: { id: 'G-TRACKER' } });
+    expect(store.dump('steps', 'step_key')).toBe(steps);
+    expect(store.dump('envelopes', 'envelope_id')).toBe(envelopes);
+    expect(store.quarantinedSteps()).toEqual([]);
+    const inv = invocations();
+    const r3 = await handBuilt({ store, scorer: demoScorer, onInvoke: inv.onInvoke }).start('run-3', [seed]);
+    expect(r3.queue).toMatchObject({ done: 6, quarantined: 0 });
+    expect(r3.replayed).toBe(6);
+    expect(inv.calls).toEqual([]);
+  });
+
+  it('G-TRACKER on a replayed step does not wedge the resume of a crashed run', async () => {
+    const store = Store.open(':memory:');
+    const crashing = handBuilt({ store, scorer: demoScorer, afterStep: (n) => { if (n === 3) throw new Error('simulated crash'); } });
+    await expect(crashing.start('run-1', [seed])).rejects.toThrow('simulated crash');
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [itemBreaker] }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ quarantined: 1 });
+    const r1 = await handBuilt({ store, scorer: demoScorer }).resume('run-1');
+    expect(r1.queue).toMatchObject({ pending: 0, done: 6, failed: 0, quarantined: 0 });
+    expect(store.entityState('demo-005', 'demo-item')).toBe('SCORED');
   });
 });
 
@@ -572,6 +604,20 @@ describe('v1 kernel extensions: supervisor', () => {
     expect(fetch.calls).toHaveLength(3);
     expect(slept).toHaveLength(2);
     for (const ms of slept) expect(ms).toBeGreaterThanOrEqual(PRODUCT_POLICY_V1.minHostIntervalMs);
+  });
+
+  it('freezes one deep copy of the pack: the caller\'s object stays mutable, typed arrays do not break it', async () => {
+    packSeen.length = 0;
+    const pack = { name: 'Asha Rao', tags: ['go'], bytes: new Uint8Array([1, 2]) };
+    const r = await build(Store.open(':memory:'), [], pack, 'pack-1').sup.start('run-1', [{ n: 2 }]);
+    expect(r.queue).toMatchObject({ done: 3, failed: 0 });
+    expect(Object.isFrozen(pack)).toBe(false);
+    expect(Object.isFrozen(pack.tags)).toBe(false);
+    const seen = packSeen[0] as typeof pack;
+    expect(seen).not.toBe(pack);
+    expect(Object.isFrozen(seen)).toBe(true);
+    expect(Object.isFrozen(seen.tags)).toBe(true);
+    expect(packSeen[1]).toBe(seen);
   });
 
   it('passes the pack to pack agents, and a pack edit re-runs only the agents that read it', async () => {

@@ -98,20 +98,28 @@ export interface IssueArgs {
   readonly signal: AbortSignal;
   /** What the run had already paid before this context was issued: by this agent, and in total. */
   readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number; readonly maxCallUsd?: number };
-  /** The pack this contract may read (public or full, as the caller chose); ignored unless the contract declares capabilities.pack. */
+  /** The pack this contract may read (public or full), already frozen by `freezePack`; ignored unless the contract declares capabilities.pack. */
   readonly pack?: unknown;
   /** Shared per-host pacing; without one, requests are not paced (unit tests, evals). */
   readonly hostPacer?: HostPacer;
 }
 
-/** Freezes every object reachable from `v`, in place. Cycles are safe. */
-export function deepFreeze<T>(v: T, seen = new WeakSet<object>()): T {
-  if (v !== null && typeof v === 'object' && !seen.has(v)) {
+/** Freezes every object reachable from `v`, in place. Cycles are safe. Typed arrays and DataViews cannot be frozen, so they are skipped. */
+function deepFreeze<T>(v: T, seen = new WeakSet<object>()): T {
+  if (v !== null && typeof v === 'object' && !seen.has(v) && !ArrayBuffer.isView(v)) {
     seen.add(v);
     Object.freeze(v);
     for (const child of Object.values(v)) deepFreeze(child, seen);
   }
   return v;
+}
+
+/**
+ * A deep-frozen deep copy of a pack: the caller's object is never frozen. The Supervisor calls it once
+ * per pack; every context then shares the same read-only view. Typed arrays inside stay mutable.
+ */
+export function freezePack<T>(pack: T): Readonly<T> {
+  return deepFreeze(structuredClone(pack));
 }
 
 function mapProviderError(e: unknown): unknown {
@@ -159,7 +167,7 @@ export function issueContext(a: IssueArgs): AgentContext {
     denials: () => [...denied],
   };
 
-  if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = deepFreeze(a.pack);
+  if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = a.pack;
 
   if (a.contract.capabilities.http) {
     const getText = async (url: string): Promise<{ status: number; body: string }> => {

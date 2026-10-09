@@ -1,7 +1,7 @@
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
-import { createHostPacer, type HostPacer } from './broker.js';
+import { createHostPacer, freezePack, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
 import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
@@ -21,9 +21,10 @@ export interface Tracker {
   /**
    * The entity this envelope belongs to, or null when the tracker does not follow it. Must be a
    * pure function of the envelope. Throwing is treated as a broken output, not a broken tracker:
-   * when it throws for an output of a done step, that step is quarantined with verdict G-TRACKER,
-   * its outputs are dropped and nothing is routed. A throw while tracking a quarantined input is
-   * only audited (`tracker_error`).
+   * when it throws for an output of a done step, that step is quarantined with verdict G-TRACKER
+   * and nothing is routed. A step executed in this run is quarantined in the store (its outputs are
+   * dropped); a replayed step is quarantined for this run only, leaving stored history untouched.
+   * A throw while tracking a quarantined input is only audited (`tracker_error`).
    */
   keyOf(env: Envelope): string | null;
   /** `env` is the tracked envelope: an output when the step is done, its input when it is quarantined. */
@@ -79,10 +80,15 @@ export class Supervisor {
   private readonly sleep: (ms: number) => Promise<void>;
   /** One per supervisor: every step's requests to a host share its spacing. */
   private readonly hostPacer: HostPacer;
+  /** One frozen deep copy of each pack, made once; the caller's objects are left alone. */
+  private readonly pack: unknown;
+  private readonly fullPack: unknown;
 
   constructor(private readonly d: SupervisorDeps) {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+    this.pack = d.pack === undefined ? undefined : freezePack(d.pack);
+    this.fullPack = d.fullPack === undefined ? undefined : freezePack(d.fullPack);
   }
 
   private get exec(): ExecutorDeps {
@@ -96,9 +102,9 @@ export class Supervisor {
       guardrails: d.guardrails,
       sleep: this.sleep,
       hostPacer: this.hostPacer,
-      ...(d.pack !== undefined ? { pack: d.pack } : {}),
+      ...(this.pack !== undefined ? { pack: this.pack } : {}),
       ...(d.packHash !== undefined ? { packHash: d.packHash } : {}),
-      ...(d.fullPack !== undefined ? { fullPack: d.fullPack } : {}),
+      ...(this.fullPack !== undefined ? { fullPack: this.fullPack } : {}),
       ...(d.fullPackHash !== undefined ? { fullPackHash: d.fullPackHash } : {}),
       contractHashOf: (id, v) => (id === SUPERVISOR_ID && v === d.compiled.pipeline.version ? d.compiled.seedHash : d.registry.contractHashOf(id, v)),
       ...(d.onInvoke ? { onInvoke: d.onInvoke } : {}),
@@ -220,8 +226,12 @@ export class Supervisor {
 
       store.tx(() => {
         if (trip) {
-          store.quarantineDoneStep(outcome.stepKey, JSON.stringify([trip]));
-          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, side: 'tracker', verdict: trip });
+          // Persist only what this execution created and nothing has consumed yet. A replayed step's
+          // envelopes may belong to other runs' history, so its quarantine is for this run only: keyOf
+          // is pure, so later runs re-derive it, and a fixed tracker heals the pipeline.
+          const persisted = executed.kind === 'done' && !executed.replayed;
+          if (persisted) store.quarantineDoneStep(outcome.stepKey, JSON.stringify([trip]));
+          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, side: 'tracker', persisted, verdict: trip });
         }
         if (outcome.kind === 'done') {
           for (const out of outcome.outputs) {
