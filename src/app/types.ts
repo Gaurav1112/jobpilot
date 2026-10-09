@@ -29,13 +29,27 @@ export type RawPosting = z.infer<typeof RawPosting.schema>;
 
 /**
  * One job link found on a career site's listing, handed from `src-careers-list` to `src-careers-job`. There is
- * deliberately no run date or timestamp: an unchanged link has the same step key every day, so its job page replays
- * instead of being rendered again, and a link that leaves the listing simply stops being emitted.
+ * deliberately no run date: the payload is the step key, so an unchanged link replays instead of being rendered again.
+ * - `refresh` is a staggered refresh epoch, `floor((dayNumber(runDate) + bucket(url)) / 7)`: each link's epoch
+ *   advances once every 7 days, on a day fixed by its URL, so about a seventh of the links re-render each day and
+ *   none is more than 7 days stale.
+ * - `linkText` is the anchor's text on the listing (normally the job title): a retitled job re-renders the next day.
+ * A link that leaves the listing simply stops being emitted.
  */
 export const CareerLink = defineType(
   'CareerLink',
   1,
-  z.object({ company: z.string(), slug: z.string(), listUrl: z.string(), url: z.string(), linkPattern: z.string() }).strict(),
+  z
+    .object({
+      company: z.string(),
+      slug: z.string(),
+      listUrl: z.string(),
+      url: z.string(),
+      linkPattern: z.string(),
+      linkText: z.string(),
+      refresh: z.number().int().nonnegative(),
+    })
+    .strict(),
 );
 export type CareerLink = z.infer<typeof CareerLink.schema>;
 

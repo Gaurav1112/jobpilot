@@ -160,7 +160,7 @@ describe('src-greenhouse', () => {
 
   it('a 404 board → invalid_output naming the slug', async () => {
     const rec = serve({});
-    await expect(run(srcGreenhouse, req('greenhouse', 'gitlab'), rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'board not found: gitlab' });
+    await expect(run(srcGreenhouse, req('greenhouse', 'gitlab'), rec)).rejects.toMatchObject({ code: 'gone', message: 'board not found: gitlab' });
   });
 
   it('another 4xx → invalid_output; a body without jobs → invalid_output', async () => {
@@ -206,7 +206,7 @@ describe('src-lever', () => {
     const none = serve({});
     await expect(run(srcLever, req('ashby', 'veeva'), none)).resolves.toEqual([]);
     expect(none.urls).toEqual([]);
-    await expect(run(srcLever, req('lever', 'veeva'), serve({}))).rejects.toMatchObject({ code: 'invalid_output', message: 'board not found: veeva' });
+    await expect(run(srcLever, req('lever', 'veeva'), serve({}))).rejects.toMatchObject({ code: 'gone', message: 'board not found: veeva' });
     await expect(run(srcLever, req('lever', 'veeva'), serve({ [LV(0)]: { body: '{"ok":true}' } }))).rejects.toMatchObject({ code: 'invalid_output' });
   });
 
@@ -239,7 +239,7 @@ describe('src-ashby', () => {
     const none = serve({});
     await expect(run(srcAshby, req('greenhouse', 'confluent'), none)).resolves.toEqual([]);
     expect(none.urls).toEqual([]);
-    await expect(run(srcAshby, req('ashby', 'confluent'), serve({}))).rejects.toMatchObject({ code: 'invalid_output', message: 'board not found: confluent' });
+    await expect(run(srcAshby, req('ashby', 'confluent'), serve({}))).rejects.toMatchObject({ code: 'gone', message: 'board not found: confluent' });
   });
 
   it('skips a malformed job and counts it', () => {
@@ -291,7 +291,7 @@ describe('src-himalayas', () => {
   });
 
   it('404 → invalid_output', async () => {
-    await expect(run(srcHimalayas, req('feed', 'himalayas'), serve({}))).rejects.toMatchObject({ code: 'invalid_output', message: 'board not found: himalayas' });
+    await expect(run(srcHimalayas, req('feed', 'himalayas'), serve({}))).rejects.toMatchObject({ code: 'gone', message: 'board not found: himalayas' });
   });
 
   it('skips a malformed job and counts it', () => {
@@ -329,7 +329,7 @@ describe('src-jobicy', () => {
   });
 
   it('404 → invalid_output', async () => {
-    await expect(run(srcJobicy, req('feed', 'jobicy'), serve({}))).rejects.toMatchObject({ code: 'invalid_output', message: 'board not found: jobicy' });
+    await expect(run(srcJobicy, req('feed', 'jobicy'), serve({}))).rejects.toMatchObject({ code: 'gone', message: 'board not found: jobicy' });
   });
 
   it('skips a malformed job and counts it', () => {

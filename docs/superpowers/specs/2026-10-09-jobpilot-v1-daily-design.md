@@ -114,8 +114,19 @@ DiscoveryRequest@1 (ats careers) ──► src-careers-list ──► CareerLink
 
 - `src-careers-list` emits one CareerLink per job link.
 - `src-careers-job` renders one job page per step.
-- CareerLink@1 is `{company, slug, listUrl, url, linkPattern}`. It carries no date, so an unchanged link replays
-  from the store on later days without a new render, and a removed link stops appearing.
+- CareerLink@1 is `{company, slug, listUrl, url, linkPattern, linkText, refresh}`. It carries no run date, so an
+  unchanged link replays from the store instead of being rendered again, and a removed link stops appearing.
+  - `refresh = floor((dayNumber(runDate) + sha256(url) mod 7) / 7)` is a staggered weekly epoch: about a seventh of
+    the links re-render each day, and no link is more than 7 days stale.
+  - `linkText`, the anchor's text, makes a retitled job re-render the next day.
+  - Task 8: a re-rendered link re-emits a RawPosting with the same `sourceId`. The projector must treat it as a newer
+    version of that posting (an upsert), not as a duplicate.
+- A job that is gone fails its own step with the kernel code `gone`, which is non-retryable and never counts
+  towards a breaker. It is still a failed step, counted as `gone` in the run report. Gone means any of:
+  - the page answers 404 or 410;
+  - a redirect leaves the job pages, so `finalUrl` differs from the link and does not match `linkPattern`.
+
+  The API sources use `gone` for "board not found" too.
 - Both contracts are built from `careersHosts(watchlist)`.
 
 Rules for the read-only browser:
@@ -181,8 +192,8 @@ Rules for the read-only browser:
   - more than 6 listing pages;
   - more than 5,000 job links.
 
-  Per job, in that job's own step only: a gone page (4xx), a redirect back to the listing, a page still loading at
-  its cap, a missing title, and unrendered template text.
+  Per job, in that job's own step only: `gone` (described above), any other 4xx, a page still loading at its cap,
+  a missing title, and unrendered template text. A click whose script submits a form fails as G-READONLY.
 - *Budget arithmetic.* A job page costs at most 10 s (pacing) + 20 s (navigation) + 45 s (settle) = 75 s, and a
   `src-careers-job` step is given 90 s (75 s plus 15 s for the host pacer and starting a context). A listing page
   costs at most 10 + 20 + 45 + 200 s (the 150 s expansion budget plus one last 5 s click and a 45 s settle) = 275 s.

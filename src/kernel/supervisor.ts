@@ -61,6 +61,8 @@ export interface RunReport {
   readonly status: 'completed';
   readonly queue: Record<'pending' | 'done' | 'failed' | 'quarantined' | 'skipped', number>;
   readonly replayed: number;
+  /** Failed steps whose item no longer exists at its source (error code `gone`); they are inside `queue.failed`. */
+  readonly gone: number;
   readonly openObligations: readonly { readonly envelopeId: string; readonly ids: readonly string[] }[];
   readonly costUsd: number;
 }
@@ -250,7 +252,10 @@ export class Supervisor {
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 
-      if (outcome.kind === 'failed') {
+      // A gone item is that item's failure, not the service's: it neither trips nor resets a breaker.
+      if (outcome.kind === 'failed' && outcome.error === 'gone') {
+        // reported through the step_failed event and RunReport.gone
+      } else if (outcome.kind === 'failed') {
         this.failure(agentKey, agent.contract.breaker.consecutiveFailures, runId);
         if (team && teamKey !== undefined) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
       } else if (outcome.kind === 'done') {
@@ -265,6 +270,7 @@ export class Supervisor {
       status: 'completed',
       queue: store.queueCounts(runId),
       replayed: events.filter((e) => e.kind === 'step_replayed').length,
+      gone: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'gone').length,
       openObligations: openObligationsOf(events),
       costUsd: store.runCost(runId),
     };

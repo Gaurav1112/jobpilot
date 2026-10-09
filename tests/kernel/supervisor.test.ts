@@ -670,4 +670,38 @@ describe('v1 kernel extensions: supervisor', () => {
     // browser interval (10 s), then its host slot (1 s); the http request waits for the slot after that (2 s).
     expect(slept).toEqual([PRODUCT_POLICY_V1.minBrowserIntervalMs, 1000, 2000]);
   });
+
+  it('a gone item fails its step but never trips a breaker; another failure code does', async () => {
+    const Out = defineType('GoneOut', 1, z.object({ n: z.number() }).strict());
+    const build = (code: 'gone' | 'invalid_output') => {
+      const agent = defineAgent(
+        defineContract({ ...common, id: 'gone-src', description: 'Fails for low numbers', skills: ['x'], team: 'pace-src', kind: 'deterministic', consumes: Req, produces: Out, breaker: { consecutiveFailures: 3 } }),
+        async (req: { n: number }) => {
+          if (req.n <= 15) throw new KernelError(code, `item ${req.n} is ${code}`);
+          return [{ n: req.n }];
+        },
+      );
+      const registry = new Registry();
+      registry.register(agent);
+      const guardrails = builtinGuardrails();
+      return new Supervisor({
+        store: Store.open(':memory:'),
+        registry,
+        compiled: compileWiring(registry, { id: 'gone', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'l', members: ['gone-src'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'gone-src' }] }, guardrails),
+        guardrails,
+        policy: PRODUCT_POLICY_V1,
+        policyHash: policyHash(PRODUCT_POLICY_V1),
+        providers: { fetch: fakeFetch({}) },
+        clock: fixedClock('2026-10-08T07:00:00.000Z'),
+        sleep: async () => undefined,
+      });
+    };
+    const seeds = Array.from({ length: 20 }, (_, i) => ({ n: i + 1 }));
+    const gone = await build('gone').start('run-gone', seeds);
+    expect(gone.queue).toMatchObject({ done: 5, failed: 15, skipped: 0 });
+    expect(gone.gone).toBe(15);
+    const other = await build('invalid_output').start('run-bad', seeds);
+    expect(other.queue.skipped).toBeGreaterThan(0);
+    expect(other.gone).toBe(0);
+  });
 });

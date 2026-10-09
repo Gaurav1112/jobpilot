@@ -18,9 +18,12 @@ import { sha256Hex } from './sha256.js';
  *   list stops growing, clicks safe "load more" buttons and scrolls), follows next, "show all" and numbered page
  *   links (at most CAREERS_LIST_MAX_PAGES listing pages), and emits one CareerLink per job link matching the entry's
  *   `linkPattern`, deduplicated and sorted (at most CAREERS_MAX_LINKS).
- * - `src-careers-job` renders one job page and emits one RawPosting. A CareerLink carries no date, so an unchanged
- *   link replays from the store on later days without a new render; a gone job fails its own step, loudly, and
- *   no other.
+ * - `src-careers-job` renders one job page and emits one RawPosting. A CareerLink carries no date, only a staggered
+ *   refresh epoch (see `refreshEpoch`) and the link text, so an unchanged link replays from the store on most days
+ *   and re-renders once a week (or the day after it is retitled). A gone job (404, 410, or a redirect away from the
+ *   job pages) fails its own step with `gone`, which never trips a breaker, so no other job or employer is affected.
+ *   Task 8: a re-rendered link re-emits a RawPosting with the same sourceId; the projector must treat it as a newer
+ *   version of that posting (upsert), not a duplicate.
  *
  * Wiring for Task 11: build both with `makeSrcCareersList(hosts)` / `makeSrcCareersJob(hosts)` where
  * `hosts = careersHosts(pack.watchlist)` (exact hosts, sorted, deduplicated), and route DiscoveryRequest@1 to
@@ -55,6 +58,26 @@ export const CAREERS_LIST_MAX_PAGES = 6;
 export const CAREERS_MAX_LINKS = 5000;
 /** src-careers-job: one page at its worst (75 s) plus 15 s for the host pacer and starting a browser context. */
 export const CAREERS_JOB_TIMEOUT_MS = CAREERS_JOB_PAGE_WORST_MS + 15_000;
+
+/** Days between two renders of an unchanged job link (the staggered refresh period). */
+export const CAREERS_REFRESH_DAYS = 7;
+
+/** Days since 1970-01-01 of a YYYY-MM-DD run date (the IST calendar date the run is for). */
+export function dayNumber(runDate: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(runDate);
+  if (!m) throw new KernelError('invalid_output', `run date ${runDate} is not YYYY-MM-DD`);
+  return Math.floor(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) / 86_400_000);
+}
+
+/**
+ * The refresh epoch of a job link on a run date: `floor((dayNumber + bucket) / 7)`, where the bucket (0-6) comes
+ * from the URL's hash. It advances exactly once in any 7 consecutive days, and different links advance on
+ * different days, so re-renders spread evenly over the week.
+ */
+export function refreshEpoch(url: string, runDate: string): number {
+  const bucket = Number.parseInt(sha256Hex(url).slice(0, 8), 16) % CAREERS_REFRESH_DAYS;
+  return Math.floor((dayNumber(runDate) + bucket) / CAREERS_REFRESH_DAYS);
+}
 
 /** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: the careers agents' egress. */
 export function careersHosts(watchlist: readonly { readonly ats: string; readonly listUrl?: string | undefined }[]): string[] {
@@ -117,7 +140,7 @@ export function makeSrcCareersJob(hosts: readonly string[]): Agent<CareerLink, R
     budget: { usdPerCall: 0, usdPerRun: 0 },
     timeoutMs: CAREERS_JOB_TIMEOUT_MS,
     retry: { max: 2, on: ['network', 'timeout'], backoffMs: [2000, 8000] },
-    // One gone job is that job's failure; a run of them (a site that is down) opens the breaker.
+    // A gone job (`gone`) never counts; other failures in a row (a site that is down) open the breaker.
     breaker: { consecutiveFailures: 10 },
   });
   return defineAgent(contract, (link, ctx) => renderJob(link, ctx));
@@ -373,6 +396,7 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
   const positions = new Set<string>(); // pagingKey().key of every listing page rendered or queued
   const listingBases = new Set<string>(); // pagingKey().base of every listing page
   const candidates = new Set<string>();
+  const texts = new Map<string, string>(); // job link -> its first non-empty anchor text, in document order
   const queue: string[] = [withoutFragment(list)];
   positions.add(pagingKey(list).key);
   listingBases.add(pagingKey(list).base);
@@ -415,7 +439,10 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
       const pk = pagingKey(u);
       if (isRelNext || (!a.head && isNextLabel(a.label))) enqueue(u);
       else if (pk.paged && listingBases.has(pk.base)) enqueue(u); // a numbered sibling: ?page=N, ?start=N, ?offset=N
-      else if (!a.head) candidates.add(here);
+      else if (!a.head) {
+        candidates.add(here);
+        if (a.label !== '' && !texts.has(here)) texts.set(here, a.label);
+      }
     }
     for (const href of itemListUrls(page.jsonLd)) {
       const u = resolveUrl(href, base);
@@ -436,7 +463,15 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
   const links = [...byCanonical.keys()].sort().map((k) => (byCanonical.get(k) as string[])[0] as string);
   if (links.length === 0) throw loud(`no job links found on ${entry.listUrl} (linkPattern ${entry.linkPattern})`);
   if (links.length > maxLinks) throw loud(`${links.length} job links exceed the cap of ${maxLinks}`);
-  return links.map((url) => ({ company: req.company, slug: req.slug, listUrl: entry.listUrl, url, linkPattern: entry.linkPattern }));
+  return links.map((url) => ({
+    company: req.company,
+    slug: req.slug,
+    listUrl: entry.listUrl,
+    url,
+    linkPattern: entry.linkPattern,
+    linkText: texts.get(url) ?? '',
+    refresh: refreshEpoch(url, req.runDate),
+  }));
 }
 
 /** Renders one job page. Anything that keeps it from being a complete posting fails this job's step, loudly. */
@@ -450,9 +485,15 @@ async function renderJob(link: CareerLink, ctx: AgentContext): Promise<RawPostin
   if (!compileSafePattern(link.linkPattern).test(u.pathname + u.search)) throw loud(`job link ${link.url} does not match linkPattern ${link.linkPattern}`);
 
   const page = await browser.render(link.url);
-  if (page.status >= 400) throw loud(`job page ${link.url} returned ${page.status} (gone?)`);
+  const gone = (why: string) => new KernelError('gone', `careers ${link.slug}: ${why}`);
+  if (page.status === 404 || page.status === 410) throw gone(`job page ${link.url} returned ${page.status}`);
+  if (page.status >= 400) throw loud(`job page ${link.url} returned ${page.status}`);
+  // A redirect that leaves the job pages (to the listing, a listing page, the home page) means the job closed.
+  const final = new URL(page.finalUrl);
+  if (withoutFragment(final) !== withoutFragment(u) && !compileSafePattern(link.linkPattern).test(final.pathname + final.search)) {
+    throw gone(`job page ${link.url} redirected away from the job pages, to ${final.pathname}${final.search}`);
+  }
   if (!page.settled) throw loud(`job page still loading: ${link.url}`);
-  if (canonicalJobUrl(page.finalUrl) === canonicalJobUrl(link.listUrl)) throw loud(`job page ${link.url} redirected to the listing (closed?)`);
   const jobPosting = findJobPosting(page.jsonLd);
   const ldTitle = jobPosting && typeof jobPosting.title === 'string' ? htmlToText(jobPosting.title).replace(/\s+/g, ' ').trim() : '';
   const title = ldTitle !== '' ? ldTitle : pageTitleOf(page.html);

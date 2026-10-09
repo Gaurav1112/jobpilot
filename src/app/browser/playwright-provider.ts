@@ -421,14 +421,19 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
         throw new KernelError('invalid_output', `load-more could not be clicked ("${target.label}") on ${url}: ${e instanceof Error ? e.message.split('\n')[0] : String(e)}`);
       }
       clicks += 1;
-      if (!(await this.settleListing(page, state, links))) return { clicks, scrolls: 0, capReached: false, settled: false };
+      const settled = await this.settleListing(page, state, links);
+      // A click that made the page submit a form fails as G-READONLY (recorded by the broker), whatever it added.
+      if (state.readOnly !== undefined) this.verdict(state);
+      if (!settled) return { clicks, scrolls: 0, capReached: false, settled: false };
       if ((await jobLinks(page, links, true)) <= before) throw new KernelError('invalid_output', `load-more did not add jobs ("${target.label}") on ${url}`);
     }
     let scrolls = 0;
     for (;;) {
       const before = await jobLinks(page, links, true);
       await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-      if (!(await this.settleListing(page, state, links))) return { clicks, scrolls, capReached: false, settled: false };
+      const settled = await this.settleListing(page, state, links);
+      if (state.readOnly !== undefined) this.verdict(state);
+      if (!settled) return { clicks, scrolls, capReached: false, settled: false };
       if ((await jobLinks(page, links, true)) <= before) break;
       scrolls += 1;
       if (scrolls >= t.maxScrolls || Date.now() >= until) return { clicks, scrolls, capReached: true, settled: true };

@@ -71,14 +71,14 @@ export function checkParsed(source: string, total: number, parsed: Parsed): Pars
 }
 
 /**
- * GETs JSON from a board. A 404 means a wrong or retired slug and is not retryable; any other
+ * GETs JSON from a board. A 404 means a wrong or retired slug: `gone` (not retried, no breaker count); any other
  * status of 400 or more is also `invalid_output` (429 and 5xx never get here: the broker maps them
  * to retryable codes).
  */
 export async function getBoard(ctx: AgentContext, url: string, slug: string): Promise<unknown> {
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const { status, json } = await ctx.http.getJson(url);
-  if (status === 404) throw new KernelError('invalid_output', `board not found: ${slug}`);
+  if (status === 404) throw new KernelError('gone', `board not found: ${slug}`);
   if (status >= 400) throw new KernelError('invalid_output', `${new URL(url).hostname} returned ${status} for ${slug}`);
   return json;
 }

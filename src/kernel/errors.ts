@@ -8,6 +8,12 @@ export const ERROR_CODES = [
   'budget_exceeded',
   /** A CAPTCHA or bot wall answered a browser render. Never retried: jobpilot does not evade. */
   'challenged',
+  /**
+   * The item no longer exists at its source (a job page or board that answers 404 or 410, or a job that redirects
+   * away from a job page). Never retried, and it does not count towards agent or team breakers: breakers measure the
+   * health of a service, not item-level data. It is still a failed step, reported as gone.
+   */
+  'gone',
   'unknown',
 ] as const;
 export type ErrorCode = (typeof ERROR_CODES)[number];

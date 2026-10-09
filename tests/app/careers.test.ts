@@ -17,6 +17,9 @@ import {
   canonicalJobUrl,
   makeSrcCareersJob,
   makeSrcCareersList,
+  CAREERS_REFRESH_DAYS,
+  dayNumber,
+  refreshEpoch,
 } from '../../src/app/agents/sources/careers.js';
 import { sha256Hex } from '../../src/app/agents/sources/sha256.js';
 import { DEFAULT_TIMING } from '../../src/app/browser/playwright-provider.js';
@@ -45,7 +48,7 @@ const packOf = (...watchlist: unknown[]) => freezePack({ watchlist });
 type Route = Partial<BrowserPage> & { html: string };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
-const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ company: 'Example Careers Co', slug: 'example-careers', listUrl: LIST, url, linkPattern: '^/jobs/', ...extra });
+const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ company: 'Example Careers Co', slug: 'example-careers', listUrl: LIST, url, linkPattern: '^/jobs/', linkText: '', refresh: refreshEpoch(url, '2026-10-09'), ...extra });
 
 /**
  * Runs src-careers-list, then src-careers-job on every link it emits, in order, over one fake browser.
@@ -172,7 +175,9 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
 
   it('emits one dateless CareerLink per job link, sorted, carrying the entry it came from', async () => {
     const { links } = run({ [LIST]: { html: listing(a('/jobs/zeta'), a('/jobs/alpha#apply'), a('/jobs/alpha')) } });
-    expect(await links).toEqual([linkOf(`${H}/jobs/alpha`), linkOf(`${H}/jobs/zeta`)]);
+    expect(await links).toEqual([linkOf(`${H}/jobs/alpha`, { linkText: 'A role' }), linkOf(`${H}/jobs/zeta`, { linkText: 'A role' })]);
+    const titled = await run({ [LIST]: { html: listing(a('/jobs/x', '  Senior   Go Engineer '), a('/jobs/x', 'Apply')) } }).links;
+    expect(titled.map((l) => l.linkText)).toEqual(['Senior Go Engineer']);
   });
 
   it('renders the listing, then each same-host job link, and emits RawPostings', async () => {
@@ -291,12 +296,12 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
     expect(titles(r.postings)).toEqual(['Fine']);
     expect(messages(r.errors)).toEqual([
       `careers example-careers: job page ${H}/jobs/dollar looks unrendered (title "\${title}")`,
-      `careers example-careers: job page ${H}/jobs/gone returned 404 (gone?)`,
+      `careers example-careers: job page ${H}/jobs/gone returned 404`,
       `careers example-careers: job page ${H}/jobs/loading looks unrendered (title "Careers | Acme")`,
       `careers example-careers: job page ${H}/jobs/tpl looks unrendered (title "{{ job.title }}")`,
       `careers example-careers: job page ${H}/jobs/untitled has no JobPosting title, h1, og:title or title`,
     ]);
-    for (const e of r.errors) expect((e.error as { code: string }).code).toBe('invalid_output');
+    expect(r.errors.map((e) => (e.error as { code: string }).code)).toEqual(['invalid_output', 'gone', 'invalid_output', 'invalid_output', 'invalid_output']);
     // The h1 inside a script is not the title.
     const scripted = run({ [LIST]: { html: listing(a('/jobs/s')) }, [`${H}/jobs/s`]: { html: '<html><head><title>Real Title</title></head><body><script>el.innerHTML = "<h1>" + d.t + "</h1>";</script></body></html>', text: 'Real text' } });
     expect(titles(await scripted.out)).toEqual(['Real Title']);
@@ -336,15 +341,43 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
     expect(titles(await out)).toEqual(['Site Reliability Engineer', 'Work With Us – Product Designer']);
   });
 
-  it('a job link that redirects back to the listing (a closed job) fails that job alone', async () => {
+  it('a job that redirects away from the job pages (listing, a listing page, home) is gone; a redirect to another job page is not', async () => {
     const { jobs } = run({
-      [LIST]: { html: listing(a('/jobs/closed'), a('/jobs/open')) },
-      [`${H}/jobs/closed`]: { html: listing(), finalUrl: LIST },
+      [LIST]: { html: listing(a('/jobs/c1'), a('/jobs/c2'), a('/jobs/c3'), a('/jobs/moved'), a('/jobs/open'), a('/jobs/g410')) },
+      [`${H}/jobs/c1`]: { html: listing(), finalUrl: LIST },
+      [`${H}/jobs/c2`]: { html: listing(), finalUrl: `${H}/jobs?page=2` },
+      [`${H}/jobs/c3`]: { html: '<h1>Welcome</h1>', finalUrl: `${H}/` },
+      [`${H}/jobs/moved`]: { ...plainJob('Moved'), finalUrl: `${H}/jobs/moved-123` },
       [`${H}/jobs/open`]: plainJob('Open'),
+      [`${H}/jobs/g410`]: { html: 'gone', status: 410 },
     });
     const r = await jobs;
-    expect(titles(r.postings)).toEqual(['Open']);
-    expect(messages(r.errors)).toEqual([`careers example-careers: job page ${H}/jobs/closed redirected to the listing (closed?)`]);
+    expect(titles(r.postings)).toEqual(['Moved', 'Open']);
+    expect(messages(r.errors)).toEqual([
+      `careers example-careers: job page ${H}/jobs/c1 redirected away from the job pages, to /jobs`,
+      `careers example-careers: job page ${H}/jobs/c2 redirected away from the job pages, to /jobs?page=2`,
+      `careers example-careers: job page ${H}/jobs/c3 redirected away from the job pages, to /`,
+      `careers example-careers: job page ${H}/jobs/g410 returned 410`,
+    ]);
+    expect(r.errors.map((e) => (e.error as { code: string }).code)).toEqual(['gone', 'gone', 'gone', 'gone']);
+  });
+
+  it('refresh: every link advances exactly once in any 7 consecutive run dates, spread evenly over the week', () => {
+    expect(CAREERS_REFRESH_DAYS).toBe(7);
+    expect(dayNumber('1970-01-01')).toBe(0);
+    expect(dayNumber('2026-10-09')).toBe(20_735);
+    const urls = Array.from({ length: 700 }, (_, i) => `${H}/jobs/j${i}`);
+    const dates = Array.from({ length: 8 }, (_, i) => `2026-10-${String(9 + i).padStart(2, '0')}`);
+    const changesPerDay = new Array<number>(7).fill(0);
+    for (const url of urls) {
+      const epochs = dates.map((d) => refreshEpoch(url, d));
+      const changes = epochs.slice(1).map((e, i) => e - (epochs[i] as number));
+      expect(changes.filter((c) => c === 1), url).toHaveLength(1);
+      expect(changes.every((c) => c === 0 || c === 1)).toBe(true);
+      changes.forEach((c, i) => (changesPerDay[i] = (changesPerDay[i] as number) + c));
+    }
+    // About a seventh each day (700 / 7 = 100).
+    for (const n of changesPerDay) expect(n).toBeGreaterThan(70), expect(n).toBeLessThan(130);
   });
 
   it('fails on a listing error, a missing watchlist entry, or a challenge', async () => {
@@ -407,7 +440,7 @@ describe('src-careers through the supervisor', () => {
     });
   };
 
-  it('one listing with 40 links runs 40 job steps; the next day all 40 replay with no new job render', async () => {
+  it('one listing with 40 links runs 40 job steps; the next day only links due for refresh re-render, the rest replay', async () => {
     const store = Store.open(':memory:');
     const browser = fakeBrowser(routes);
     const slept: number[] = [];
@@ -417,17 +450,83 @@ describe('src-careers through the supervisor', () => {
     // Pacing holds across steps: with the clock fixed, the k-th render after the first waits k browser intervals.
     expect(slept).toEqual(expect.arrayContaining(Array.from({ length: 40 }, (_, i) => (i + 1) * PRODUCT_POLICY_V1.minBrowserIntervalMs)));
 
+    // Day 2: only the links whose staggered refresh epoch advanced re-render; every other link replays.
+    const due = forty.filter((p) => refreshEpoch(`${H}${p}`, '2026-10-10') !== refreshEpoch(`${H}${p}`, '2026-10-09'));
+    expect(due.length).toBeGreaterThan(0);
+    expect(due.length).toBeLessThan(15);
     const day2 = await supervisor(store, browser, []).start('run-2', [req('careers', 'example-careers', '2026-10-10')]);
     expect(day2.queue).toMatchObject({ done: 41, failed: 0 });
-    expect(day2.replayed).toBe(40);
-    expect(browser.calls).toHaveLength(42);
+    expect(day2.replayed).toBe(40 - due.length);
     expect(browser.calls[41]?.url).toBe(LIST);
+    expect(browser.calls.slice(42).map((c) => c.url).sort()).toEqual(due.map((p) => `${H}${p}`).sort());
   });
 
-  it('a gone job fails its own step; the other jobs are done', async () => {
+  it('a gone job fails its own step as gone; the other jobs are done', async () => {
     const browser = fakeBrowser({ ...routes, [`${H}/jobs/j07`]: { html: 'gone', status: 410 } });
     const r = await supervisor(Store.open(':memory:'), browser, []).start('run-g', [req()]);
     expect(r.queue).toMatchObject({ done: 40, failed: 1 });
+    expect(r.gone).toBe(1);
+  });
+
+  it('over 8 consecutive days each unchanged link re-renders exactly once after day 1; a retitled link re-renders the next day', async () => {
+    const seven = forty.slice(0, 7);
+    const page = (text: (p: string) => string) => ({ [LIST]: { html: listing(...seven.map((p) => a(p, text(p)))) } });
+    const jobPages = Object.fromEntries(seven.map((p) => [`${H}${p}`, plainJob(`Job ${p.slice(-2)}`)]));
+    const store = Store.open(':memory:');
+    const rendered: string[][] = [];
+    for (let d = 0; d < 8; d++) {
+      const browser = fakeBrowser({ ...page((p) => `Role ${p.slice(-2)}`), ...jobPages });
+      const r = await supervisor(store, browser, []).start(`day-${d}`, [req('careers', 'example-careers', `2026-10-${String(9 + d).padStart(2, '0')}`)]);
+      expect(r.queue).toMatchObject({ done: 8, failed: 0 });
+      rendered.push(browser.calls.map((c) => c.url).filter((u) => u !== LIST));
+    }
+    expect(rendered[0]).toHaveLength(7);
+    const later = rendered.slice(1).flat().sort();
+    expect(later).toEqual(seven.map((p) => `${H}${p}`).sort());
+    // Day 9: one link retitled on the listing re-renders; the rest replay unless their refresh day has come.
+    const browser = fakeBrowser({ ...page((p) => (p === seven[3] ? 'Senior Role (retitled)' : `Role ${p.slice(-2)}`)), ...jobPages });
+    await supervisor(store, browser, []).start('day-8', [req('careers', 'example-careers', '2026-10-17')]);
+    expect(browser.calls.map((c) => c.url)).toContain(`${H}${seven[3]}`);
+  });
+
+  it('one employer with 40 gone jobs does not cost another employer a single posting', async () => {
+    const ALPHA = 'https://alpha.example.com';
+    const BETA = 'https://beta.example.com';
+    const alphaLinks = Array.from({ length: 40 }, (_, i) => `/jobs/a${String(i).padStart(2, '0')}`);
+    const betaLinks = Array.from({ length: 10 }, (_, i) => `/jobs/b${i}`);
+    const browser = fakeBrowser({
+      [`${ALPHA}/jobs`]: { html: listing(...alphaLinks.map((p) => a(p))) },
+      [`${BETA}/jobs`]: { html: listing(...betaLinks.map((p) => a(p))) },
+      ...Object.fromEntries(betaLinks.map((p) => [`${BETA}${p}`, plainJob(`Beta ${p}`)])),
+    });
+    const registry = new Registry();
+    registry.register(makeSrcCareersList(['alpha.example.com', 'beta.example.com']));
+    registry.register(makeSrcCareersJob(['alpha.example.com', 'beta.example.com']));
+    const guardrails = builtinGuardrails();
+    const watchlist = [
+      entry({ company: 'Alpha', slug: 'alpha', listUrl: `${ALPHA}/jobs` }),
+      entry({ company: 'Beta', slug: 'beta', listUrl: `${BETA}/jobs` }),
+    ];
+    const sup = new Supervisor({
+      store: Store.open(':memory:'),
+      registry,
+      compiled: compileWiring(registry, pipeline, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser },
+      clock: fixedClock('2026-10-09T07:00:00.000Z'),
+      sleep: async () => undefined,
+      pack: { watchlist },
+      packHash: 'pack-ab',
+    });
+    const r = await sup.start('run-ab', [
+      { ats: 'careers', slug: 'alpha', company: 'Alpha', runDate: '2026-10-09' },
+      { ats: 'careers', slug: 'beta', company: 'Beta', runDate: '2026-10-09' },
+    ]);
+    expect(r.queue).toMatchObject({ done: 12, failed: 40, skipped: 0 });
+    expect(r.gone).toBe(40);
+    expect(browser.calls.filter((c) => c.url.startsWith(`${BETA}/jobs/b`))).toHaveLength(10);
   });
 });
 
@@ -486,6 +585,7 @@ describe('src-careers with real chromium', async () => {
     '/form-attr-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<form id="f" method="post" action="/apply-submit"><input name="email" value="me@x"></form><button form="f">Show more</button>`) }),
     '/in-form-opportunities': () => ({ body: doc(`<h1>Jobs</h1>${two}<form method="get" action="/s"><input name="a"><button type="button" onclick="1">Load more opportunities</button></form>`) }),
     '/submit-type': () => ({ body: doc(`<h1>Jobs</h1>${two}<button type="submit">Show more</button>`) }),
+    '/click-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<form id="f" method="post" action="/posted"><input name="q" value="1"></form><button type="button" onclick="document.getElementById('f').requestSubmit()">Load more</button>`) }),
     '/typeless-more': () => ({ body: doc(`<h1>Jobs</h1><div id="l">${two}</div><button onclick="document.getElementById('l').insertAdjacentHTML('beforeend', '<a href=&quot;/jobs/c&quot;>c</a>'); this.remove();">Load more</button>`) }),
     '/reveal-all': () => ({ body: doc(`<h1>Jobs</h1>${two}<div id="more" style="display:none"><a href="/jobs/c">c</a> <a href="/jobs/d">d</a></div><button type="button" onclick="document.getElementById('more').style.display = 'block'; this.remove();">Show all jobs</button>`) }),
     '/show20-untyped': () => ({ body: doc(`<h1>Jobs</h1>${two}<button onclick="1">Show 20 more</button>`) }),
@@ -698,6 +798,12 @@ describe('src-careers with real chromium', async () => {
     const reveal = await render(`${base}/reveal-all`, { expand: true, linkPattern: '^/jobs/' });
     expect(reveal.expansion).toMatchObject({ clicks: 1, capReached: false, unfollowedControls: [] });
   }, 60_000);
+
+  it.skipIf(!installed)('a click whose script submits a POST form fails with G-READONLY, and no POST reaches the server', async () => {
+    const before = hits.length;
+    await expect(render(`${base}/click-post`, { expand: true, linkPattern: '^/jobs/' })).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/G-READONLY/) });
+    expect(since(before)).toEqual(['GET 127.0.0.1/click-post']);
+  }, 30_000);
 
   it.skipIf(!installed)('a clicked control that adds no jobs fails loudly (the XHR POST it makes is the page\'s own)', async () => {
     const before = hits.length;
