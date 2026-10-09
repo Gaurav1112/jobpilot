@@ -1,7 +1,8 @@
 import { FactStatus } from '../pack/schema.js';
 import type { Fact } from '../pack/schema.js';
 import type { Posting } from '../types.js';
-import { Store } from '../../kernel/store/store.js';
+import { dirname } from 'node:path';
+import { Store, tightenMode } from '../../kernel/store/store.js';
 import { APP_MIGRATIONS, DOCS_STATES, JOB_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
@@ -255,7 +256,9 @@ export class AppStore {
   ) {}
 
   /** Opens the DB file: the kernel's migrations first (through `Store.open`), then the app's. `close` closes both. */
+  /** The DB file lives in the jobpilot home, which is kept owner-only (0700); the DB itself is 0600 (`Store.open`). */
   static open(path: string, opts: { readonly timeoutMs?: number } = {}): AppStore {
+    if (path !== ':memory:' && path !== '') tightenMode(dirname(path), 0o700);
     const kernel = Store.open(path, opts);
     try {
       return AppStore.migrate(kernel, true);

@@ -1,3 +1,4 @@
+import { chmodSync, closeSync, constants, openSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from '../canonical.js';
 import type { Cost, Envelope } from '../envelope.js';
@@ -55,12 +56,27 @@ export function eventHash(prevHash: string, e: Pick<EventRow, 'run_id' | 'at' | 
  * The only module that touches SQLite. better-sqlite3 is synchronous, so
  * writes happen in program order and every multi-row write is one transaction.
  */
+/** Removes group and other permission bits from `path` when it exists and has any. */
+export function tightenMode(path: string, mode: number): void {
+  try {
+    const st = statSync(path);
+    if ((st.mode & 0o077) !== 0) chmodSync(path, mode);
+  } catch (e) {
+    if ((e as { code?: string }).code !== 'ENOENT') throw e;
+  }
+}
+
 export class Store {
   private constructor(readonly db: Database.Database) {}
 
   /** `timeoutMs`: how long a statement waits for another connection's lock (SQLite busy_timeout); default the driver's 5 s. */
   static open(path: string, opts: { readonly timeoutMs?: number } = {}): Store {
+    const onDisk = path !== ':memory:' && path !== '';
+    // Owner-only: the file is created 0600 before SQLite opens it (SQLite gives its -wal and -shm files the database
+    // file's mode), and a looser existing file, or journal files left by an older version, are tightened.
+    if (onDisk) closeSync(openSync(path, constants.O_RDWR | constants.O_CREAT, 0o600));
     const db = new Database(path, opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {});
+    if (onDisk) for (const f of [path, `${path}-wal`, `${path}-shm`]) tightenMode(f, 0o600);
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     try {

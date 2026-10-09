@@ -125,6 +125,8 @@ export interface SentData {
   readonly changedSince: Readonly<Record<string, string>>;
   /** Applied, ready documents and no snapshot: offer to keep a copy now. */
   readonly canKeep: boolean;
+  /** The IST day the job was marked applied, if known. */
+  readonly appliedDay: string | null;
   readonly csrf: string;
   readonly istDay: (iso: string) => string;
 }
@@ -136,12 +138,16 @@ export function sentSection(d: SentData, oob = false): Html {
 <h2 id="sent-h">Documents you sent</h2>
 ${
   d.canKeep
-    ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept.</p>
+    ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
 <form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
-  (s) => html`<div class="sent"><h3>Applied ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p>${
+  (s) => html`<div class="sent">${
+    s.day === d.appliedDay
+      ? html`<h3>Applied ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p>`
+      : html`<h3>Copy kept ${dateText(s.day)} (made after you applied${d.appliedDay !== null ? html` on ${dateText(d.appliedDay)}` : ''})</h3><p class="hint">Kept read-only as they were on ${dateText(s.day)}, which may differ from what you sent; later runs never change them.</p>`
+  }${
     d.changedSince[s.day] !== undefined
       ? html`<p class="fact-warn">These documents changed after you downloaded them on ${dateText(d.istDay(d.changedSince[s.day] as string))}: the copy kept here is the current version.</p>`
       : ''

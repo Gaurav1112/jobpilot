@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -313,6 +313,25 @@ describe('AppStore.listJobs comp-first sort (spec §7)', () => {
     expect(s.listJobs({ minScore: 95, floorInr: 1_200_000 }).map((j) => j.jobKey)).toEqual([k(5), k(4), k(12), k(7)]);
     expect(s.listJobs({ text: 'globex' }).map((j) => j.jobKey)).toEqual([k(13)]);
     expect(s.listJobs({ text: '100%_' })).toEqual([]);
+  });
+});
+
+describe('AppStore: owner-only files (Task 13 fix round 3, M10)', () => {
+  it('creates the DB and its WAL files 0600 and the home 0700, and tightens looser ones on open', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
+    chmodSync(d, 0o755);
+    const path = join(d, 'jobpilot.db');
+    const a = AppStore.open(path);
+    a.upsertJob(jobRow());
+    for (const f of [path, `${path}-wal`, `${path}-shm`]) if (existsSync(f)) expect(statSync(f).mode & 0o777, f).toBe(0o600);
+    expect(statSync(d).mode & 0o777).toBe(0o700);
+    a.close();
+    chmodSync(path, 0o644);
+    chmodSync(d, 0o755);
+    AppStore.open(path).close();
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(statSync(d).mode & 0o777).toBe(0o700);
   });
 });
 

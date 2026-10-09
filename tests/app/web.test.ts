@@ -70,6 +70,14 @@ const withStore = <T>(fn: (s: AppStore) => T): T => {
 
 const RESUME_HTML = '<!doctype html><html><head><style>body{}</style></head><body><main data-doc="resume"><ul><li data-fact="f-nw-01">• Led the order pipeline.</li></ul></main></body></html>\n';
 
+/** Makes `key` a ready job with its six documents. */
+function writeDocsFor(key: string): void {
+  withStore((s) => {
+    writeDocs(s, key);
+    s.setDocs(key, 'ready', null, s.getJob(key)?.docs ?? []);
+  });
+}
+
 /** Writes a ready job's six documents under out/<key>/ and records them. */
 function writeDocs(s: AppStore, key: string): Doc[] {
   mkdirSync(join(out, key), { recursive: true });
@@ -145,6 +153,8 @@ const post = (path: string, form: Record<string, string>, headers: Record<string
 const hx = { 'hx-request': 'true', origin: 'http://localhost' };
 /** A plain form post with JS off, under `Referrer-Policy: same-origin`: the page's Referer (the real-browser test covers Origin). */
 const nojs = (page: string) => ({ referer: `http://localhost${page}` });
+/** A download link clicked on a dashboard page. */
+const dl = { 'sec-fetch-site': 'same-origin' };
 const get = async (path: string): Promise<{ status: number; body: string; headers: Headers }> => {
   const r = await app.request(path, { headers: { cookie } });
   return { status: r.status, body: await r.text(), headers: r.headers };
@@ -789,9 +799,9 @@ describe('dashboard: fix round 2 (keep a copy, downloads)', () => {
   });
 
   it('records each download (job, file, sha256, time); previews are not downloads', async () => {
-    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
-    await app.request(`/jobs/${K1}/files/cover.docx`, { headers: { cookie } });
-    await app.request(`/jobs/${K1}/files/resume.html`, { headers: { cookie } });
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie, ...dl } });
+    await app.request(`/jobs/${K1}/files/cover.docx`, { headers: { cookie, ...dl } });
+    await app.request(`/jobs/${K1}/files/resume.html`, { headers: { cookie, ...dl } });
     expect(withStore((s) => s.downloads(K1))).toEqual([
       { file: 'resume.pdf', sha256: sha(`resume.pdf of ${K1}`), at: NOW },
       { file: 'cover.docx', sha256: sha(`cover.docx of ${K1}`), at: NOW },
@@ -799,7 +809,7 @@ describe('dashboard: fix round 2 (keep a copy, downloads)', () => {
   });
 
   it('warns when the kept copy differs from what was downloaded before applying', async () => {
-    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie, ...dl } });
     now = '2026-10-10T06:30:00.000Z';
     rerender('a re-rendered resume');
     await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
@@ -808,9 +818,89 @@ describe('dashboard: fix round 2 (keep a copy, downloads)', () => {
   });
 
   it('no warning when the downloaded files are the ones kept', async () => {
-    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie, ...dl } });
     await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
     expect((await get(`/jobs/${K1}`)).body).not.toContain('changed after you downloaded');
+  });
+});
+
+describe('dashboard: fix round 3', () => {
+  it('I4: a copy made on the apply day is "Applied <day>"; a later one says when it was made, never "exactly as they were"', async () => {
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    const same = (await get(`/jobs/${K1}`)).body;
+    expect(same).toContain('<h3>Applied 9 Oct 2026</h3>');
+    expect(same).toContain('exactly as they were that day');
+
+    withStore((s) => s.setStatus(K2, 'applied', 'user', '2026-10-01T06:30:00.000Z'));
+    writeDocsFor(K2);
+    const before = (await get(`/jobs/${K2}`)).body;
+    expect(before).toContain("A copy made now is today's version, which may differ from what you sent.");
+    await post(`/jobs/${K2}/keep`, { _csrf: token }, hx);
+    const later = (await get(`/jobs/${K2}`)).body;
+    expect(later).toContain('<h3>Copy kept 9 Oct 2026 (made after you applied on 1 Oct 2026)</h3>');
+    expect(later).not.toContain('exactly as they were that day');
+  });
+
+  it('M8: a download is recorded only from the dashboard itself (Sec-Fetch-Site, else a same-origin Referer)', async () => {
+    const fetchPdf = (headers: Record<string, string>) => app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie, ...headers } });
+    expect((await fetchPdf({ 'sec-fetch-site': 'cross-site' })).status).toBe(200);
+    expect((await fetchPdf({ 'sec-fetch-site': 'same-site' })).status).toBe(200);
+    expect((await fetchPdf({})).status).toBe(200);
+    expect((await fetchPdf({ referer: 'http://evil.example/x' })).status).toBe(200);
+    expect(withStore((s) => s.downloads(K1))).toHaveLength(0);
+    await fetchPdf({ 'sec-fetch-site': 'same-origin' });
+    await fetchPdf({ 'sec-fetch-site': 'none' });
+    await fetchPdf({ referer: `http://localhost/jobs/${K1}` });
+    expect(withStore((s) => s.downloads(K1))).toHaveLength(3);
+  });
+
+  it('M9: a busy store never blocks or fails a download; the record is skipped', async () => {
+    const lock = new Database(join(home, 'jobpilot.db'));
+    lock.exec('BEGIN IMMEDIATE');
+    try {
+      const t0 = Date.now();
+      const r = await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie, ...dl } });
+      expect(r.status).toBe(200);
+      expect(Buffer.from(await r.arrayBuffer()).toString()).toBe(`resume.pdf of ${K1}`);
+      expect(Date.now() - t0).toBeLessThan(2000);
+    } finally {
+      lock.exec('ROLLBACK');
+      lock.close();
+    }
+    expect(withStore((s) => s.downloads(K1))).toHaveLength(0);
+  });
+
+  it('M11: status saved but the snapshot hit a busy lock: a success answer that points at Keep a copy', async () => {
+    let lock: InstanceType<typeof Database> | undefined;
+    const hooked = wrap(createDashboard({
+      home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)), busyTimeoutMs: 100,
+      testHooks: { beforeSnapshot: () => {
+        lock = new Database(join(home, 'jobpilot.db'));
+        lock.exec('BEGIN IMMEDIATE');
+      } },
+    }));
+    try {
+      const r = await hooked.request(`/jobs/${K1}/status`, {
+        method: 'POST', body: new URLSearchParams({ to: 'applied', _csrf: token }).toString(),
+        headers: { 'content-type': 'application/x-www-form-urlencoded', cookie, ...hx },
+      });
+      expect(r.status).toBe(200);
+      expect(await r.text()).toContain('Status saved. Couldn&#39;t keep a copy of the documents just now; use &#39;Keep a copy&#39; below.');
+    } finally {
+      lock?.exec('ROLLBACK');
+      lock?.close();
+    }
+    expect(withStore((s) => s.getJob(K1)?.status)).toBe('applied');
+    expect(withStore((s) => s.snapshots(K1))).toEqual([]);
+    // the files a failed attempt left are accepted by Keep a copy
+    expect((await post(`/jobs/${K1}/keep`, { _csrf: token }, hx)).status).toBe(200);
+    expect(withStore((s) => s.snapshots(K1)[0]?.files)).toHaveLength(6);
+  });
+
+  it('an over-long note tells htmx why', async () => {
+    const r = await post(`/jobs/${K1}/note`, { note: 'x'.repeat(4001), _csrf: token }, hx);
+    expect(r.status).toBe(400);
+    expect(await r.text()).toBe('Your note is longer than 4,000 characters');
   });
 });
 

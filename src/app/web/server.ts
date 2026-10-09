@@ -54,7 +54,12 @@ export interface DashboardDeps {
   readonly port?: number | (() => number | undefined);
   /** How long a write waits for a run's lock before answering 503 (SQLite busy_timeout). Default 10 s. */
   readonly busyTimeoutMs?: number;
+  /** Tests only: runs just before an applied snapshot is recorded (to hold a lock there). */
+  readonly testHooks?: { readonly beforeSnapshot?: () => void };
 }
+
+/** A download record is best-effort: it waits this long for a lock, then is skipped. */
+const DOWNLOAD_RECORD_TIMEOUT_MS = 200;
 
 export const BUSY_MESSAGE = "jobpilot is busy finishing today's run — try again in a moment";
 const CSRF_SECRET_KEY = 'dashboard.csrf_secret';
@@ -258,7 +263,10 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
         if (last !== undefined && last.sha256 !== f.sha256 && (changedSince[snap.day] === undefined || last.at > (changedSince[snap.day] as string))) changedSince[snap.day] = last.at;
       }
     }
-    return { jobKey: key, snapshots, changedSince, canKeep: job !== undefined && keepable(job, snapshots.length), csrf: csrf(c), istDay: istDate };
+    return {
+      jobKey: key, snapshots, changedSince, canKeep: job !== undefined && keepable(job, snapshots.length), csrf: csrf(c), istDay: istDate,
+      appliedDay: job?.appliedAt ? istDate(job.appliedAt) : null,
+    };
   };
   const keepable = (job: { status: string; docsState: string; docs: readonly { kind: string }[] }, snapshotCount: number): boolean =>
     job.status === 'applied' && snapshotCount === 0 && job.docsState === 'ready' && job.docs.some((d) => d.kind === 'resume' || d.kind === 'cover');
@@ -344,6 +352,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
   const NOTICE: Readonly<Record<string, string>> = {
     nodocs: 'Marked applied. No documents were kept: this job had no ready documents.',
     keepfail: 'Marked applied, but the documents could not be kept as sent. They are unchanged; see the reason in the log.',
+    keepbusy: "Status saved. Couldn't keep a copy of the documents just now; use 'Keep a copy' below.",
   };
 
   app.get('/jobs/:key', (c) => {
@@ -388,17 +397,20 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
       if (!job) return undefined;
       // The status first (its own transaction): a busy store answers 503 before any file is written.
       const changed = s.setStatus(key, to as JobStatus, 'user', at);
-      let notice: 'nodocs' | 'keepfail' | undefined;
+      let notice: 'nodocs' | 'keepfail' | 'keepbusy' | undefined;
       // A snapshot is "the documents you sent": made once, on a real transition INTO applied, for a job that has none.
       if (changed && to === 'applied' && job.status !== 'applied' && s.snapshots(key).length === 0) {
         const docs = job.docs.filter((d) => d.kind === 'resume' || d.kind === 'cover');
         if (job.docsState !== 'ready' || docs.length === 0) notice = 'nodocs';
         else {
           try {
-            s.putSnapshot(key, day, snapshotApplied(paths.out, key, docs, day), at);
+            const files = snapshotApplied(paths.out, key, docs, day);
+            deps.testHooks?.beforeSnapshot?.();
+            s.putSnapshot(key, day, files, at);
           } catch (e) {
-            if (isBusy(e)) throw e;
-            notice = 'keepfail';
+            // The status is already saved: a busy store is a success with a pointer to Keep a copy, never a 503.
+            if (isBusy(e)) notice = 'keepbusy';
+            else notice = 'keepfail';
             console.error(`jobpilot dashboard: could not keep the applied documents of ${key}: ${e instanceof Error ? e.message : String(e)}`);
           }
         }
@@ -437,7 +449,8 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
   app.post('/jobs/:key/note', async (c) => {
     const key = c.req.param('key');
     const note = (await c.req.parseBody())['note'];
-    if (!JOB_KEY.test(key) || typeof note !== 'string' || note.length > 4000) return c.text('Bad request', 400);
+    if (typeof note === 'string' && note.length > 4000) return c.text('Your note is longer than 4,000 characters', 400);
+    if (!JOB_KEY.test(key) || typeof note !== 'string') return c.text('Bad request', 400);
     const ok = withStore((s) => {
       if (!s.getJob(key)) return false;
       s.setNote(key, note.replace(/\r\n/g, '\n'));
@@ -468,6 +481,16 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     return c.body(new Uint8Array(read.bytes), 200, headers);
   };
 
+  /**
+   * Whether a GET came from a dashboard page (or was typed in): `Sec-Fetch-Site` is same-origin or none; a client
+   * that sends no such header counts only with a same-origin Referer. A cross-site `<img src>` never records a download.
+   */
+  const fromDashboard = (c: Context<Env>): boolean => {
+    const site = c.req.header('sec-fetch-site');
+    if (site !== undefined) return site === 'same-origin' || site === 'none';
+    return sameOrigin(new URL(c.req.url).origin, undefined, c.req.header('referer'));
+  };
+
   const companySlug = (company: string, naming: NamingRules, key: string): string => {
     const shown = redactor(naming).text(company);
     const slug = shown === HIDDEN ? '' : asciiSlug(shown);
@@ -483,13 +506,18 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     if (!job || !doc) return c.text('Not found', 404);
     const naming = packState(deps.home, now()).naming;
     const read = readRecorded(paths.out, doc.path, doc.sha256);
-    if (read.ok && doc.format !== 'html') {
-      // A download (not a preview): remembered, so a later snapshot can say whether the kept copy is what was downloaded.
+    if (read.ok && doc.format !== 'html' && fromDashboard(c)) {
+      // A download (not a preview) clicked on a dashboard page: remembered, so a later snapshot can say whether the kept
+      // copy is what was downloaded. Best-effort: a short lock wait, and any failure only skips the record.
       try {
-        withStore((s) => s.recordDownload(key, name, doc.sha256, now()));
+        const s = AppStore.open(paths.db, { timeoutMs: DOWNLOAD_RECORD_TIMEOUT_MS });
+        try {
+          s.recordDownload(key, name, doc.sha256, now());
+        } finally {
+          s.close();
+        }
       } catch (e) {
-        if (!isBusy(e)) throw e;
-        console.error(`jobpilot dashboard: download of ${key}/${name} not recorded (busy)`);
+        console.error(`jobpilot dashboard: download of ${key}/${name} not recorded: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     return sendFile(c, read, name, `${doc.kind}-${companySlug(job.company, naming, key)}.${doc.format}`);
