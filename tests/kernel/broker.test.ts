@@ -381,6 +381,13 @@ describe('v1 kernel extensions: broker', () => {
     await expect(ctx.http!.getJson(`${H}/j`)).rejects.toMatchObject({ code: 'invalid_output' });
   });
 
+  it('getJson does not parse a 4xx body: it returns json null with the status', async () => {
+    const f = fakeFetch({ [`${H}/gone`]: { status: 404, body: 'Not Found' }, [`${H}/bad`]: { status: 400, body: '{"error":"bad"}' } });
+    const ctx = issueWith(fetcher, { fetch: f });
+    await expect(ctx.http!.getJson(`${H}/gone`)).resolves.toEqual({ status: 404, json: null });
+    await expect(ctx.http!.getJson(`${H}/bad`)).resolves.toEqual({ status: 400, json: null });
+  });
+
   it('refuses a body over policy.maxResponseBytes with invalid_output, for getText and getJson', async () => {
     const policy = { ...PRODUCT_POLICY_V1, maxResponseBytes: 8 };
     const f = fakeFetch({ [`${H}/big`]: { body: '"0123456789"' }, [`${H}/ok`]: { body: '"1234"' } });

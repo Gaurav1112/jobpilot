@@ -8,7 +8,10 @@ import type { FetchResponse, LlmResponse, Providers } from './providers.js';
 
 export interface HttpTool {
   getText(url: string): Promise<{ status: number; body: string }>;
-  /** Like getText, then parses the body; a body that is not JSON is `invalid_output`. */
+  /**
+   * Like getText, then parses the body; a body that is not JSON is `invalid_output`.
+   * A status of 400 or more is not parsed: the result is `{ status, json: null }` and the caller maps it.
+   */
   getJson(url: string): Promise<{ status: number; json: unknown }>;
 }
 
@@ -203,6 +206,7 @@ export function issueContext(a: IssueArgs): AgentContext {
       getText,
       async getJson(url) {
         const { status, body } = await getText(url);
+        if (status >= 400) return { status, json: null };
         let json: unknown;
         try {
           json = JSON.parse(body);
