@@ -1,0 +1,18 @@
+titles:
+  - backend engineer
+  - software engineer
+  - platform engineer
+  - staff engineer
+  - principal engineer
+  - lead engineer
+  - sde 3
+seniority:
+  - words: [staff, lead, principal, sde-3, sde iii]
+    points: 10
+  - words: [senior]
+    points: 8
+titleBonusWords: [backend, platform, java, distributed]
+titleBonusPoints: 10
+minFit: 60
+maxYearsRequired: 14
+yearsPenalty: 20

@@ -1,0 +1,101 @@
+roleDeny:
+  - front-?end
+  - mobile
+  - \bios\b
+  - android
+  - \bqa\b
+  - sdet
+  - test automation
+  - in test
+  - quality
+  - engineering manager
+  - director
+  - ^manager\b
+  - sales
+  - account
+  - solutions engineer
+  - support engineer
+  - customer success
+  - devrel
+  - developer advocate
+  - recruiter
+  - designer
+  - data scientist
+  - ml scientist
+  - intern
+  - embedded
+  - firmware
+  - hardware
+  - security analyst
+  - sre manager
+companyDeny:
+  - TCS
+  - Tata Consultancy
+  - Infosys
+  - Wipro
+  - HCL
+  - Tech Mahindra
+  - Cognizant
+  - Accenture
+  - Capgemini
+  - LTIMindtree
+  - Mindtree
+  - Mphasis
+  - Hexaware
+  - Persistent
+  - Birlasoft
+  - Zensar
+  - Cyient
+  - L&T Technology
+  - UST
+  - Virtusa
+  - Coforge
+  - NIIT
+  - Sonata
+  - KPIT
+  - Mastek
+  - Happiest Minds
+  - Thoughtworks
+  - Incubyte
+  - Scalio
+  - Deloitte
+  - EY
+  - KPMG
+  - PwC
+  - IBM Consulting
+  - NTT Data
+  - DXC
+  - Atos
+  - Genpact
+  - GlobalLogic
+  - EPAM
+  - Ciklum
+  - Randstad
+  - TeamLease
+  - Quess
+  - Adecco
+  - Michael Page
+  - ABC Consultants
+  - Sourcebae
+  - Uplers
+  - Xformics
+  - UnionSys
+  - Jobgether
+  - GiantMind
+  - Synthires
+  - Staffnix
+  - TalixoHR
+  - JobCrexa
+  - MindBrain
+  - Hire Feed
+employmentDeny:
+  - contract
+  - contractor
+  - c2h
+  - contract-to-hire
+  - freelance
+  - temporary
+  - fixed-term
+  - 3 months
+  - 6 months
+  - hourly

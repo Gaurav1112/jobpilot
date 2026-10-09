@@ -1,0 +1,113 @@
+facts:
+  - id: f-nw-01
+    claim: Led the design of an event-driven order pipeline on Kafka handling 40M events a day.
+    tech: [java, kafka, event-driven]
+    employer: Northwind Labs
+    role: Senior Backend Engineer
+    period: "2022-03..present"
+    kind: experience
+    status: verified
+  - id: f-nw-02
+    claim: Cut p99 latency of the pricing service from 800 ms to 180 ms by introducing a Redis read-through cache.
+    tech: [java, redis, spring boot]
+    employer: Northwind Labs
+    role: Senior Backend Engineer
+    period: "2022-03..present"
+    kind: experience
+    status: verified
+  - id: f-nw-03
+    claim: Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.
+    tech: [microservices, kubernetes, multi-tenant, saas]
+    employer: Northwind Labs
+    role: Senior Backend Engineer
+    period: "2022-03..present"
+    kind: experience
+    status: verified
+  - id: f-nw-04
+    claim: Mentored four engineers and ran the weekly design review for the platform group.
+    tech: []
+    employer: Initech India (GCC for Northwind)
+    role: Senior Backend Engineer
+    period: "2023-01..present"
+    kind: experience
+    status: user-stated
+  - id: f-nw-05
+    claim: Reduced AWS spend by roughly 30 percent through right-sizing and spot capacity.
+    tech: [aws, kubernetes]
+    employer: Northwind Labs
+    period: "2023-06..2024-06"
+    kind: experience
+    status: derived-unverified
+  - id: f-ct-01
+    claim: Built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly.
+    tech: [java, postgres, fintech]
+    employer: Contoso Retail
+    role: Software Engineer II
+    period: "2018-06..2022-02"
+    kind: experience
+    status: verified
+  - id: f-ct-02
+    claim: Introduced RabbitMQ based retry queues that removed a class of duplicate-charge incidents.
+    tech: [rabbitmq, java]
+    employer: Contoso Retail
+    role: Software Engineer II
+    period: "2019-02..2020-01"
+    kind: experience
+    status: verified
+  - id: f-ct-03
+    claim: Owned the on-call rotation and wrote the first runbooks for the checkout stack.
+    tech: [docker]
+    employer: Contoso Retail
+    period: "2020-01..2022-02"
+    kind: experience
+    status: user-stated
+  - id: f-ct-04
+    claim: Led a Scala rewrite of the recommendation feed.
+    tech: [scala]
+    employer: Contoso Retail
+    period: "2021-01..2021-12"
+    kind: project
+    status: rejected
+  - id: f-fb-01
+    claim: Built REST services in Java with Spring and MySQL for the store-locator product.
+    tech: [java, spring]
+    employer: Fabrikam
+    role: Software Engineer
+    period: "2016-07..2018-05"
+    kind: experience
+    status: verified
+  - id: f-fb-02
+    claim: Wrote a Python tool that generated nightly sales reports for regional managers.
+    tech: [python]
+    employer: Fabrikam
+    period: "2017-03..2017-09"
+    kind: project
+    status: user-stated
+  - id: f-fb-03
+    claim: Claims familiarity with Elasticsearch relevance tuning on an internal search project.
+    tech: [elasticsearch]
+    employer: Fabrikam
+    period: "2017-10..2018-03"
+    kind: project
+    status: user-cannot-confirm
+  - id: f-ed-01
+    claim: B.E. in Computer Engineering, Savitribai Phule Pune University.
+    tech: []
+    employer: Savitribai Phule Pune University
+    period: "2012-08..2016-05"
+    kind: education
+    status: verified
+  - id: f-ce-01
+    claim: AWS Certified Solutions Architect - Associate.
+    tech: [aws]
+    employer: Amazon Web Services
+    period: "2021-05..2024-05"
+    kind: cert
+    status: verified
+  - id: f-ce-02
+    claim: Certified Kubernetes Application Developer (CKAD).
+    tech: [kubernetes]
+    employer: Cloud Native Computing Foundation
+    period: "2022-09..2025-09"
+    kind: cert
+    status: user-stated

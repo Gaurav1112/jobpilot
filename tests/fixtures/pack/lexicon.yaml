@@ -1,0 +1,42 @@
+strong:
+  - {key: java, synonyms: []}
+  - {key: spring, synonyms: [spring boot]}
+  - {key: kafka, synonyms: []}
+  - {key: microservices, synonyms: [microservice]}
+  - {key: distributed systems, synonyms: [distributed system]}
+  - {key: postgres, synonyms: [postgresql]}
+  - {key: event-driven, synonyms: [event driven]}
+  - {key: aws, synonyms: []}
+  - {key: kubernetes, synonyms: [k8s]}
+  - {key: redis, synonyms: []}
+  - {key: multi-tenant, synonyms: [multitenant, multi tenant]}
+  - {key: saas, synonyms: []}
+  - {key: fintech, synonyms: [payments]}
+  - {key: llm, synonyms: [ai]}
+medium:
+  - {key: go, synonyms: [golang]}
+  - {key: typescript, synonyms: []}
+  - {key: node, synonyms: [node.js, nodejs]}
+  - {key: react, synonyms: []}
+  - {key: rabbitmq, synonyms: []}
+  - {key: sqs, synonyms: []}
+  - {key: gcp, synonyms: []}
+  - {key: docker, synonyms: []}
+  - {key: elasticsearch, synonyms: []}
+  - {key: mongodb, synonyms: []}
+  - {key: cqrs, synonyms: []}
+  - {key: ddd, synonyms: []}
+  - {key: grpc, synonyms: []}
+  - {key: mcp, synonyms: []}
+  - {key: rag, synonyms: []}
+  - {key: python, synonyms: []}
+gap:
+  - {key: scala, synonyms: []}
+  - {key: rust, synonyms: []}
+  - {key: c++, synonyms: []}
+  - {key: .net, synonyms: [c#]}
+  - {key: ruby, synonyms: []}
+  - {key: php, synonyms: []}
+  - {key: elixir, synonyms: []}
+  - {key: spark, synonyms: []}
+  - {key: hadoop, synonyms: []}
