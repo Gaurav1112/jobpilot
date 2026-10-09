@@ -23,20 +23,26 @@ export const COVER_P1_PAST = 'I am applying for the {title} role at {company}. I
 const A_BEFORE = ['uni', 'use', 'usu', 'uti', 'ure', 'ubi', 'uk', 'eu', 'one', 'once'];
 /** Words that start with a silent h ("an hour", "an honest", "an heir"). */
 const AN_BEFORE = ['hour', 'honest', 'honor', 'honour', 'heir'];
+/** Acronyms read as a word, not letter by letter, with the article their spoken word takes (a NASA, a FAANG). */
+const WORD_ACRONYMS: Readonly<Record<string, 'a' | 'an'>> = { NASA: 'a', FAANG: 'a', SAAS: 'a', PAAS: 'a', NATO: 'a', UNICEF: 'a', SCADA: 'a', OPEC: 'an', IKEA: 'an' };
 /** Letters whose spoken name starts with a vowel sound (an SDE, an MLE, an HR ...); U ("you") is not one. */
 const VOWEL_SOUND_LETTERS = 'AEFHILMNORSX';
 
 /**
  * "a" or "an" for a title, by the sound of its first word:
- * - an all-capital acronym (SDE, MLE, UX) is read letter by letter: "an" when its first letter's name starts with a
- *   vowel sound (A E F H I L M N O R S X), else "a" (a UX Engineer);
+ * - an acronym read as a word (WORD_ACRONYMS: NASA, FAANG, SaaS, NATO, ...) takes its word's article (a NASA, a FAANG);
+ * - any other all-capital initialism, or a single capital letter, is read letter by letter: "an" when its first
+ *   letter's name starts with a vowel sound (A E F H I L M N O R S X), else "a" (an SDE, an AWS, an X-ray, a UX);
  * - a number: "an" for 8, 11, 18 and 80-89 ... (eight, eleven, eighteen), else "a";
  * - a word: "an" before a silent h (hour, honest, honor, heir); "a" before a vowel letter that sounds like a consonant
  *   (uni-, use-, usu-, uti-, ure-, ubi-, uk-, eu-, one, once); otherwise "an" before a vowel letter and "a" before a consonant.
  */
 export function articleFor(title: string): 'a' | 'an' {
   const word = title.trim().split(/[\s-]+/)[0] ?? '';
-  if (/^[A-Z][A-Z0-9]+$/.test(word) && !/^[AEIOU][a-z]/.test(word)) return VOWEL_SOUND_LETTERS.includes(word[0] as string) ? 'an' : 'a';
+  const asWord = WORD_ACRONYMS[word.toUpperCase()];
+  if (asWord !== undefined && (/^[A-Z0-9]+$/.test(word) || /^[A-Z][a-z]+[A-Z]$/.test(word))) return asWord;
+  // an initialism, or a single capital letter ("X-ray"), is read letter by letter
+  if (/^[A-Z][A-Z0-9]*$/.test(word)) return VOWEL_SOUND_LETTERS.includes(word[0] as string) ? 'an' : 'a';
   if (/^\d/.test(word)) return /^(8|11|18)(\D|$)|^8\d/.test(word) ? 'an' : 'a';
   const w = word.toLowerCase();
   if (AN_BEFORE.some((p) => w.startsWith(p))) return 'an';
@@ -110,7 +116,8 @@ const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>',
  * Sanitises a posting title or company for a template slot: markup tags removed, HTML entities decoded (so an
  * encoded `<` still fails the character rule), format (zero-width, bidi) and private-use characters removed, control
  * characters made spaces,
- * NFKC, curly single quotes as `'`, whitespace collapsed, then capped at `POSTING_SLOT_MAX` characters.
+ * NFKC, curly single quotes as `'`, whitespace collapsed. It never truncates: a slot longer than `POSTING_SLOT_MAX`
+ * characters is unsafe (`unsafePostingText`), so a document never misquotes a cut-off title.
  */
 export function sanitisePostingText(raw: string): string {
   const decoded = raw
@@ -130,8 +137,7 @@ export function sanitisePostingText(raw: string): string {
     .replace(/[‘’]/g, "'")
     .replace(/\s+/gu, ' ')
     .trim();
-  const chars = [...clean];
-  return chars.length > POSTING_SLOT_MAX ? chars.slice(0, POSTING_SLOT_MAX).join('').trim() : clean;
+  return clean;
 }
 
 /** Abbreviations whose full stop does not end a sentence ("Sr. Backend Engineer", "Acme Inc. India"). */
@@ -149,7 +155,7 @@ const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\
 
 /**
  * Why a sanitised posting slot may not go into a template, or null when it may. It is unsafe when it:
- * - is empty;
+ * - is empty, or longer than `POSTING_SLOT_MAX` (120) characters;
  * - holds a first-person pronoun: "I" (or a Greek or Cyrillic lookalike of it) before a verb-like word (am, have,
  *   hold, will, was, can, worked, led, built, own, bring, believe, know, designed, developed, managed, love, enjoy) or
  *   as I'm / I've / I'll / I'd, so a level ("Software Engineer I", "SDE I") is not one; "we" and "our" in any case;
@@ -162,6 +168,7 @@ const URL_OR_EMAIL = /(?:https?:\/\/|www\.)|[\p{L}\p{N}._%+-]+@[\p{L}\p{N}-]+\.\
  */
 export function unsafePostingText(s: string): string | null {
   if (s === '') return 'is empty';
+  if ([...s].length > POSTING_SLOT_MAX) return `is longer than ${POSTING_SLOT_MAX} characters`;
   const bad = DISALLOWED.exec(s);
   if (bad !== null) return `has a character outside the allowed set (U+${(bad[0].codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, '0')})`;
   if (URL_OR_EMAIL.test(s)) return 'has a URL or email address';

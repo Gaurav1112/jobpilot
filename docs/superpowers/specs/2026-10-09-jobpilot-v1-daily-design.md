@@ -306,8 +306,8 @@ backs it; education facts back nothing.
 
 **cover-writer.** A fixed four-paragraph template:
 1. The role and the company (sanitised posting text: markup, entities and control characters
-   removed, NFKC, whitespace collapsed, at most 120 characters; a slot with a first-person
-   pronoun, more than 14 words, a sentence end followed by more text, a URL or email, or a
+   removed, NFKC, whitespace collapsed, never truncated; a slot longer than 120 characters, or
+   with a first-person pronoun, more than 14 words, a word over 40 characters, a sentence end followed by more text, a URL or email, or a
    character outside letters, digits, whitespace and `&,./()-+#':;|–—` blocks the job's
    documents as `unsafe-posting-text`), the user's claimable title and years, and "I am based
    in India and am looking for a fully remote role." The source is not named (amended in

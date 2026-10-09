@@ -312,6 +312,8 @@ describe('resume-planner', () => {
       ['Senior Backend Engineer', 'a'], ['Engineering Manager', 'an'], ['SDE 3', 'an'], ['MLE', 'an'], ['SRE', 'an'], ['HR Partner', 'an'],
       ['UX Engineer', 'a'], ['Unix Engineer', 'a'], ['Ubiquitous Engineer', 'a'], ['Engineer', 'an'], ['Hourly Lead', 'an'], ['Honest Engineer', 'an'],
       ['Head of Platform', 'a'], ['One Platform Lead', 'a'], ['European Lead', 'a'], ['Infrastructure Engineer', 'an'], ['8-Figure Lead', 'an'], ['Staff Engineer', 'a'],
+      // acronyms read as words take their word sound; initialisms (and single letters) are read letter by letter
+      ['NASA Engineer', 'a'], ['FAANG Engineer', 'a'], ['SaaS Engineer', 'a'], ['SAAS Engineer', 'a'], ['AWS Engineer', 'an'], ['X-ray Engineer', 'an'], ['NATO Analyst', 'a'],
     ];
     for (const [t, a] of cases) expect(articleFor(t), t).toBe(a);
     const custom = freezePack({ ...pack, targets: { ...pack.targets, claimableTitles: ['Engineering Manager'] } }) as WritingPack;
@@ -552,7 +554,7 @@ describe('fix round 1: review probes as regressions', () => {
     expect(sanitisePostingText('R&amp;D  Engineer​‮')).toBe('R&D Engineer');
     expect(sanitisePostingText('Women’s Health\tCo')).toBe("Women's Health Co");
     expect(sanitisePostingText('ﬁnance Ｅngineer')).toBe('finance Engineer'); // NFKC
-    expect([...sanitisePostingText('x'.repeat(300))]).toHaveLength(120);
+    expect([...sanitisePostingText('x'.repeat(300))]).toHaveLength(300); // never truncated: an overlong slot is unsafe instead
   });
 
   it('I1: flags unsafe posting text, by rule, and keeps ordinary titles', () => {
@@ -579,6 +581,10 @@ describe('fix round 1: review probes as regressions', () => {
       expect(why(bad), bad).toBe('has a first-person pronoun');
     expect(why(`Backend ${'A'.repeat(41)}`)).toBe('has a word longer than 40 characters');
     expect(why(`Backend ${'A'.repeat(40)}`)).toBeNull();
+    const long = `${'Engineer '.repeat(13)}${'x'.repeat(10)}`; // 14 words, 127 characters
+    expect([...long].length).toBeGreaterThan(120);
+    expect(why(long)).toBe('is longer than 120 characters');
+    expect(why('A'.repeat(36) + ' ' + 'B'.repeat(36) + ' ' + 'C'.repeat(36) + ' ' + 'D'.repeat(10))).toBe('is longer than 120 characters');
     expect(why('one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen')).toBe('has more than 14 words');
     expect(why('Backend Engineer. Apply now')).toBe('has a sentence end followed by more text');
     expect(why('Backend Engineer at https://acme.example')).toBe('has a URL or email address');
