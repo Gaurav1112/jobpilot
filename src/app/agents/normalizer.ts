@@ -2,8 +2,8 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
-import { decodeEntities, htmlToText } from '../text/html.js';
-import { countriesIn, jobKey, placeOf, postedAtOf, remoteTextSignals, yearsRequired } from '../text/norm.js';
+import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
+import { countriesIn, hasPlaceExclusion, jobKey, placeOf, postedAtOf, remoteTextSignals, yearsRequired } from '../text/norm.js';
 import { Posting, RawPosting } from '../types.js';
 
 /**
@@ -46,8 +46,16 @@ const listText = (v: unknown, sep = ', '): string | null => {
 };
 /** Plain-text description parts joined by a blank line, empty parts dropped. */
 const joinParts = (parts: readonly string[]): string => parts.map((p) => p.trim()).filter((p) => p !== '').join('\n\n');
-/** An HTML field that a site may have escaped once more: decode first only when it carries no real tag. */
-const htmlish = (s: string): string => htmlToText(/&lt;\/?[a-z]/i.test(s) && !/<\/?[a-z][^>]*>/i.test(s) ? decodeEntities(s) : s);
+const REAL_TAG = /<\/?[a-z][a-z0-9]*\b[^>]*>/i;
+/**
+ * A description that may be HTML, HTML escaped once more, or plain text (schema.org allows all three): escaped HTML
+ * is decoded first; plain text keeps its lines and bullets (`plainToText`).
+ */
+function htmlish(s: string): string {
+  if (REAL_TAG.test(s)) return htmlToText(s);
+  if (/&lt;\/?[a-z]/i.test(s)) return htmlToText(decodeEntities(s));
+  return plainToText(s);
+}
 
 const fail = (raw: RawPosting, why: string): KernelError => new KernelError('invalid_output', `normalizer ${raw.source} ${raw.sourceId}: ${why}`);
 
@@ -58,72 +66,126 @@ const fail = (raw: RawPosting, why: string): KernelError => new KernelError('inv
 const CURRENCIES: ReadonlySet<string> = new Set(['INR', 'USD', 'EUR', 'GBP']);
 
 /**
- * Below this many units a year a figure is not a salary (₹1 LPA; 1,000 of a foreign currency, which is under
- * ₹1.2 LPA at any recent rate). The normalizer reads no fx table (it has no pack), so the bound is per currency.
+ * A figure outside these bounds per year is not a salary: about ₹1 lakh to ₹10 crore. The normalizer reads no fx
+ * table (it has no pack), so the bounds are a fixed table per currency. Each zone or component is judged alone: an
+ * implausible one is dropped, the others stay.
  */
-export const PLAUSIBLE_MIN_PER_YEAR: Readonly<Record<Currency, number>> = { INR: 100_000, USD: 1_000, EUR: 1_000, GBP: 1_000 };
+export const PLAUSIBLE_PER_YEAR: Readonly<Record<Currency, { readonly min: number; readonly max: number }>> = {
+  INR: { min: 100_000, max: 100_000_000 },
+  USD: { min: 1_200, max: 1_200_000 },
+  EUR: { min: 1_100, max: 1_100_000 },
+  GBP: { min: 1_000, max: 1_000_000 },
+};
 
-/** One disclosed range, already annualised, in a currency that may be unsupported. */
+/** One disclosed range, already annualised, in a currency that may be unsupported. A null bound is not stated. */
 interface Range {
-  min: number;
-  max: number;
+  min: number | null;
+  max: number | null;
   currency: string;
   base: boolean;
 }
 
-/** A range from raw bounds, or null when a bound is missing, negative or inverted, or the period cannot be annualised. */
+/**
+ * A range from raw bounds, or null when neither bound is stated, a bound is negative, the bounds are inverted, there
+ * is no currency, or the period cannot be annualised. A one-sided range keeps its known bound.
+ */
 function rangeOf(min: unknown, max: unknown, currency: unknown, perYear: number | null, base: boolean): Range | null {
   const lo = num(min);
   const hi = num(max);
   const cur = str(currency)?.trim().toUpperCase();
-  if (lo === null || hi === null || cur === undefined || perYear === null || lo < 0 || lo > hi) return null;
-  return { min: lo * perYear, max: hi * perYear, currency: cur, base };
+  if (cur === undefined || perYear === null || (lo === null && hi === null)) return null;
+  if ((lo !== null && lo < 0) || (hi !== null && hi < 0) || (lo !== null && hi !== null && lo > hi)) return null;
+  return { min: lo === null ? null : lo * perYear, max: hi === null ? null : hi * perYear, currency: cur, base };
 }
 
+const plausible = (r: Range): boolean => {
+  const b = CURRENCIES.has(r.currency) ? PLAUSIBLE_PER_YEAR[r.currency as Currency] : undefined;
+  return b === undefined || [r.min, r.max].every((v) => v === null || (v >= b.min && v <= b.max));
+};
+
 /**
- * The comp of a set of disclosed ranges: an INR range is the one that applies in India, so INR ranges win; otherwise
- * every range must share one currency. The result is their union, `base` only if every range is base pay. It is
- * null for no ranges, mixed currencies, an unsupported currency, or a figure below the plausibility minimum.
+ * The comp of a set of disclosed ranges. Implausible ranges are dropped one by one. An INR range is the one that
+ * applies in India, so INR ranges win; otherwise every range must share one supported currency. The result is their
+ * union (a bound is null when any range leaves it open), `base` only if every range is base pay. It is null for no
+ * ranges, mixed or unsupported currencies, or a union open at both ends.
  */
-function compOf(ranges: readonly Range[]): Comp | null {
+function compOf(all: readonly Range[]): Comp | null {
+  const ranges = all.filter(plausible);
   if (ranges.length === 0) return null;
   const inr = ranges.filter((r) => r.currency === 'INR');
   const use = inr.length > 0 ? inr : ranges;
   const currency = use[0]?.currency ?? '';
   if (!CURRENCIES.has(currency) || use.some((r) => r.currency !== currency)) return null;
-  const c = currency as Currency;
-  const min = Math.min(...use.map((r) => r.min));
-  const max = Math.max(...use.map((r) => r.max));
-  if (min < PLAUSIBLE_MIN_PER_YEAR[c]) return null;
-  return { min, max, currency: c, period: 'year', basis: use.every((r) => r.base) ? 'base' : 'unknown' };
+  const mins = use.map((r) => r.min);
+  const maxs = use.map((r) => r.max);
+  const min = mins.some((v) => v === null) ? null : Math.min(...(mins as number[]));
+  const max = maxs.some((v) => v === null) ? null : Math.max(...(maxs as number[]));
+  if (min === null && max === null) return null;
+  return { min, max, currency: currency as Currency, period: 'year', basis: use.every((r) => r.base) ? 'base' : 'unknown' };
 }
 
-/** Lines that may state pay (spec: salary, base, CTC, LPA, compensation or pay). */
-const COMP_LINE = /\b(?:salary|salaries|base|ctc|lpa|compensation|pay)\b/i;
-/** Pay that is not base salary; such a line counts only when it also says base or salary. */
-const NOT_SALARY = /\b(?:equity|rsus?|stock|options?|esops?|shares|bonus(?:es)?|commission|ote|on[- ]target|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|budget|perks?)\b/i;
-const SALARY_WORD = /\b(?:base|salary|salaries)\b/i;
+/** Pay that is not base salary: its presence makes the basis `unknown`. */
+const NOT_BASE =
+  /\b(?:ote|on[- ]target|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration)|tc|commissions?|bonus(?:es)?|equity|rsus?|stocks?|esops?|options|variable|incentives?|target\s+(?:cash|comp\w*|earnings))\b/i;
+/** Explicit base pay. CTC counts as base in India for floor purposes. */
+const BASE = /\b(?:base|fixed|ctc)\b/i;
+/** `base` iff the wording says base, fixed or CTC and names no other kind of pay. */
+const basisIsBase = (s: string): boolean => BASE.test(s) && !NOT_BASE.test(s);
+/** For a Greenhouse blurb, only these make a base title doubtful (blurbs routinely say "plus equity"). */
+const BLURB_NOT_BASE = /\b(?:ote|on[- ]target|total\s+comp\w*|tc)\b/i;
+
+/** Sentences that may state pay. */
+const PAY_WORD =
+  /\b(?:salary|salaries|base|pay|pays|compensation|ctc|lpa|remuneration)\b|\bper annum\b|\bp\.a\.|\/\s*(?:yr|year)\b|\bper year\b|\ba year\b|\bannually\b/i;
+/** Sentences about money that is not pay. */
+const NOT_PAY =
+  /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
+/** Pay that is not salary; a sentence that names only these (no base, salary, fixed or CTC) states no salary. */
+const OTHER_PAY = /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commission|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?)\b/i;
+const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
   /(?<![A-Za-z])(?:CA|C|A|AU|NZ|S|SG|HK|NT|R|MX|COL)\$|\b(?:CAD|AUD|SGD|NZD|HKD|JPY|CNY|RMB|CHF|SEK|NOK|DKK|PLN|CZK|HUF|RON|BRL|MXN|ARS|CLP|COP|PHP|IDR|MYR|THB|VND|KRW|TWD|ZAR|AED|SAR|QAR|ILS|TRY|NGN|KES|PKR|BDT|LKR|NPR|EGP|UAH)\b|[₱฿₩₺₪₦]/;
+/** A bare `$` beside a dollar country other than the US, with no USD or US$, is that country's dollar. */
+const DOLLAR_COUNTRY = /\b(?:canada|canadian|australia|australian|singapore|hong kong|new zealand|mexico|taiwan)\b/i;
+const US_DOLLAR = /\bUSD\b|US\$/;
+/** Sentence ends; "Rs.", "No.", "e.g." and the like are not ends. */
+const PAY_SENTENCE_SPLIT = /\n+|(?<=[.!?;])(?<!\b(?:rs|no|approx|e\.g|i\.e|incl|min|max|vs|etc|mr|ms|dr|p\.a)\.)\s+/i;
+/** Where a money figure starts: a currency sign or code before digits, or digits with a magnitude word. */
+const FIGURE = /(?:[₹$€£]|\b(?:rs\.?|inr|usd|eur|gbp)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr|k|m|l)?\b|\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr)\b/i;
+const UP_TO = /\b(?:up ?to|upto|max(?:imum)?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
+const FROM = /\b(?:from|starting(?: at| from)?|starts at|at least|min(?:imum)?(?: of)?|no less than)\s*:?\s*$/i;
+const OR_MORE = /^\s*(?:\+|or more\b|and above\b|or higher\b|onwards\b)/i;
 
 /**
- * Comp stated in the description: each line that mentions pay is parsed on its own with `parseComp`. A line is
- * skipped when it names non-salary pay (equity, bonus, ...) without saying base or salary, names a currency the
- * Posting cannot carry, cannot be parsed with confidence, or gives a figure below the plausibility minimum. The
- * remaining ranges combine as in `compOf`. The basis is `base` only when every contributing line says "base".
+ * Comp stated in the description, read one sentence at a time with `parseComp`. A sentence counts only when it has a
+ * pay word (salary, base, pay, compensation, CTC, LPA, per annum, /yr, per year, a year) and no funding or revenue
+ * word (raised, funding, valuation, revenue, ARR, series, saved, budget, customers, users ...). It is skipped when it
+ * names only non-salary pay (equity, bonus ...), a currency the Posting cannot carry, a bare `$` beside Canada or
+ * another dollar country, or cannot be parsed with confidence. A single figure after "up to" keeps only the max; after
+ * "from", "starting at", "at least" or before "+" / "or more" only the min. Implausible figures are dropped. The
+ * basis is `base` only when every contributing sentence says base, fixed or CTC and names no other kind of pay.
  */
 export function compFromText(text: string): Comp | null {
   const ranges: Range[] = [];
-  for (const line of text.split('\n')) {
-    if (!COMP_LINE.test(line)) continue;
-    if (NOT_SALARY.test(line) && !SALARY_WORD.test(line)) continue;
-    if (FOREIGN_MONEY.test(line)) continue;
-    const r = parseComp(line);
+  for (const sentence of text.split(PAY_SENTENCE_SPLIT)) {
+    if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
+    if (OTHER_PAY.test(sentence) && !SALARY_WORD.test(sentence)) continue;
+    if (FOREIGN_MONEY.test(sentence) || (sentence.includes('$') && DOLLAR_COUNTRY.test(sentence) && !US_DOLLAR.test(sentence))) continue;
+    const r = parseComp(sentence);
     if (r.kind !== 'parsed') continue;
-    const range: Range = { ...r.range, base: /\bbase\b/i.test(line) };
-    if (range.min < PLAUSIBLE_MIN_PER_YEAR[r.range.currency]) continue;
-    ranges.push(range);
+    let { min, max } = r.range as { min: number | null; max: number | null };
+    if (min === max) {
+      const fig = FIGURE.exec(sentence);
+      const before = fig === null ? '' : sentence.slice(0, fig.index);
+      const after = fig === null ? '' : sentence.slice(fig.index + fig[0].length);
+      const up = UP_TO.test(before);
+      const from = FROM.test(before) || OR_MORE.test(after);
+      if (up && from) continue;
+      if (up) min = null;
+      if (from) max = null;
+    }
+    ranges.push({ min, max, currency: r.range.currency, base: basisIsBase(sentence) });
   }
   return compOf(ranges);
 }
@@ -188,7 +250,14 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
     remote: {
       structured: m.structured,
       countries: sortedUnique(m.countries),
-      signals: [...new Set([...m.signals, ...remoteTextSignals('location', locationText), ...remoteTextSignals('title', title)])],
+      signals: [
+        ...new Set([
+          ...m.signals,
+          ...remoteTextSignals('location', locationText),
+          ...(hasPlaceExclusion(locationText) ? ['location:exclusion'] : []),
+          ...remoteTextSignals('title', title),
+        ]),
+      ],
     },
     employmentType: m.employmentType === null ? null : oneLine(m.employmentType) || null,
     descriptionText: m.descriptionText,
@@ -201,8 +270,7 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
 const places = (entries: readonly unknown[]): string[] =>
   entries.flatMap((e) => {
     const name = typeof e === 'string' ? e : isRec(e) ? (str(e.alpha2) ?? str(e.name)) : null;
-    const p = name === null ? null : placeOf(name);
-    return p === null ? [] : [p];
+    return name === null ? [] : placeOf(name);
   });
 
 // ---------------------------------------------------------------------------
@@ -220,9 +288,11 @@ function greenhouse(raw: RawPosting, r: Rec): Posting {
   if (ranges.length > 0) {
     structuredComp = compOf(
       ranges.flatMap((p) => {
-        const label = `${str(p.title) ?? ''} ${htmlToText(str(p.blurb) ?? '')}`;
-        if (/\bhour(?:ly)?\b|\bper hour\b/i.test(label)) return [];
-        const base = SALARY_WORD.test(label) && !/\bOTE\b|on[- ]target/i.test(label);
+        const title = str(p.title) ?? '';
+        const blurb = htmlToText(str(p.blurb) ?? '');
+        if (/\bhour(?:ly)?\b|\bper hour\b/i.test(`${title} ${blurb}`)) return [];
+        // The title decides first; a neutral title ("Zone 3 Pay Range") defers to an explicit base in the blurb.
+        const base = !NOT_BASE.test(title) && !BLURB_NOT_BASE.test(blurb) && (BASE.test(title) || BASE.test(blurb));
         const min = num(p.min_cents);
         const max = num(p.max_cents);
         const range = rangeOf(min === null ? null : min / 100, max === null ? null : max / 100, p.currency_type, 1, base);
@@ -297,7 +367,8 @@ function ashby(raw: RawPosting, r: Rec): Posting {
   let structuredComp: Comp | null | undefined;
   const comp = isRec(r.compensation) ? r.compensation : null;
   if (comp !== null) {
-    const components = Array.isArray(comp.summaryComponents) ? comp.summaryComponents : arr(comp.compensationTiers).flatMap((t) => (isRec(t) ? arr(t.components) : []));
+    const summary = arr(comp.summaryComponents);
+    const components = summary.length > 0 ? summary : arr(comp.compensationTiers).flatMap((t) => (isRec(t) ? arr(t.components) : []));
     // Only Salary is pay: equity (EquityCashValue, EquityPercentage), Bonus and Commission are never comp.
     const salary = components.filter((c): c is Rec => isRec(c) && c.compensationType === 'Salary');
     if (salary.length > 0) {
@@ -351,7 +422,7 @@ function himalayas(raw: RawPosting, r: Rec): Posting {
 }
 
 function jobicy(raw: RawPosting, r: Rec): Posting {
-  const geo = str(r.jobGeo) ?? '';
+  const geo = decodeEntities(str(r.jobGeo) ?? '');
   const descriptionText = htmlToText(str(r.jobDescription) ?? '');
   return assemble(raw, 'feed', {
     title: str(r.jobTitle),

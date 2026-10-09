@@ -49,15 +49,20 @@ function fromCodePoint(cp: number): string {
 }
 
 /**
- * Decodes named (case-sensitive, semicolon required), decimal and hex character references, exactly once. An unknown
- * name, or an ampersand that starts no reference, is left as it is.
+ * Decodes named (case-sensitive), decimal and hex character references, exactly once. A semicolon is required,
+ * except for the legacy names browsers also accept bare (`&amp`, `&lt`, `&gt`, `&quot`, `&nbsp`, `&copy`, `&reg`)
+ * when no letter, digit, `;` or `=` follows. An unknown name, or an ampersand that starts no reference, is left as it is.
  */
 export function decodeEntities(s: string): string {
-  return s.replace(/&(?:#(\d{1,8})|#[xX]([0-9a-fA-F]{1,7})|([A-Za-z][A-Za-z0-9]{1,31}));/g, (m, dec?: string, hex?: string, name?: string) => {
-    if (dec !== undefined) return fromCodePoint(Number.parseInt(dec, 10));
-    if (hex !== undefined) return fromCodePoint(Number.parseInt(hex, 16));
-    return (name !== undefined ? NAMED[name] : undefined) ?? m;
-  });
+  return s.replace(
+    /&(?:#(\d{1,8});|#[xX]([0-9a-fA-F]{1,7});|([A-Za-z][A-Za-z0-9]{1,31});|(amp|lt|gt|quot|nbsp|copy|reg|AMP|LT|GT|QUOT|COPY|REG)(?![A-Za-z0-9;=]))/g,
+    (m, dec?: string, hex?: string, name?: string, legacy?: string) => {
+      if (dec !== undefined) return fromCodePoint(Number.parseInt(dec, 10));
+      if (hex !== undefined) return fromCodePoint(Number.parseInt(hex, 16));
+      const n = name ?? legacy;
+      return (n !== undefined ? NAMED[n] : undefined) ?? m;
+    },
+  );
 }
 
 /** Tags whose boundaries end a paragraph (a blank line). */
@@ -65,17 +70,19 @@ const PARAGRAPH = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'bl
 /** Tags whose boundaries end a line. */
 const LINE = new Set([
   'div', 'tr', 'section', 'article', 'header', 'footer', 'main', 'aside', 'nav', 'address', 'dl', 'dt', 'dd', 'figcaption', 'form',
-  'fieldset', 'legend', 'details', 'summary', 'center', 'caption', 'thead', 'tbody', 'tfoot', 'ul', 'ol', 'menu',
+  'fieldset', 'legend', 'details', 'summary', 'center', 'caption', 'thead', 'tbody', 'tfoot', 'ul', 'ol', 'menu', 'option',
+  'optgroup', 'select', 'textarea', 'label',
 ]);
 const LIST = new Set(['ul', 'ol', 'menu']);
 const CELL = new Set(['td', 'th']);
 
 /**
- * One token per match: a comment, a raw-text element with its body, a tag (attribute values may hold `>`), or a
- * doctype / processing instruction. Everything between matches is text.
+ * One token per match, case-insensitive: a comment, a raw-text element with its body, a tag (attribute values may
+ * hold `>`), or a doctype / processing instruction. Everything between matches is text. Fail safe: an unclosed
+ * comment or raw-text element (script, style, template, noscript) swallows the rest of the input, as browsers hide it.
  */
 const TOKEN =
-  /<!--[\s\S]*?-->|<(script|style|template|noscript)\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>|<(\/?)([A-Za-z][A-Za-z0-9:-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|<[!?][^>]*>/g;
+  /<!--[\s\S]*?(?:-->|$)|<(script|style|template|noscript)\b(?:[^>"']|"[^"]*"|'[^']*')*>[\s\S]*?<\/\1\s*>|<(?:script|style|template|noscript)\b[\s\S]*$|<(\/?)([A-Za-z][A-Za-z0-9:-]*)(?:[^>"']|"[^"]*"|'[^']*')*>|<[!?][^>]*>/gi;
 
 /** Characters that are never visible content: soft hyphen, zero-width space, word joiner, BOM. */
 const INVISIBLE = /[\u00ad\u200b\u2060\ufeff]/g;
@@ -168,10 +175,19 @@ export function htmlToText(html: string): string {
   const out = new TextBuilder();
   let listDepth = 0;
   let cellIndex = 0;
+  let pre = 0;
   let last = 0;
+  /** Text between tags; inside `<pre>` each source line break is kept. */
+  const text = (t: string): void => {
+    if (pre === 0) return out.text(decodeEntities(t));
+    t.split(/\r?\n/).forEach((line, i) => {
+      if (i > 0) out.br();
+      out.text(decodeEntities(line));
+    });
+  };
   for (const m of html.matchAll(TOKEN)) {
     const at = m.index ?? 0;
-    if (at > last) out.text(decodeEntities(html.slice(last, at)));
+    if (at > last) text(html.slice(last, at));
     last = at + m[0].length;
     const name = m[3]?.toLowerCase();
     if (name === undefined) continue; // comment, raw-text element, doctype
@@ -202,11 +218,29 @@ export function htmlToText(html: string): string {
     } else if (CELL.has(name)) {
       if (!closing) out.cell(cellIndex++ === 0);
     } else if (PARAGRAPH.has(name)) {
+      if (name === 'pre') pre = closing ? Math.max(0, pre - 1) : pre + 1;
       out.lineBreak(2);
     } else if (LINE.has(name)) {
       out.lineBreak(1);
     }
   }
-  if (last < html.length) out.text(decodeEntities(html.slice(last)));
+  if (last < html.length) text(html.slice(last));
   return out.done();
+}
+
+/**
+ * Plain text (a JSON-LD description without markup) in the same shape `htmlToText` gives: entities decoded, line
+ * breaks kept, whitespace collapsed within each line, bullets (`•`, `·`, and `-` or `*` at a line start) as `- `
+ * items (an inline `•` starts a new item), at most 2 newlines in a row.
+ */
+export function plainToText(text: string): string {
+  return decodeEntities(text)
+    .replace(INVISIBLE, '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/\n?[^\S\n]*[•·][^\S\n]*/g, '\n- ')
+    .split('\n')
+    .map((line) => line.replace(/[^\S\n]+/g, ' ').trim().replace(/^[-*]\s+/, '- '))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }

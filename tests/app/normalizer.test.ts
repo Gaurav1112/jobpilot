@@ -31,7 +31,9 @@ describe('decodeEntities', () => {
   });
 
   it('leaves unknown names and bare ampersands alone', () => {
-    expect(decodeEntities('AT&T R&D &notanentity; &amp')).toBe('AT&T R&D &notanentity; &amp');
+    expect(decodeEntities('AT&T R&D &notanentity; &ampere;')).toBe('AT&T R&D &notanentity; &ampere;');
+    // Legacy names without a semicolon decode the way browsers do, when no letter or digit follows.
+    expect(decodeEntities('a &amp b &nbsp c &copy 2026 &ampx')).toBe('a & b \u00a0 c © 2026 &ampx');
   });
 
   it('decodes exactly once', () => {
@@ -363,9 +365,12 @@ describe('greenhouse', () => {
     expect(comp([range(10880000, 14960000, 'USD', 'Zone 3 Pay Range')])).toEqual({ min: 108800, max: 149600, currency: 'USD', period: 'year', basis: 'unknown' });
     expect(comp([range(10880000, 14960000, 'USD', 'US Base Salary')])).toEqual({ min: 108800, max: 149600, currency: 'USD', period: 'year', basis: 'base' });
     // Several zones in one currency: the union.
-    expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary'), range(9000000, 11000000, 'USD', 'Zone 2 Salary')])).toEqual({ min: 90000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Base Salary'), range(9000000, 11000000, 'USD', 'Zone 2 Base Salary')])).toEqual({ min: 90000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+    // A neutral title defers to the blurb; an explicit base there makes it base.
+    expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary', '<p>The base salary range for this role</p>')])?.basis).toBe('base');
+    expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary')])?.basis).toBe('unknown');
     // An INR range is the one that applies to India.
-    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(400000000, 120000000, 'INR', 'India Salary')])).toEqual({ min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(400000000, 120000000, 'INR', 'India Base Salary')])).toEqual({ min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
     // Two currencies without INR: no single figure is faithful.
     expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(9000000, 11000000, 'EUR', 'EU Salary')])).toBeNull();
     // Unsupported currency, hourly, OTE.
@@ -470,7 +475,7 @@ describe('ashby', () => {
       descriptionText: golden('ashby-0b2a4106'),
       postedAt: '2026-02-16T07:38:53.841+00:00',
       comp: null,
-      yearsRequired: null,
+      yearsRequired: 10,
     });
   });
 
@@ -546,7 +551,9 @@ describe('himalayas', () => {
     const c = (o: Record<string, unknown>) => one(raw('himalayas', { ...base, ...o }, 'X', 'himalayas')).comp;
     expect(c({ minSalary: 200000, maxSalary: 300000, currency: 'INR', salaryPeriod: 'monthly' })).toEqual({ min: 2400000, max: 3600000, currency: 'INR', period: 'year', basis: 'base' });
     expect(c({ minSalary: 30, maxSalary: 40, currency: 'USD', salaryPeriod: 'hourly' })).toBeNull();
-    expect(c({ minSalary: 100000, maxSalary: null, currency: 'USD', salaryPeriod: 'annual' })).toBeNull();
+    // One known bound is kept; the other is not invented.
+    expect(c({ minSalary: 100000, maxSalary: null, currency: 'USD', salaryPeriod: 'annual' })).toEqual({ min: 100000, max: null, currency: 'USD', period: 'year', basis: 'base' });
+    expect(c({ minSalary: null, maxSalary: 150000, currency: 'USD', salaryPeriod: 'annual' })).toEqual({ min: null, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
     expect(c({ minSalary: null, maxSalary: null, currency: null, salaryPeriod: 'annual' })).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
   });
 
@@ -661,7 +668,9 @@ describe('comp from text', () => {
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('reads only lines that mention salary, base, CTC, LPA, compensation or pay', () => {
-    expect(text('<p>CTC: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>CTC: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Compensation: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Fixed pay: ₹30 LPA</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Base salary: $150,000 - $180,000 per annum</p>')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year', basis: 'base' });
     expect(text('<p>We raised $50,000,000 last year.</p>')).toBeNull();
     expect(text('<p>Competitive salary.</p>')).toBeNull();
@@ -670,7 +679,7 @@ describe('comp from text', () => {
   it('never takes equity or a bonus as comp', () => {
     expect(text('<p>Equity compensation: $50,000 in RSUs</p>')).toBeNull();
     expect(text('<p>Salary: $100,000 plus $20,000 bonus</p>')).toBeNull();
-    expect(text('<p>Base pay: $95,000 - $140,000, plus equity</p>')).toEqual({ min: 95000, max: 140000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Base pay: $95,000 - $140,000, plus equity</p>')).toEqual({ min: 95000, max: 140000, currency: 'USD', period: 'year', basis: 'unknown' });
   });
 
   it('refuses dollars that are not US dollars', () => {
@@ -728,13 +737,20 @@ describe('postedAt per source', () => {
 describe('description completeness on every recorded posting', () => {
   /** Words of HTML read naively: raw-text elements gone, every tag a space, entities decoded. */
   const words = (s: string): string[] => (s.match(/[\p{L}\p{N}]+/gu) ?? []).sort();
+  /** An entity decoder independent of the one under test: numeric references and the names the fixtures use. */
+  const NAMES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', rsquo: '’', lsquo: '‘', ldquo: '“', rdquo: '”', ndash: '–', mdash: '—', hellip: '…', bull: '•', eacute: 'é' };
+  const decode = (s: string): string =>
+    s.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) =>
+      e.startsWith('#x') || e.startsWith('#X') ? String.fromCodePoint(parseInt(e.slice(2), 16)) : e.startsWith('#') ? String.fromCodePoint(Number(e.slice(1))) : (NAMES[e] ?? m));
   const naive = (html: string): string =>
-    decodeEntities(html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<[^>]*>/g, ' '));
+    decode(html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<[^>]*>/g, ' '));
   const sourceHtml = (p: RawPosting): string => {
     const r = p.raw as Record<string, unknown> & { lists?: { text: string; content: string }[] };
     switch (p.source) {
       case 'greenhouse':
-        return decodeEntities(String(r.content ?? ''));
+        return decode(String(r.content ?? ''));
+      case 'careers':
+        return String((r.jsonLd as Record<string, unknown> | null)?.description ?? '');
       case 'lever':
         return [r.description, ...(r.lists ?? []).flatMap((l) => [l.text.replace(/&/g, '&amp;').replace(/</g, '&lt;'), l.content]), r.additional, r.salaryDescription].map((x) => String(x ?? '')).join(' ');
       case 'ashby':
@@ -747,8 +763,252 @@ describe('description completeness on every recorded posting', () => {
   };
 
   it('keeps every word of the source, and adds none', () => {
-    for (const p of [...gh, ...lv, ...ab, ...hm, ...jbAny, ...jbApac]) {
+    for (const p of [...gh, ...lv, ...ab, ...hm, ...jbAny, ...jbApac, careersJsonLd()]) {
       expect(words(one(p).descriptionText), `${p.source} ${p.sourceId}`).toEqual(words(naive(sourceHtml(p))));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 1 (review I1-I8 and minors)
+// ---------------------------------------------------------------------------
+
+describe('fix round 1: comp basis (I1, I4)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('never calls OTE, total comp, commission, bonus, equity or variable pay base', () => {
+    expect(text('<p>OTE $200k (50/50 base/commission)</p>')?.basis).toBe('unknown');
+    expect(text('<p>Total compensation (base + bonus): $180k - $220k</p>')).toEqual({ min: 180000, max: 220000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Base salary $150,000 plus variable pay</p>')?.basis).toBe('unknown');
+    expect(text('<p>TC: $250,000 including base</p>')?.basis).toBe('unknown');
+    expect(text('<p>Base salary: $150,000</p>')?.basis).toBe('base');
+    expect(text('<p>Salary: $150,000</p>')?.basis).toBe('unknown');
+  });
+
+  it('judges a Greenhouse range by its title first', () => {
+    const base = { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote' }, content: '' };
+    const basis = (title: string, blurb: string) =>
+      one(raw('greenhouse', { ...base, pay_input_ranges: [{ min_cents: 15000000, max_cents: 20000000, currency_type: 'USD', title, blurb }] })).comp?.basis;
+    expect(basis('Total compensation', '<p>Base salary plus equity and bonus</p>')).toBe('unknown');
+    expect(basis('Target cash compensation', '<p>Base salary</p>')).toBe('unknown');
+    expect(basis('Base salary range', '<p>Plus equity and benefits</p>')).toBe('base');
+    expect(basis('US Pay Range', '<p>This range is total compensation (TC)</p>')).toBe('unknown');
+    // The recorded GitLab blurb says "base salary range ... does not include any bonuses, equity": base.
+    expect(one(byId(gh, '8638232002')).comp?.basis).toBe('base');
+  });
+});
+
+describe('fix round 1: text gate per sentence (I2, M3)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('needs the figure in the same sentence as a pay word', () => {
+    expect(text('<p>We are a startup that raised $50M from top investors, and we pay well.</p>')).toBeNull();
+    expect(text('<p>We pay well. Last year we raised $50M.</p>')).toBeNull();
+    expect(text('<p>Base salary: competitive. Our customers save $2M a year.</p>')).toBeNull();
+    expect(text('<p>Base salary competitive; we saved clients $5k</p>')).toBeNull();
+    expect(text('<p>About us. We pay competitively. Salary: ₹40 LPA. Our ARR is $10M.</p>')).toEqual({ min: 4000000, max: 4000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>The role pays $150,000 per year.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Earn $150,000 a year.</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+
+  it('does not split a sentence at "Rs."', () => {
+    expect(text('<p>CTC Rs. 30,00,000 per annum</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+
+  it('drops funding and revenue sentences even with a pay word', () => {
+    expect(text('<p>Our Series B valuation lets us pay $200,000 salaries.</p>')).toBeNull();
+    expect(text('<p>Salary budget: $1,000,000 for the team.</p>')).toBeNull();
+  });
+
+  it('reads a bare $ beside Canada, Australia or Singapore as not US dollars', () => {
+    expect(text('<p>Canada salary range: $120,000 - $150,000</p>')).toBeNull();
+    expect(text('<p>US and Canada salary range: USD 120,000 - 150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+
+  it('keeps a plain-text careers description sentence-sized, so an About-us figure is not pay', () => {
+    const p = one({ source: 'careers', sourceId: 's', company: 'Co', slug: 'co', raw: { url: 'https://co.example/jobs/1', title: 'Eng', text: '', jsonLd: { '@type': 'JobPosting', description: 'About us\nWe raised $50M and pay well.\n\nRequirements\n- 3+ years of Go' } } });
+    expect(p.comp).toBeNull();
+    expect(p.descriptionText).toBe('About us\nWe raised $50M and pay well.\n\nRequirements\n- 3+ years of Go');
+  });
+});
+
+describe('fix round 1: one-sided ranges (I3)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('keeps only the stated bound', () => {
+    expect(text('<p>Salary from $100,000</p>')).toEqual({ min: 100000, max: null, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Base salary starting at ₹18 LPA</p>')).toEqual({ min: 1800000, max: null, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Pay: up to $150,000</p>')).toEqual({ min: null, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: $120k+</p>')).toEqual({ min: 120000, max: null, currency: 'USD', period: 'year', basis: 'unknown' });
+    // A real range with "from ... to" is two bounds.
+    expect(text('<p>Salary from $100,000 to $120,000</p>')).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
+    // "from" elsewhere in the sentence does not make it open-ended.
+    expect(text('<p>Remote from India, salary $100,000</p>')).toEqual({ min: 100000, max: 100000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+
+  it('keeps the known bound of a structured range', () => {
+    const base = { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', categories: { location: 'India' }, description: '' };
+    expect(one(raw('lever', { ...base, salaryRange: { min: 3000000, max: null, currency: 'INR', interval: 'per-year-salary' } })).comp).toEqual({ min: 3000000, max: null, currency: 'INR', period: 'year', basis: 'base' });
+    expect(one(raw('lever', { ...base, salaryRange: { min: null, max: null, currency: 'INR', interval: 'per-year-salary' } })).comp).toBeNull();
+  });
+
+  it('types: at least one bound, nullable bounds, min <= max', () => {
+    const p = one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1' }));
+    const withComp = (comp: unknown) => Posting.schema.safeParse({ ...p, comp }).success;
+    expect(withComp({ min: null, max: 5, currency: 'USD', period: 'year', basis: 'base' })).toBe(true);
+    expect(withComp({ min: 5, max: null, currency: 'USD', period: 'year', basis: 'base' })).toBe(true);
+    expect(withComp({ min: null, max: null, currency: 'USD', period: 'year', basis: 'base' })).toBe(false);
+    expect(withComp({ min: 6, max: 5, currency: 'USD', period: 'year', basis: 'base' })).toBe(false);
+  });
+});
+
+describe('fix round 1: plausibility per zone (M1)', () => {
+  const base = { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote' }, content: '' };
+  const comp = (ranges: [number, number, string][]) =>
+    one(raw('greenhouse', { ...base, pay_input_ranges: ranges.map(([min, max, cur]) => ({ min_cents: min * 100, max_cents: max * 100, currency_type: cur, title: 'Base Salary' })) })).comp;
+
+  it('drops an implausible zone without nulling the others', () => {
+    expect(comp([[50, 50, 'USD'], [100000, 120000, 'USD']])).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+  });
+
+  it('uses the fixed table: about ₹1 lakh to ₹10 crore a year', () => {
+    expect(comp([[1199, 1199, 'USD']])).toBeNull();
+    expect(comp([[1200, 1200, 'USD']])?.min).toBe(1200);
+    expect(comp([[1099, 1099, 'EUR']])).toBeNull();
+    expect(comp([[999, 999, 'GBP']])).toBeNull();
+    expect(comp([[99999, 99999, 'INR']])).toBeNull();
+    expect(comp([[1200001, 1200001, 'USD']])).toBeNull();
+    expect(comp([[100000001, 100000001, 'INR']])).toBeNull();
+    expect(comp([[100000000, 100000000, 'INR']])?.max).toBe(100000000);
+  });
+});
+
+describe('fix round 1: raw-text elements (I5) and htmlToText details (M6)', () => {
+  it('drops script, style and noscript bodies in any case', () => {
+    expect(htmlToText('<SCRIPT>bad()</SCRIPT>ok')).toBe('ok');
+    expect(htmlToText('<Style>p{}</sTyLe><NoScript>n</NOSCRIPT>ok')).toBe('ok');
+    expect(htmlToText('<P>One</P><UL><LI>Two</LI></UL>')).toBe('One\n\n- Two');
+  });
+
+  it('drops everything after an unclosed script, style, noscript or comment', () => {
+    expect(htmlToText('<p>kept</p><script>var x = 1; <p>never</p>')).toBe('kept');
+    expect(htmlToText('<p>kept</p><style>p { }')).toBe('kept');
+    expect(htmlToText('<p>kept</p><!-- open comment <p>never</p>')).toBe('kept');
+  });
+
+  it('keeps <pre> line breaks and separates <option> items', () => {
+    expect(htmlToText('<pre>line1\n  line2\nline3</pre>')).toBe('line1\nline2\nline3');
+    expect(htmlToText('<select><option>opt1</option><option>opt2</option></select>')).toBe('opt1\nopt2');
+  });
+});
+
+describe('fix round 1: plain-text JSON-LD descriptions (I6)', () => {
+  const careers = (description: string): string =>
+    one({ source: 'careers', sourceId: 's', company: 'Co', slug: 'co', raw: { url: 'https://co.example/jobs/1', title: 'Eng', text: '', jsonLd: { '@type': 'JobPosting', description } } }).descriptionText;
+
+  it('keeps lines, paragraphs and bullets', () => {
+    expect(careers('About us\nWe build.\n\n\n\nRequirements\n- 3+ years   of Go\n* Postgres\n• Kafka\r\n· Redis')).toBe(
+      'About us\nWe build.\n\nRequirements\n- 3+ years of Go\n- Postgres\n- Kafka\n- Redis',
+    );
+  });
+
+  it('splits inline bullets into lines and decodes entities', () => {
+    expect(careers('Stack: • Go • Postgres &amp; Redis')).toBe('Stack:\n- Go\n- Postgres & Redis');
+  });
+});
+
+describe('fix round 1: yearsRequired (I7, widened)', () => {
+  it('ignores the company describing itself', () => {
+    expect(yearsRequired('We have 20 years of experience serving clients.')).toBeNull();
+    expect(yearsRequired('Our team brings 25+ years of combined experience.')).toBeNull();
+    expect(yearsRequired('Founded 15 years ago with deep experience.')).toBeNull();
+    expect(yearsRequired('The company has been in business for 12 years, with experience in fintech.')).toBeNull();
+    expect(yearsRequired('Collectively we have 40 years experience.')).toBeNull();
+    expect(yearsRequired('Options vest over 4 years.')).toBeNull();
+    expect(yearsRequired('After 5 years of service you get a sabbatical.')).toBeNull();
+    expect(yearsRequired('Over the past 10 years we grew 10x.')).toBeNull();
+  });
+
+  it('still reads the requirement when the company is looking for it', () => {
+    expect(yearsRequired("We're looking for someone with 5+ years of experience in Go.")).toBe(5);
+    expect(yearsRequired('Our ideal candidate has 7 years of backend experience.')).toBe(7);
+  });
+
+  it('accepts year/yr/exp, bullet lines and "N+ years of|in|as|with"', () => {
+    expect(yearsRequired('1 year of experience with Go.')).toBe(1);
+    expect(yearsRequired('15 yrs exp in Java.')).toBe(15);
+    expect(yearsRequired('3 yr exp.')).toBe(3);
+    expect(yearsRequired('- 6+ years building distributed systems')).toBe(6);
+    expect(yearsRequired('You bring 10+ years in SRE or reliability engineering.')).toBe(10);
+    expect(yearsRequired('5+ years as a backend engineer.')).toBe(5);
+    expect(yearsRequired('4+ years with Kubernetes.')).toBe(4);
+    expect(yearsRequired('A 2 year contract.')).toBeNull();
+  });
+
+  it('needs requirement wording above 14 years', () => {
+    expect(yearsRequired('Experience: 20 years in finance.')).toBe(20);
+    expect(yearsRequired('With 18+ years in the industry, the team ships.')).toBeNull();
+    expect(yearsRequired('6+ years in the industry, the team ships.')).toBe(6);
+    expect(yearsRequired('- 16+ years building payments')).toBe(16);
+  });
+
+  it('reads the three recorded postings that were null', () => {
+    expect(one(byId(ab, '0b2a4106-7f01-4205-813d-81e4fa1abdb4')).yearsRequired).toBe(10);
+    expect(one(byId(lv, '9ac55b31-df46-4acb-b305-2c0b7ed56027')).yearsRequired).toBe(5);
+    expect(one(byId(jbAny, '154552')).yearsRequired).toBe(5);
+  });
+});
+
+describe('fix round 1: jobKey keeps title places (I8, M7)', () => {
+  it('gives US and India variants of one title different keys', () => {
+    expect(jobKey('Acme', 'Software Engineer (US)', 'Remote')).not.toBe(jobKey('Acme', 'Software Engineer (India)', 'Remote'));
+    expect(jobKey('Acme', 'Backend Engineer (Remote)', 'Bengaluru')).not.toBe(jobKey('Acme', 'Backend Engineer (Hybrid)', 'Bengaluru'));
+  });
+
+  it('still matches the place written in the title or in the location', () => {
+    expect(jobKey('Acme', 'Engineer (India)', 'Remote')).toBe(jobKey('Acme', 'Engineer', 'Remote, India'));
+    expect(jobKey('Acme', 'Engineer (India)', 'Remote')).toBe(hex16('acme|engineer|india, remote'));
+  });
+
+  it('trims the company, folds city aliases, ignores a trailing full stop', () => {
+    expect(jobKey(' Acme ', 'Engineer.', 'Bangalore, India')).toBe(jobKey('Acme', 'Engineer', 'Bengaluru, India'));
+  });
+});
+
+describe('fix round 1: places (M2, M4)', () => {
+  it('resolves longer names first', () => {
+    expect(countriesIn('Sydney, New South Wales')).toEqual(['australia']);
+    expect(countriesIn('Santa Fe, New Mexico')).toEqual(['united states']);
+    expect(countriesIn('Boston, New England')).toEqual(['united states']);
+  });
+
+  it('does not add India for a city of that name in another country', () => {
+    expect(countriesIn('Hyderabad, Sindh, Pakistan')).toEqual(['pakistan']);
+    expect(countriesIn('Hyderabad, India')).toEqual(['india']);
+    expect(countriesIn('Hyderabad')).toEqual(['india']);
+  });
+
+  it('never reads an excluded place as included, and signals the exclusion', () => {
+    expect(countriesIn('Remote (except India)')).toEqual([]);
+    expect(countriesIn('Anywhere but US')).toEqual(['worldwide']);
+    expect(countriesIn('Remote, excluding India, Pakistan; Canada')).toEqual(['canada']);
+    const p = one(raw('greenhouse', { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote (except India)' } }));
+    expect(p.remote).toEqual({ structured: null, countries: [], signals: ['location:remote', 'location:exclusion'] });
+  });
+
+  it('decodes a Jobicy geo, and splits an entry naming two places', () => {
+    const p = one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'USA &amp; Canada, APAC' }, 'X', 'jobicy'));
+    expect(p.locationText).toBe('USA & Canada, APAC');
+    expect(p.remote.countries).toEqual(['apac', 'canada', 'united states']);
+  });
+});
+
+describe('fix round 1: Ashby empty summary falls back to tiers (M5)', () => {
+  it('reads tier components when summaryComponents is empty', () => {
+    const p = one(raw('ashby', { id: '1', title: 'Eng', jobUrl: 'https://jobs.ashbyhq.com/x/1', location: 'Remote', compensation: { summaryComponents: [], compensationTiers: [{ components: [{ compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'USD', minValue: 100000, maxValue: 120000 }] }] } }));
+    expect(p.comp).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
   });
 });

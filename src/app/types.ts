@@ -97,15 +97,22 @@ export const Posting = defineType(
       // Deliberately lenient (shape only): it is source data, and one source's impossible date must not fail the
       // whole board. The normalizer (Task 6) sets a date that is not a real calendar date to null.
       postedAt: IsoDateOrDateTime.nullable(),
+      /**
+       * Disclosed pay per year. A bound the source does not state is null ("up to X" has no min, "from X" no max);
+       * at least one is set, and min <= max when both are. `basis` is `base` only for pay stated as base, fixed or
+       * CTC; OTE, total comp, bonus or equity wording makes it `unknown`.
+       */
       comp: z
         .object({
-          min: z.number(),
-          max: z.number(),
+          min: z.number().nullable(),
+          max: z.number().nullable(),
           currency: z.enum(['INR', 'USD', 'EUR', 'GBP']),
           period: z.literal('year'),
           basis: z.enum(['base', 'unknown']),
         })
         .strict()
+        .refine((c) => c.min !== null || c.max !== null, 'comp needs at least one bound')
+        .refine((c) => c.min === null || c.max === null || c.min <= c.max, 'comp min must not exceed max')
         .nullable(),
       yearsRequired: z.number().nullable(),
     })

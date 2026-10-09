@@ -37,7 +37,7 @@ const PLACES: Readonly<Record<string, readonly string[]>> = {
     'chandigarh', 'indore', 'coimbatore', 'mysore', 'mysuru', 'nagpur', 'vadodara', 'bhubaneswar', 'visakhapatnam', 'lucknow', 'mohali',
     'karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat',
   ],
-  'united states': ['united states', 'united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'u.s'],
+  'united states': ['united states', 'united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'u.s', 'new mexico', 'new england'],
   'united kingdom': ['united kingdom', 'uk', 'u.k.', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland'],
   canada: ['canada'],
   mexico: ['mexico'],
@@ -89,7 +89,7 @@ const PLACES: Readonly<Record<string, readonly string[]>> = {
   'south africa': ['south africa'],
   nigeria: ['nigeria'],
   kenya: ['kenya'],
-  australia: ['australia'],
+  australia: ['australia', 'new south wales'],
   'new zealand': ['new zealand'],
   japan: ['japan'],
   china: ['china', 'prc'],
@@ -121,6 +121,8 @@ const ISO2: Readonly<Record<string, string>> = {
   VN: 'vietnam', PK: 'pakistan', BD: 'bangladesh', LK: 'sri lanka', NP: 'nepal',
 };
 
+/** Canonical names that are countries (not regions): an address's last one names its country. */
+const ISO_NAMES: ReadonlySet<string> = new Set(Object.values(ISO2));
 const ALIAS = new Map<string, string>(Object.entries(PLACES).flatMap(([name, spellings]) => spellings.map((s) => [s, name] as const)));
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 /** Longest spelling first, so "south east asia" wins over "asia" and "united states of america" over "united states". */
@@ -131,29 +133,75 @@ const PLACE_RE = new RegExp(
 
 const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();
 
-/** Places named in free location text, as canonical lowercase names, sorted. Text that names no listed place gives []. */
-export function countriesIn(text: string): string[] {
+/** India named by a city or state rather than the country: a city of that name elsewhere must not add India. */
+const INDIA_BY_NAME = new Set(['india', 'bharat']);
+/** Words that turn the places after them (to the end of the clause) into exclusions. */
+const EXCLUDING = /\b(?:except|excluding|excl\.?|outside(?: of)?|not(?: in| from)?|anywhere but|but not|other than)\b/i;
+/** A clause ends at these; commas do not end it ("except India, Pakistan" excludes both). */
+const CLAUSE_END = /[;|()[\]\n]/g;
+/** One place: separate locations are joined by these ("Bengaluru or Singapore", "Pune; Austin"). */
+const SEGMENT_SPLIT = /[;|\n/&]|\bor\b|\band\b/gi;
+
+interface PlaceScan {
+  places: string[];
+  excluded: boolean;
+}
+
+function scanPlaces(text: string): PlaceScan {
+  const t = text.normalize('NFKC');
   const out: string[] = [];
-  for (const m of text.normalize('NFKC').matchAll(PLACE_RE)) {
-    const name = ALIAS.get((m[1] ?? '').toLowerCase());
-    if (name !== undefined) out.push(name);
+  let excluded = false;
+  const bounds = [0, ...[...t.matchAll(SEGMENT_SPLIT)].flatMap((m) => [m.index ?? 0, (m.index ?? 0) + m[0].length]), t.length];
+  for (let k = 0; k + 1 < bounds.length; k += 2) {
+    const segStart = bounds[k] ?? 0;
+    const segment = t.slice(segStart, bounds[k + 1] ?? t.length);
+    const found: { name: string; byCity: boolean }[] = [];
+    for (const m of segment.matchAll(PLACE_RE)) {
+      const alias = (m[1] ?? '').toLowerCase();
+      const name = ALIAS.get(alias);
+      if (name === undefined) continue;
+      const at = segStart + (m.index ?? 0);
+      const before = t.slice(0, at);
+      const clauseStart = Math.max(-1, ...[...before.matchAll(CLAUSE_END)].map((c) => c.index ?? -1)) + 1;
+      if (EXCLUDING.test(before.slice(clauseStart))) {
+        excluded = true;
+        continue;
+      }
+      found.push({ name, byCity: name === 'india' && !INDIA_BY_NAME.has(alias) });
+    }
+    // "Hyderabad, Sindh, Pakistan": an address ending in another country is in that country.
+    const lastCountry = [...found].reverse().find((f) => ISO_NAMES.has(f.name));
+    const cityOnlyIndia = found.some((f) => f.name === 'india') && found.every((f) => f.name !== 'india' || f.byCity);
+    for (const f of found) if (!(f.name === 'india' && cityOnlyIndia && lastCountry !== undefined && lastCountry.name !== 'india')) out.push(f.name);
   }
-  return sortedUnique(out);
+  return { places: sortedUnique(out), excluded };
 }
 
 /**
- * One entry of a structured place list (a Himalayas restriction, a JSON-LD country, an Ashby address country): its
- * canonical name when it is a listed place or an ISO alpha-2 code, else the entry itself lower-cased. An unlisted
- * restriction is kept verbatim rather than dropped, because an empty list means "no restriction".
+ * Places named in free location text, as canonical lowercase names, sorted. Text that names no listed place gives [].
+ * A place after "except", "excluding", "outside", "not", "anywhere but" (to the end of its clause) is left out; see
+ * `hasPlaceExclusion`.
  */
-export function placeOf(entry: string): string | null {
+export const countriesIn = (text: string): string[] => scanPlaces(text).places;
+
+/** Whether the text excludes a place ("Remote (except India)"), which `countriesIn` then leaves out. */
+export const hasPlaceExclusion = (text: string): boolean => scanPlaces(text).excluded;
+
+/**
+ * One entry of a structured place list (a Himalayas restriction, a JSON-LD country, an Ashby address country): its
+ * canonical name when it is a listed place or an ISO alpha-2 code, every listed place when it names several
+ * ("USA & Canada"), else the entry itself lower-cased. An unlisted restriction is kept verbatim rather than dropped,
+ * because an empty list means "no restriction".
+ */
+export function placeOf(entry: string): string[] {
   const t = collapse(entry.normalize('NFKC'));
-  if (t === '') return null;
-  if (/^[A-Za-z]{2}$/.test(t) && ISO2[t.toUpperCase()] !== undefined) return ISO2[t.toUpperCase()] ?? null;
+  if (t === '') return [];
+  const code = ISO2[t.toUpperCase()];
+  if (/^[A-Za-z]{2}$/.test(t) && code !== undefined) return [code];
   const whole = ALIAS.get(t.toLowerCase());
-  if (whole !== undefined) return whole;
+  if (whole !== undefined) return [whole];
   const found = countriesIn(t);
-  return found.length === 1 ? (found[0] ?? null) : t.toLowerCase();
+  return found.length > 0 ? found : [t.toLowerCase()];
 }
 
 /** Canonical name of an ISO 3166 alpha-2 code, or null when it is not one of the listed places. */
@@ -171,39 +219,57 @@ function isLocationParen(inner: string): boolean {
   return rest === '' && inner.trim() !== '';
 }
 
-/**
- * The title's comparison form: NFKC, lowercase, whitespace collapsed, gender markers removed, and trailing
- * parentheses that only name places or a work arrangement ("(Remote)", "(India)", "(Remote - India)") removed.
- * Other parentheses ("(YDB Team)") are part of the title.
- */
-export function normTitle(title: string): string {
+/** The title's comparison form and the places taken out of it (see `normTitle`). */
+export function splitTitle(title: string): { title: string; places: string[] } {
   let t = collapse(title.normalize('NFKC').toLowerCase().replace(GENDER, ' '));
+  const places: string[] = [];
   for (;;) {
     const m = /\(([^()]*)\)\s*$/.exec(t);
     if (m === null || !isLocationParen(m[1] ?? '')) break;
+    places.push(m[1] ?? '');
     t = t.slice(0, m.index).replace(/[\s,;|:–—-]+$/, '');
   }
-  return collapse(t);
+  return { title: collapse(t).replace(/[\s.]+$/, ''), places };
 }
 
 /**
+ * The title's comparison form: NFKC, lowercase, whitespace collapsed, gender markers removed, a trailing full stop
+ * removed, and trailing parentheses that only name places or a work arrangement ("(Remote)", "(India)",
+ * "(Remote - India)") removed. Other parentheses ("(YDB Team)") are part of the title. `jobKey` moves the removed
+ * places into the location part, so "Engineer (US)" and "Engineer (India)" stay distinct.
+ */
+export const normTitle = (title: string): string => splitTitle(title).title;
+
+/** City spellings that name one place, folded to one form for comparison. */
+const CITY_ALIASES: Readonly<Record<string, string>> = {
+  bangalore: 'bengaluru', bombay: 'mumbai', gurgaon: 'gurugram', calcutta: 'kolkata', madras: 'chennai', mysore: 'mysuru',
+  cochin: 'kochi', trivandrum: 'thiruvananthapuram',
+};
+const CITY_RE = new RegExp(`(?<![\\p{L}])(${Object.keys(CITY_ALIASES).join('|')})(?![\\p{L}])`, 'gu');
+
+/**
  * The location's comparison form: NFKC, lowercase, split into parts at commas, semicolons, slashes, bars,
- * parentheses and spaced dashes, each part whitespace-collapsed, then de-duplicated and sorted, so "Remote, India"
- * and "India (Remote)" compare equal.
+ * parentheses and spaced dashes, each part whitespace-collapsed with city spellings folded (Bangalore = Bengaluru),
+ * then de-duplicated and sorted, so "Remote, India" and "India (Remote)" compare equal.
  */
 export function normLocation(location: string): string {
   const parts = location
     .normalize('NFKC')
     .toLowerCase()
+    .replace(CITY_RE, (c) => CITY_ALIASES[c] ?? c)
     .split(/[,;/|()[\]•·]+|\s[-–—]\s|\s[-–—]|[-–—]\s/)
     .map(collapse)
     .filter((p) => p !== '');
   return sortedUnique(parts).join(', ');
 }
 
-/** `sha256(company.toLowerCase() | normTitle | normLocation)`, first 16 hex chars. */
+/**
+ * `sha256(company | normTitle | normLocation)`, first 16 hex chars. The company is trimmed, whitespace-collapsed and
+ * lower-cased; the places taken out of the title join the location parts.
+ */
 export function jobKey(company: string, title: string, location: string): string {
-  return sha256Hex(`${company.toLowerCase()}|${normTitle(title)}|${normLocation(location)}`).slice(0, 16);
+  const t = splitTitle(title);
+  return sha256Hex(`${collapse(company).toLowerCase()}|${t.title}|${normLocation([location, ...t.places].join(', '))}`).slice(0, 16);
 }
 
 // ---- remote wording ----
@@ -221,22 +287,46 @@ export function remoteTextSignals(origin: string, text: string): string[] {
 
 // ---- experience ----
 
-/** A figure of years: not part of a longer number or a decimal, and not a company's age or a person's. */
-const YEARS = /(?<![\d.])(\d{1,2})\+?\s*(?:years|yrs)\b(?!\s+(?:old|ago|young)\b|\s+of\s+age\b)/gi;
+/**
+ * A figure of years: not part of a longer number or a decimal, not "after/every/within/next/first N years", and not a
+ * company's age or a person's.
+ */
+const YEARS = /(?<![\d.])(?<!\b(?:after|every|within|next|first|for the)\s+)(\d{1,2})\s*(\+?)\s*(?:years?|yrs?)\b(?!\s+(?:old|ago|young)\b|\s+of\s+age\b)/gi;
 /** Sentences: lines, then sentence ends followed by a space. */
-const SENTENCE_SPLIT = /\n+|(?<=[.!?;])\s+/;
+const SENTENCE_SPLIT = /(?<=[.!?;])\s+/;
+const EXPERIENCE = /experience|\bexp\b/i;
+/** After "N+ years": what the years are spent on. */
+const SPENT_ON = /^\s*(?:of|in|as|with|building|managing|leading|working|developing|designing|running|shipping|hands-on|professional|industry|relevant|commercial|production)\b/i;
+/** Sentences about the company, a benefit or history, never a requirement. */
+const NOT_A_REQUIREMENT =
+  /\b(?:combined|collectively|in business|founded|history|track record|vest(?:s|ed|ing)?|warranty|sabbatical|service award|of service|over the (?:past|last)|anniversary|since)\b/i;
+/** The company as the subject ("we have 20 years"), unless it is asking for something. */
+const COMPANY_SUBJECT = /\b(?:we|we've|we're|our|us|the company)\b/i;
+const ASKING = /\b(?:looking for|seeking|need|needs|require[sd]?|requirements?|must|minimum|at least|you|your|candidates?|ideal|ideally|applicants?|preferred|should|qualifications?)\b|^\s*(?:experience|exp)\b\s*:/i;
 
 /**
- * The largest years figure (`N years`, `N+ years`, `N yrs`; "3-5 years" counts 5) in sentences that mention
- * experience. Figures above 30 are ignored. Null when there is none.
+ * The largest years requirement in the text, or null. A figure (`N years`, `N+ yrs`, `N year`; "3-5 years" counts 5)
+ * counts when its sentence mentions experience ("experience", "exp"), when it sits on a bullet line, or when it is
+ * "N+ years of|in|as|with ...". Sentences about the company itself (history, founding, combined experience, "we
+ * have ..." without asking for anything), vesting and benefits are skipped. Above 14 years a "N+ years of ..." match
+ * also needs requirement wording or a bullet. Figures above 30 are ignored.
  */
 export function yearsRequired(text: string): number | null {
   let max: number | null = null;
-  for (const sentence of text.split(SENTENCE_SPLIT)) {
-    if (!/experience/i.test(sentence)) continue;
-    for (const m of sentence.matchAll(YEARS)) {
-      const n = Number(m[1]);
-      if (n <= 30 && (max === null || n > max)) max = n;
+  for (const line of text.split(/\n+/)) {
+    const bullet = /^\s*-\s/.test(line);
+    for (const sentence of line.split(SENTENCE_SPLIT)) {
+      if (NOT_A_REQUIREMENT.test(sentence)) continue;
+      const asking = ASKING.test(sentence);
+      if (COMPANY_SUBJECT.test(sentence) && !asking) continue;
+      const experience = EXPERIENCE.test(sentence);
+      for (const m of sentence.matchAll(YEARS)) {
+        const n = Number(m[1]);
+        const spentOn = m[2] === '+' && SPENT_ON.test(sentence.slice((m.index ?? 0) + m[0].length));
+        if (!experience && !bullet && !spentOn) continue;
+        if (n > 30 || (n > 14 && !experience && !bullet && !asking)) continue;
+        if (max === null || n > max) max = n;
+      }
     }
   }
   return max;
