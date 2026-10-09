@@ -114,17 +114,23 @@ DiscoveryRequest@1 (ats careers) ──► src-careers-list ──► CareerLink
 
 - `src-careers-list` emits one CareerLink per job link.
 - `src-careers-job` renders one job page per step.
-- CareerLink@1 is `{company, slug, listUrl, url, linkPattern, linkText, refresh}`. It carries no run date, so an
+- CareerLink@1 is `{company, slug, listUrl, url, linkPattern, titleKey, refresh}`. It carries no run date, so an
   unchanged link replays from the store instead of being rendered again, and a removed link stops appearing.
   - `refresh = floor((dayNumber(runDate) + sha256(url) mod 7) / 7)` is a staggered weekly epoch: about a seventh of
     the links re-render each day, and no link is more than 7 days stale.
-  - `linkText`, the anchor's text, makes a retitled job re-render the next day.
+  - `titleKey` makes a retitled job re-render the next day. It comes from the title element inside the anchor
+    (`h1`–`h6`, a class containing "title", or `itemprop=title`), or else the anchor's text, normalised: NFKC,
+    lower-cased, with digits, punctuation and relative-time or badge words ("posted", "ago", "new", "days",
+    "featured", and so on, but not "remote") removed. So "Posted 3 days ago" does not cause a re-render.
   - Task 8: a re-rendered link re-emits a RawPosting with the same `sourceId`. The projector must treat it as a newer
     version of that posting (an upsert), not as a duplicate.
 - A job that is gone fails its own step with the kernel code `gone`, which is non-retryable and never counts
   towards a breaker. It is still a failed step, counted as `gone` in the run report. Gone means any of:
   - the page answers 404 or 410;
-  - a redirect leaves the job pages, so `finalUrl` differs from the link and does not match `linkPattern`.
+  - a redirect leaves the job pages for the listing's path (any query, such as `?page=2`) or the site root `/`.
+
+  Any other redirect outside `linkPattern` (a login wall, maintenance, a locale prefix) is `invalid_output`, which
+  counts towards the breaker. Its message names the target and suggests widening `linkPattern`.
 
   The API sources use `gone` for "board not found" too.
 - Both contracts are built from `careersHosts(watchlist)`.

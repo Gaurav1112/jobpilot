@@ -136,3 +136,13 @@ describe('predicates', () => {
     expect(qaRan.test({ ...qa, checks: [] })).toBe(false);
   });
 });
+
+describe('dates are real calendar dates', () => {
+  const ok = (runDate: string) => DiscoveryRequest.schema.safeParse({ ats: 'careers', slug: 's', company: 'C', runDate }).success;
+  it('accepts real dates, leap days included', () => {
+    for (const d of ['2026-10-09', '2028-02-29', '2026-12-31', '1970-01-01']) expect(ok(d), d).toBe(true);
+  });
+  it('rejects impossible dates that only look right', () => {
+    for (const d of ['2026-02-30', '2026-02-29', '2026-13-01', '2026-00-10', '2026-04-31', '2026-10-9', '2026-10-09T00:00']) expect(ok(d), d).toBe(false);
+  });
+});

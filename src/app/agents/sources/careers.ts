@@ -19,9 +19,11 @@ import { sha256Hex } from './sha256.js';
  *   links (at most CAREERS_LIST_MAX_PAGES listing pages), and emits one CareerLink per job link matching the entry's
  *   `linkPattern`, deduplicated and sorted (at most CAREERS_MAX_LINKS).
  * - `src-careers-job` renders one job page and emits one RawPosting. A CareerLink carries no date, only a staggered
- *   refresh epoch (see `refreshEpoch`) and the link text, so an unchanged link replays from the store on most days
- *   and re-renders once a week (or the day after it is retitled). A gone job (404, 410, or a redirect away from the
- *   job pages) fails its own step with `gone`, which never trips a breaker, so no other job or employer is affected.
+ *   refresh epoch (see `refreshEpoch`) and a normalised title key (see `titleKeyOf`), so an unchanged link replays
+ *   from the store on most days and re-renders once a week, or the day after it is retitled. A gone job (404, 410,
+ *   or a redirect from the job page to the listing or the site root) fails its own step with `gone`, which never
+ *   trips a breaker, so no other job or employer is affected. Any other off-pattern redirect (a login wall,
+ *   maintenance, a locale move) is `invalid_output`, which does count towards the breaker.
  *   Task 8: a re-rendered link re-emits a RawPosting with the same sourceId; the projector must treat it as a newer
  *   version of that posting (upsert), not a duplicate.
  *
@@ -213,6 +215,8 @@ interface Anchor {
   readonly rel: string;
   /** The visible text, else aria-label, else title. */
   readonly label: string;
+  /** The anchor's inner HTML. */
+  readonly inner: string;
 }
 
 function anchorsOf(html: string): Anchor[] {
@@ -221,11 +225,11 @@ function anchorsOf(html: string): Anchor[] {
     const attrs = m[1] ?? '';
     const text = htmlToText(m[2] ?? '').replace(/\s+/g, ' ').trim();
     const label = text !== '' ? text : (attr(attrs, 'aria-label') ?? attr(attrs, 'title') ?? '').trim();
-    out.push({ head: false, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label });
+    out.push({ head: false, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label, inner: m[2] ?? '' });
   }
   for (const m of html.matchAll(/<link\b([^>]*)>/gi)) {
     const attrs = m[1] ?? '';
-    out.push({ head: true, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label: '' });
+    out.push({ head: true, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label: '', inner: '' });
   }
   return out;
 }
@@ -248,6 +252,45 @@ const resolveUrl = (href: string, base: string): URL | null => {
     return null;
   }
 };
+
+/** Relative-time and badge words that change from day to day without the job changing. "remote" is kept. */
+const BADGE_WORDS = new Set([
+  'posted', 'updated', 'reposted', 'promoted', 'ago', 'new', 'hot', 'today', 'yesterday', 'just', 'now', 'day', 'days',
+  'hour', 'hours', 'week', 'weeks', 'month', 'months', 'minute', 'minutes', 'featured', 'urgent', 'actively', 'closing', 'soon',
+]);
+
+/** The first title element inside an anchor's HTML: an h1-h6, or an element whose class contains "title" or itemprop is title. */
+function titleElementText(inner: string): string | undefined {
+  const found: { at: number; html: string }[] = [];
+  const h = /<(h[1-6])\b[^>]*>([\s\S]*?)<\/\1\s*>/i.exec(inner);
+  if (h) found.push({ at: h.index, html: h[2] ?? '' });
+  for (const m of inner.matchAll(/<([a-z][a-z0-9-]*)\b([^>]*)>/gi)) {
+    const attrs = m[2] ?? '';
+    if (!/title/i.test(attr(attrs, 'class') ?? '') && (attr(attrs, 'itemprop') ?? '').toLowerCase() !== 'title') continue;
+    const close = new RegExp(`</${m[1]}\\s*>`, 'i').exec(inner.slice((m.index ?? 0) + m[0].length));
+    if (close) found.push({ at: m.index ?? 0, html: inner.slice((m.index ?? 0) + m[0].length, (m.index ?? 0) + m[0].length + close.index) });
+    break;
+  }
+  found.sort((x, y) => x.at - y.at);
+  const t = found[0] ? htmlToText(found[0].html).trim() : '';
+  return t === '' ? undefined : t;
+}
+
+/**
+ * A stable key for a job link's title, used only to notice a retitle (never shown). The title element inside the
+ * anchor when there is one, else the anchor text; then NFKC, lower-case, digits and punctuation dropped, the
+ * relative-time and badge words dropped, whitespace collapsed, at most 200 characters. Its only failure mode is a
+ * missed retitle, which the weekly refresh catches.
+ */
+export function titleKeyOf(innerHtml: string): string {
+  const text = (titleElementText(innerHtml) ?? htmlToText(innerHtml)).normalize('NFKC').toLowerCase();
+  return text
+    .replace(/[^\p{L}\s]+/gu, ' ')
+    .split(/\s+/)
+    .filter((w) => w !== '' && !BADGE_WORDS.has(w))
+    .join(' ')
+    .slice(0, 200);
+}
 
 /** An anchor label that means "more of this list" (the shared rule in src/app/browser/labels.ts), counts allowed. */
 export function isNextLabel(label: string): boolean {
@@ -396,7 +439,7 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
   const positions = new Set<string>(); // pagingKey().key of every listing page rendered or queued
   const listingBases = new Set<string>(); // pagingKey().base of every listing page
   const candidates = new Set<string>();
-  const texts = new Map<string, string>(); // job link -> its first non-empty anchor text, in document order
+  const titleKeys = new Map<string, string>(); // job link -> the titleKey of its first anchor with one, in document order
   const queue: string[] = [withoutFragment(list)];
   positions.add(pagingKey(list).key);
   listingBases.add(pagingKey(list).base);
@@ -441,7 +484,8 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
       else if (pk.paged && listingBases.has(pk.base)) enqueue(u); // a numbered sibling: ?page=N, ?start=N, ?offset=N
       else if (!a.head) {
         candidates.add(here);
-        if (a.label !== '' && !texts.has(here)) texts.set(here, a.label);
+        const key = titleKeyOf(a.inner) || titleKeyOf(a.label);
+        if (key !== '' && !titleKeys.has(here)) titleKeys.set(here, key);
       }
     }
     for (const href of itemListUrls(page.jsonLd)) {
@@ -469,10 +513,16 @@ async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPag
     listUrl: entry.listUrl,
     url,
     linkPattern: entry.linkPattern,
-    linkText: texts.get(url) ?? '',
+    titleKey: titleKeys.get(url) ?? '',
     refresh: refreshEpoch(url, req.runDate),
   }));
 }
+
+/** Two URL paths are the same page, ignoring case and a trailing slash. */
+const samePath = (a: string, b: string): boolean => {
+  const norm = (p: string) => (p.length > 1 ? p.replace(/\/+$/, '') : p).toLowerCase() || '/';
+  return norm(a) === norm(b);
+};
 
 /** Renders one job page. Anything that keeps it from being a complete posting fails this job's step, loudly. */
 async function renderJob(link: CareerLink, ctx: AgentContext): Promise<RawPosting[]> {
@@ -488,10 +538,15 @@ async function renderJob(link: CareerLink, ctx: AgentContext): Promise<RawPostin
   const gone = (why: string) => new KernelError('gone', `careers ${link.slug}: ${why}`);
   if (page.status === 404 || page.status === 410) throw gone(`job page ${link.url} returned ${page.status}`);
   if (page.status >= 400) throw loud(`job page ${link.url} returned ${page.status}`);
-  // A redirect that leaves the job pages (to the listing, a listing page, the home page) means the job closed.
+  // A redirect that leaves the job pages is a closed job only when it lands on the listing (any query: a listing
+  // page, an "expired" flag) or the site root. Anything else (a login wall, maintenance, a locale move) is not proof
+  // the job closed, so it is invalid_output and counts towards the breaker.
   const final = new URL(page.finalUrl);
-  if (withoutFragment(final) !== withoutFragment(u) && !compileSafePattern(link.linkPattern).test(final.pathname + final.search)) {
-    throw gone(`job page ${link.url} redirected away from the job pages, to ${final.pathname}${final.search}`);
+  const target = `${final.pathname}${final.search}`;
+  if (withoutFragment(final) !== withoutFragment(u) && !compileSafePattern(link.linkPattern).test(target)) {
+    if (samePath(final.pathname, list.pathname)) throw gone(`job page ${link.url} redirected to the listing (${target}): the job closed`);
+    if (samePath(final.pathname, '/')) throw gone(`job page ${link.url} redirected to the site root (${target}): the job closed`);
+    throw loud(`job page ${link.url} redirected to ${target}, outside linkPattern ${link.linkPattern}; if the site moved its job pages (a locale prefix, for example), widen linkPattern`);
   }
   if (!page.settled) throw loud(`job page still loading: ${link.url}`);
   const jobPosting = findJobPosting(page.jsonLd);

@@ -3,7 +3,17 @@ import { definePredicate } from '../kernel/predicates.js';
 import { defineType } from '../kernel/types.js';
 
 const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers']);
-const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
+/** A real calendar date: month 1-12, day within that month (leap years included). */
+const isCalendarDate = (s: string): boolean => {
+  const [y, m, d] = s.split('-').map(Number) as [number, number, number];
+  const leap = (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
+  return days !== undefined && d >= 1 && d <= days;
+};
+const IsoDate = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
+  .refine(isCalendarDate, 'not a real calendar date');
 const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
 const JobKey = z.string().regex(/^[0-9a-f]{16}$/, 'expected 16 lowercase hex chars');
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'expected 64 lowercase hex chars');
@@ -33,7 +43,8 @@ export type RawPosting = z.infer<typeof RawPosting.schema>;
  * - `refresh` is a staggered refresh epoch, `floor((dayNumber(runDate) + bucket(url)) / 7)`: each link's epoch
  *   advances once every 7 days, on a day fixed by its URL, so about a seventh of the links re-render each day and
  *   none is more than 7 days stale.
- * - `linkText` is the anchor's text on the listing (normally the job title): a retitled job re-renders the next day.
+ * - `titleKey` is a normalised key of the job's title on the listing (a title element inside the anchor, else its
+ *   text without digits, dates or badges): a retitled job re-renders the next day, a "Posted N days ago" does not.
  * A link that leaves the listing simply stops being emitted.
  */
 export const CareerLink = defineType(
@@ -46,7 +57,7 @@ export const CareerLink = defineType(
       listUrl: z.string(),
       url: z.string(),
       linkPattern: z.string(),
-      linkText: z.string(),
+      titleKey: z.string(),
       refresh: z.number().int().nonnegative(),
     })
     .strict(),

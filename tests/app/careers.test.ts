@@ -19,6 +19,7 @@ import {
   makeSrcCareersList,
   CAREERS_REFRESH_DAYS,
   dayNumber,
+  titleKeyOf,
   refreshEpoch,
 } from '../../src/app/agents/sources/careers.js';
 import { sha256Hex } from '../../src/app/agents/sources/sha256.js';
@@ -48,7 +49,7 @@ const packOf = (...watchlist: unknown[]) => freezePack({ watchlist });
 type Route = Partial<BrowserPage> & { html: string };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
-const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ company: 'Example Careers Co', slug: 'example-careers', listUrl: LIST, url, linkPattern: '^/jobs/', linkText: '', refresh: refreshEpoch(url, '2026-10-09'), ...extra });
+const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ company: 'Example Careers Co', slug: 'example-careers', listUrl: LIST, url, linkPattern: '^/jobs/', titleKey: '', refresh: refreshEpoch(url, '2026-10-09'), ...extra });
 
 /**
  * Runs src-careers-list, then src-careers-job on every link it emits, in order, over one fake browser.
@@ -175,9 +176,9 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
 
   it('emits one dateless CareerLink per job link, sorted, carrying the entry it came from', async () => {
     const { links } = run({ [LIST]: { html: listing(a('/jobs/zeta'), a('/jobs/alpha#apply'), a('/jobs/alpha')) } });
-    expect(await links).toEqual([linkOf(`${H}/jobs/alpha`, { linkText: 'A role' }), linkOf(`${H}/jobs/zeta`, { linkText: 'A role' })]);
+    expect(await links).toEqual([linkOf(`${H}/jobs/alpha`, { titleKey: 'a role' }), linkOf(`${H}/jobs/zeta`, { titleKey: 'a role' })]);
     const titled = await run({ [LIST]: { html: listing(a('/jobs/x', '  Senior   Go Engineer '), a('/jobs/x', 'Apply')) } }).links;
-    expect(titled.map((l) => l.linkText)).toEqual(['Senior Go Engineer']);
+    expect(titled.map((l) => l.titleKey)).toEqual(['senior go engineer']);
   });
 
   it('renders the listing, then each same-host job link, and emits RawPostings', async () => {
@@ -341,25 +342,41 @@ describe('src-careers-list and src-careers-job with a fake browser', () => {
     expect(titles(await out)).toEqual(['Site Reliability Engineer', 'Work With Us – Product Designer']);
   });
 
-  it('a job that redirects away from the job pages (listing, a listing page, home) is gone; a redirect to another job page is not', async () => {
+  it('gone only for a redirect to the listing path or the site root; any other off-pattern redirect is invalid_output', async () => {
     const { jobs } = run({
-      [LIST]: { html: listing(a('/jobs/c1'), a('/jobs/c2'), a('/jobs/c3'), a('/jobs/moved'), a('/jobs/open'), a('/jobs/g410')) },
+      [LIST]: { html: listing(a('/jobs/c1'), a('/jobs/c2'), a('/jobs/c3'), a('/jobs/m1'), a('/jobs/m2'), a('/jobs/m3'), a('/jobs/moved'), a('/jobs/open'), a('/jobs/g410')) },
       [`${H}/jobs/c1`]: { html: listing(), finalUrl: LIST },
       [`${H}/jobs/c2`]: { html: listing(), finalUrl: `${H}/jobs?page=2` },
       [`${H}/jobs/c3`]: { html: '<h1>Welcome</h1>', finalUrl: `${H}/` },
+      [`${H}/jobs/m1`]: { html: '<h1>Down for maintenance</h1>', finalUrl: `${H}/maintenance` },
+      [`${H}/jobs/m2`]: { html: '<h1>Sign in</h1>', finalUrl: `${H}/login?next=/jobs/m2` },
+      [`${H}/jobs/m3`]: { ...plainJob('Localised'), finalUrl: `${H}/en-us/jobs/m3` },
       [`${H}/jobs/moved`]: { ...plainJob('Moved'), finalUrl: `${H}/jobs/moved-123` },
       [`${H}/jobs/open`]: plainJob('Open'),
       [`${H}/jobs/g410`]: { html: 'gone', status: 410 },
     });
     const r = await jobs;
     expect(titles(r.postings)).toEqual(['Moved', 'Open']);
-    expect(messages(r.errors)).toEqual([
-      `careers example-careers: job page ${H}/jobs/c1 redirected away from the job pages, to /jobs`,
-      `careers example-careers: job page ${H}/jobs/c2 redirected away from the job pages, to /jobs?page=2`,
-      `careers example-careers: job page ${H}/jobs/c3 redirected away from the job pages, to /`,
-      `careers example-careers: job page ${H}/jobs/g410 returned 410`,
-    ]);
-    expect(r.errors.map((e) => (e.error as { code: string }).code)).toEqual(['gone', 'gone', 'gone', 'gone']);
+    const codes = Object.fromEntries(r.errors.map((e) => [e.url.split('/').pop(), (e.error as { code: string }).code]));
+    expect(codes).toEqual({ c1: 'gone', c2: 'gone', c3: 'gone', g410: 'gone', m1: 'invalid_output', m2: 'invalid_output', m3: 'invalid_output' });
+    expect(messages(r.errors)).toContain(`careers example-careers: job page ${H}/jobs/c2 redirected to the listing (/jobs?page=2): the job closed`);
+    expect(messages(r.errors)).toContain(`careers example-careers: job page ${H}/jobs/c3 redirected to the site root (/): the job closed`);
+    expect(messages(r.errors)).toContain(
+      `careers example-careers: job page ${H}/jobs/m3 redirected to /en-us/jobs/m3, outside linkPattern ^/jobs/; if the site moved its job pages (a locale prefix, for example), widen linkPattern`,
+    );
+  });
+
+  it('titleKey: a title element inside the anchor wins; otherwise the text loses digits, dates and badges, never "remote"', () => {
+    expect(titleKeyOf('<h3>Senior Engineer</h3><span>Posted 3 days ago</span><span>Bengaluru</span>')).toBe('senior engineer');
+    expect(titleKeyOf('<div class="JobCard-title">Data Engineer</div><time>2 hours ago</time>')).toBe('data engineer');
+    expect(titleKeyOf('<span itemprop="title">Site Reliability Engineer</span> NEW')).toBe('site reliability engineer');
+    for (const t of ['Backend Engineer · Posted 3 days ago', 'Backend Engineer · Posted 4 days ago', 'NEW! Backend Engineer – posted today', 'Backend Engineer (Featured) 12 hours ago', 'Backend Engineer just now']) {
+      expect(titleKeyOf(t), t).toBe('backend engineer');
+    }
+    expect(titleKeyOf('Backend Engineer, Remote')).toBe('backend engineer remote');
+    expect(titleKeyOf('Ｅｎｇｉｎｅｅｒ')).toBe('engineer'); // NFKC
+    expect(titleKeyOf('Senior Backend Engineer')).not.toBe(titleKeyOf('Backend Engineer'));
+    expect(titleKeyOf('x'.repeat(500))).toHaveLength(200);
   });
 
   it('refresh: every link advances exactly once in any 7 consecutive run dates, spread evenly over the week', () => {
@@ -487,6 +504,28 @@ describe('src-careers through the supervisor', () => {
     const browser = fakeBrowser({ ...page((p) => (p === seven[3] ? 'Senior Role (retitled)' : `Role ${p.slice(-2)}`)), ...jobPages });
     await supervisor(store, browser, []).start('day-8', [req('careers', 'example-careers', '2026-10-17')]);
     expect(browser.calls.map((c) => c.url)).toContain(`${H}${seven[3]}`);
+  });
+
+  it('a site redirecting every job to /maintenance trips the job breaker (it is not gone)', async () => {
+    const browser = fakeBrowser({ ...routes, ...Object.fromEntries(forty.map((p) => [`${H}${p}`, { html: '<h1>Down</h1>', finalUrl: `${H}/maintenance` }])) });
+    const r = await supervisor(Store.open(':memory:'), browser, []).start('run-m', [req()]);
+    expect(r.gone).toBe(0);
+    expect(r.queue.failed).toBe(10);
+    expect(r.queue.skipped).toBe(30);
+  });
+
+  it('"Posted N days ago" inside the anchors changes nothing: over 8 days each link re-renders exactly once after day 1', async () => {
+    const seven = forty.slice(0, 7);
+    const store = Store.open(':memory:');
+    const later: string[] = [];
+    for (let d = 0; d < 8; d++) {
+      // Half the cards wrap the title in an <h3>; the other half are plain text with the date inline.
+      const anchors = seven.map((p, i) => (i % 2 === 0 ? a(p, `<h3>Engineer ${i}</h3><span>Posted ${d + 1} days ago</span>`) : a(p, `Engineer ${i} · Posted ${d + 1} days ago`)));
+      const browser = fakeBrowser({ [LIST]: { html: listing(...anchors) }, ...Object.fromEntries(seven.map((p) => [`${H}${p}`, plainJob(`Job ${p}`)])) });
+      await supervisor(store, browser, []).start(`posted-${d}`, [req('careers', 'example-careers', `2026-10-${String(9 + d).padStart(2, '0')}`)]);
+      if (d > 0) later.push(...browser.calls.map((c) => c.url).filter((u) => u !== LIST));
+    }
+    expect(later.sort()).toEqual(seven.map((p) => `${H}${p}`).sort());
   });
 
   it('one employer with 40 gone jobs does not cost another employer a single posting', async () => {
