@@ -18,7 +18,7 @@ import {
 } from '../../src/app/types.js';
 
 const posting: Posting = {
-  jobKey: 'greenhouse:acme:1', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
+  jobKey: '0123456789abcdef', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
   title: 'Backend Engineer', url: 'https://example.com/jobs/1', locationText: 'Remote - India',
   remote: { structured: 'remote', countries: ['india'] }, employmentType: null, descriptionText: 'Build things.',
   postedAt: '2026-10-01', comp: { min: 1, max: 2, currency: 'INR', period: 'year', basis: 'base' }, yearsRequired: 5,
@@ -37,7 +37,7 @@ const resume: ResumePlan = {
   certs: [{ factId: 'c1', text: 'Cert' }], covered: ['go'], missing: [], ats: 'greenhouse', firstSeen: '2026-10-09',
 };
 const cover: CoverPlan = { jobKey: posting.jobKey, resume, paragraphs: [{ text: 'Dear', factIds: ['f1'] }] };
-const files = [{ kind: 'resume' as const, format: 'pdf' as const, path: '/o/r.pdf', sha256: 'ab', pages: 1 }];
+const files = [{ kind: 'resume' as const, format: 'pdf' as const, path: 'o/r.pdf', sha256: 'a'.repeat(64), pages: 1 }];
 const rendered: Rendered = { jobKey: posting.jobKey, files, recommended: 'pdf', plan: cover };
 const qa: QaReport = { jobKey: posting.jobKey, ok: true, checks: [{ id: 'pages', ok: true, detail: '1' }], files };
 
@@ -78,6 +78,30 @@ describe('message types', () => {
     expect(Posting.schema.safeParse({ ...posting, postedAt: 'yesterday' }).success).toBe(false);
     expect(Posting.schema.safeParse({ ...posting, postedAt: '2026-10-01T10:00:00Z' }).success).toBe(true);
     expect(Scored.schema.safeParse({ ...scored, verdict: 'rejected' }).success).toBe(false);
+  });
+
+  it('constrains jobKey everywhere it appears', () => {
+    for (const bad of ['greenhouse:acme:1', '0123456789ABCDEF', '0123456789abcde', '']) {
+      expect(Posting.schema.safeParse({ ...posting, jobKey: bad }).success).toBe(false);
+      expect(ResumePlan.schema.safeParse({ ...resume, jobKey: bad }).success).toBe(false);
+      expect(CoverPlan.schema.safeParse({ ...cover, jobKey: bad }).success).toBe(false);
+      expect(Rendered.schema.safeParse({ ...rendered, jobKey: bad }).success).toBe(false);
+      expect(QaReport.schema.safeParse({ ...qa, jobKey: bad }).success).toBe(false);
+    }
+  });
+
+  it('constrains sha256 on rendered files', () => {
+    for (const bad of ['ab', 'A'.repeat(64), 'g'.repeat(64), 'a'.repeat(63)]) {
+      expect(Rendered.schema.safeParse({ ...rendered, files: [{ ...files[0], sha256: bad }] }).success).toBe(false);
+      expect(QaReport.schema.safeParse({ ...qa, files: [{ ...files[0], sha256: bad }] }).success).toBe(false);
+    }
+  });
+
+  it('requires relative rendered paths', () => {
+    for (const bad of ['/o/r.pdf', '../r.pdf', 'o/../../r.pdf', '..\\r.pdf', 'C:\\r.pdf', '']) {
+      expect(Rendered.schema.safeParse({ ...rendered, files: [{ ...files[0], path: bad }] }).success).toBe(false);
+    }
+    expect(Rendered.schema.safeParse({ ...rendered, files: [{ ...files[0], path: 'out/a..b/r.pdf' }] }).success).toBe(true);
   });
 
   it('carries ids', () => {

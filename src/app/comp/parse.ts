@@ -105,7 +105,7 @@ function applyInheritedFactors(found: Figure[]): number[] {
 // figure and hand degroup a shape it correctly refuses, nulling a clean case.
 const NUMBER = /\d+(?:,\d+)*(?:\.\d+)?/g;
 
-const PREFIX_RE = /(?:[₹$€£]|\bRs\.?)\s*$/i;
+const PREFIX_RE = /(?:[₹$€£]|\bRs\.?|(?<![A-Za-z])(?:INR|USD|EUR|GBP))\s*$/i;
 // Longer alternatives first: `lakhs`/`crores` must win over the bare `l`/`cr`.
 const MAGWORD_SUFFIX_RE = new RegExp(
   `^\\s*(${MAGNITUDE_GROUPS.flatMap((g) => g.words)
@@ -205,10 +205,10 @@ function buildRuns(nums: NumMatch[], text: string): Run[] | null {
 
 function detectCurrencies(text: string): Set<Currency> {
   const found = new Set<Currency>();
-  if (/₹|\bINR\b|\bRs\.?\b/i.test(text)) found.add('INR');
-  if (/\$|\bUSD\b/.test(text)) found.add('USD');
-  if (/€|\bEUR\b/.test(text)) found.add('EUR');
-  if (/£|\bGBP\b/.test(text)) found.add('GBP');
+  if (/₹|(?<![A-Za-z])INR(?![A-Za-z])|\bRs\.?\b/i.test(text)) found.add('INR');
+  if (/\$|(?<![A-Za-z])USD(?![A-Za-z])/.test(text)) found.add('USD');
+  if (/€|(?<![A-Za-z])EUR(?![A-Za-z])/.test(text)) found.add('EUR');
+  if (/£|(?<![A-Za-z])GBP(?![A-Za-z])/.test(text)) found.add('GBP');
   return found;
 }
 

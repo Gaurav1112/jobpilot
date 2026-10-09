@@ -5,6 +5,12 @@ import { defineType } from '../kernel/types.js';
 const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed']);
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD');
 const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
+const JobKey = z.string().regex(/^[0-9a-f]{16}$/, 'expected 16 lowercase hex chars');
+const Sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'expected 64 lowercase hex chars');
+const RelativePath = z
+  .string()
+  .min(1)
+  .refine((p) => !p.startsWith('/') && !/^[A-Za-z]:/.test(p) && !p.split(/[\\/]/).includes('..'), 'path must be relative with no .. segment');
 const Verdict = z.enum(['eligible', 'rejected', 'review']);
 
 export const DiscoveryRequest = defineType(
@@ -26,7 +32,7 @@ export const Posting = defineType(
   1,
   z
     .object({
-      jobKey: z.string(),
+      jobKey: JobKey,
       source: z.string(),
       sourceId: z.string(),
       company: z.string(),
@@ -109,7 +115,7 @@ export const ResumePlan = defineType(
   1,
   z
     .object({
-      jobKey: z.string(),
+      jobKey: JobKey,
       headline: z.string(),
       summary: z
         .object({ text: z.string(), slots: z.record(z.string(), z.union([z.string(), z.number()])) })
@@ -142,7 +148,7 @@ export const CoverPlan = defineType(
   1,
   z
     .object({
-      jobKey: z.string(),
+      jobKey: JobKey,
       resume: ResumePlan.schema,
       paragraphs: z.array(z.object({ text: z.string(), factIds: z.array(z.string()) }).strict()),
     })
@@ -154,8 +160,8 @@ const RenderedFile = z
   .object({
     kind: z.enum(['resume', 'cover']),
     format: z.enum(['pdf', 'docx', 'html']),
-    path: z.string(),
-    sha256: z.string(),
+    path: RelativePath,
+    sha256: Sha256,
     pages: z.number().nullable(),
   })
   .strict();
@@ -165,7 +171,7 @@ export const Rendered = defineType(
   1,
   z
     .object({
-      jobKey: z.string(),
+      jobKey: JobKey,
       files: z.array(RenderedFile),
       recommended: z.enum(['pdf', 'docx']),
       plan: CoverPlan.schema,
@@ -179,7 +185,7 @@ export const QaReport = defineType(
   1,
   z
     .object({
-      jobKey: z.string(),
+      jobKey: JobKey,
       ok: z.boolean(),
       checks: z.array(z.object({ id: z.string(), ok: z.boolean(), detail: z.string() }).strict()),
       files: z.array(RenderedFile),

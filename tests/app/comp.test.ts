@@ -303,3 +303,28 @@ describe('belowFloor', () => {
     expect(belowFloor({ min: 0, max: 8350000 }, usd, fx)).toBe(false);
   });
 });
+
+describe('leading currency-code anchor', () => {
+  it('parses code prefixes with or without a space', () => {
+    expect(parseCompRange('INR 1,200,000')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year' });
+    expect(parseCompRange('INR1,200,000')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year' });
+    expect(parseCompRange('USD 150,000 - 180,000')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year' });
+    expect(parseCompRange('USD 150,000 - USD 180,000')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year' });
+    expect(parseCompRange('INR 45-12 LPA')).toEqual({ min: 4500000, max: 1200000, currency: 'INR', period: 'year' });
+    expect(parseCompRange('EUR 70,000')).toEqual({ min: 70000, max: 70000, currency: 'EUR', period: 'year' });
+    expect(parseCompRange('GBP 80,000')).toEqual({ min: 80000, max: 80000, currency: 'GBP', period: 'year' });
+  });
+  it('still refuses a base plus a separate bonus', () => {
+    expectRefused(parseComp('INR 30 LPA + INR 20L bonus'), 'multiple anchored figures');
+  });
+  it('still refuses a conflicting code and symbol', () => {
+    expect(parseCompRange('USD 150,000 and ₹20 LPA')).toBeNull();
+  });
+});
+
+describe('toInrPerYear rounding', () => {
+  it('rounds both bounds to whole rupees', () => {
+    const odd: Fx = { asOf: '2026-10-01', toINR: { USD: 83.333, EUR: 90.2, GBP: 106.4, INR: 1 } };
+    expect(toInrPerYear({ min: 1.1, max: 1.1, currency: 'USD', period: 'year' }, odd)).toEqual({ min: 92, max: 92 });
+  });
+});

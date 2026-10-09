@@ -6,10 +6,10 @@ export interface InrRange {
   max: number;
 }
 
-/** Convert an annual range into INR per year using the pack's fx table. */
+/** Convert an annual range into whole INR per year using the pack's fx table. */
 export function toInrPerYear(range: CompRange, fx: Fx): InrRange {
   const rate = fx.toINR[range.currency];
-  return { min: range.min * rate, max: range.max * rate };
+  return { min: Math.round(range.min * rate), max: Math.round(range.max * rate) };
 }
 
 /**
