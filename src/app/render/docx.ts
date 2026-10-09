@@ -1,6 +1,6 @@
 import { crc32, inflateRawSync } from 'node:zlib';
-import { AlignmentType, Document, LevelFormat, Packer, Paragraph, TextRun } from 'docx';
-import { BULLET, type Block, type DocModel } from './model.js';
+import { AlignmentType, Document, LevelFormat, NoBreakHyphen, Packer, Paragraph, TextRun } from 'docx';
+import { BULLET, CONTACT_SEPARATOR, contactTokens, type Block, type DocModel } from './model.js';
 
 /**
  * DOCX rendering with `docx` (Task 10). Trusted render library: agent code may call it (G-CONTAINMENT allow-list), it
@@ -21,13 +21,30 @@ const BULLETS_REF = 'jobpilot-bullets';
 /** A4 in twips, and 54 pt (1080 twips) margins, matching the PDF. */
 const A4 = { width: 11906, height: 16838, margin: 1080 } as const;
 
+/**
+ * The contact line's run content (L4): Word wraps at spaces and after hyphens, so inside each token every space is a
+ * no-break space (U+00A0) and every hyphen a `w:noBreakHyphen`; only the " | " separators can wrap. The text layer
+ * (`docxText`) reads them back as a space and "-", so it still equals the model text.
+ */
+function contactChildren(text: string): (string | NoBreakHyphen)[] {
+  const out: (string | NoBreakHyphen)[] = [];
+  contactTokens(text).forEach((t, i) => {
+    if (i > 0) out.push(CONTACT_SEPARATOR);
+    t.replace(/ /g, '\u00A0').split('-').forEach((part, j) => {
+      if (j > 0) out.push(new NoBreakHyphen());
+      if (part !== '') out.push(part);
+    });
+  });
+  return out;
+}
+
 function paragraphOf(b: Block): Paragraph {
   const run = (bold: boolean, size: number = HALF_POINTS.body) => new TextRun({ text: b.text, bold, size, font: ARIAL });
   switch (b.kind) {
     case 'name':
       return new Paragraph({ children: [run(true, HALF_POINTS.name)], spacing: { after: 40 } });
     case 'contact':
-      return new Paragraph({ children: [run(false)], spacing: { after: 160 } });
+      return new Paragraph({ children: [new TextRun({ children: contactChildren(b.text), bold: false, size: HALF_POINTS.body, font: ARIAL })], spacing: { after: 160 } });
     case 'heading':
       return new Paragraph({ children: [run(true, HALF_POINTS.heading)], spacing: { before: 160, after: 40 } });
     case 'title':
@@ -200,7 +217,7 @@ const decodeXml = (s: string): string =>
 
 /**
  * The text of `word/document.xml`, one line per non-empty paragraph: the paragraph's `w:t` runs concatenated (a tab
- * or line break is a space), prefixed with "• " when the paragraph is numbered (a bullet). Same shape as
+ * or line break is a space, a no-break space a space and a no-break hyphen "-"), prefixed with "• " when the paragraph is numbered (a bullet). Same shape as
  * `modelText`, so the two compare after `normText`.
  */
 export function docxText(docx: Uint8Array): string {
@@ -211,7 +228,9 @@ export function docxText(docx: Uint8Array): string {
   for (const p of xml.matchAll(/<w:p\b(?:[^>]*[^/])?>([\s\S]*?)<\/w:p>/g)) {
     const inner = p[1] ?? '';
     let text = '';
-    for (const t of inner.matchAll(/<w:t\b[^>]*>([^<]*)<\/w:t>|<w:(?:tab|br)\b[^>]*\/>/g)) text += t[1] !== undefined ? decodeXml(t[1]) : ' ';
+    for (const t of inner.matchAll(/<w:t\b[^>]*>([^<]*)<\/w:t>|<w:(tab|br|noBreakHyphen)\b[^>]*\/>/g)) {
+      text += t[1] !== undefined ? decodeXml(t[1]).replace(/\u00A0/g, ' ') : t[2] === 'noBreakHyphen' ? '-' : ' ';
+    }
     if (text.trim() === '') continue;
     lines.push(/<w:numPr\b/.test(inner) ? `${BULLET} ${text}` : text);
   }

@@ -62,10 +62,22 @@ export function monthYear(ym: string): string {
   return `${name.slice(0, 3)} ${m[1]}`;
 }
 
+/** What separates the contact tokens; the only place the contact line may wrap (L4). */
+export const CONTACT_SEPARATOR = ' | ';
+
 /** email | phone | city | links, skipping empty fields. */
 export function contactLine(c: ContactDetails): string {
-  return [c.email, c.phone, c.city, ...c.links].map((s) => s.trim()).filter((s) => s !== '').join(' | ');
+  return [c.email, c.phone, c.city, ...c.links].map((s) => s.trim()).filter((s) => s !== '').join(CONTACT_SEPARATOR);
 }
+
+/**
+ * The tokens of a contact line (an email, a phone number, a city, a link). Each is laid out as one unit in every format
+ * (L4): the line wraps only between tokens, never inside one, so a URL is never split.
+ */
+export const contactTokens = (line: string): string[] => line.split(CONTACT_SEPARATOR).map((t) => t.trim()).filter((t) => t !== '');
+
+/** The contact line of a document text (`Rendered.text`): its second line, under the name. */
+export const contactLineOf = (text: string): string => text.split('\n')[1] ?? '';
 
 /**
  * Invisible format characters (soft hyphen U+00AD, zero-width spaces and joiners, bidi marks: Unicode category Cf)

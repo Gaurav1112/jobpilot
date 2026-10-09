@@ -13,8 +13,8 @@ import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
 import { htmlAttributeText, htmlText, renderHtml } from '../../src/app/render/html.js';
-import { cleanText, contactLine, coverModel, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
-import { pdfIdOf, renderPdf, uncoveredGlyph } from '../../src/app/render/pdf.js';
+import { cleanText, contactLine, contactTokens, coverModel, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
+import { pdfIdOf, renderPdf, uncoveredGlyph, wrapContact } from '../../src/app/render/pdf.js';
 import type { Pack } from '../../src/app/pack/schema.js';
 import { CoverPlan, QaReport, Rendered } from '../../src/app/types.js';
 import { defineAgent, type AnyAgent } from '../../src/kernel/agent.js';
@@ -538,7 +538,7 @@ describe('qa-gate', () => {
   withPdftotext('passes every check on the real renderer output', async () => {
     const { rendered, out } = await render();
     const report = await runQa(rendered, out);
-    expect(report.checks.map((c) => c.id)).toEqual(['qa.files', 'qa.pages', 'qa.terms', 'qa.hyphen', 'qa.docx-text', 'qa.pdf-text', 'qa.naming']);
+    expect(report.checks.map((c) => c.id)).toEqual(['qa.files', 'qa.pages', 'qa.terms', 'qa.hyphen', 'qa.docx-text', 'qa.pdf-text', 'qa.naming', 'qa.contact-intact']);
     expect(report.checks.filter((c) => !c.ok)).toEqual([]);
     expect(report.ok).toBe(true);
     expect(report.files).toEqual(rendered.files);
@@ -664,6 +664,70 @@ describe('render libraries', () => {
       writeFileSync(join(out, 'long.pdf'), pdf.bytes);
       expect((pdftotext(join(out, 'long.pdf')).match(/\f/g) ?? []).length).toBe(pdf.pages);
     }
+  });
+});
+
+describe('contact line (L4): wraps only between " | " separators', () => {
+  /** A fictional profile URL long enough that pdfkit used to break it inside, after "senior-". */
+  const LONG = 'https://www.linkedin.com/in/asha-rao-senior-backend-engineer-distributed-systems-0a1b2c3d';
+  const longPack = (): Pack => fullPack({ contact: { ...fullPack().contact, links: [LONG, 'https://github.com/asha-rao-example'] } });
+  const tokens = (p: Pack) => contactTokens(contactLine(p.contact));
+
+  it('splits the contact line into its tokens, and lays tokens out greedily, separators kept at the line end', () => {
+    expect(contactTokens('a@example.com | +91 1 | Pune | https://x.test/a-b')).toEqual(['a@example.com', '+91 1', 'Pune', 'https://x.test/a-b']);
+    expect(contactTokens('')).toEqual([]);
+    const width = (s: string) => s.length;
+    expect(wrapContact(['aaaa', 'bbbb', 'cccc'], width, 13)).toEqual(['aaaa | bbbb |', 'cccc']);
+    expect(wrapContact(['aaaa', 'bbbb', 'cccc'], width, 100)).toEqual(['aaaa | bbbb | cccc']);
+    // a token wider than the line stays whole on a line of its own
+    expect(wrapContact(['a', 'x'.repeat(30), 'b'], width, 10)).toEqual(['a |', `${'x'.repeat(30)} |`, 'b']);
+    expect(normText(wrapContact(['aaaa', 'bbbb', 'cccc'], width, 13).join('\n'))).toBe('aaaa | bbbb | cccc');
+  });
+
+  withPdftotext('keeps every contact token, URLs included, on one line of the PDF text layer (resume and cover)', async () => {
+    const pack = longPack();
+    const { rendered, out } = await render(coverPlanOf(posting(), pack), pack);
+    for (const kind of ['resume', 'cover'] as const) {
+      const lines = pdftotext(join(out, rendered.files.find((f) => f.kind === kind && f.format === 'pdf')!.path)).split('\n').map((l) => l.replace(/\s+/g, ' '));
+      for (const t of tokens(pack)) expect(lines.some((l) => l.includes(t)), `${kind}: ${t}`).toBe(true);
+    }
+  });
+
+  withPdftotext('passes qa.contact-intact on the real output and fails it when a URL is split across lines', async () => {
+    const pack = longPack();
+    const { rendered, out } = await render(coverPlanOf(posting(), pack), pack);
+    const ok = await (async () => {
+      const [r] = await qaGate.run(rendered, ctxFor(qaGate, out, publicPackOf(pack), {}, 'P1'));
+      return QaReport.schema.parse(r);
+    })();
+    expect(ok.checks.find((c) => c.id === 'qa.contact-intact')).toEqual({ id: 'qa.contact-intact', ok: true, detail: 'ok' });
+    expect(ok.ok).toBe(true);
+    const split: PdfTextProvider = async (abs, signal) => (await realPdfText!(abs, signal)).replace('senior-backend', 'senior-\nbackend');
+    const [bad] = await qaGate.run(rendered, ctxFor(qaGate, out, publicPackOf(pack), { pdfText: split }, 'P1'));
+    const check = QaReport.schema.parse(bad).checks.find((c) => c.id === 'qa.contact-intact')!;
+    expect(check.ok).toBe(false);
+    expect(check.detail).toBe('0123456789abcdef/resume.pdf: contact item 4 is broken across lines; 0123456789abcdef/cover.pdf: contact item 4 is broken across lines');
+    expect(check.detail).not.toContain('linkedin');
+  });
+
+  it('makes each DOCX contact token unbreakable (no-break spaces and hyphens), with the text layer unchanged', async () => {
+    const pack = longPack();
+    const m = resumeModel(coverPlanOf(posting(), pack).resume, pack.contact);
+    const docx = await renderDocx(m);
+    const xml = new TextDecoder().decode(readZip(docx).find((e) => e.name === 'word/document.xml')!.data);
+    const contactPara = [...xml.matchAll(/<w:p\b[\s\S]*?<\/w:p>/g)].map((x) => x[0]).find((p) => p.includes('linkedin'))!;
+    expect(contactPara).toContain('<w:noBreakHyphen/>');
+    expect(contactPara).toContain('+91\u00A090000\u00A000000');
+    expect(contactPara).not.toMatch(/linkedin[^<]*-/);
+    expect(normText(docxText(docx))).toBe(normText(modelText(m)));
+  });
+
+  it('keeps each HTML contact token on one line (white-space: nowrap)', () => {
+    const pack = longPack();
+    const html = renderHtml(resumeModel(coverPlanOf(posting(), pack).resume, pack.contact));
+    expect(html).toContain(`<span class="tok">${LONG}</span>`);
+    expect(html).toMatch(/\.tok\{white-space:nowrap\}/);
+    expect(htmlText(html)).toContain(contactLine(pack.contact));
   });
 });
 

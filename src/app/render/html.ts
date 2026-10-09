@@ -1,4 +1,4 @@
-import { BULLET, type Block, type DocModel } from './model.js';
+import { BULLET, CONTACT_SEPARATOR, contactTokens, type Block, type DocModel } from './model.js';
 
 /**
  * The HTML preview (Task 10): one standalone page per document for the dashboard, no script, no external resource,
@@ -19,6 +19,7 @@ const STYLE = [
   'h2{font-size:.95rem;letter-spacing:.04em;margin:1.25rem 0 .25rem;border-bottom:1px solid var(--rule)}',
   'p{margin:.2rem 0 .6rem}',
   '.contact,.meta{color:var(--muted)}',
+  '.tok{white-space:nowrap}',
   '.title{font-weight:700;margin:.6rem 0 0}',
   'ul{list-style:none;margin:0 0 .4rem;padding:0}',
   'li{padding-left:1.1rem;text-indent:-1.1rem;margin:.15rem 0}',
@@ -30,7 +31,8 @@ function blockHtml(b: Block): string {
     case 'name':
       return `<h1>${t}</h1>`;
     case 'contact':
-      return `<p class="contact">${t}</p>`;
+      // L4: each token (an email, a phone number, a URL) is one unit; the line wraps only at the separators.
+      return `<p class="contact">${contactTokens(b.text).map((x) => `<span class="tok">${escapeHtml(x)}</span>`).join(escapeHtml(CONTACT_SEPARATOR))}</p>`;
     case 'heading':
       return `<h2>${t}</h2>`;
     case 'title':

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import PDFDocument from 'pdfkit';
 import { fontBytes } from './fonts.js';
-import { BULLET, modelText, type Block, type DocModel } from './model.js';
+import { BULLET, CONTACT_SEPARATOR, contactTokens, modelText, type Block, type DocModel } from './model.js';
 
 /**
  * PDF rendering with pdfkit (Task 10). Trusted render library: agent code may call it (G-CONTAINMENT allow-list), it
@@ -61,6 +61,29 @@ export function uncoveredGlyph(texts: readonly string[]): string | null {
   return null;
 }
 const BULLET_INDENT = 14;
+/** The smallest size a contact line is shrunk to when one token alone is wider than the line. */
+const MIN_CONTACT_SIZE = 6;
+
+/**
+ * The contact line's lines (L4): tokens placed greedily, each whole, joined by " | "; a line that continues on the next
+ * keeps its trailing " |", so the text layer still reads "a | b | c" once whitespace is collapsed. A token wider than
+ * `maxWidth` gets a line of its own (the renderer shrinks that line to fit). Pure; `width` measures a string.
+ */
+export function wrapContact(tokens: readonly string[], width: (s: string) => number, maxWidth: number): string[] {
+  const sep = CONTACT_SEPARATOR.trimEnd();
+  const lines: string[] = [];
+  let cur: string[] = [];
+  const fits = (xs: readonly string[]): boolean => width(`${xs.join(CONTACT_SEPARATOR)}${sep}`) <= maxWidth || xs.length === 1;
+  for (const t of tokens) {
+    if (cur.length === 0 || fits([...cur, t])) cur.push(t);
+    else {
+      lines.push(cur.join(CONTACT_SEPARATOR));
+      cur = [t];
+    }
+  }
+  if (cur.length > 0) lines.push(cur.join(CONTACT_SEPARATOR));
+  return lines.map((l, i) => (i < lines.length - 1 ? `${l}${sep}` : l));
+}
 
 export interface RenderedPdf {
   readonly bytes: Uint8Array;
@@ -108,10 +131,22 @@ export async function renderPdf(m: DocModel): Promise<RenderedPdf> {
       case 'name':
         body(FONT.bold, FONT.name).text(b.text, left, doc.y, { width });
         break;
-      case 'contact':
-        body().text(b.text, left, doc.y + 2, { width });
+      case 'contact': {
+        // L4: tokens are atomic; each line is drawn without pdfkit's own wrapping, so a URL never breaks inside.
+        body();
+        doc.y += 2;
+        for (const line of wrapContact(contactTokens(b.text), (s) => doc.widthOfString(s), width)) {
+          const natural = doc.widthOfString(line);
+          const size = natural > width ? Math.max(MIN_CONTACT_SIZE, (FONT.body * width) / natural) : FONT.body;
+          const y = doc.y;
+          body(FONT.regular, size).text(line, left, y, { lineBreak: false });
+          doc.x = left;
+          doc.y = y + doc.currentLineHeight(true);
+        }
+        body();
         doc.moveDown(0.6);
         break;
+      }
       case 'heading':
         doc.moveDown(0.5);
         body(FONT.bold, FONT.heading).text(b.text, left, doc.y, { width });

@@ -5,7 +5,7 @@ import { KernelError } from '../../../kernel/errors.js';
 import { assertNoForbidden, ForbiddenTermError } from '../../pack/rules.js';
 import { docxText } from '../../render/docx.js';
 import { htmlAttributeText, htmlText } from '../../render/html.js';
-import { normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
+import { contactLineOf, contactTokens, normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
 import { QaReport, qaRan, Rendered } from '../../types.js';
 
 /**
@@ -22,6 +22,7 @@ import { QaReport, qaRan, Rendered } from '../../types.js';
  * | qa.docx-text | each DOCX `word/document.xml` text equals the document text (`Rendered.text`) |
  * | qa.pdf-text | each PDF text layer equals the document text |
  * | qa.naming | no forbidden term in any PDF or DOCX text layer, nor in the HTML previews' text (tags stripped) or attribute values (data-fact ids) |
+ * | qa.contact-intact | each contact token (email, phone, city, each link) is whole on one line of each PDF's text layer: never split inside a URL (L4) |
  *
  * Every text comparison uses `normText` (render/model.ts): NFC, format characters (soft hyphens U+00AD, zero-width
  * characters) removed, a line break after a word's hyphen joined, whitespace runs collapsed, ends trimmed. The renderer
@@ -89,6 +90,19 @@ export function hyphenProblems(pdf: string, source: string): string[] {
   return problems;
 }
 
+/**
+ * Contact tokens of `source` (its second line, split at " | ") that no single line of the PDF text layer holds whole,
+ * as "contact item N is broken across lines" (1-based; the token itself is P1 and never named). Whitespace inside a
+ * line is collapsed first, since pdftotext -layout may widen it.
+ */
+export function contactProblems(pdf: string, source: string): string[] {
+  const lines = pdf.split(/\n|\f/).map((l) => l.replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' '));
+  return contactTokens(contactLineOf(source)).flatMap((t, i) => {
+    const token = t.replace(/\s+/gu, ' ');
+    return lines.some((l) => l.includes(token)) ? [] : [`contact item ${i + 1} is broken across lines`];
+  });
+}
+
 /** The QA checks of one Rendered, from what was read. Pure, so tests can drive every branch. */
 export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Check[] {
   const expected = RENDER_FILES.map((f) => ({ ...f, path: renderedPath(rendered.jobKey, f.kind, f.format) }));
@@ -118,6 +132,7 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
   const pdfTextProblems: string[] = [];
   const naming: string[] = [];
   const docxProblems: string[] = [];
+  const contact: string[] = [];
   const scan = (where: string, text: string) => {
     try {
       assertNoForbidden(text, pack.naming);
@@ -135,6 +150,7 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
     if (pdf === undefined) {
       pageProblems.push(`${pdfPath} has no text layer`);
       pdfTextProblems.push(`${pdfPath} has no text layer`);
+      contact.push(`${pdfPath} has no text layer`);
     } else {
       const pages = (pdf.match(/\f/g) ?? []).length;
       if (pages > PAGE_LIMITS[kind]) pageProblems.push(`${kind} has ${pages} pages, the limit is ${PAGE_LIMITS[kind]}`);
@@ -142,6 +158,7 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
       if (recorded !== pages) pageProblems.push(`${pdfPath} has ${pages} pages, the renderer recorded ${String(recorded)}`);
       hyphen.push(...hyphenProblems(pdf, source).map((p) => `${pdfPath} ${p}`));
       if (normText(pdf) !== normText(source)) pdfTextProblems.push(`${pdfPath} text differs from the document text`);
+      contact.push(...contactProblems(pdf, source).map((p) => `${pdfPath}: ${p}`));
       scan(pdfPath, pdf);
     }
     const htmlPath = renderedPath(rendered.jobKey, kind, 'html');
@@ -184,6 +201,7 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
     check('qa.docx-text', docxProblems),
     check('qa.pdf-text', pdfTextProblems),
     check('qa.naming', naming),
+    check('qa.contact-intact', contact),
   ];
 }
 
