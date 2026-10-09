@@ -166,6 +166,8 @@ const OTHER_PAY =
  */
 const TOTAL_PAY =
   /\b(?:ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
+/** A total followed (in its sentence) by include/including/comprises/consists of: what it includes is not stated as a figure of its own. */
+const TOTAL_INCLUDES = new RegExp(`${TOTAL_PAY.source}[^.;]*?\\b(?:includ(?:e|es|ed|ing)|comprises?|consists? of)\\b`, 'i');
 const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
@@ -222,6 +224,9 @@ export function compFromText(text: string): Comp | null {
     // A clause whose only pay words are components (variable, incentive, commission, bonus, equity ...) states no salary.
     if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
     const core = withoutIncluded(sentence);
+    // A total word beside a component, or a total that "includes" something: the figure may be the component, so the
+    // sentence is not read (task 7 fix round 3, I-R1). An unread figure only costs a note, never a rejection.
+    if (TOTAL_PAY.test(core) && (OTHER_PAY.test(core) || TOTAL_INCLUDES.test(core))) continue;
     if (OTHER_PAY.test(core) && !SALARY_WORD.test(core) && !TOTAL_PAY.test(core)) continue;
     if (FOREIGN_MONEY.test(sentence) || (sentence.includes('$') && DOLLAR_COUNTRY.test(sentence) && !US_DOLLAR.test(sentence))) continue;
     const r = parseComp(core);

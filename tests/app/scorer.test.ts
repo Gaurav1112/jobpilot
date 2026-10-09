@@ -116,6 +116,47 @@ describe('lexicon: termsIn', () => {
     for (const [t, want] of cases) expect(termsIn(t, lex), t).toEqual(want);
   });
 
+  it('ambiguous words in bullet blocks, beside a tech term, after a label or before skills (fix round 3, I-R2)', () => {
+    const lex = [...pack.lexicon.strong, ...pack.lexicon.medium, ...pack.lexicon.gap];
+    const cases: [string, string[]][] = [
+      ['Requirements:\n- Go\n- Postgres\n- Kafka', ['go', 'kafka', 'postgres']],
+      ['Requirements:\n- Spring\n- Hibernate\n- MySQL', ['spring']],
+      ['- Spring\n- Kafka', ['kafka', 'spring']],
+      ['1. Go\n2. Kafka', ['go', 'kafka']],
+      ['• React\n• Redux', ['react']],
+      ['Build payment services.\nGo\nPostgres', ['go', 'postgres']],
+      ['We use Go and Postgres.', ['go', 'postgres']],
+      ['Backend: Go', ['go']],
+      ['Tech: React', ['react']],
+      ['Strong Go skills.', ['go']],
+      ['Spring, Hibernate, JPA', ['spring']],
+      ['Node, Express', ['node']],
+      ['Flink/Spark pipelines', ['spark']],
+      ['Ruby/Rails, Go', ['go', 'ruby']],
+      ['React experience is a plus', ['react']],
+      // homonyms stay non-hits
+      ['companies can react faster', []],
+      ['a spark of genius', []],
+      ['spring hiring', []],
+      ['Kubernetes node pools', ['kubernetes']],
+      ['Go and check the dashboard', []],
+      ['In Go we trust', []],
+      ['go/no-go', []],
+      ['rust belt', []],
+      ['- Spring hiring drive\n- Summer offsite', []],
+      ['Note: go to the portal', []],
+    ];
+    for (const [t, want] of cases) expect(termsIn(t, lex), t).toEqual(want);
+  });
+
+  it('the careers fixture gets medium:go back (fix round 3, I-R2)', () => {
+    // The recorded careers JSON-LD job (tests/fixtures/careers/job-jsonld.html) normalises to this description.
+    const p = posting({ title: 'Senior Backend Engineer', descriptionText: 'Build payment services.\n\n- Go\n- Postgres' });
+    const s = scorePosting(verdict(p), pack);
+    expect(s.jdTerms).toEqual({ strong: ['postgres'], medium: ['go'], gap: [] });
+    expect(s.score).toBe(54); // 30 + 8 + 10 + 4 + 1.5 = 53.5
+  });
+
   it('an empty or blank term matches nothing (a stray "" in the pack must not match every posting)', () => {
     expect(hasTerm('anything at all', '')).toBe(false);
     expect(hasTerm('anything at all', '  ')).toBe(false);

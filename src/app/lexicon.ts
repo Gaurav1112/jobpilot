@@ -21,7 +21,13 @@
  *    by a newline or a sentence-ending `.`) holds another lexicon term or a known language word (LANGUAGE_WORDS)
  *    ("Kotlin, Swift, Java, and React"; not "companies can react faster", not "spring, summer");
  * 3. a skill phrase comes right before it: experience in/with, proficient/proficiency in, knowledge of, using,
- *    written in, familiar/familiarity with ("deep knowledge of Go").
+ *    written in, familiar/familiarity with ("deep knowledge of Go");
+ * 4. (fix round 3) a known tech term is directly beside it, joined by one connector (`, / & + |`, and/or, or a line
+ *    break with an optional bullet): "Go and Postgres", "Flink/Spark", "Ruby/Rails", "Go\nPostgres";
+ * 5. (fix round 3) it is the single item after a heading label: "Backend: Go", "Tech stack: React";
+ * 6. (fix round 3) a skill noun follows it: skills, experience, expertise, developer(s), engineer(s).
+ * On a bullet line (`-`, `•`, `*`, `·` or `1.`), the list segment is the whole contiguous bullet block, so one item per
+ * line still has its neighbours.
  * A `go` followed by a hyphen and a letter ("go-to-market", "go-getter") never counts, nor "go/no-go" or "no-go".
  * `ai` is stricter: it never counts alone, only inside the compounds of AI_COMPOUND (ai/ml, generative ai, genai, ai
  * platform ...). "AI-powered tools" and "embrace AI" do not count; "llm" and "large language model" are ordinary
@@ -33,10 +39,19 @@ export interface TermGroup {
   readonly synonyms: readonly string[];
 }
 
-/** Language words that make a list a tech list, whatever the pack's lexicon holds. */
-export const LANGUAGE_WORDS: readonly string[] = ['java', 'kotlin', 'python', 'typescript', 'javascript', 'scala', 'c++', 'c#', 'swift', 'sql'];
+/**
+ * Tech words that make a list a tech list (and a neighbour an ambiguous word can lean on), whatever the pack's lexicon
+ * holds: languages, plus ecosystem words (fix round 3, I-R2).
+ */
+export const LANGUAGE_WORDS: readonly string[] = [
+  'java', 'kotlin', 'python', 'typescript', 'javascript', 'scala', 'c++', 'c#', 'swift', 'sql',
+  'hibernate', 'jpa', 'maven', 'gradle', 'express', 'rails', 'django', 'flask', 'mysql', 'graphql', 'flink', 'airflow',
+  'redux', 'vue', 'angular', 'nestjs', 'junit', 'jvm',
+];
 
 /** The qualifiers that make each ambiguous word unambiguous when they follow it. */
+/** Following words that make any ambiguous word a skill ("Strong Go skills", "React experience"). */
+const SKILL_NOUN = 'skills?|experience|expertise|developers?|engineers?';
 const QUALIFIERS: Readonly<Record<string, string>> = {
   go: 'lang|language|programming|developers?|engineers?|services?|microservices?|code|backend|modules?|runtime|stack|routines?|apis?',
   react: 'js|\\.js|native|hooks|redux|components?|query|router',
@@ -87,13 +102,62 @@ function plainHas(text: string, term: string): boolean {
   return re.test(text.toLowerCase());
 }
 
-const LIST_BEFORE = /(?:^|\n)[ \t]*(?:[-*•·][ \t]*)?$|[,/|;(:][ \t]*$|(?<![\p{L}\p{N}_])(?:and|or|&)[ \t]+$/iu;
+const LIST_BEFORE = /(?:^|\n)[ \t]*(?:[-*•·][ \t]*|\d+[.)][ \t]*)?$|[,/|;(:][ \t]*$|(?<![\p{L}\p{N}_])(?:and|or|&)[ \t]+$/iu;
 const LIST_AFTER = /^[ \t]*(?:[,/|;).]|\n|$)|^[ \t]+(?:and|or)(?![\p{L}\p{N}_])/iu;
 const SKILL_BEFORE = /(?<![\p{L}\p{N}_])(?:experience (?:in|with)|proficien(?:t|cy) in|knowledge of|using|written in|familiar(?:ity)? with)[ \t]+$/iu;
+/** A heading label right before a single item: "Backend: Go", "Tech stack: React". */
+const LABEL_BEFORE = /(?<![\p{L}\p{N}_])(?:tech(?:nolog(?:y|ies))?(?: stack)?|stack|languages?|backend|frontend|skills?|tools?)[ \t]*:[ \t]*$/iu;
+/** A connector between two neighbouring terms: `,` `/` `&` `+` `|`, and/or, or a line break (optionally a bullet). */
+const CONNECTOR = '(?:[ \\t]*[,/&+|][ \\t]*|[ \\t]+(?:and|or)[ \\t]+|[ \\t]*\\n[ \\t]*(?:[-*•·][ \\t]*|\\d+[.)][ \\t]*)?)';
+const CONNECTOR_AFTER = new RegExp(`^${CONNECTOR}`, 'iu');
+const CONNECTOR_BEFORE = new RegExp(`${CONNECTOR}$`, 'iu');
+const BULLET_LINE = /^[ \t]*(?:[-*•·]|\d+[.)])[ \t]+\S/;
+
+const anchored = new Map<string, readonly [RegExp, RegExp]>();
+/** [starts-with, ends-with] regexes for a neighbour term. */
+function anchoredRe(term: string): readonly [RegExp, RegExp] {
+  let r = anchored.get(term);
+  if (r === undefined) {
+    const src = termSource(term);
+    r = [new RegExp(`^${src}`, 'iu'), new RegExp(`${src}$`, 'iu')];
+    anchored.set(term, r);
+  }
+  return r;
+}
+
+/** A known tech term directly beside the word, joined by one connector ("Go and Postgres", "Flink/Spark", "Go\nPostgres"). */
+function besideTech(before: string, after: string, others: readonly string[]): boolean {
+  const a = CONNECTOR_AFTER.exec(after);
+  const next = a === null ? null : after.slice(a[0].length, a[0].length + 40);
+  const b = CONNECTOR_BEFORE.exec(before);
+  const prev = b === null ? null : before.slice(Math.max(0, before.length - b[0].length - 40), before.length - b[0].length);
+  return others.some((n) => (next !== null && anchoredRe(n)[0].test(next)) || (prev !== null && anchoredRe(n)[1].test(prev)));
+}
+
 /** A segment ends at a newline or a sentence-ending dot (one followed by space or the end), not the dot in "Node.js". */
 const SEGMENT_END = /\n|\.(?=\s|$)/g;
 
 function segmentAround(text: string, start: number, end: number): string {
+  // On a bullet line, the segment is the whole contiguous bullet block (fix round 3, I-R2).
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1;
+  const lineEndAt = text.indexOf('\n', end);
+  const lineEnd = lineEndAt < 0 ? text.length : lineEndAt;
+  if (BULLET_LINE.test(text.slice(lineStart, lineEnd))) {
+    const lines = text.split('\n');
+    let offset = 0;
+    let index = 0;
+    for (; index < lines.length; index++) {
+      if (offset + (lines[index] ?? '').length >= start) break;
+      offset += (lines[index] ?? '').length + 1;
+    }
+    let first = index;
+    let last = index;
+    while (first > 0 && BULLET_LINE.test(lines[first - 1] ?? '')) first--;
+    while (last + 1 < lines.length && BULLET_LINE.test(lines[last + 1] ?? '')) last++;
+    const blockStart = lines.slice(0, first).reduce((n, l) => n + l.length + 1, 0);
+    const blockEnd = lines.slice(0, last + 1).reduce((n, l) => n + l.length + 1, 0) - 1;
+    return `${text.slice(blockStart, start)} \u0000 ${text.slice(end, blockEnd)}`;
+  }
   let from = 0;
   let to = text.length;
   for (const m of text.matchAll(SEGMENT_END)) {
@@ -109,7 +173,7 @@ function segmentAround(text: string, start: number, end: number): string {
 
 function ambiguousHas(text: string, word: string, neighbours: readonly string[]): boolean {
   if (word === 'ai') return AI_COMPOUND.test(text);
-  const qualifier = new RegExp(`^(?:[ \\t]+|[-.]?)(?:${QUALIFIERS[word] ?? '(?!)'})(?![\\p{L}\\p{N}_])`, 'iu');
+  const qualifier = new RegExp(`^(?:[ \\t]+|[-.]?)(?:${QUALIFIERS[word] ?? '(?!)'}|${SKILL_NOUN})(?![\\p{L}\\p{N}_])`, 'iu');
   const occurrence = new RegExp(`(?<![\\p{L}\\p{N}_])${word}`, 'giu');
   const others = neighbours.filter((n) => n.trim().toLowerCase() !== word && n.replace(/[\s-]+/g, '') !== '');
   for (const m of text.matchAll(occurrence)) {
@@ -121,6 +185,8 @@ function ambiguousHas(text: string, word: string, neighbours: readonly string[])
     if (WORD.test(after[0] ?? '')) continue; // inside a longer word ("Google", "gopher")
     if (word === 'go' && (/^-\p{L}/u.test(after) || /^\/no[- ]?go\b/i.test(after) || /\bno[- ]?$/i.test(before))) continue;
     if (SKILL_BEFORE.test(before)) return true;
+    if (LABEL_BEFORE.test(before) && LIST_AFTER.test(after)) return true;
+    if (besideTech(before, after, others)) return true;
     if (LIST_BEFORE.test(before) && LIST_AFTER.test(after)) {
       const segment = segmentAround(text, start, end);
       if (others.some((n) => plainHas(segment, n))) return true;

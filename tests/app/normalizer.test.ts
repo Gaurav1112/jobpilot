@@ -778,10 +778,11 @@ describe('fix round 1: comp basis (I1, I4)', () => {
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
   it('never calls OTE, total comp, commission, bonus, equity or variable pay base', () => {
-    expect(text('<p>OTE $200k (50/50 base/commission)</p>')?.basis).toBe('unknown');
-    expect(text('<p>Total compensation (base + bonus): $180k - $220k</p>')).toEqual({ min: 180000, max: 220000, currency: 'USD', period: 'year', basis: 'unknown' });
+    // task 7 fix round 3 (I-R1): a total beside a component, or a total that includes something, is not read
+    expect(text('<p>OTE $200k (50/50 base/commission)</p>')).toBeNull();
+    expect(text('<p>Total compensation (base + bonus): $180k - $220k</p>')).toBeNull();
     expect(text('<p>Base salary $150,000 plus variable pay</p>')?.basis).toBe('unknown');
-    expect(text('<p>TC: $250,000 including base</p>')?.basis).toBe('unknown');
+    expect(text('<p>TC: $250,000 including base</p>')).toBeNull();
     expect(text('<p>Base salary: $150,000</p>')?.basis).toBe('base');
     expect(text('<p>Salary: $150,000</p>')?.basis).toBe('base');
   });
@@ -1249,5 +1250,30 @@ describe('task 7 fix round 2: totals are kept, "+ equity" is not "or more"', () 
     expect(text('<p>Salary: ₹30 LPA + equity</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
     expect(text('<p>Salary: $120k+</p>')).toEqual({ min: 120000, max: null, currency: 'USD', period: 'year', basis: 'base' });
     expect(text('<p>Salary: $120k + bonus</p>')).toEqual({ min: 120000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+});
+
+describe('task 7 fix round 3: a total word beside a component sets no comp (I-R1)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('skips the reviewer sentences', () => {
+    for (const t of [
+      'On-target earnings include a ₹10 LPA variable component.',
+      'OTE includes ₹15 LPA variable.',
+      'Your total compensation will include a joining bonus of ₹5 LPA.',
+      'Total package includes ₹3 LPA relocation support.',
+      'Total compensation includes base salary, bonus and RSUs worth up to ₹20 LPA.',
+      'TC includes ₹25 LPA in ESOPs.',
+      'Total rewards: ₹2 LPA learning stipend.',
+      'Total compensation comprises a ₹30 LPA package.',
+    ]) expect(text(`<p>${t}</p>`), t).toBeNull();
+  });
+
+  it('keeps a total on its own, and CTC with a component (CTC is base-type)', () => {
+    expect(text('<p>OTE ₹50 LPA</p>')?.max).toBe(5000000);
+    expect(text('<p>TC: $250,000</p>')).toEqual({ min: 250000, max: 250000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>CTC up to ₹45 LPA including variable</p>')).toEqual({ min: null, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: ₹80 LPA. Total compensation includes ₹20 LPA in RSUs.</p>')).toEqual({ min: 8000000, max: 8000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });

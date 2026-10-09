@@ -30,7 +30,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       office>"). Negations and alternatives ("not hybrid", "no office", "remote or hybrid") never count.
  *    b. India excluded → `remote-excludes-india:<rule>`, rules in this order: `location` (a `location:excludes:india`
  *       signal; a city-level exclusion is informational only), `us-only`, `must-reside`, `us-work-authorization`,
- *       `eu-only` (phrases in the title, location or first 1500 characters; US, USA and U.S. only in capitals), and
+ *       `eu-only` (phrases in the title, location or first 1500 characters; US, USA and U.S. only in capitals;
+ *       must-reside only in sentences about the candidate; a phrase whose own sentence names India is no exclusion;
+ *       a posting whose remote location names India or a region with India goes to `review` instead), and
  *       `country-list`: structured remote or a location that says remote, with a non-empty country list naming none
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
@@ -112,10 +114,29 @@ const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
 /** Title phrases where a contract word is not employment ("Smart Contract Engineer", "Contract Testing"). */
 const TITLE_NOT_EMPLOYMENT = /\bsmart[\s-]+contracts?\b|\bcontract[\s-]+testing\b/gi;
 
-/** The longest `filters.employmentDeny` word found bare in the title, or undefined. */
+/** Role words that a leading "Contract <role>" must reach within three words. */
+const ROLE_WORD = 'engineers?|developers?|programmers?|architects?|consultants?|analysts?|sde|swe|leads?|specialists?|administrators?|testers?';
+/** Domain nouns: "Contract Management", "Temporary Storage", "Hourly Billing" name a product, not employment. */
+const DOMAIN_WORD = 'management|lifecycle|intelligence|platform|billing|storage|deposits?|data|analytics|systems?|marketplace|services?|operations|ledger';
+const titleWordRe = (w: string): string => w.trim().split(/[\s-]+/).map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('[\\s-]+');
+const sameWords = (a: string, b: string): boolean => a.toLowerCase().replace(/[\s-]+/g, ' ').trim() === b.toLowerCase().replace(/[\s-]+/g, ' ').trim();
+
+/**
+ * The longest `filters.employmentDeny` word that stands as a qualifier in the title (fix round 3): in parentheses or
+ * brackets ("(Contract)", "[6 months]"), as the whole last part after " - ", " | ", "," or ":" ("... - Contract"), or
+ * leading a role ("Contract Java Developer", but not "Contract Management Engineer"). Anywhere else it is a domain
+ * word ("Contract Lifecycle Management", "Temporary Storage") and does not count.
+ */
 function titleDenyWord(title: string, words: readonly string[]): string | undefined {
   const t = title.replace(TITLE_NOT_EMPLOYMENT, ' ');
-  return [...words].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find((w) => hasTerm(t, w));
+  const bracketed = [...t.matchAll(/[([]([^)\]]*)[)\]]/g)].map((m) => m[1] ?? '');
+  const parts = t.split(/\s+[-–—|]\s+|\s*[,:]\s*/);
+  const last = parts.length > 1 ? (parts[parts.length - 1] ?? '') : '';
+  const standalone = (w: string): boolean =>
+    bracketed.some((b) => hasTerm(b, w)) ||
+    sameWords(last, w) ||
+    new RegExp(`^\\s*${titleWordRe(w)}\\s+(?!(?:${DOMAIN_WORD})\\b)(?:[\\p{L}\\p{N}+#./]+\\s+){0,2}(?:${ROLE_WORD})\\b`, 'iu').test(t);
+  return [...words].filter((w) => w.trim() !== '').sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find(standalone);
 }
 
 function employmentReason(p: Posting, pack: EligibilityPack): string | null {
@@ -140,12 +161,15 @@ const withoutAlternatives = (s: string): string => s.replace(NEGATED_OR_ALTERNAT
 /** In the title or location a bare word is the arrangement. */
 const HYBRID_WORD = /\bhybrid\b/i;
 const ONSITE_WORD = /\bon-?site\b|\bin[- ]office\b/i;
+/** A number of office days, in digits or words ("2", "2-3", "two", "two-three"). */
+const DAY_COUNT = '(?:\\d+|one|two|three|four|five)';
+const DAYS = `${DAY_COUNT}(?:\\s*[-–]\\s*${DAY_COUNT})?`;
 /** In the description only these work-arrangement phrases count (task 7 fix round 1, I2). */
 const HYBRID_PHRASES: readonly RegExp[] = [
   /\bhybrid[\s-]+(?:work|working|role|position|model|schedule|arrangement|setup|policy|mode)\b/i,
   /\b(?:role|position|job) is (?:a )?hybrid\b/i,
-  /\b\d+(?:\s*[-–]\s*\d+)? days? (?:(?:a|per|\/) ?week )?(?:in|at) (?:the )?office\b/i,
-  /\bin (?:the )?office \d+(?:\s*[-–]\s*\d+)? days\b/i,
+  new RegExp(`\\b${DAYS} days? (?:(?:a|per|/) ?week )?(?:in|at) (?:the )?office\\b`, 'i'),
+  new RegExp(`\\bin (?:the )?office ${DAYS} days\\b`, 'i'),
   /\b(?:on-?site|in[- ]office) (?:\d+|one|two|three|four) days\b/i,
 ];
 const ONSITE_PHRASES: readonly RegExp[] = [
@@ -172,11 +196,17 @@ const EXCLUSION_RULES: readonly (readonly [string, readonly RegExp[]])[] = [
   [
     'must-reside',
     [
-      new RegExp(`\\bmust (?:be|reside) (?:located |based )?in the (${US}|uk|eu)${END}`, 'giu'),
-      new RegExp(`\\b(?:based|located) in the (${US})${END}`, 'giu'),
-      new RegExp(`\\bwithin the (${US})${END}`, 'giu'),
-      // "US-based" about the role or the candidate; a US-based company, team or office says where the employer is.
-      new RegExp(`(?<![\\p{L}\\p{N}])(${US})-based(?!\\s+(?:company|companies|startup|firm|organi[sz]ation|business|headquarters|hq|employer|customers?|clients?|investors?|parent))${END}`, 'giu'),
+      // Only sentences about the candidate (fix round 3, C-R1): "based in the US", "within the US" or "US-based team"
+      // describe the employer or colleagues and are not exclusions.
+      new RegExp(`\\bmust (?:be|reside|live) (?:located |based )?in the (${US}|uk|eu)${END}`, 'giu'),
+      new RegExp(
+        `\\b(?:you|candidates?|applicants?)\\b[^.]{0,40}?\\b(?:must|should|need to|needs to|required to|are required to|is required to) (?:be|reside|live) (?:located |based )?in the (${US}|uk|eu)${END}`,
+        'giu',
+      ),
+      new RegExp(`\\bmust be (${US})-based${END}`, 'giu'),
+      new RegExp(`(?<![\\p{L}\\p{N}])(${US})-based (?:candidates?|applicants?|residents?) only\\b`, 'giu'),
+      new RegExp(`\\b(?:role|position|job) is (${US})-based${END}`, 'giu'),
+      new RegExp(`(?<![\\p{L}\\p{N}])(${US})-based (?:role|position|job)\\b`, 'giu'),
     ],
   ],
   [
@@ -233,7 +263,12 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (signals.includes('location:excludes:india')) return 'remote-excludes-india:location';
   const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
   const rule = exclusionRule(head);
-  if (rule !== undefined) return `remote-excludes-india:${rule}`;
+  if (rule !== undefined) {
+    // The posting's own India scope wins over a JD phrase (fix round 3, C-R1): a remote location naming India (or a
+    // region with India) can only go to review on a description phrase, never be rejected.
+    const ownIndiaScope = (structured === 'remote' || REMOTE_WORD.test(p.locationText)) && (indiaInScope(countries) || /\bindia\b/i.test(p.locationText));
+    return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
+  }
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {

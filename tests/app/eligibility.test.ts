@@ -141,6 +141,8 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(d('Remote with 2 days a week in the office.')).toEqual(rejected('hybrid'));
     expect(d('You will work 3 days in office.')).toEqual(rejected('hybrid'));
     expect(d('In the office 3 days a week.')).toEqual(rejected('hybrid'));
+    expect(d('Two days a week in the office.')).toEqual(rejected('hybrid'));
+    expect(d('You will be in the office three days a week.')).toEqual(rejected('hybrid'));
     expect(d('We follow a hybrid work model.')).toEqual(rejected('hybrid'));
     expect(d('This is a hybrid role in Pune.')).toEqual(rejected('hybrid'));
     expect(d('A hybrid schedule.')).toEqual(rejected('hybrid'));
@@ -179,25 +181,63 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ locationText: 'Remote or Hybrid - India' })).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
+  // Remote with no country named: JD exclusion phrases may reject it (no India scope of its own to protect).
+  const FOREIGN = { remote: remote('remote', [], ['workplaceType:remote']), locationText: 'Remote' };
+  const REVIEW_UNDISCLOSED = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+
   it('5.2 remote that excludes India', () => {
+    const f = (descriptionText: string) => decide({ ...FOREIGN, descriptionText });
     expect(decide({ remote: remote('remote', [], ['location:excludes:india']) })).toEqual(rejected('remote-excludes-india:location'));
     expect(decide({ remote: remote(null, ['india'], ['location:remote', 'location:excludes:mumbai']), locationText: 'Remote India (excluding Mumbai)' })).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(decide({ descriptionText: 'Remote, US only.' })).toEqual(rejected('remote-excludes-india:us-only'));
-    expect(decide({ descriptionText: 'This role is USA-only.' })).toEqual(rejected('remote-excludes-india:us-only'));
-    expect(decide({ descriptionText: 'You must reside in the UK.' })).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(decide({ descriptionText: 'Must be located in the United States.' })).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(decide({ descriptionText: 'You must be authorized to work in the US.' })).toEqual(rejected('remote-excludes-india:us-work-authorization'));
-    expect(decide({ descriptionText: 'Remote (Europe only).' })).toEqual(rejected('remote-excludes-india:eu-only'));
-    expect(decide({ descriptionText: 'Remote, U.S. only.' })).toEqual(rejected('remote-excludes-india:us-only'));
-    expect(decide({ descriptionText: 'Remote, United States only.' })).toEqual(rejected('remote-excludes-india:us-only'));
-    expect(decide({ descriptionText: 'You must be authorized to work in the U.S.' })).toEqual(rejected('remote-excludes-india:us-work-authorization'));
+    expect(f('Remote, US only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('This role is USA-only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('You must reside in the UK.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('Must be located in the United States.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('You must be authorized to work in the US.')).toEqual(rejected('remote-excludes-india:us-work-authorization'));
+    expect(f('Remote (Europe only).')).toEqual(rejected('remote-excludes-india:eu-only'));
+    expect(f('Remote, U.S. only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('Remote, United States only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('You must be authorized to work in the U.S.')).toEqual(rejected('remote-excludes-india:us-work-authorization'));
     expect(decide({ remote: remote('remote', ['canada', 'united states']), locationText: 'Remote' })).toEqual(rejected('remote-excludes-india:country-list'));
   });
 
   it('5.2 the pronoun "us" is not the US (I4)', () => {
-    expect(decide({ descriptionText: 'Contact us only if you have 5 years of Java.' })).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(decide({ descriptionText: 'Join us only after reading our values.' })).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(decide({ descriptionText: 'People must be in the us team channel.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    const f = (descriptionText: string) => decide({ ...FOREIGN, descriptionText });
+    expect(f('Contact us only if you have 5 years of Java.')).toEqual(REVIEW_UNDISCLOSED);
+    expect(f('Join us only after reading our values.')).toEqual(REVIEW_UNDISCLOSED);
+    expect(f('People must be in the us team channel.')).toEqual(REVIEW_UNDISCLOSED);
+  });
+
+  it('5.2 a posting whose own location is Remote India: JD exclusion phrases only send it to review (fix round 3, C-R1)', () => {
+    const india = (descriptionText: string) => decide({ descriptionText });
+    for (const t of ['Remote, US only.', 'US residents only.', 'You must be authorized to work in the US.', 'Candidates must be located in the U.S.', 'Remote (EU only).'])
+      expect(india(t), t).toEqual(REVIEW_UNDISCLOSED);
+    // also via a structured India scope with an APAC location
+    expect(decide({ remote: remote('remote', ['apac']), locationText: 'Remote - APAC', slug: 'example-gh', descriptionText: 'US only.' })).toEqual(REVIEW_UNDISCLOSED);
+  });
+
+  it('5.2 the reviewer\'s US-team and company sentences never reject a Remote India posting (fix round 3, C-R1)', () => {
+    for (const t of [
+      'You will work closely with our US-based team.',
+      'Collaborate with US-based stakeholders.',
+      'Partner with our US-based engineering team.',
+      'Overlap with US-based colleagues for 3-4 hours.',
+      'Report to our US-based CTO.',
+      'Join a fast-growing US-based fintech.',
+      'Acme is a U.S.-based SaaS leader.',
+      'Acme (US-based) is hiring remote engineers.',
+      'Founded in 2015 and based in the US, Acme builds billing software.',
+      'Acme is headquartered in New York and based in the US.',
+      'Our customers located in the U.S. rely on us.',
+      'Our HQ is located in the US.',
+      'We are among the largest fintechs within the US.',
+      'Serve 10M users within the US.',
+    ]) {
+      const v = decide({ descriptionText: t });
+      expect(v.verdict, t).not.toBe('rejected');
+      expect(v, t).toEqual(ELIGIBLE_UNDISCLOSED); // and none of them is even an exclusion phrase now
+      expect(decide({ ...FOREIGN, descriptionText: t }), t).toEqual(REVIEW_UNDISCLOSED);
+    }
   });
 
   it('5.2 a remote location in foreign countries rejects, before allRemote and hiresInIndia (#5, I3)', () => {
@@ -272,10 +312,28 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(through('₹10 LPA in ESOPs')).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
+  it('6. comp, end to end: a total word beside a component never rejects on the component (fix round 3, I-R1)', () => {
+    const through = (descriptionText: string) =>
+      decideEligibility(normalize({ source: 'jobicy', sourceId: '1', company: 'X', slug: 'jobicy', raw: { id: 1, jobTitle: 'Backend Engineer', companyName: 'X', url: 'https://jobicy.com/jobs/1', jobGeo: 'India', jobDescription: `<p>${descriptionText}</p>` } }), pack);
+    for (const t of [
+      'On-target earnings include a ₹10 LPA variable component.',
+      'OTE includes ₹15 LPA variable.',
+      'Your total compensation will include a joining bonus of ₹5 LPA.',
+      'Total package includes ₹3 LPA relocation support.',
+      'Total compensation includes base salary, bonus and RSUs worth up to ₹20 LPA.',
+      'TC includes ₹25 LPA in ESOPs.',
+      'Total rewards: ₹2 LPA learning stipend.',
+    ]) expect(through(t), t).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(through('OTE ₹50 LPA')).toEqual(rejected('below-floor:5000000'));
+    expect(through('TC: $250,000')).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
+    expect(through('Total compensation $40k–$60k')).toEqual(rejected('below-floor:5010000'));
+    expect(through('CTC up to ₹45 LPA including variable')).toEqual(rejected('below-floor:4500000'));
+  });
+
   it('4. employment: a bare contract word from filters.employmentDeny in the title rejects (fix round 2)', () => {
     expect(decide({ title: 'Java Developer (Contract)' })).toEqual(rejected('employment:contract'));
     expect(decide({ title: 'Contract Backend Engineer', employmentType: 'Full-time' })).toEqual(rejected('employment:contract'));
-    expect(decide({ title: 'Backend Contractor' })).toEqual(rejected('employment:contractor'));
+    expect(decide({ title: 'Backend Engineer (Contractor)' })).toEqual(rejected('employment:contractor'));
     expect(decide({ title: 'Backend Engineer - C2H' })).toEqual(rejected('employment:c2h'));
     expect(decide({ title: 'Backend Engineer - Contract-to-Hire' })).toEqual(rejected('employment:contract-to-hire'));
     expect(decide({ title: 'Freelance Backend Engineer' })).toEqual(rejected('employment:freelance'));
@@ -285,25 +343,39 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ title: 'Backend Engineer, Contracts Platform' })).toEqual(ELIGIBLE_UNDISCLOSED); // "contracts" is not the word
   });
 
-  it('5.2 more US exclusion phrases, case-sensitive on US forms (fix round 2)', () => {
-    const d = (descriptionText: string) => decide({ descriptionText });
-    expect(d('You must be based in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('Candidates based in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('Applicants located in the U.S. are preferred.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('Applicants located in the U.S. only.')).toEqual(rejected('remote-excludes-india:us-only')); // us-only is checked first
-    expect(d('Remote within the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('This is a US-based remote role.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('Remote within the USA.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('Must be based in the United States.')).toEqual(rejected('remote-excludes-india:must-reside'));
-    expect(d('US residents only.')).toEqual(rejected('remote-excludes-india:us-only'));
-    expect(d('You must be eligible to work in the US.')).toEqual(rejected('remote-excludes-india:us-work-authorization'));
-    // negatives
-    expect(d('We have teams in the US and India.')).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(d('Our engineers are based in the US and India.')).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(d('We are a US-based company hiring across APAC.')).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(d('A US-based company with a Pune team.')).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(d('Tell us within the us channel.')).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(d('Customers based in the us? no.')).toEqual(ELIGIBLE_UNDISCLOSED);
+  it('4. employment: a title word counts only as a standalone qualifier (fix round 3)', () => {
+    expect(decide({ title: 'Backend Engineer (6 months)' })).toEqual(rejected('employment:6 months'));
+    expect(decide({ title: 'Backend Engineer [Contract]' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Senior Backend Engineer - Contract' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Backend Engineer | Freelance' })).toEqual(rejected('employment:freelance'));
+    expect(decide({ title: 'Contract Java Developer' })).toEqual(rejected('employment:contract'));
+    for (const t of [
+      'Senior Backend Engineer - Contract Lifecycle Management', 'Backend Engineer, Contract Management Platform', 'Staff Engineer, Contracts',
+      'Senior Engineer, Freelancer Marketplace', 'Backend Engineer - Hourly Billing', 'Senior Backend Engineer, Temporary Storage',
+      'Backend Engineer - Fixed-Term Deposits', 'Contract Management Engineer', 'Backend Contractor Platform Engineer',
+    ]) expect(decide({ title: t }), t).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('5.2 must-reside is candidate-directed only; US forms case-sensitive (fix rounds 2 and 3)', () => {
+    const f = (descriptionText: string) => decide({ ...FOREIGN, descriptionText });
+    expect(f('You must be based in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('Candidates must be located in the U.S.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('Applicants should live in the United States.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('You need to be located in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('Candidates must be US-based.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('US-based candidates only.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('This is a US-based role.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('The position is US-based.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('Must be based in the United States.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(f('US residents only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('Applicants located in the U.S. only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(f('You must be eligible to work in the US.')).toEqual(rejected('remote-excludes-india:us-work-authorization'));
+    // dropped bare patterns and negatives: no exclusion
+    for (const t of [
+      'Candidates based in the US.', 'Applicants located in the U.S. are preferred.', 'Remote within the US.', 'This is a US-based remote company.',
+      'We have teams in the US and India.', 'Our engineers are based in the US and India.', 'We are a US-based company hiring across APAC.',
+      'A US-based company with a Pune team.', 'Tell us within the us channel.', 'Customers based in the us? no.', 'You must be eligible to work in the US or India.',
+    ]) expect(f(t), t).toEqual(REVIEW_UNDISCLOSED);
   });
 
   it('every reason and note is one of the fixed codes', () => {
