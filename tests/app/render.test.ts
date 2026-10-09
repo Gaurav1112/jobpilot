@@ -12,7 +12,7 @@ import { COVER_P4, COVER_P4_THANKS } from '../../src/app/agents/writing/template
 import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
-import { renderHtml } from '../../src/app/render/html.js';
+import { htmlText, renderHtml } from '../../src/app/render/html.js';
 import { cleanText, contactLine, coverModel, longDate, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
 import { pdfIdOf, renderPdf, uncoveredGlyph } from '../../src/app/render/pdf.js';
 import type { Pack } from '../../src/app/pack/schema.js';
@@ -28,7 +28,7 @@ import type { GuardrailContext } from '../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import { pdftotextProvider, type PdfTextProvider, type Providers } from '../../src/kernel/providers.js';
 import { Store } from '../../src/kernel/store/store.js';
-import { commitPending, openPending } from '../../src/kernel/files.js';
+import { commitPending, openPending, type PendingFiles } from '../../src/kernel/files.js';
 import { BUILTIN_GUARDRAILS } from '../../src/kernel/guardrails/builtin.js';
 import { GuardrailRegistry } from '../../src/kernel/guardrails/index.js';
 import { coverPlanOf, fullPack, posting, publicPackOf, tempOut } from '../support/render-fixtures.js';
@@ -47,9 +47,15 @@ const providersFor = (out: string, extra: Partial<Providers> = {}): Providers =>
 });
 /** The step key direct renderer runs stage under; `render` commits it the way the executor does after the out guardrails. */
 const KEY = 'b'.repeat(64);
+const stages = new Map<string, PendingFiles>();
+const stageFor = (out: string): PendingFiles => {
+  const p = openPending(out, KEY);
+  stages.set(out, p);
+  return p;
+};
 const ctxFor = (agent: AnyAgent, out: string, pack: unknown, extra: Partial<Providers> = {}, inputClass: 'P0' | 'P1' = 'P0') =>
   issueContext({
-    ...(agent.contract.capabilities.files?.access === 'read-write' ? { pendingFiles: openPending(out, KEY) } : {}),
+    ...(agent.contract.capabilities.files?.access === 'read-write' ? { pendingFiles: stageFor(out) } : {}),
     contract: agent.contract,
     policy: PRODUCT_POLICY_V1,
     inputClass,
@@ -61,6 +67,7 @@ const ctxFor = (agent: AnyAgent, out: string, pack: unknown, extra: Partial<Prov
 
 async function render(cover: CoverPlan = coverPlanOf(), pack: Pack = fullPack(), out = tempOut()): Promise<{ rendered: Rendered; out: string }> {
   const [rendered] = await renderer.run(cover, ctxFor(renderer, out, pack));
+  await stages.get(out)?.markFinal();
   await commitPending(out, KEY, PRODUCT_POLICY_V1.maxResponseBytes);
   return { rendered: Rendered.schema.parse(rendered), out };
 }
@@ -240,6 +247,17 @@ describe('renderer', () => {
     for (const b of bulletsOf(rendered.plan)) expect(xml).toContain(b.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'));
     const numbering = new TextDecoder().decode(zip.find((e) => e.name === 'word/numbering.xml')!.data);
     expect(numbering).toContain('w:val="•"');
+    // m5: every bullet paragraph's numId maps, through its abstractNum, to a level-0 lvlText of a literal "•"
+    const numIds = new Set([...xml.matchAll(/<w:numId w:val="(\d+)"\/>/g)].map((m) => m[1]));
+    expect(numIds.size).toBe(1);
+    for (const id of numIds) {
+      const abstract = new RegExp(`<w:num w:numId="${id}"[^>]*>\\s*<w:abstractNumId w:val="(\\d+)"`).exec(numbering)?.[1];
+      expect(abstract, `numId ${id}`).toBeDefined();
+      const def = new RegExp(`<w:abstractNum [^>]*w:abstractNumId="${abstract}"[^>]*>([\\s\\S]*?)</w:abstractNum>`).exec(numbering)?.[1] ?? '';
+      const lvl0 = /<w:lvl w:ilvl="0"[^>]*>([\s\S]*?)<\/w:lvl>/.exec(def)?.[1] ?? '';
+      expect(lvl0).toMatch(/<w:numFmt w:val="bullet"\/>/);
+      expect(lvl0).toMatch(/<w:lvlText w:val="•"\/>/);
+    }
     const core = new TextDecoder().decode(zip.find((e) => e.name === 'docProps/core.xml')!.data);
     expect(core).toMatch(/<dcterms:created[^>]*>2026-10-01T00:00:00Z<\/dcterms:created>/);
     expect(core).toMatch(/<dcterms:modified[^>]*>2026-10-01T00:00:00Z<\/dcterms:modified>/);
@@ -576,6 +594,16 @@ describe('qa-gate', () => {
     const checks = qaChecks(rendered, qaPack(), { files: new Map(), pdfText: new Map() });
     expect(checks.every((c) => !c.ok || c.id === 'qa.hyphen' || c.id === 'qa.naming')).toBe(true);
     expect(JSON.stringify(checks).toLowerCase()).not.toContain('initech');
+  });
+
+  it('fails qa.naming when an HTML preview names a forbidden term (tags stripped, entities decoded)', async () => {
+    const { rendered, out } = await render();
+    const htmlPath = join(out, '0123456789abcdef/cover.html');
+    writeFileSync(htmlPath, readFileSync(htmlPath, 'utf8').replace('</main>', '<p>I<b></b>ni&#116;ech</p></main>'));
+    const fake: PdfTextProvider = async (abs) => (abs.endsWith('resume.pdf') ? `${rendered.text.resume}\f` : `${rendered.text.cover}\f`);
+    const report = await runQa(rendered, out, { pdfText: fake });
+    expect(report.checks.find((c) => c.id === 'qa.naming')).toEqual({ id: 'qa.naming', ok: false, detail: 'forbidden term #1 appears in 0123456789abcdef/cover.html' });
+    expect(htmlText('<p>a&amp;b &lt;x&gt; &#39;q&#39;</p>')).toBe(" a&b <x> 'q' ");
   });
 
   it('a renderer page count that disagrees with the text layer fails qa.pages', async () => {

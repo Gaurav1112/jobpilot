@@ -75,3 +75,18 @@ export function renderHtml(m: DocModel): string {
     '',
   ].join('\n');
 }
+
+/**
+ * The visible text of a preview page, for the qa-gate's forbidden-term scan: the `<style>` and `<title>` elements' text
+ * kept as text (a title is shown too), block tags turned into spaces and inline tags removed (so markup cannot split a
+ * word apart), the five escapes and numeric references decoded.
+ */
+export function htmlText(html: string): string {
+  return html
+    // block tags separate words; inline tags do not, so "I<b></b>nitech" reads as one word
+    .replace(/<\/?(?:p|li|ul|ol|h[1-6]|br|div|main|body|head|html|title|style|meta|section|article|header|footer|tr|td|th|table)\b[^>]*>/gi, ' ')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|#39|apos);/g, (_m, e: string) =>
+      e.startsWith('#x') ? String.fromCodePoint(Number.parseInt(e.slice(2), 16)) : e.startsWith('#') ? String.fromCodePoint(Number(e.slice(1))) : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[e] ?? '',
+    );
+}

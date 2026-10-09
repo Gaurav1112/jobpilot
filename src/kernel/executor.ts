@@ -106,6 +106,13 @@ const messageOf = (err: unknown): string => {
  */
 export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope): Promise<StepOutcome> {
   const c = agent.contract;
+  // m9: a pack agent's step key must carry the pack hash, or a pack edit would replay a stale step.
+  if (c.capabilities.pack === 'full' && deps.fullPackHash === undefined) {
+    throw new TypeError(`executeStep: ${c.id} reads the full pack but no fullPackHash was supplied`);
+  }
+  if (c.capabilities.pack === true && deps.pack !== undefined && deps.packHash === undefined) {
+    throw new TypeError(`executeStep: ${c.id} reads the pack but no packHash was supplied`);
+  }
   const files = c.capabilities.files;
   const root = files?.access === 'read-write' ? deps.providers.fileRoots?.[files.root] : undefined;
   const staging: Staging | undefined = root === undefined ? undefined : { root, maxBytes: deps.policy.maxResponseBytes };
@@ -220,9 +227,8 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
       const signal = AbortSignal.timeout(c.timeoutMs);
-      // Each attempt stages into a clean transaction, sealed when the attempt ends.
-      if (staging !== undefined && attempt > 0) await discardPending(staging.root, stepKey);
-      const pendingFiles = staging === undefined ? undefined : openPending(staging.root, stepKey);
+      // Each attempt stages into its own directory, sealed when the attempt ends; only the final one is committed.
+      const pendingFiles = staging === undefined ? undefined : openPending(staging.root, stepKey, attempt);
       const priorSpend = {
         agentUsd: deps.store.runCost(runId, c.id) + unrecorded.usd,
         runUsd: deps.store.runCost(runId) + unrecorded.usd,
@@ -309,6 +315,9 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         });
       }
 
+      // This attempt's stage is the one to commit, named before the step is recorded done (so a crash after the
+      // done record still knows which stage to commit, and a crash before it leaves nothing that will be).
+      await pendingFiles?.markFinal();
       // 12-13 one transaction: envelopes, step status, cost and the hash-chained event
       finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd }));
       return { kind: 'done', stepKey, outputs, replayed: false };

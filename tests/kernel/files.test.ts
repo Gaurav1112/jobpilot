@@ -11,7 +11,7 @@ import { contractHash, defineContract, type ContractSpec } from '../../src/kerne
 import { type Envelope, ZERO_COST } from '../../src/kernel/envelope.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { executeStep } from '../../src/kernel/executor.js';
-import { commitPending, openPending, recoverPending } from '../../src/kernel/files.js';
+import { commitPending, discardPending as discardPendingFn, openPending, recoverPending, type CommitHooks, type PendingFiles } from '../../src/kernel/files.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import type { Providers } from '../../src/kernel/providers.js';
@@ -49,12 +49,19 @@ const providers = (out: string, extra: Partial<Providers> = {}): Providers => ({
 });
 /** The step key every directly issued writer context stages under; `commit(out)` plays the executor's commit. */
 const KEY = 'a'.repeat(64);
+/** The latest stage opened per step key; `commit` names it final, as the executor does after the out guardrails. */
+const stages = new Map<string, PendingFiles>();
 const ctxOf = (contract: typeof writer, p: Providers, key: string | null = KEY) => {
   const root = p.fileRoots?.out;
   const pending = contract.capabilities.files?.access === 'read-write' && root !== undefined && key !== null ? openPending(root, key) : undefined;
+  if (pending && key !== null) stages.set(`${root}|${key}`, pending);
   return issueContext({ contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: p, clock: fixedClock('2026-10-09T00:00:00Z'), signal: AbortSignal.timeout(5000), ...(pending ? { pendingFiles: pending } : {}) });
 };
-const commit = (out: string, key = KEY) => commitPending(out, key, PRODUCT_POLICY_V1.maxResponseBytes);
+const markFinal = async (out: string, key = KEY) => stages.get(`${out}|${key}`)?.markFinal();
+const commit = async (out: string, key = KEY, hooks: CommitHooks = {}) => {
+  await markFinal(out, key);
+  return commitPending(out, key, PRODUCT_POLICY_V1.maxResponseBytes, hooks);
+};
 const bytes = (s: string) => new TextEncoder().encode(s);
 const sha = (b: Uint8Array | string) => createHash('sha256').update(b).digest('hex');
 
@@ -110,7 +117,7 @@ describe('kernel capability files (broker)', () => {
     expect(res).toEqual({ path: '0123456789abcdef/resume.pdf', sha256: sha('%PDF-1.3 hello') });
     // staged, not yet in place: the final path appears only on commit
     expect(existsSync(join(out, '0123456789abcdef/resume.pdf'))).toBe(false);
-    expect(readFileSync(join(out, '.pending', KEY, 'files', '0123456789abcdef/resume.pdf'), 'utf8')).toBe('%PDF-1.3 hello');
+    expect(readFileSync(join(out, '.pending', KEY, '0', 'files', '0123456789abcdef/resume.pdf'), 'utf8')).toBe('%PDF-1.3 hello');
     expect(await commit(out)).toEqual(['0123456789abcdef/resume.pdf']);
     expect(readFileSync(join(out, '0123456789abcdef/resume.pdf'), 'utf8')).toBe('%PDF-1.3 hello');
     expect(existsSync(join(out, '.pending', KEY))).toBe(false);
@@ -220,7 +227,7 @@ describe('kernel capability files (broker)', () => {
     // simulate a crash after the first rename
     mkdirSync(join(out, 'k'));
     const { renameSync } = await import('node:fs');
-    renameSync(join(out, '.pending', KEY, 'files', 'k', 'a.txt'), join(out, 'k', 'a.txt'));
+    renameSync(join(out, '.pending', KEY, '0', 'files', 'k', 'a.txt'), join(out, 'k', 'a.txt'));
     expect(await commit(out)).toEqual(['k/a.txt', 'k/b.txt']);
     expect(readFileSync(join(out, 'k', 'b.txt'), 'utf8')).toBe('B');
     expect(await commit(out)).toEqual([]);
@@ -229,7 +236,7 @@ describe('kernel capability files (broker)', () => {
   it('refuses to commit a staged file whose bytes changed after staging', async () => {
     const out = root();
     await ctxOf(writer, providers(out)).files!.write!('k/a.txt', bytes('A'));
-    writeFileSync(join(out, '.pending', KEY, 'files', 'k', 'a.txt'), 'tampered');
+    writeFileSync(join(out, '.pending', KEY, '0', 'files', 'k', 'a.txt'), 'tampered');
     await expect(commit(out)).rejects.toThrow(/does not match its recorded sha256/);
     expect(existsSync(join(out, 'k', 'a.txt'))).toBe(false);
   });
@@ -241,6 +248,7 @@ describe('kernel capability files (broker)', () => {
     await ctxOf(writer, providers(out), k2).files!.write!('k/r.pdf', bytes('from-2'));
     await ctxOf(writer, providers(out), k1).files!.write!('k/r.pdf', bytes('from-1'));
     await ctxOf(writer, providers(out), k3).files!.write!('k/other.pdf', bytes('from-3'));
+    for (const k of [k1, k2, k3]) await markFinal(out, k);
     const r = await recoverPending(out, (k) => k !== k3, PRODUCT_POLICY_V1.maxResponseBytes);
     expect(r).toEqual({ committed: [k1, k2], discarded: [k3], failed: [] });
     expect(readFileSync(join(out, 'k', 'r.pdf'), 'utf8')).toBe('from-2');
@@ -460,5 +468,199 @@ describe('executor: transactional writes (staged, committed only after the out g
     expect(existsSync(join(out, 'k'))).toBe(false);
     const ev = store.events('run-1').find((e) => e.kind === 'files_recovered');
     expect(JSON.parse(ev!.data)).toMatchObject({ root: 'out', committed: [], discarded: [stale] });
+  });
+});
+
+describe('staging never follows a link (N1), hard links (m8), temp squatters (m10)', () => {
+  const max = PRODUCT_POLICY_V1.maxResponseBytes;
+
+  it('a symlinked .pending: writes are denied, recovery reports it and touches nothing outside', async () => {
+    const out = root();
+    const outside = root();
+    mkdirSync(join(outside, 'victim-dir'));
+    writeFileSync(join(outside, 'victim-dir', 'keep.txt'), 'keep');
+    writeFileSync(join(outside, 'victim.txt'), 'keep');
+    symlinkSync(outside, join(out, '.pending'));
+    const ctx = ctxOf(writer, providers(out));
+    await expect(ctx.files!.write!('job2/a.txt', bytes('x'))).rejects.toThrow(/G-FILES: \.pending is not a real directory/);
+    const r = await recoverPending(out, () => false, max);
+    expect(r).toEqual({ committed: [], discarded: [], failed: [{ stepKey: '.pending', message: 'G-FILES: .pending is not a real directory' }] });
+    await expect(commitPending(out, KEY, max)).rejects.toThrow(/\.pending is not a real directory/);
+    await expect(discardPendingFn(out, KEY)).rejects.toThrow(/\.pending is not a real directory/);
+    expect(readdirSync(outside).sort()).toEqual(['victim-dir', 'victim.txt']);
+    expect(readFileSync(join(outside, 'victim-dir', 'keep.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('a symlinked step directory: writes are denied, recovery skips and reports it, nothing outside is emptied', async () => {
+    const out = root();
+    const outside = root();
+    writeFileSync(join(outside, 'victim.txt'), 'keep');
+    mkdirSync(join(out, '.pending'));
+    symlinkSync(outside, join(out, '.pending', KEY));
+    await expect(ctxOf(writer, providers(out)).files!.write!('job2/a.txt', bytes('x'))).rejects.toThrow(/G-FILES: \.pending\/a+ is not a real directory/);
+    const r = await recoverPending(out, () => false, max);
+    expect(r.discarded).toEqual([]);
+    expect(r.failed).toEqual([{ stepKey: KEY, message: `G-FILES: .pending/${KEY} is not a real directory` }]);
+    await expect(commitPending(out, KEY, max)).rejects.toThrow(/is not a real directory/);
+    expect(readFileSync(join(outside, 'victim.txt'), 'utf8')).toBe('keep');
+  });
+
+  it('a symlinked directory inside a stage: the commit is denied and the outside file is not moved', async () => {
+    const out = root();
+    const outside = root();
+    mkdirSync(join(outside, 'sub'));
+    writeFileSync(join(outside, 'sub', 'a.txt'), 'outside');
+    const sha = createHash('sha256').update('outside').digest('hex');
+    const base = join(out, '.pending', KEY);
+    mkdirSync(join(base, '0', 'files'), { recursive: true });
+    symlinkSync(join(outside, 'sub'), join(base, '0', 'files', 'job4'));
+    writeFileSync(join(base, '0', 'manifest.json'), JSON.stringify({ stepKey: KEY, files: [{ path: 'job4/a.txt', sha256: sha }] }));
+    writeFileSync(join(base, 'final.json'), JSON.stringify({ attempt: 0 }));
+    await expect(commitPending(out, KEY, max)).rejects.toThrow(/G-FILES: job4\/a\.txt passes through a symlink/);
+    expect(readFileSync(join(outside, 'sub', 'a.txt'), 'utf8')).toBe('outside');
+    expect(existsSync(join(out, 'job4', 'a.txt'))).toBe(false);
+    // recovery of a done step reports the failed commit and leaves the outside file alone
+    const r = await recoverPending(out, () => true, max);
+    expect(r.failed.map((f) => f.stepKey)).toEqual([KEY]);
+    expect(readFileSync(join(outside, 'sub', 'a.txt'), 'utf8')).toBe('outside');
+  });
+
+  it('a symlinked staged file or final.json is a G-FILES denial, not a raw ELOOP', async () => {
+    const out = root();
+    const outside = root();
+    writeFileSync(join(outside, 'a.txt'), 'outside');
+    const sha = createHash('sha256').update('outside').digest('hex');
+    const base = join(out, '.pending', KEY);
+    mkdirSync(join(base, '0', 'files', 'job5'), { recursive: true });
+    symlinkSync(join(outside, 'a.txt'), join(base, '0', 'files', 'job5', 'a.txt'));
+    writeFileSync(join(base, '0', 'manifest.json'), JSON.stringify({ stepKey: KEY, files: [{ path: 'job5/a.txt', sha256: sha }] }));
+    writeFileSync(join(base, 'final.json'), JSON.stringify({ attempt: 0 }));
+    const err = await commitPending(out, KEY, max).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KernelError);
+    expect((err as KernelError).code).toBe('policy_denied');
+    expect((err as Error).message).toMatch(/^G-FILES: job5\/a\.txt is a symlink/);
+    const key2 = 'f'.repeat(64);
+    mkdirSync(join(out, '.pending', key2));
+    symlinkSync(join(outside, 'a.txt'), join(out, '.pending', key2, 'final.json'));
+    await expect(commitPending(out, key2, max)).rejects.toThrow(/^G-FILES: final\.json is a symlink/);
+    expect(readFileSync(join(outside, 'a.txt'), 'utf8')).toBe('outside');
+  });
+
+  it('m10: a directory squatting the temp path is a G-FILES denial', async () => {
+    const out = root();
+    mkdirSync(join(out, '.pending', KEY, '0', 'files', 'k', 'a.txt.jobpilot-tmp'), { recursive: true });
+    const ctx = ctxOf(writer, providers(out));
+    const err = await ctx.files!.write!('k/a.txt', bytes('x')).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(KernelError);
+    expect((err as Error).message).toMatch(/^G-FILES: k\/a\.txt has a directory in the way of its temp file/);
+  });
+
+  it('m8: a read (or pdfText) of a file with more than one hard link is a denial', async () => {
+    const out = root();
+    const outside = root();
+    writeFileSync(join(outside, 'secret.txt'), 'secret');
+    const { linkSync } = await import('node:fs');
+    linkSync(join(outside, 'secret.txt'), join(out, 'alias.txt'));
+    const ctx = ctxOf(reader, providers(out, { pdfText: async () => 'text' }));
+    await expect(ctx.files!.read('alias.txt')).rejects.toThrow(/G-FILES: alias\.txt is a hard link/);
+    await expect(ctx.pdfText!('alias.txt')).rejects.toThrow(/G-FILES: alias\.txt is a hard link/);
+    writeFileSync(join(out, 'plain.txt'), 'ok');
+    await expect(ctx.files!.read('plain.txt')).resolves.toMatchObject({ sha256: sha('ok') });
+  });
+});
+
+describe('commits are all or nothing per step (N2)', () => {
+  const max = PRODUCT_POLICY_V1.maxResponseBytes;
+  const seed = (out: string) => {
+    mkdirSync(join(out, 'k'), { recursive: true });
+    for (const n of ['a', 'b', 'c']) writeFileSync(join(out, 'k', `${n}.txt`), `OLD-${n}`);
+  };
+  const stageAll = async (out: string) => {
+    const ctx = ctxOf(writer, providers(out));
+    for (const n of ['a', 'b', 'c']) await ctx.files!.write!(`k/${n}.txt`, bytes(`NEW-${n}`));
+  };
+  const contents = (out: string) => ['a', 'b', 'c'].map((n) => readFileSync(join(out, 'k', `${n}.txt`), 'utf8'));
+
+  it('a failure while moving the third file restores the first two from their backups', async () => {
+    const out = root();
+    seed(out);
+    await stageAll(out);
+    await expect(commit(out, KEY, { beforeMove: (i) => { if (i === 2) throw new Error('disk full'); } })).rejects.toThrow(/disk full/);
+    expect(contents(out)).toEqual(['OLD-a', 'OLD-b', 'OLD-c']);
+    expect(readdirSync(join(out, 'k')).sort()).toEqual(['a.txt', 'b.txt', 'c.txt']);
+  });
+
+  it('a target that is no longer a regular file fails validation before anything moves', async () => {
+    const out = root();
+    seed(out);
+    await stageAll(out);
+    const { rmSync } = await import('node:fs');
+    rmSync(join(out, 'k', 'c.txt'));
+    mkdirSync(join(out, 'k', 'c.txt'));
+    await expect(commit(out, KEY)).rejects.toThrow(/G-FILES: k\/c\.txt is not a regular file/);
+    expect(['a', 'b'].map((n) => readFileSync(join(out, 'k', `${n}.txt`), 'utf8'))).toEqual(['OLD-a', 'OLD-b']);
+  });
+
+  it('a successful commit replaces the whole set and leaves no backup behind', async () => {
+    const out = root();
+    seed(out);
+    await stageAll(out);
+    await commit(out, KEY);
+    expect(contents(out)).toEqual(['NEW-a', 'NEW-b', 'NEW-c']);
+    expect(readdirSync(join(out, '.pending'))).toEqual([]);
+  });
+});
+
+describe('executor: per-attempt stages (N4) and pack hashes (m9)', () => {
+  const pHash = policyHash(PRODUCT_POLICY_V1);
+  const input: Envelope = {
+    envelopeId: 'seed', stepKey: 'seed-step', index: 0, type: 'FileIn@1',
+    producer: { agentId: 'supervisor', version: '1.0.0', contractHash: 'seed-hash' },
+    parents: [], payload: { n: 1 },
+    handoff: { guarantees: [], dataClass: 'P0', obligations: [], pins: { policyHash: pHash } },
+    guardrails: [], cost: ZERO_COST,
+  };
+  const depsFor = (store: Store, out: string, contract: ReturnType<typeof defineContract<{ n: number }, { n: number }>>, extra: Record<string, unknown> = {}) => ({
+    store, policy: PRODUCT_POLICY_V1, policyHash: pHash, providers: providers(out), clock: fixedClock('2026-10-09T00:00:00Z'), guardrails: builtinGuardrails(),
+    contractHashOf: (id: string) => (id === 'supervisor' ? 'seed-hash' : contractHash(contract)), sleep: async () => {}, ...extra,
+  });
+
+  it('commits only the successful attempt\'s stage; a failed attempt\'s writes are never committed', async () => {
+    const out = root();
+    const c = defineContract({ ...base, id: 'retrier', capabilities: { files: { root: 'out', access: 'read-write' } }, retry: { max: 1, on: ['network'], backoffMs: [0] } });
+    let attempt = 0;
+    const agent = defineAgent(c, async (_i, ctx) => {
+      attempt += 1;
+      if (attempt === 1) {
+        await ctx.files!.write!('k/first.txt', bytes('attempt 1'));
+        throw new KernelError('network', 'flaky');
+      }
+      await ctx.files!.write!('k/second.txt', bytes('attempt 2'));
+      return [{ n: 2 }];
+    });
+    let layout: { entries: string[]; final: unknown } | undefined;
+    const beforeCommit = (_a: string, key: string) => {
+      const dir = join(out, '.pending', key);
+      layout = { entries: readdirSync(dir).sort(), final: JSON.parse(readFileSync(join(dir, 'final.json'), 'utf8')) };
+    };
+    const res = await executeStep(depsFor(Store.open(':memory:'), out, c, { beforeCommit }), 'r', agent, input);
+    expect(res.kind).toBe('done');
+    // each attempt staged into its own directory, and only attempt 1 (the second, successful one) is named final
+    expect(layout).toEqual({ entries: ['0', '1', 'final.json'], final: { attempt: 1 } });
+    expect(readdirSync(join(out, 'k'))).toEqual(['second.txt']);
+    expect(readdirSync(join(out, '.pending'))).toEqual([]);
+  });
+
+  it("throws when a 'full' pack agent runs without fullPackHash, or a pack agent with a pack but no packHash", async () => {
+    const full = defineContract({ ...base, id: 'full-reader', kind: 'deterministic', capabilities: { pack: 'full' }, emits: 'P1', dataClasses: { in: ['P0'], out: ['P1'] } });
+    const pub = defineContract({ ...base, id: 'pub-reader', kind: 'deterministic', capabilities: { pack: true } });
+    const run = (c: typeof full, extra: Record<string, unknown>) =>
+      executeStep(depsFor(Store.open(':memory:'), root(), c, extra), 'r', defineAgent(c, async () => [{ n: 2 }]), input);
+    await expect(run(full, { fullPack: { contact: {} } })).rejects.toThrow(/full-reader reads the full pack but no fullPackHash was supplied/);
+    await expect(run(full, {})).rejects.toThrow(/no fullPackHash/);
+    await expect(run(pub, { pack: { naming: {} } })).rejects.toThrow(/pub-reader reads the pack but no packHash was supplied/);
+    await expect(run(full, { fullPack: { contact: {} }, fullPackHash: 'f' })).resolves.toMatchObject({ kind: 'done' });
+    await expect(run(pub, { pack: { naming: {} }, packHash: 'p' })).resolves.toMatchObject({ kind: 'done' });
+    await expect(run(pub, {})).resolves.toMatchObject({ kind: 'done' });
   });
 });

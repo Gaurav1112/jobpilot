@@ -13,6 +13,7 @@ import { coverPlanOf, fullPack, posting, tempOut } from './render-fixtures.js';
 const out = tempOut();
 const key = 'd'.repeat(64);
 const pack = fullPack({ contact: { ...fullPack().contact, name: 'Αθηνά Ράο', city: 'Pune ₹ 12 LPA' } });
+const stage = openPending(out, key);
 const ctx = issueContext({
   contract: renderer.contract,
   policy: PRODUCT_POLICY_V1,
@@ -21,8 +22,9 @@ const ctx = issueContext({
   clock: fixedClock('2026-10-09T00:00:00Z'),
   signal: AbortSignal.timeout(60_000),
   pack: freezePack(pack),
-  pendingFiles: openPending(out, key),
+  pendingFiles: stage,
 });
 const [r] = await renderer.run(coverPlanOf(posting({ company: 'Łódź Systems' }), pack), ctx);
+await stage.markFinal();
 await commitPending(out, key, PRODUCT_POLICY_V1.maxResponseBytes);
 console.log(JSON.stringify(r!.files.map((f) => [f.path, f.sha256])));
