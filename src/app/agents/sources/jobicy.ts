@@ -1,16 +1,22 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, pageSignature, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, finish, getBoard, idOf, isRecord, onlySeenBefore, sourceContract, type Parsed } from './common.js';
 
 /**
  * Jobicy remote-jobs API, `tag=backend&count=50`, for `geo=apac` then `geo=anywhere` (there is
  * no India geo slug). Each geo is followed to its natural end: while a response says
  * `hasMore: true`, the next request passes its `nextCursor` back as `cursor` (checked live on
- * 2026-10-09: `after` is ignored, `cursor` pages). Nothing is truncated quietly:
- * - JOBICY_MAX_REQUESTS is a safety cap on requests for the whole step (both geos); reaching it
- *   before the natural end is `invalid_output` ('jobicy jobicy: request cap reached at N postings');
- * - `hasMore` without a `nextCursor`, or a page repeating the one before, is `invalid_output`.
+ * 2026-10-09: `after` is ignored, `cursor` pages). No end signal is taken on trust:
+ * - `hasMore` must be a boolean; a missing or renamed field is `invalid_output`, not "no more";
+ * - `hasMore: true` without a `nextCursor` is `invalid_output`;
+ * - the envelope has no total for the whole result set (`jobCount` is the count on this page), so
+ *   when `jobCount` is a number it must equal the jobs on the page;
+ * - JOBICY_MAX_REQUESTS is a safety cap on requests for the whole step (both geos). One more
+ *   request is allowed only to confirm an end; if it brings jobs, or another request would be
+ *   needed, the step fails ('jobicy jobicy: request cap reached at N postings');
+ * - within a geo, a page whose ids were all seen on earlier pages (repeat, or an A, B, A cycle)
+ *   is `invalid_output`. Across geos repeats are normal (apac and anywhere overlap).
  * A job in both geos is kept once: the first seen, i.e. the apac copy. A failed request fails the
  * whole step; a retry starts again at the first request. The step timeout allows 9 s per request.
  * `raw` is the job object unchanged (no request-time fields seen live); the envelope
@@ -49,24 +55,24 @@ export const srcJobicy = defineAgent(srcJobicyContract, async (req, ctx) => {
   const all: RawPosting[] = [];
   let requests = 0;
   for (const geo of JOBICY_GEOS) {
+    const fail = (page: number, message: string): KernelError => new KernelError('invalid_output', `${what}: ${geo} page ${page} ${message}`);
+    const seen = new Set<string>();
     let cursor: string | undefined;
-    let previous: string | undefined;
     for (let page = 1; ; page++) {
-      if (requests === JOBICY_MAX_REQUESTS) throw capReached(what, 'request', finish(all).length);
+      if (requests > JOBICY_MAX_REQUESTS) throw capReached(what, 'request', finish(all).length);
       requests++;
       const json = await getBoard(ctx, jobicyUrl(geo, cursor), JOBICY_FEED);
       const parsed = jobicyParse(json);
-      const body = json as { jobs: unknown[]; hasMore?: unknown; nextCursor?: unknown };
-      const signature = pageSignature(body.jobs, 'id');
-      if (signature !== undefined && signature === previous) {
-        throw new KernelError('invalid_output', `${what}: ${geo} page ${page} repeats page ${page - 1}`);
+      const body = json as { jobs: unknown[]; hasMore?: unknown; nextCursor?: unknown; jobCount?: unknown };
+      if (typeof body.hasMore !== 'boolean') throw fail(page, 'has no boolean hasMore');
+      if (typeof body.jobCount === 'number' && body.jobCount !== body.jobs.length) {
+        throw fail(page, `jobCount ${body.jobCount} but ${body.jobs.length} jobs`);
       }
-      previous = signature;
+      if (requests > JOBICY_MAX_REQUESTS && body.jobs.length > 0) throw capReached(what, 'request', finish(all).length);
+      if (onlySeenBefore(seen, parsed.postings.map((p) => p.sourceId))) throw fail(page, 'repeats earlier postings');
       all.push(...parsed.postings);
-      if (body.hasMore !== true) break;
-      if (typeof body.nextCursor !== 'string' || body.nextCursor === '') {
-        throw new KernelError('invalid_output', `${what}: ${geo} page ${page} says hasMore but gives no nextCursor`);
-      }
+      if (!body.hasMore) break;
+      if (typeof body.nextCursor !== 'string' || body.nextCursor === '') throw fail(page, 'says hasMore but gives no nextCursor');
       cursor = body.nextCursor;
     }
   }

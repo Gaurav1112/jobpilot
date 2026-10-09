@@ -1,21 +1,26 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSignature, repeatedPage, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
 
 /**
  * Lever Postings API: a top-level array. A big board unpaged (veeva: 937 postings, 13 MB) comes
  * close to the broker's 16 MiB cap, so the list is paged with `skip`/`limit` (LEVER_PAGE_SIZE per
- * page) until the API's natural end: the first page shorter than LEVER_PAGE_SIZE (an empty page
- * included). Nothing is truncated quietly:
- * - LEVER_MAX_PAGES (10,000 postings) is a safety cap; reaching it before the natural end is
- *   `invalid_output` ('lever <slug>: page cap reached at N postings');
- * - a page with the same length, first id and last id as the one before means the API ignored
- *   `skip`, which would loop or return a partial board, so it is `invalid_output` too.
+ * page). No single signal is trusted as the end of the list:
+ * - a short page may be the last one, but a server that clamps `limit` or a glitching page also
+ *   looks short, so the next page is always fetched: empty means the natural end, anything else is
+ *   `invalid_output` ('lever <slug>: short page before end');
+ * - only an empty page ends the walk;
+ * - LEVER_MAX_PAGES (10,000 postings) is a safety cap. After that many pages one more request
+ *   confirms the end; if it is not empty the step fails ('lever <slug>: page cap reached at N
+ *   postings'), so an exactly-full board is not a false alarm and a bigger one is never cut quietly;
+ * - a page whose ids were all seen on earlier pages (the API ignored `skip`, or cycles A, B, A) is
+ *   `invalid_output`.
  * Pages are processed in request order and deduped by id (the first copy wins), then sorted.
  * A failed page fails the whole step; the GETs are idempotent, so a retry starts again at page 1.
  * A live page took up to 7.7 s and pages share the 1 s host pacer, so the step timeout
- * (LEVER_TIMEOUT_MS) allows 9 s per page at the cap.
+ * (LEVER_TIMEOUT_MS) allows 9 s per page at the cap (8.9 s per request counting the confirming one;
+ * the kernel caps a step at 900 s).
  * `raw` is the posting unchanged, except a `salaryRange` whose min and max are both 0 is
  * dropped (Lever's placeholder for "no salary"). Live postings carry no request-time fields.
  */
@@ -51,17 +56,18 @@ export const srcLever = defineAgent(srcLeverContract, async (req, ctx) => {
   if (req.ats !== 'lever') return [];
   const what = `lever ${req.slug}`;
   const all: RawPosting[] = [];
-  let previous: string | undefined;
+  const seen = new Set<string>();
+  let short = false;
   for (let page = 0; ; page++) {
-    if (page === LEVER_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
     const json = await getBoard(ctx, leverUrl(req.slug, page * LEVER_PAGE_SIZE), req.slug);
     const parsed = leverParse(json, req);
     const jobs = json as unknown[];
-    const signature = pageSignature(jobs, 'id');
-    if (signature !== undefined && signature === previous) throw repeatedPage(what, page + 1);
-    previous = signature;
+    if (jobs.length === 0) break;
+    if (short) throw new KernelError('invalid_output', `${what}: short page before end`);
+    if (page === LEVER_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
+    if (onlySeenBefore(seen, parsed.postings.map((p) => p.sourceId))) throw repeatedPage(what, page + 1);
     all.push(...parsed.postings);
-    if (jobs.length < LEVER_PAGE_SIZE) break;
+    short = jobs.length < LEVER_PAGE_SIZE;
   }
   return finish(all);
 });

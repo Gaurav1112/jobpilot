@@ -1,18 +1,26 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSignature, repeatedPage, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
 
 /**
- * Himalayas search API, narrowed server-side to full-time backend roles open to India:
- * `q=backend&country=IN&employment_type=Full Time&sort=recent`. Full-time only matches the
- * spec (eligibility rejects contract, intern and temporary roles), and it cut the live result set
- * from 843 to 711 on 2026-10-09. Pages (20 jobs each) are fetched from 1 until the natural end:
- * the first EMPTY page (a short page is not the end: live pages hold 16 to 20 jobs mid-list).
- * Nothing is truncated quietly:
- * - HIMALAYAS_MAX_PAGES (1,600 jobs) is a safety cap; reaching it before the natural end is
- *   `invalid_output` ('himalayas himalayas: page cap reached at N postings');
- * - a page with the same length, first guid and last guid as the one before is `invalid_output`.
+ * Himalayas search API, `q=backend&country=IN&sort=recent`. There is deliberately no
+ * `employment_type` filter: eligibility (spec §5.2) decides employment type, and a server-side
+ * "Full Time" filter dropped "Other" and "Part Time" jobs it would keep.
+ *
+ * Pages (20 slots each) are walked from 1 against the envelope (`offset`, `limit`, `totalCount`),
+ * which is the source of truth for the end; nothing is truncated quietly:
+ * - every page must carry numeric `offset`, `limit` and `totalCount`, and its `offset` must be the
+ *   previous page's `offset + limit` (page 1: 0), so every window of the result set is visited;
+ * - the walk ends only at an empty page with `offset >= totalCount`. An empty page before that (a
+ *   transient glitch, or an empty page 1 while `totalCount > 0`) is `invalid_output`;
+ * - a short page is not the end. Live, the server drops a few slots from some pages: on 2026-10-09
+ *   it served 827 jobs for `totalCount` 842 (15 slots missing over 11 short pages), so "jobs seen ==
+ *   totalCount" cannot be asserted; window coverage is the invariant instead;
+ * - HIMALAYAS_MAX_PAGES (1,600 jobs) is a safety cap. After it, one more request confirms the end;
+ *   if that is not empty the step fails ('himalayas himalayas: page cap reached at N postings');
+ * - a page whose guids were all seen on earlier pages (repeat, or an A, B, A cycle) is
+ *   `invalid_output`. Jobs filtered out for location count as seen.
  * A failed page fails the whole step; a retry starts again at page 1. Pages are processed in
  * request order and deduped by guid (first copy wins). The step timeout allows 9 s per page.
  *
@@ -26,13 +34,13 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, pageSi
  */
 export const HIMALAYAS_HOST = 'himalayas.app';
 export const HIMALAYAS_FEED = 'himalayas';
-/** The live natural end on 2026-10-09 was page 37 (711 jobs); 80 pages (1,600 jobs) give 2x headroom. */
+/** Live on 2026-10-09: `totalCount` 842 needs 43 pages (the end is page 44); 80 pages (1,600 jobs) give 1.86x headroom. */
 export const HIMALAYAS_MAX_PAGES = 80;
 export const HIMALAYAS_TIMEOUT_MS = 720_000;
 const DROPPED = ['expiryDate'] as const;
 
 export const himalayasUrl = (page: number): string =>
-  `https://${HIMALAYAS_HOST}/jobs/api/search?q=backend&country=IN&employment_type=Full%20Time&sort=recent&page=${page}`;
+  `https://${HIMALAYAS_HOST}/jobs/api/search?q=backend&country=IN&sort=recent&page=${page}`;
 
 const ELIGIBLE = /^(india|asia|apac|asia[- ]pacific|worldwide|anywhere)$/i;
 
@@ -64,20 +72,34 @@ export function himalayasParse(json: unknown): Parsed {
 
 export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HOST, 'Fetches India-eligible backend jobs from the Himalayas feed', HIMALAYAS_TIMEOUT_MS);
 
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
 export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) => {
   if (req.ats !== 'feed' || req.slug !== HIMALAYAS_FEED) return [];
   const what = `himalayas ${HIMALAYAS_FEED}`;
+  const fail = (message: string): KernelError => new KernelError('invalid_output', `${what}: ${message}`);
   const all: RawPosting[] = [];
-  let previous: string | undefined;
+  const seen = new Set<string>();
+  let expectedOffset = 0;
   for (let page = 1; ; page++) {
-    if (page > HIMALAYAS_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
     const json = await getBoard(ctx, himalayasUrl(page), HIMALAYAS_FEED);
     const parsed = himalayasParse(json);
-    const jobs = (json as { jobs: unknown[] }).jobs;
-    if (jobs.length === 0) break;
-    const signature = pageSignature(jobs, 'guid');
-    if (signature === previous) throw repeatedPage(what, page);
-    previous = signature;
+    const body = json as { jobs: unknown[]; offset?: unknown; limit?: unknown; totalCount?: unknown };
+    const offset = num(body.offset);
+    const limit = num(body.limit);
+    const total = num(body.totalCount);
+    if (offset === undefined || limit === undefined || total === undefined || limit <= 0) {
+      throw fail(`page ${page} has no numeric offset, limit or totalCount`);
+    }
+    if (offset !== expectedOffset) throw fail(`page ${page} starts at offset ${offset}, expected ${expectedOffset}`);
+    expectedOffset = offset + limit;
+    if (body.jobs.length === 0) {
+      if (offset < total) throw fail(`empty page ${page} at offset ${offset} before totalCount ${total}`);
+      break;
+    }
+    if (page > HIMALAYAS_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
+    const guids = body.jobs.flatMap((j) => (isRecord(j) && idOf(j.guid) !== undefined ? [idOf(j.guid) as string] : []));
+    if (onlySeenBefore(seen, guids)) throw repeatedPage(what, page);
     all.push(...parsed.postings);
   }
   return finish(all);

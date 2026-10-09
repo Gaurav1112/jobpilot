@@ -84,13 +84,14 @@ export async function getBoard(ctx: AgentContext, url: string, slug: string): Pr
 }
 
 /**
- * The first and last job ids of a page, used to spot an API that answers every page with the
- * same jobs (one that ignores `skip`, `page` or `cursor`). `undefined` for an empty page.
+ * Records a page's ids in `seen` and reports whether the page brought nothing new: every id on it
+ * was already seen on an earlier page. That catches an API that ignores `skip`, `page` or `cursor`,
+ * whether it repeats the previous page or cycles (A, B, A). A page with no ids is never a repeat.
  */
-export function pageSignature(jobs: readonly unknown[], key: string): string | undefined {
-  if (jobs.length === 0) return undefined;
-  const at = (j: unknown): string => (isRecord(j) ? (idOf(j[key]) ?? '?') : '?');
-  return `${jobs.length}:${at(jobs[0])}:${at(jobs[jobs.length - 1])}`;
+export function onlySeenBefore(seen: Set<string>, ids: readonly string[]): boolean {
+  const repeat = ids.length > 0 && ids.every((id) => seen.has(id));
+  for (const id of ids) seen.add(id);
+  return repeat;
 }
 
 /** No silent truncation: a paged source that runs out of pages before the API's natural end fails loudly. */
@@ -98,7 +99,7 @@ export const capReached = (what: string, unit: 'page' | 'request', postings: num
   new KernelError('invalid_output', `${what}: ${unit} cap reached at ${postings} postings`);
 
 export const repeatedPage = (what: string, page: number): KernelError =>
-  new KernelError('invalid_output', `${what}: page ${page} repeats page ${page - 1}`);
+  new KernelError('invalid_output', `${what}: page ${page} repeats earlier postings`);
 
 const byId = (a: RawPosting, b: RawPosting): number => (a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0);
 
