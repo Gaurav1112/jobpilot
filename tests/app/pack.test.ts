@@ -165,7 +165,7 @@ describe('loadPack', () => {
     }
     const r = copyFixture();
     const roles = join(r, 'roles.yaml');
-    writeFileSync(roles, readFileSync(roles, 'utf8').replace('title: Senior Backend Engineer', 'title: "Senior Backend Engineer!"'));
+    writeFileSync(roles, readFileSync(roles, 'utf8').replace('title: Senior Backend Engineer', 'title: "Senior Backend Engineer {x}"')); // final fix L3: "!" is allowed now; braces are not
     expect(() => loadPack(r)).toThrow(/claimableTitles entry 0 is not a safe title/); // the default list is checked too
   });
 
