@@ -673,6 +673,15 @@ describe('src-careers with real chromium', async () => {
     '/slow-job-list': () => ({ body: doc('<h1>Jobs</h1><a href="/jobs/slow">S</a>') }),
     '/jobs/slow': () => ({ body: doc('<div id="j">Loading…</div><script>fetch("/api/slow-desc").then((r) => r.json()).then((d) => { document.getElementById("j").innerHTML = "<h1>" + d.t + "</h1><p>" + d.d + "</p>"; });</script>', '<title>Careers | Acme</title>') }),
     '/slow-job': () => ({ body: doc('<div id="j">Loading…</div><script>fetch("/api/slow-desc").then((r) => r.json()).then((d) => { document.getElementById("j").innerHTML = "<h1>" + d.t + "</h1><p>" + d.d + "</p>"; });</script>', '<title>Careers | Acme</title>') }),
+    // I10: subresources, subframes and fetches whose redirect chain ends on a denied brand (linkedin under any suffix).
+    '/sub-redirects': () => ({ body: doc('<h1>Subresources</h1><p id="ok">waiting</p><script src="/ok-1.js"></script><script src="/r-1.js"></script><iframe src="/frame-redir"></iframe><script>fetch("/xhr-redir").catch(() => 0);</script>') }),
+    '/ok-1.js': () => ({ status: 302, body: '', headers: { location: '/ok-2.js' } }),
+    '/ok-2.js': () => ({ status: 302, body: '', headers: { location: '/ok-final.js' } }),
+    '/ok-final.js': () => ({ type: 'application/javascript', body: 'document.getElementById("ok").textContent = "loaded via two hops";' }),
+    '/r-1.js': () => ({ status: 302, body: '', headers: { location: '/r-2.js' } }),
+    '/r-2.js': () => ({ status: 302, body: '', headers: { location: `http://px.linkedin.localhost:${new URL(base).port}/denied.js` } }),
+    '/frame-redir': () => ({ status: 302, body: '', headers: { location: `http://www.linkedin.localhost:${new URL(base).port}/denied-frame` } }),
+    '/xhr-redir': () => ({ status: 307, body: '', headers: { location: `http://api.linkedin.localhost:${new URL(base).port}/denied-xhr` } }),
     '/api/slow-desc': () => ({ type: 'application/json', body: JSON.stringify({ t: 'Real Title', d: 'Full description' }), delayMs: 25_000 }),
   };
 
@@ -806,6 +815,23 @@ describe('src-careers with real chromium', async () => {
     // The navigation itself is governed by navigationHosts (the broker refuses denied hosts before this point);
     // the page's own fetch of the job list goes to the denied host and is aborted.
     expect(since(before)).toEqual(['GET 127.0.0.1/listing.html']);
+  }, 30_000);
+
+  it.skipIf(!installed)('checks every redirect hop of subresources, subframes and fetches: a denied brand is never reached (I10)', async () => {
+    const { PlaywrightBrowserProvider } = await import('../../src/app/browser/playwright-provider.js');
+    // The denied names resolve to the local server, so a hop the provider let through would be logged below.
+    const mapped = new PlaywrightBrowserProvider({
+      allowInsecureLocalhostForTests: true,
+      resolveToLoopbackForTests: ['px.linkedin.localhost', 'www.linkedin.localhost', 'api.linkedin.localhost'],
+      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 6_000 },
+    });
+    const before = hits.length;
+    const page = await render(`${base}/sub-redirects`, { via: mapped }).finally(() => mapped.close());
+    await sleep(800); // anything still following a chain lands here
+    const reached = hits.slice(before).filter((h) => /linkedin/.test(h.split(' ')[1] ?? ''));
+    expect(reached).toEqual([]);
+    // An allowed chain still loads (the hops are followed inside the handler, then fulfilled).
+    expect(page.text).toContain('loaded via two hops');
   }, 30_000);
 
   it.skipIf(!installed)('survives window.open: pop-ups load nothing and the render completes', async () => {

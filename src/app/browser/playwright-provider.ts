@@ -18,6 +18,9 @@ const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 /** Redirect hops one render follows before giving up. */
 const MAX_REDIRECTS = 10;
 
+/** Redirect hops a subresource, fetch or subframe may take; each one is checked against the denied hosts and brands. */
+const MAX_SUB_REDIRECTS = 5;
+
 
 /**
  * How long rendering waits, and how far a listing is expanded. The defaults are the product values; tests shorten
@@ -66,6 +69,11 @@ export interface PlaywrightProviderOptions {
    * renders http or a port, so a production pipeline cannot reach it. Never set it outside tests.
    */
   readonly allowInsecureLocalhostForTests?: boolean;
+  /**
+   * Test-only: host names Chromium resolves to 127.0.0.1 (`--host-resolver-rules`), so a test can serve a name that
+   * looks like a denied board and prove no hop ever reaches it. Never set it outside tests.
+   */
+  readonly resolveToLoopbackForTests?: readonly string[];
   readonly timing?: Partial<RenderTiming>;
 }
 
@@ -100,7 +108,8 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *   document is never requested twice in one render (no reloads); a non-GET navigation (a form submission) is
  *   aborted and fails the render with G-READONLY.
  * - Pop-ups are closed and their requests aborted; WebSockets are closed; images, fonts, media and denied hosts
- *   or brands are aborted. Other subresources load, so script-built pages render (see spec §5).
+ *   or brands are aborted. Other subresources load, so script-built pages render (see spec §5); they, fetches and
+ *   subframes are fetched here one redirect hop at a time, and a chain is aborted at the first denied hop (I10).
  * - Job pages wait for network idle and stable text; listings (`expand`) wait until the link count is stable,
  *   then click same-page "load more" buttons (never inside a form, never a form button) and report pagination
  *   controls that only a script could follow.
@@ -115,7 +124,11 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
   }
 
   private launch(): Promise<Browser> {
-    this.browser ??= chromium.launch({ headless: true });
+    const map = this.opts.resolveToLoopbackForTests ?? [];
+    // A page fulfilled from route.fetch counts as public address space, so Chromium's local-network checks would
+    // refuse every loopback hop the test needs to observe; they are off in that test-only mode as well.
+    const testArgs = [`--host-resolver-rules=${map.map((h) => `MAP ${h} 127.0.0.1`).join(', ')}`, '--disable-features=LocalNetworkAccessChecks,BlockInsecurePrivateNetworkRequests'];
+    this.browser ??= chromium.launch({ headless: true, ...(map.length > 0 ? { args: testArgs } : {}) });
     return this.browser;
   }
 
@@ -224,7 +237,49 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     if (url.protocol !== 'http:' && url.protocol !== 'https:') return route.continue();
     if (BLOCKED_TYPES.has(request.resourceType())) return route.abort('blockedbyclient');
     if (denied(url.hostname)) return route.abort('blockedbyclient');
-    return route.continue();
+    return this.subresource(route, req, url, denied);
+  }
+
+  /**
+   * I10: Playwright routes only the first URL of a redirect chain, and Chromium follows the later hops itself. So an
+   * allowed subresource, fetch or subframe is fetched here one hop at a time (`maxRedirects: 0`); every hop's scheme
+   * and host is checked against the denied hosts and brands, and the chain is aborted at the first denied hop, before
+   * anything is sent to it. The final response is handed to the page. At most MAX_SUB_REDIRECTS hops are followed.
+   */
+  private async subresource(route: Route, req: BrowserRenderRequest, first: URL, denied: (host: string) => boolean): Promise<void> {
+    const request = route.request();
+    let url = first;
+    let method = request.method();
+    let postData = request.postDataBuffer() ?? undefined;
+    // A slow API may answer late in a settle; the render's own caps (and closing its context) bound the wait.
+    const subTimeout = Math.max(this.timing.navigationMs, this.timing.settleCapMs, this.timing.jobSettleCapMs);
+    for (let hop = 0; ; hop++) {
+      let res;
+      try {
+        res = await route.fetch({ url: url.href, method, maxRedirects: 0, timeout: subTimeout, ...(postData !== undefined ? { postData } : {}) });
+      } catch {
+        return route.abort('failed');
+      }
+      const location = res.headers()['location'];
+      if (res.status() < 300 || res.status() >= 400 || location === undefined) {
+        if (Number(res.headers()['content-length'] ?? '0') > req.maxBytes) return route.abort('blockedbyclient');
+        return route.fulfill({ response: res });
+      }
+      if (hop >= MAX_SUB_REDIRECTS) return route.abort('blockedbyclient');
+      let next: URL;
+      try {
+        next = new URL(location, url);
+      } catch {
+        return route.abort('failed');
+      }
+      if ((next.protocol !== 'http:' && next.protocol !== 'https:') || denied(next.hostname)) return route.abort('blockedbyclient');
+      // As browsers do: 303, and a 301/302 answering a POST, continue as a GET without a body.
+      if (res.status() === 303 || ((res.status() === 301 || res.status() === 302) && method === 'POST')) {
+        method = 'GET';
+        postData = undefined;
+      }
+      url = next;
+    }
   }
 
   /** Fetches one top-level document hop, checks it, then hands it to the page or aborts. */
