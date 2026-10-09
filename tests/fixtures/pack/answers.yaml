@@ -2,3 +2,6 @@ notice_period_days: 30
 work_mode: remote
 open_to_relocation: false
 current_ctc_note: Prefer to discuss after the first round.
+# Read by the renderer (Task 10) to fill the cover letter's {availableFrom} and {notice} placeholders.
+available_from: 1 November 2026
+notice_period: 30 days

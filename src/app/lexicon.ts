@@ -240,3 +240,25 @@ export function termsIn(text: string, groups: readonly TermGroup[], allGroups: r
   const keys = groups.filter((g) => anyTermIn(text, [g.key, ...g.synonyms], neighbours)).map((g) => g.key);
   return [...new Set(keys)].sort();
 }
+
+const tagCache = new Map<string, RegExp>();
+/**
+ * Whether a fact's tech tag (`facts.yaml` `tech[]`) is `term`, a lexicon key or synonym: the whole tag must be the
+ * term under the same rules as JD matching (case-insensitive, symbols literal, a space or hyphen inside the term
+ * matching any run of spaces or hyphens, or none). A tag is a skill label by definition, so the ambiguous-word
+ * context rules do not apply: the tag "go" is Go. A blank term matches nothing.
+ */
+export function tagIs(tag: string, term: string): boolean {
+  if (term.replace(/[\s-]+/g, '') === '') return false;
+  const t = term.trim().toLowerCase();
+  let re = tagCache.get(t);
+  if (re === undefined) {
+    re = new RegExp(`^${termSource(t)}$`, 'iu');
+    tagCache.set(t, re);
+  }
+  return re.test(tag.trim());
+}
+
+/** Whether any tag in `tags` is the key or a synonym of `group`. */
+export const tagsBack = (tags: readonly string[], group: TermGroup): boolean =>
+  tags.some((tag) => [group.key, ...group.synonyms].some((term) => tagIs(tag, term)));

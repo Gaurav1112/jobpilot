@@ -73,7 +73,7 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
     expect(agentFiles.map(rel)).toEqual(
-      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts', 'src/app/comp/floor.ts', 'src/app/lexicon.ts', 'src/app/agents/eligibility.ts', 'src/app/agents/scorer-lexicon.ts']),
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts', 'src/app/comp/floor.ts', 'src/app/lexicon.ts', 'src/app/agents/eligibility.ts', 'src/app/agents/scorer-lexicon.ts', 'src/app/pack/rules.ts', 'src/app/agents/writing/evidence-matcher.ts', 'src/app/agents/writing/resume-planner.ts', 'src/app/agents/writing/cover-writer.ts', 'src/app/agents/writing/grounded.ts', 'src/app/agents/writing/templates.ts']),
     );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
   });
@@ -121,6 +121,7 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
       "import { jobKey } from '../../text/norm.js'",
       "import { toInrPerYear } from '../../comp/floor.js'",
       "import { termsIn } from '../../lexicon.js'",
+      "import { citeable, employerDisplay } from '../../pack/rules.js'",
     ]) {
       expect(scanAgentSource(f, ok), ok).toEqual([]);
     }

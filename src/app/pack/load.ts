@@ -23,18 +23,10 @@ import {
   type LexiconGroup,
   type Pack,
   type PublicPack,
-  type Naming,
 } from './schema.js';
 
 export class PackError extends Error {
   override readonly name = 'PackError';
-}
-
-export class ForbiddenTermError extends Error {
-  override readonly name = 'ForbiddenTermError';
-  constructor(readonly term: string) {
-    super(`forbidden term found: ${term}`);
-  }
 }
 
 /** Defaults for the optional files. The fx default is deliberately ancient so the dashboard warns it is stale. */
@@ -102,55 +94,4 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
   return { pack, hash: hashOf(publicPack) };
 }
 
-/** Only verified and user-stated facts may be cited in a document. */
-export function citeable(f: Fact): boolean {
-  return f.status === 'verified' || f.status === 'user-stated';
-}
-
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/**
- * Cyrillic and Greek letters that look like Latin ones, mapped to the Latin letter, so a homoglyph spelling of a
- * forbidden term still matches. For the forbidden-term check only.
- */
-const CONFUSABLES: Readonly<Record<string, string>> = {
-  // Cyrillic lower and upper case
-  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's',
-  А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', І: 'I', Ј: 'J', Ѕ: 'S',
-  // Greek upper case, and the lower case letters that read as Latin
-  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Χ: 'X', Υ: 'Y',
-  ο: 'o', ι: 'i', κ: 'k', ρ: 'p', ν: 'v',
-  // Turkish dotless i (dotted İ decomposes to I plus a combining dot, removed with the other marks)
-  ı: 'i',
-};
-const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join('')}]`, 'gu');
-
-/**
- * Folds text for matching: NFKD, combining marks and invisible format characters (zero-width etc.) removed, Cyrillic
- * and Greek homoglyphs and the dotless i mapped to Latin, case-folded, ß as ss, then NFKC. So `İnitech`, `Іnitech`
- * (Cyrillic І) and `Café` fold like `initech` and `cafe`.
- */
-function fold(s: string): string {
-  return s
-    .normalize('NFKD')
-    .replace(/[\p{M}\p{Cf}]/gu, '')
-    .replace(CONFUSABLE_RE, (c) => CONFUSABLES[c] ?? c)
-    .toLowerCase()
-    .replaceAll('ß', 'ss')
-    .normalize('NFKC');
-}
-
-/**
- * Throws `ForbiddenTermError` if `text` contains any forbidden term. Both sides are folded (see `fold`),
- * whitespace runs inside a term match any whitespace (including NBSP and newlines), and boundaries are
- * Unicode letter/digit lookarounds.
- */
-export function assertNoForbidden(text: string, naming: Naming): void {
-  const hay = fold(text);
-  for (const term of naming.forbiddenTerms) {
-    const words = fold(term).split(/\s+/u).filter((w) => w !== '');
-    if (words.length === 0) continue;
-    const body = words.map(escapeRe).join('\\s+');
-    if (new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'u').test(hay)) throw new ForbiddenTermError(term);
-  }
-}
+export { assertNoForbidden, citeable, ForbiddenTermError } from './rules.js';

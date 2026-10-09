@@ -216,6 +216,19 @@ describe('assertNoForbidden', () => {
     }
     expect(() => assertNoForbidden('reinitechnology and \u0456nitiative', naming)).not.toThrow();
   });
+  it('folds the lower-case lookalikes Greek \u03b5 \u03c4 and Cyrillic \u0442 \u043d (Task 8 minor R2-2, folded in Task 9)', () => {
+    for (const t of [
+      'Init\u03b5ch', // Greek \u03b5
+      'Ini\u03c4ech', // Greek \u03c4
+      'Ini\u0442ech', // Cyrillic \u0442
+      'Initec\u043d', // Cyrillic \u043d, which reads as h in many fonts
+      'In\u0456\u0442\u03b5c\u043d', // all of them at once, with a Cyrillic \u0456
+    ]) {
+      expect(() => assertNoForbidden(`worked at ${t} once`, naming), t).toThrow(ForbiddenTermError);
+    }
+    // \u03b7 is not a lookalike of n, so it is not folded: this spelling is a different word.
+    expect(() => assertNoForbidden('I\u03b7itech', naming)).not.toThrow();
+  });
 
   it('sees through zero-width characters and Unicode normalisation', () => {
     const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech', 'café', 'Straße'] };

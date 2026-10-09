@@ -15,9 +15,11 @@ export interface EvalCase {
 }
 
 export interface EvalSpec {
+  /** The eval's own name, when it measures more than its agent (the `grounding` eval runs the writing chain). */
+  readonly name?: string;
   readonly agent: AnyAgent;
   readonly cases: readonly EvalCase[];
-  /** Maps the agent's outputs to what the dataset's `expected` describes. */
+  /** Maps the agent's outputs to what the dataset's `expected` describes (it may be async, to run a downstream chain). */
   readonly project: (outputs: readonly unknown[]) => unknown;
   readonly metric: 'exactMatch';
   readonly min: number;
@@ -32,6 +34,8 @@ export interface EvalSpec {
 }
 
 export interface EvalReport {
+  /** Present when the spec named one. */
+  readonly name?: string;
   readonly agentId: string;
   readonly version: string;
   readonly metric: 'exactMatch';
@@ -129,7 +133,7 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
         const parsed = outs.map((o) => ({ o, r: c.produces.schema.safeParse(o) }));
         if (parsed.some((p) => !p.r.success)) actual = { error: 'output does not match the produced schema' };
         else if (parsed.some((p) => !same((p.r as { data: unknown }).data, p.o))) actual = { error: 'output would be coerced by the produced schema' };
-        else actual = spec.project(outs);
+        else actual = await spec.project(outs);
       } catch (e) {
         actual = { error: classify(e) === 'timeout' ? 'timeout' : (e as Error).message };
       }
@@ -138,6 +142,7 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
   }
   const score = exactMatch(pairs);
   return {
+    ...(spec.name !== undefined ? { name: spec.name } : {}),
     agentId: c.id,
     version: c.version,
     metric: spec.metric,
@@ -151,5 +156,5 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
 }
 
 export function failedGates(reports: readonly EvalReport[]): string[] {
-  return reports.filter((r) => !r.pass).map((r) => `${r.agentId}@${r.version}: ${r.metric} ${r.score.toFixed(3)} < ${r.min}`);
+  return reports.filter((r) => !r.pass).map((r) => `${r.name !== undefined ? `${r.name} (${r.agentId}@${r.version})` : `${r.agentId}@${r.version}`}: ${r.metric} ${r.score.toFixed(3)} < ${r.min}`);
 }

@@ -172,12 +172,18 @@ export type Evidence = z.infer<typeof Evidence.schema>;
 
 const FactText = z.object({ factId: z.string(), text: z.string() }).strict();
 
+/**
+ * The resume plan of one job. It carries its parent `evidence` (Task 9), as the later types carry theirs: the
+ * cover-writer needs the posting's title and company, and G-GROUND re-derives every slot from the posting and the
+ * pack rather than trusting the plan's own values.
+ */
 export const ResumePlan = defineType(
   'ResumePlan',
   1,
   z
     .object({
       jobKey: JobKey,
+      evidence: Evidence.schema,
       headline: z.string(),
       summary: z
         .object({ text: z.string(), slots: z.record(z.string(), z.union([z.string(), z.number()])) })

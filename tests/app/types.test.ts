@@ -32,7 +32,7 @@ const evidence: Evidence = {
   scored, ranked: [{ factId: 'f1', employer: 'Acme', rank: 1, matched: ['go'] }], covered: ['go'], missing: [],
 };
 const resume: ResumePlan = {
-  jobKey: posting.jobKey, headline: 'Engineer', summary: { text: 'Hi {n}', slots: { n: 3, s: 'x' } }, skills: ['Go'],
+  jobKey: posting.jobKey, evidence, headline: 'Engineer', summary: { text: 'Hi {n}', slots: { n: 3, s: 'x' } }, skills: ['Go'],
   roles: [{ employer: 'Acme', title: 'Eng', location: 'Pune', start: '2020-01', end: 'Present', bullets: [{ factId: 'f1', text: 'Did.' }] }],
   certs: [{ factId: 'c1', text: 'Cert' }], covered: ['go'], missing: [], ats: 'greenhouse', firstSeen: '2026-10-09',
 };

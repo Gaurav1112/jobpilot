@@ -7,6 +7,7 @@ import { checkDrift, exportContracts } from '../../src/kernel/contracts-export.j
 import { defineContract } from '../../src/kernel/contract.js';
 import { Registry } from '../../src/kernel/registry.js';
 import { demoAgents } from '../../src/demo/pipeline.js';
+import { exportedAgents } from '../../src/exported-agents.js';
 import { demoSource } from '../../src/demo/agents.js';
 import { itemIdSet, scoreInRange } from '../../src/demo/types.js';
 
@@ -18,7 +19,7 @@ const registry = (...agents: Parameters<Registry['register']>[0][]) => {
 
 describe('contract export and drift', () => {
   it('the committed contracts-out/ matches the code', () => {
-    expect(checkDrift(registry(...demoAgents), join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
+    expect(checkDrift(registry(...exportedAgents), join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
   });
 
   it('writes one file per agent major, with JSON Schemas for both message types', () => {

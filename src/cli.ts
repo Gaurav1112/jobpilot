@@ -11,12 +11,12 @@ import { failedGates, runEval } from './evals/runner.js';
 import { demoEvalSpecs } from './demo/evals.js';
 import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
-import { demoAgents } from './demo/pipeline.js';
+import { exportedAgents } from './exported-agents.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
   const r = new Registry();
-  for (const a of demoAgents) r.register(a);
+  for (const a of exportedAgents) r.register(a);
   return r;
 };
 
@@ -178,7 +178,7 @@ program
     for (const spec of specs) {
       reports.push(await runEval(spec, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 }));
     }
-    for (const r of reports) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.agentId}@${r.version} ${r.metric}=${r.score.toFixed(3)} (min ${r.min}, n=${r.n}${r.packHash !== undefined ? `, pack ${r.packHash.slice(0, 12)}` : ''})`);
+    for (const r of reports) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.name !== undefined ? `${r.name} via ` : ''}${r.agentId}@${r.version} ${r.metric}=${r.score.toFixed(3)} (min ${r.min}, n=${r.n}${r.packHash !== undefined ? `, pack ${r.packHash.slice(0, 12)}` : ''})`);
     const failed = failedGates(reports);
     if (failed.length > 0) process.exitCode = 1;
   });

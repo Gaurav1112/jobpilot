@@ -17,7 +17,7 @@ export const isAgentCode = (path: string) =>
 /**
  * Shared app modules agent code may import: message types and predicates (zod plus kernel definitions), the
  * import-free safe-regex compiler for user-supplied patterns, the load-more label rule, and the normalizer's pure
- * text helpers (HTML to text, normalisation, the comp parser). Each is scanned like agent code.
+ * text helpers (HTML to text, normalisation, the comp parser), and the pure pack rules. Each is scanned like agent code.
  */
 export const APP_ALLOWED = [
   'src/app/types.ts',
@@ -28,6 +28,8 @@ export const APP_ALLOWED = [
   'src/app/comp/parse.ts',
   'src/app/comp/floor.ts',
   'src/app/lexicon.ts',
+  // The pure pack rules (citeable, the forbidden-term check, employer display names) the writing team applies.
+  'src/app/pack/rules.ts',
 ];
 
 /** The only kernel modules agent code may import: definitions, never providers, broker, store, executor or fakes. */
