@@ -154,6 +154,17 @@ const PAY_WORD =
 const NOT_PAY =
   /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
 /**
+ * Final fix I5: perk and benefit wording. A sentence with any of these states a perk budget, never pay, whatever else
+ * it says ("Learning and development: $1,500 per year", "$2,000 a year for your home office", "₹2,00,000 annually for
+ * wellness", "we pay up to $3,000 per year" for conferences): it is never read, so a perk figure can never reject a
+ * job below the floor.
+ */
+const PERK =
+  /\b(?:learning|education(?:al)?|training|conferences?|wellness|wellbeing|gym|home[\s-]+office|equipment|internet|(?:tele)?phones?|stipends?|budgets?|allowances?|reimburse\w*|relocation|sign[\s-]*on|joining\s+bonus(?:es)?)\b|\bper\s+year\s+for\b|\bannual\b[^.;\n]*\bbudget\b/i;
+/** "Base salary incl. allowances ₹20 LPA": allowances that the salary includes are part of it, not a perk figure. */
+const INCLUDED_ALLOWANCES = /\b(?:incl\.?|including|inclusive of)\s+(?:all\s+)?allowances?\b/gi;
+const isPerk = (sentence: string): boolean => PERK.test(sentence.replace(INCLUDED_ALLOWANCES, ' '));
+/**
  * Pay components that are not salary: a sentence that names only these (no base, salary, fixed, CTC or total-type
  * wording) states no salary.
  */
@@ -210,7 +221,9 @@ function withoutIncluded(sentence: string): string {
 /**
  * Comp stated in the description, read one sentence (and `;` clause) at a time with `parseComp`. A sentence counts only when it has a
  * pay word (salary, base, pay, compensation, CTC, LPA, per annum, /yr, per year, a year) and no funding or revenue
- * word (raised, funding, valuation, revenue, ARR, series, saved, budget, customers, users ...). It is skipped when it
+ * word (raised, funding, valuation, revenue, ARR, series, saved, budget, customers, users ...) and no perk or benefit
+ * word (`PERK`: learning, education, training, conference, wellness, gym, home office, equipment, internet, phone,
+ * stipend, budget, allowance, reimbursement, relocation, sign-on, joining bonus, "per year for"). It is skipped when it
  * names only non-salary pay (equity, bonus ...), a currency the Posting cannot carry, a bare `$` beside Canada or
  * another dollar country, or cannot be parsed with confidence. A single figure after "up to" keeps only the max; after
  * "from", "starting at", "at least" or before "+" / "or more" only the min. Implausible figures are dropped. The
@@ -222,7 +235,7 @@ export function compFromText(text: string): Comp | null {
   const ranges: Range[] = [];
   for (const sentence of text.split(PAY_SENTENCE_SPLIT)) {
     // A clause whose only pay words are components (variable, incentive, commission, bonus, equity ...) states no salary.
-    if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
+    if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence) || isPerk(sentence)) continue;
     const core = withoutIncluded(sentence);
     // A total word beside a component, or a total that "includes" something: the figure may be the component, so the
     // sentence is not read (task 7 fix round 3, I-R1). An unread figure only costs a note, never a rejection.
