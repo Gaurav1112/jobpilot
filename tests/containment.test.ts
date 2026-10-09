@@ -73,7 +73,7 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
     expect(agentFiles.map(rel)).toEqual(
-      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts']),
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts', 'src/app/comp/floor.ts', 'src/app/lexicon.ts', 'src/app/agents/eligibility.ts', 'src/app/agents/scorer-lexicon.ts']),
     );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
   });
@@ -119,13 +119,15 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
       "import { parseComp } from '../../comp/parse.js'",
       "import { htmlToText } from '../../text/html.js'",
       "import { jobKey } from '../../text/norm.js'",
+      "import { toInrPerYear } from '../../comp/floor.js'",
+      "import { termsIn } from '../../lexicon.js'",
     ]) {
       expect(scanAgentSource(f, ok), ok).toEqual([]);
     }
     for (const bad of [
       "import type { AgentContext } from '../../../kernel/broker.js'",
       "import x from '../../../kernel/providers.js'",
-      "import { toInrPerYear } from '../../comp/floor.js'",
+      "import { FiltersSchema } from '../../pack/schema.js'",
       "import { loadPack } from '../../pack/load.js'",
       "import { x } from '../../../cli.js'",
     ]) {

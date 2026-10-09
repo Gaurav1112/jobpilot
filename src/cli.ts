@@ -9,6 +9,7 @@ import { verifyChain } from './kernel/store/audit.js';
 import { Store } from './kernel/store/store.js';
 import { failedGates, runEval } from './evals/runner.js';
 import { demoEvalSpecs } from './demo/evals.js';
+import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
 import { demoAgents } from './demo/pipeline.js';
 
@@ -172,10 +173,12 @@ program
   .description('Run every golden-set eval and enforce its gate')
   .action(async () => {
     const reports = [];
-    for (const spec of demoEvalSpecs(join(root, 'evals/datasets'))) {
+    // The app evals run on the fictional fixture pack, never the user's own.
+    const specs = [...demoEvalSpecs(join(root, 'evals/datasets')), ...appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack'))];
+    for (const spec of specs) {
       reports.push(await runEval(spec, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 }));
     }
-    for (const r of reports) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.agentId}@${r.version} ${r.metric}=${r.score.toFixed(3)} (min ${r.min}, n=${r.n})`);
+    for (const r of reports) console.log(`${r.pass ? 'PASS' : 'FAIL'} ${r.agentId}@${r.version} ${r.metric}=${r.score.toFixed(3)} (min ${r.min}, n=${r.n}${r.packHash !== undefined ? `, pack ${r.packHash.slice(0, 12)}` : ''})`);
     const failed = failedGates(reports);
     if (failed.length > 0) process.exitCode = 1;
   });

@@ -26,6 +26,8 @@ export const APP_ALLOWED = [
   'src/app/text/html.ts',
   'src/app/text/norm.ts',
   'src/app/comp/parse.ts',
+  'src/app/comp/floor.ts',
+  'src/app/lexicon.ts',
 ];
 
 /** The only kernel modules agent code may import: definitions, never providers, broker, store, executor or fakes. */

@@ -10,6 +10,7 @@ import { defineContract } from '../../src/kernel/contract.js';
 import { defineType } from '../../src/kernel/types.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { failedGates, loadJsonl, runEval } from '../../src/evals/runner.js';
+import { freezePack } from '../../src/kernel/broker.js';
 import { demoSource } from '../../src/demo/agents.js';
 import { demoEvalSpecs } from '../../src/demo/evals.js';
 
@@ -112,6 +113,41 @@ describe('runEval', () => {
     const r = await runEval(miniSpec(agent), env);
     expect(r.failures[0]?.actual).toEqual({ error: 'timeout' });
     expect(r.pass).toBe(false);
+  });
+});
+
+describe('runEval with a pack', () => {
+  const Item = defineType('PackItem', 1, z.object({ id: z.string() }).strict());
+  const packContract = (pack: boolean) => defineContract({
+    id: pack ? 'mini-pack-reader' : 'mini-no-pack', version: '1.0.0', description: 'Echoes one pack value for the item', skills: ['x'],
+    team: 'evaluation', kind: 'deterministic', consumes: Item, produces: Item, ...(pack ? { capabilities: { pack: true as const } } : {}),
+    dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000,
+  });
+  const reader = defineAgent(packContract(true), async (_i, ctx) => {
+    const p = ctx.pack as { name?: string } | undefined;
+    return [{ id: `${p?.name ?? 'none'}:${Object.isFrozen(ctx.pack) ? 'frozen' : 'thawed'}` }];
+  });
+  const spec = (agent: AnyAgent, extra: Record<string, unknown>) => ({
+    agent, cases: [{ id: 'c', input: { id: 'a' }, expected: [{ id: 'asha:frozen' }] }], project: (outs: readonly unknown[]) => outs,
+    metric: 'exactMatch' as const, min: 1, ...extra,
+  });
+
+  it('hands a frozen pack to an agent that declares capabilities.pack, and reports the pack hash', async () => {
+    const r = await runEval(spec(reader, { pack: freezePack({ name: 'asha', nested: { a: [1] } }), packHash: 'h1' }), env);
+    expect(r.failures).toEqual([]);
+    expect(r).toMatchObject({ pass: true, packHash: 'h1' });
+  });
+
+  it('fails closed on a pack that freezePack did not freeze, at any depth', async () => {
+    await expect(runEval(spec(reader, { pack: { name: 'asha' } }), env)).rejects.toThrow(/pack must be frozen with freezePack/);
+    const shallow = Object.freeze({ name: 'asha', nested: { a: [1] } });
+    await expect(runEval(spec(reader, { pack: shallow }), env)).rejects.toThrow(/pack must be frozen with freezePack/);
+  });
+
+  it('refuses a pack agent with no pack, and a pack for an agent that cannot read it', async () => {
+    await expect(runEval(spec(reader, {}), env)).rejects.toThrow(/declares capabilities.pack but the eval has no pack/);
+    const plain = defineAgent(packContract(false), async () => [{ id: 'x' }]);
+    await expect(runEval(spec(plain, { pack: freezePack({ name: 'asha' }) }), env)).rejects.toThrow(/has a pack but mini-no-pack does not declare capabilities.pack/);
   });
 });
 

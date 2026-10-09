@@ -21,6 +21,14 @@ export interface EvalSpec {
   readonly project: (outputs: readonly unknown[]) => unknown;
   readonly metric: 'exactMatch';
   readonly min: number;
+  /**
+   * The pack handed to an agent whose contract declares `capabilities.pack`, as `ctx.pack`. It must already be deep
+   * frozen by `freezePack` (the runner checks every level and refuses anything else), so an agent under eval sees
+   * exactly the read-only view it gets in production.
+   */
+  readonly pack?: unknown;
+  /** The hash of `pack`, carried into the report so a gate result names the pack it was measured on. */
+  readonly packHash?: string;
 }
 
 export interface EvalReport {
@@ -31,6 +39,8 @@ export interface EvalReport {
   readonly score: number;
   readonly min: number;
   readonly pass: boolean;
+  /** Present when the spec named one. */
+  readonly packHash?: string;
   readonly failures: readonly { readonly id: string; readonly expected: unknown; readonly actual: unknown }[];
 }
 
@@ -79,6 +89,13 @@ const offlineBrowser: BrowserProvider = {
   },
 };
 
+/** True when `v` and every object reachable from it are frozen (what `freezePack` makes). Typed arrays cannot be frozen and are skipped, as `freezePack` skips them. */
+function deeplyFrozen(v: unknown, seen = new WeakSet<object>()): boolean {
+  if (v === null || typeof v !== 'object' || ArrayBuffer.isView(v) || seen.has(v)) return true;
+  seen.add(v);
+  return Object.isFrozen(v) && Object.values(v).every((child) => deeplyFrozen(child, seen));
+}
+
 const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonicalJson(b);
 
 /**
@@ -91,6 +108,11 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
   const providers: Providers = { ...env.providers, fetch: offlineFetch, browser: offlineBrowser };
   if (spec.cases.length === 0) throw new Error(`eval ${c.id}: no cases`);
   if (!(spec.min > 0 && spec.min <= 1)) throw new Error(`eval ${c.id}: min must be in (0, 1]`);
+  const hasPack = spec.pack !== undefined && spec.pack !== null;
+  if (c.capabilities.pack && !hasPack) throw new Error(`eval ${c.id}: ${c.id} declares capabilities.pack but the eval has no pack`);
+  if (!c.capabilities.pack && hasPack) throw new Error(`eval ${c.id}: the eval has a pack but ${c.id} does not declare capabilities.pack`);
+  // Fail closed (M8): a pack that is not frozen all the way down would let an agent under eval mutate shared state.
+  if (hasPack && !deeplyFrozen(spec.pack)) throw new Error(`eval ${c.id}: pack must be frozen with freezePack`);
   const pairs: { id: string; expected: unknown; actual: unknown }[] = [];
   for (const k of spec.cases) {
     let actual: unknown;
@@ -102,7 +124,7 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
     } else {
       try {
         const signal = AbortSignal.timeout(c.timeoutMs);
-        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal });
+        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal, ...(hasPack ? { pack: spec.pack } : {}) });
         const outs = await raceAbort(spec.agent.run(k.input, ctx), signal);
         const parsed = outs.map((o) => ({ o, r: c.produces.schema.safeParse(o) }));
         if (parsed.some((p) => !p.r.success)) actual = { error: 'output does not match the produced schema' };
@@ -123,6 +145,7 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
     score,
     min: spec.min,
     pass: score >= spec.min,
+    ...(spec.packHash !== undefined ? { packHash: spec.packHash } : {}),
     failures: pairs.filter((p) => !same(p.expected, p.actual)),
   };
 }
