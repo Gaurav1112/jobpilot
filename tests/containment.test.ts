@@ -73,7 +73,7 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
 
   it('finds no imports, globals or reflection outside the allow-list in agent code', () => {
     expect(agentFiles.map(rel)).toEqual(
-      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts']),
+      expect.arrayContaining(['src/demo/agents.ts', 'src/demo/types.ts', 'src/app/agents/sources/common.ts', 'src/app/agents/sources/lever.ts', 'src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/agents/sources/careers.ts', 'src/app/agents/normalizer.ts', 'src/app/text/html.ts', 'src/app/text/norm.ts', 'src/app/comp/parse.ts']),
     );
     expect(agentFiles.flatMap((f) => scanAgentSource(rel(f), readFileSync(f, 'utf8')))).toEqual([]);
   });
@@ -116,13 +116,16 @@ describe('G-CONTAINMENT: agent code reaches the outside world only through the b
       "import { x } from '../other/y.js'",
       "import { defineAgent, type AgentContext } from '../../../kernel/agent.js'",
       "import { KernelError } from '../../../kernel/errors.js'",
+      "import { parseComp } from '../../comp/parse.js'",
+      "import { htmlToText } from '../../text/html.js'",
+      "import { jobKey } from '../../text/norm.js'",
     ]) {
       expect(scanAgentSource(f, ok), ok).toEqual([]);
     }
     for (const bad of [
       "import type { AgentContext } from '../../../kernel/broker.js'",
       "import x from '../../../kernel/providers.js'",
-      "import { parseComp } from '../../comp/parse.js'",
+      "import { toInrPerYear } from '../../comp/floor.js'",
       "import { loadPack } from '../../pack/load.js'",
       "import { x } from '../../../cli.js'",
     ]) {

@@ -80,8 +80,16 @@ export const Posting = defineType(
       locationText: z.string(),
       remote: z
         .object({
+          /** The source's structured arrangement (Lever/Ashby workplaceType, Ashby isRemote, JSON-LD TELECOMMUTE, a remote-only feed); null when it has none. */
           structured: z.enum(['remote', 'hybrid', 'onsite']).nullable(),
+          /** Canonical lowercase country or region names (`india`, `united states`, `apac`, `worldwide`, ...), sorted. */
           countries: z.array(z.string()),
+          /**
+           * The evidence, in order: structured fields first (`workplaceType:remote`, `isRemote:true`,
+           * `jobLocationType:TELECOMMUTE`, `feed:remote-only`), then words found in the text (`location:hybrid`,
+           * `title:remote`). When they disagree, `structured` follows the structured field and both stay visible here.
+           */
+          signals: z.array(z.string()),
         })
         .strict(),
       employmentType: z.string().nullable(),

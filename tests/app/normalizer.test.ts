@@ -1,0 +1,754 @@
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { decodeEntities, htmlToText } from '../../src/app/text/html.js';
+import { countriesIn, jobKey, normLocation, normTitle, postedAtOf, remoteTextSignals, yearsRequired } from '../../src/app/text/norm.js';
+import { normalize, normalizer } from '../../src/app/agents/normalizer.js';
+import { ashbyParse } from '../../src/app/agents/sources/ashby.js';
+import { greenhouseParse } from '../../src/app/agents/sources/greenhouse.js';
+import { himalayasParse } from '../../src/app/agents/sources/himalayas.js';
+import { jobicyParse } from '../../src/app/agents/sources/jobicy.js';
+import { leverParse } from '../../src/app/agents/sources/lever.js';
+import { Posting, type DiscoveryRequest, type RawPosting } from '../../src/app/types.js';
+import type { AgentContext } from '../../src/kernel/agent.js';
+import { KernelError } from '../../src/kernel/errors.js';
+
+const hex16 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16);
+
+describe('decodeEntities', () => {
+  it('decodes named, decimal and hex entities', () => {
+    expect(decodeEntities('Tom &amp; Jerry &lt;3 &gt; &quot;q&quot; &apos;a&#39;')).toBe(`Tom & Jerry <3 > "q" 'a'`);
+    expect(decodeEntities('&rsquo;&#8217;&#x2019;&#X2019;')).toBe('’’’’');
+    expect(decodeEntities('caf&eacute; &Eacute;cole na&iuml;ve &ndash; &mdash; &hellip; &bull; &euro;5 &pound;6 &copy;')).toBe(
+      'café École naïve – — … • €5 £6 ©',
+    );
+    expect(decodeEntities('a&nbsp;b&ensp;c')).toBe('a\u00a0b\u2002c');
+  });
+
+  it('maps the windows-1252 range the way browsers do, and refuses impossible code points', () => {
+    expect(decodeEntities('&#150; &#151; &#146;')).toBe('– — ’');
+    expect(decodeEntities('&#0; &#xD800; &#x110000;')).toBe('� � �');
+  });
+
+  it('leaves unknown names and bare ampersands alone', () => {
+    expect(decodeEntities('AT&T R&D &notanentity; &amp')).toBe('AT&T R&D &notanentity; &amp');
+  });
+
+  it('decodes exactly once', () => {
+    expect(decodeEntities('&amp;amp; &amp;lt;p&amp;gt;')).toBe('&amp; &lt;p&gt;');
+  });
+});
+
+describe('htmlToText', () => {
+  it('turns block tags into newlines: paragraphs and headings get a blank line, br and div a line break', () => {
+    expect(htmlToText('<p>One</p><p>Two</p>')).toBe('One\n\nTwo');
+    expect(htmlToText('<h2>About</h2><p>Body</p>')).toBe('About\n\nBody');
+    expect(htmlToText('<div>a</div><div>b</div>')).toBe('a\nb');
+    expect(htmlToText('a<br>b<br/>c<BR />d')).toBe('a\nb\nc\nd');
+    expect(htmlToText('a<br><br>b')).toBe('a\n\nb');
+  });
+
+  it('allows at most two newlines in a row', () => {
+    expect(htmlToText('a<br><br><br><br>b<p></p><p></p><p>c</p>')).toBe('a\n\nb\n\nc');
+  });
+
+  it('collapses whitespace inside text, including source newlines and nbsp', () => {
+    expect(htmlToText('<p>  lots \n\t of   space&nbsp;&nbsp;here </p>')).toBe('lots of space here');
+  });
+
+  it('strips inline tags without gluing or splitting words', () => {
+    expect(htmlToText('<p>Build <b>payment</b> services with <a href="https://x.example/a>b">Go</a>.</p>')).toBe(
+      'Build payment services with Go.',
+    );
+  });
+
+  it('decodes entities after the tags are gone, so escaped markup stays text', () => {
+    expect(htmlToText('<p>Use &lt;b&gt; for bold &amp; R&amp;D</p>')).toBe('Use <b> for bold & R&D');
+  });
+
+  it('drops script, style, template, noscript and comments', () => {
+    expect(htmlToText('<p>a</p><script>var x = "<p>no</p>";</script><style>p{}</style><!-- hidden --><template>t</template><noscript>n</noscript><p>b</p>')).toBe(
+      'a\n\nb',
+    );
+  });
+
+  it('prefixes list items with "- "', () => {
+    expect(htmlToText('<p>Needs:</p><ul><li>Go</li><li>Postgres</li></ul><p>Thanks</p>')).toBe('Needs:\n\n- Go\n- Postgres\n\nThanks');
+    expect(htmlToText('<ol><li>first</li><li>second</li></ol>')).toBe('- first\n- second');
+  });
+
+  it('indents nested lists, keeping every item', () => {
+    expect(htmlToText('<ul><li>A<ul><li>A1</li><li>A2<ul><li>A2a</li></ul></li></ul></li><li>B</li></ul>')).toBe(
+      '- A\n  - A1\n  - A2\n    - A2a\n- B',
+    );
+  });
+
+  it('keeps text after a nested list inside its parent item', () => {
+    expect(htmlToText('<ul><li>A<ul><li>A1</li></ul>tail of A</li></ul>')).toBe('- A\n  - A1\n  tail of A');
+  });
+
+  it('keeps a <br> inside an <li> as an indented continuation of that item', () => {
+    expect(htmlToText('<ul><li>Line one<br>line two</li><li>Next</li></ul>')).toBe('- Line one\n  line two\n- Next');
+    expect(htmlToText('<ul><li><p>Para one</p><p>Para two</p></li></ul>')).toBe('- Para one\n\n  Para two');
+  });
+
+  it('puts the marker on the item text when the item wraps it in a block', () => {
+    expect(htmlToText('<ul><li><p><strong>Lead:</strong> text</p></li><li><div>Two</div></li></ul>')).toBe('- Lead: text\n- Two');
+  });
+
+  it('handles bare <li> items (Lever lists) and unclosed items', () => {
+    expect(htmlToText('\n<li>One</li>\n<li>Two</li>\n')).toBe('- One\n- Two');
+    expect(htmlToText('<ul><li>One<li>Two</ul><p>after</p>')).toBe('- One\n- Two\n\nafter');
+  });
+
+  it('drops empty list items only', () => {
+    expect(htmlToText('<ul><li></li><li> </li><li>Kept</li></ul>')).toBe('- Kept');
+  });
+
+  it('keeps every table cell, separating cells and rows', () => {
+    expect(htmlToText('<table><tr><th>Level</th><th>Pay</th></tr><tr><td>L4</td><td>$1</td></tr><tr><td></td><td>x</td></tr></table>')).toBe(
+      'Level | Pay\nL4 | $1\nx',
+    );
+  });
+
+  it('leaves a stray < that is not a tag as text', () => {
+    expect(htmlToText('<p>a < b and c > d</p>')).toBe('a < b and c > d');
+  });
+
+  it('removes soft hyphens and zero-width characters', () => {
+    expect(htmlToText('<p>co\u00adop\u200b\ufeff \u2060x</p>')).toBe('coop x');
+  });
+
+  it('turns double-escaped Greenhouse content into text when decoded once first', () => {
+    const escaped = '&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;R&amp;amp;D &amp;nbsp;team&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Go&lt;/li&gt;&lt;/ul&gt;&lt;/div&gt;';
+    expect(htmlToText(decodeEntities(escaped))).toBe('R&D team\n\n- Go');
+  });
+});
+
+describe('normTitle', () => {
+  it('lowercases, collapses whitespace, strips gender suffixes', () => {
+    expect(normTitle('  Senior   Backend  Engineer (m/f/d) ')).toBe('senior backend engineer');
+    expect(normTitle('Backend Engineer (f/m/x)')).toBe('backend engineer');
+    expect(normTitle('Backend Engineer (m/w/d)')).toBe('backend engineer');
+    expect(normTitle('Backend Engineer (all genders)')).toBe('backend engineer');
+  });
+
+  it('strips trailing location parentheses but keeps other ones', () => {
+    expect(normTitle('Backend Engineer (Remote)')).toBe('backend engineer');
+    expect(normTitle('Backend Engineer (India)')).toBe('backend engineer');
+    expect(normTitle('Backend Engineer (Remote - India)')).toBe('backend engineer');
+    expect(normTitle('Backend Engineer (Remote, US only) (m/f/d)')).toBe('backend engineer');
+    expect(normTitle('Senior Software Engineer (YDB Team)')).toBe('senior software engineer (ydb team)');
+    expect(normTitle('QA Tester (Future Roles)')).toBe('qa tester (future roles)');
+  });
+});
+
+describe('normLocation', () => {
+  it('orders the parts, so the same place written two ways has one key', () => {
+    expect(normLocation('Remote, India')).toBe('india, remote');
+    expect(normLocation('India (Remote)')).toBe('india, remote');
+    expect(normLocation('India - Hyderabad')).toBe('hyderabad, india');
+    expect(normLocation('  ')).toBe('');
+  });
+});
+
+describe('jobKey', () => {
+  it('is the first 16 hex chars of sha256(company|normTitle|normLocation)', () => {
+    expect(jobKey('Acme', 'Backend Engineer (m/f/d)', 'Remote, India')).toBe(hex16('acme|backend engineer|india, remote'));
+    expect(jobKey('Acme', 'Backend Engineer', 'Remote, India')).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  it('is stable across casing, spacing, suffixes and location order', () => {
+    const k = jobKey('Acme', 'Backend Engineer', 'Remote, India');
+    expect(jobKey('ACME', '  backend   ENGINEER (Remote) ', 'India (Remote)')).toBe(k);
+    expect(jobKey('Acme', 'Frontend Engineer', 'Remote, India')).not.toBe(k);
+    expect(jobKey('Acme', 'Backend Engineer', 'Remote, Canada')).not.toBe(k);
+    expect(jobKey('Acme2', 'Backend Engineer', 'Remote, India')).not.toBe(k);
+  });
+});
+
+describe('countriesIn', () => {
+  it('maps country names, aliases and Indian cities to canonical lowercase names, sorted', () => {
+    expect(countriesIn('Remote, India')).toEqual(['india']);
+    expect(countriesIn('Bengaluru, Karnataka')).toEqual(['india']);
+    expect(countriesIn('Remote, US; Remote, UK; Remote, United Kingdom; USA')).toEqual(['united kingdom', 'united states']);
+    expect(countriesIn('Remote Ireland; Remote, Australia; Remote, Canada; Remote, India')).toEqual(['australia', 'canada', 'india', 'ireland']);
+  });
+
+  it('maps regions to their tokens', () => {
+    expect(countriesIn('Worldwide')).toEqual(['worldwide']);
+    expect(countriesIn('Anywhere')).toEqual(['worldwide']);
+    expect(countriesIn('APAC')).toEqual(['apac']);
+    expect(countriesIn('Asia-Pacific')).toEqual(['apac']);
+    expect(countriesIn('EMEA, LATAM, Americas')).toEqual(['americas', 'emea', 'latam']);
+    expect(countriesIn('Remote - Europe')).toEqual(['europe']);
+    expect(countriesIn('Remote - European Union')).toEqual(['europe']);
+    expect(countriesIn('Southeast Asia')).toEqual(['southeast asia']);
+    expect(countriesIn('Asia')).toEqual(['asia']);
+  });
+
+  it('needs whole words: tier codes and words containing a name are not countries', () => {
+    expect(countriesIn('*Job Posting Only: USA1')).toEqual([]);
+    expect(countriesIn('Indiana')).toEqual([]);
+    expect(countriesIn('Remote')).toEqual([]);
+    expect(countriesIn('')).toEqual([]);
+  });
+});
+
+describe('remoteTextSignals', () => {
+  it('names each remote, hybrid or onsite word found, with its origin', () => {
+    expect(remoteTextSignals('location', 'Remote, India')).toEqual(['location:remote']);
+    expect(remoteTextSignals('location', 'Hybrid - Pune')).toEqual(['location:hybrid']);
+    expect(remoteTextSignals('location', 'On-site, Pune')).toEqual(['location:onsite']);
+    expect(remoteTextSignals('title', 'Engineer (Remote or Hybrid)')).toEqual(['title:remote', 'title:hybrid']);
+    expect(remoteTextSignals('location', 'Remotely Bengaluru')).toEqual([]);
+  });
+});
+
+describe('yearsRequired', () => {
+  it('takes the largest years figure in sentences about experience', () => {
+    expect(yearsRequired('You have 5+ years of experience in Go.')).toBe(5);
+    expect(yearsRequired('A minimum of 8 years of professional experience.')).toBe(8);
+    expect(yearsRequired('3-5 years of experience with Java.')).toBe(5);
+    expect(yearsRequired('3–5 yrs experience.')).toBe(5);
+    expect(yearsRequired('- 2+ years experience with SQL\n- 7 years experience with Kafka')).toBe(7);
+  });
+
+  it('ignores years outside experience sentences, company ages, and values above 30', () => {
+    expect(yearsRequired('We are a 10 years old company. Experience with Go is a plus.')).toBeNull();
+    expect(yearsRequired('Our 10 years old company values experience.')).toBeNull();
+    expect(yearsRequired('Founded 12 years ago, we value experience.')).toBeNull();
+    expect(yearsRequired('Applicants must be 18 years of age; experience preferred.')).toBeNull();
+    expect(yearsRequired('5 years of growth. Experience required.')).toBeNull();
+    expect(yearsRequired('40 years experience.')).toBeNull();
+    expect(yearsRequired('No figure, but experience matters.')).toBeNull();
+    expect(yearsRequired('1.5 years experience')).toBeNull();
+    expect(yearsRequired('100 years experience')).toBeNull();
+  });
+});
+
+describe('postedAtOf', () => {
+  it('keeps a real ISO date or datetime unchanged', () => {
+    expect(postedAtOf('2026-07-21T17:30:38.012+00:00')).toBe('2026-07-21T17:30:38.012+00:00');
+    expect(postedAtOf('2026-07-22T13:38:40-04:00')).toBe('2026-07-22T13:38:40-04:00');
+    expect(postedAtOf('2026-10-01')).toBe('2026-10-01');
+    expect(postedAtOf('2024-02-29')).toBe('2024-02-29');
+  });
+
+  it('converts epoch milliseconds and seconds', () => {
+    expect(postedAtOf(1790799896055, 'ms')).toBe('2026-09-30T20:24:56.055Z');
+    expect(postedAtOf(1791509657, 's')).toBe('2026-10-09T01:34:17.000Z');
+    // A seconds field that actually carries milliseconds is read as milliseconds.
+    expect(postedAtOf(1791509657000, 's')).toBe('2026-10-09T01:34:17.000Z');
+  });
+
+  it('is null for an impossible or unparseable date', () => {
+    for (const bad of ['2026-02-30', '2025-02-29', '2026-13-01', '2026-10-01T25:00:00Z', '2026-10-01T10:61:00Z', 'yesterday', '10/01/2026', '', '0000-01-01', '1969-12-31']) {
+      expect(postedAtOf(bad), bad).toBeNull();
+    }
+    for (const bad of [0, -5, Number.NaN, Number.POSITIVE_INFINITY]) expect(postedAtOf(bad, 'ms'), String(bad)).toBeNull();
+    expect(postedAtOf(null)).toBeNull();
+    expect(postedAtOf({})).toBeNull();
+    expect(postedAtOf(1790799896055)).toBeNull(); // a number with no stated unit is not guessed
+  });
+});
+
+const fixtureJson = (name: string): unknown => JSON.parse(readFileSync(new URL(`../fixtures/sources/${name}.json`, import.meta.url), 'utf8'));
+
+// ---------------------------------------------------------------------------
+// The normalizer agent
+// ---------------------------------------------------------------------------
+
+const golden = (name: string): string => readFileSync(new URL(`../fixtures/normalizer/${name}.txt`, import.meta.url), 'utf8').replace(/\n$/, '');
+const req = (ats: DiscoveryRequest['ats'], slug: string, company: string): DiscoveryRequest => ({ ats, slug, company, runDate: '2026-10-09' });
+const raw = (source: string, r: Record<string, unknown>, company = 'Acme', slug = 'acme'): RawPosting => ({ source, sourceId: '1', company, slug, raw: r });
+const one = (p: RawPosting): Posting => {
+  const out = normalize(p);
+  expect(Posting.schema.safeParse(out).success, JSON.stringify(Posting.schema.safeParse(out).error?.issues)).toBe(true);
+  return out;
+};
+const listItems = (html: string): string[] =>
+  [...html.matchAll(/<li\b[^>]*>([\s\S]*?)(?=<\/?li\b|<\/?[uo]l\b)/gi)].map((m) => htmlToText(m[1] ?? '')).filter((t) => t !== '');
+
+const gh = greenhouseParse(fixtureJson('greenhouse-gitlab'), req('greenhouse', 'gitlab', 'GitLab')).postings;
+const lv = leverParse(fixtureJson('lever-veeva'), req('lever', 'veeva', 'Veeva')).postings;
+const ab = ashbyParse(fixtureJson('ashby-confluent'), req('ashby', 'confluent', 'Confluent')).postings;
+const hm = himalayasParse(fixtureJson('himalayas')).postings;
+const jbAny = jobicyParse(fixtureJson('jobicy-anywhere')).postings;
+const jbApac = jobicyParse(fixtureJson('jobicy-apac')).postings;
+const byId = (ps: readonly RawPosting[], id: string): RawPosting => {
+  const p = ps.find((x) => x.sourceId === id);
+  if (!p) throw new Error(`no posting ${id}`);
+  return p;
+};
+
+/** The careers source's raw for the recorded JSON-LD job page (Task 5b fixture). */
+const careersJsonLd = (): RawPosting => {
+  const html = readFileSync(new URL('../fixtures/careers/job-jsonld.html', import.meta.url), 'utf8');
+  const ld = JSON.parse(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/.exec(html)?.[1] ?? 'null') as Record<string, unknown>;
+  return {
+    source: 'careers',
+    sourceId: 'abcdef0123456789',
+    company: 'Example Careers Co',
+    slug: 'example-careers',
+    raw: { url: 'https://careers.example/jobs/backend-engineer', jsonLd: ld, title: 'Senior Backend Engineer', text: 'Build payment services.\nGo\nPostgres' },
+  };
+};
+
+describe('normalizer contract', () => {
+  it('is a deterministic understanding agent with no capabilities, RawPosting@1 to Posting@1', () => {
+    const c = normalizer.contract;
+    expect(c.id).toBe('normalizer');
+    expect(c.team).toBe('understanding');
+    expect(c.kind).toBe('deterministic');
+    expect(c.capabilities).toEqual({});
+    expect(c.egress).toEqual([]);
+    expect(c.consumes.name).toBe('RawPosting');
+    expect(c.produces.name).toBe('Posting');
+  });
+
+  it('emits exactly one Posting per input', async () => {
+    const out = await normalizer.run(byId(lv, 'a89d4ff8-b50b-4e56-9b74-0823d2751c66'), {} as AgentContext);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toEqual(normalize(byId(lv, 'a89d4ff8-b50b-4e56-9b74-0823d2751c66')));
+  });
+
+  it('maps every recorded posting of every source to a valid Posting', () => {
+    for (const p of [...gh, ...lv, ...ab, ...hm, ...jbAny, ...jbApac, careersJsonLd()]) one(p);
+  });
+});
+
+describe('greenhouse', () => {
+  it('maps the full posting (pay_input_ranges in cents, double-escaped content)', () => {
+    expect(one(byId(gh, '8638232002'))).toEqual({
+      jobKey: hex16('gitlab|ai transformation owner, cro|remote, united states'),
+      source: 'greenhouse', sourceId: '8638232002', company: 'GitLab', slug: 'gitlab', ats: 'greenhouse',
+      title: 'AI Transformation Owner, CRO',
+      url: 'https://job-boards.greenhouse.io/gitlab/jobs/8638232002',
+      locationText: 'Remote, United States',
+      remote: { structured: null, countries: ['united states'], signals: ['location:remote'] },
+      employmentType: null,
+      descriptionText: golden('greenhouse-8638232002'),
+      postedAt: '2026-07-22T13:38:40-04:00',
+      comp: { min: 139200, max: 235200, currency: 'USD', period: 'year', basis: 'base' },
+      yearsRequired: null,
+    });
+  });
+
+  it('reads every country of a multi-location posting, and collapses title whitespace', () => {
+    const p = one(byId(gh, '8869149002'));
+    expect(p.title).toBe('Recruiter, GTM');
+    expect(p.remote.countries).toEqual(['australia', 'canada', 'india', 'ireland', 'mexico', 'poland', 'united kingdom', 'united states']);
+    expect(p.remote.structured).toBeNull();
+  });
+
+  it('decodes the escaped content once, then strips it: no tag or entity survives, every list item does', () => {
+    for (const p of gh) {
+      const text = one(p).descriptionText;
+      expect(text).not.toMatch(/<\/?[a-z][a-z0-9]*\b[^>]*>|&[a-z]+;|&#\d+;/i);
+      const content = decodeEntities((p.raw as { content: string }).content);
+      for (const item of listItems(content)) expect(text, item).toContain(`- ${item.split('\n')[0]}`);
+    }
+  });
+
+  it('handles HTML entities inside double-escaped content', () => {
+    const p = one(raw('greenhouse', { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote' }, content: '&lt;p&gt;R&amp;amp;D &amp;amp; caf&amp;eacute; &amp;lt;b&amp;gt;&lt;/p&gt;&lt;ul&gt;&lt;li&gt;A&lt;br&gt;B&lt;/li&gt;&lt;/ul&gt;' }));
+    expect(p.descriptionText).toBe('R&D & café <b>\n\n- A\n  B');
+  });
+
+  it('converts pay ranges: cents to units, INR first, one currency only, hourly and OTE are not base', () => {
+    const base = { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote' }, content: '' };
+    const range = (min: number, max: number, cur: string, title = 'Salary Range', blurb = '') => ({ min_cents: min, max_cents: max, currency_type: cur, title, blurb });
+    const comp = (ranges: unknown[]) => one(raw('greenhouse', { ...base, pay_input_ranges: ranges })).comp;
+    expect(comp([range(10880000, 14960000, 'USD', 'Zone 3 Pay Range')])).toEqual({ min: 108800, max: 149600, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(comp([range(10880000, 14960000, 'USD', 'US Base Salary')])).toEqual({ min: 108800, max: 149600, currency: 'USD', period: 'year', basis: 'base' });
+    // Several zones in one currency: the union.
+    expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary'), range(9000000, 11000000, 'USD', 'Zone 2 Salary')])).toEqual({ min: 90000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+    // An INR range is the one that applies to India.
+    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(400000000, 120000000, 'INR', 'India Salary')])).toEqual({ min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
+    // Two currencies without INR: no single figure is faithful.
+    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(9000000, 11000000, 'EUR', 'EU Salary')])).toBeNull();
+    // Unsupported currency, hourly, OTE.
+    expect(comp([range(10000000, 12000000, 'CAD', 'Canada Salary')])).toBeNull();
+    expect(comp([range(4000, 4000, 'USD', 'Hourly Pay Range')])).toBeNull();
+    expect(comp([range(15000000, 20000000, 'USD', 'OTE Range', '<p>On-target earnings, base salary plus commission</p>')])?.basis).toBe('unknown');
+    // An empty list falls back to the text.
+    expect(one(raw('greenhouse', { ...base, pay_input_ranges: [], content: '&lt;p&gt;Base salary: $120,000 - $150,000&lt;/p&gt;' })).comp).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
+  });
+
+  it('reads an employment type from metadata when the board exposes one', () => {
+    const base = { id: 1, title: 'Eng', absolute_url: 'https://x.example/1', location: { name: 'Remote' }, content: '' };
+    expect(one(raw('greenhouse', { ...base, metadata: [{ name: 'Employment Type', value: 'Full-time' }] })).employmentType).toBe('Full-time');
+    expect(one(raw('greenhouse', { ...base, metadata: [{ name: 'Quota Coverage Type', value: 'n/a' }] })).employmentType).toBeNull();
+  });
+});
+
+describe('lever', () => {
+  it('maps the full posting (remote India)', () => {
+    expect(one(byId(lv, 'a89d4ff8-b50b-4e56-9b74-0823d2751c66'))).toEqual({
+      jobKey: hex16('veeva|netsuite developer|hyderabad, india'),
+      source: 'lever', sourceId: 'a89d4ff8-b50b-4e56-9b74-0823d2751c66', company: 'Veeva', slug: 'veeva', ats: 'lever',
+      title: 'NetSuite Developer',
+      url: 'https://jobs.lever.co/veeva/a89d4ff8-b50b-4e56-9b74-0823d2751c66',
+      locationText: 'India - Hyderabad',
+      remote: { structured: 'remote', countries: ['india'], signals: ['workplaceType:remote'] },
+      employmentType: 'Full-Time',
+      descriptionText: golden('lever-a89d4ff8'),
+      postedAt: '2026-09-30T20:24:56.055Z',
+      comp: null,
+      yearsRequired: 3,
+    });
+  });
+
+  it('keeps the description, every list with its heading, and the closing section', () => {
+    for (const p of lv) {
+      const r = p.raw as { description: string; additional: string; lists: { text: string; content: string }[] };
+      const text = one(p).descriptionText;
+      expect(text.startsWith(htmlToText(r.description).slice(0, 40))).toBe(true);
+      for (const l of r.lists) {
+        expect(text).toContain(l.text.trim());
+        for (const item of listItems(l.content)) expect(text, item).toContain(`- ${item.split('\n')[0]}`);
+      }
+      expect(text).toContain(htmlToText(r.additional).split('\n').at(-1));
+    }
+  });
+
+  it('reads comp from a Compensation list line, as base', () => {
+    const p = one(byId(lv, '9ac55b31-df46-4acb-b305-2c0b7ed56027'));
+    expect(p.comp).toEqual({ min: 95000, max: 140000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(p.remote).toEqual({ structured: 'onsite', countries: ['united states'], signals: ['workplaceType:onsite'] });
+  });
+
+  it('maps workplaceType remote, hybrid, onsite and unspecified', () => {
+    const base = { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', categories: { location: 'Pune, India' }, description: '' };
+    const r = (w: unknown) => one(raw('lever', { ...base, workplaceType: w })).remote;
+    expect(r('remote')).toEqual({ structured: 'remote', countries: ['india'], signals: ['workplaceType:remote'] });
+    expect(r('hybrid')).toEqual({ structured: 'hybrid', countries: ['india'], signals: ['workplaceType:hybrid'] });
+    expect(r('onsite')).toEqual({ structured: 'onsite', countries: ['india'], signals: ['workplaceType:onsite'] });
+    expect(r('unspecified')).toEqual({ structured: null, countries: ['india'], signals: ['workplaceType:unspecified'] });
+    expect(r(undefined)).toEqual({ structured: null, countries: ['india'], signals: [] });
+  });
+
+  it('prefers the structured workplaceType when the location text disagrees, keeping both', () => {
+    const p = one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', workplaceType: 'hybrid', categories: { location: 'Remote - India', allLocations: ['Remote - India', 'Pune, India'] }, country: 'IN' }));
+    expect(p.locationText).toBe('Remote - India; Pune, India');
+    expect(p.remote).toEqual({ structured: 'hybrid', countries: ['india'], signals: ['workplaceType:hybrid', 'location:remote'] });
+  });
+
+  it('converts salaryRange to yearly base comp, refusing intervals it cannot annualise', () => {
+    const base = { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', categories: { location: 'India' }, description: '<p>Salary: ₹1 crore</p>' };
+    const c = (s: unknown) => one(raw('lever', { ...base, salaryRange: s })).comp;
+    expect(c({ min: 3000000, max: 4500000, currency: 'INR', interval: 'per-year-salary' })).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(c({ min: 250000, max: 300000, currency: 'INR', interval: 'per-month-salary' })).toEqual({ min: 3000000, max: 3600000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(c({ min: 40, max: 60, currency: 'USD', interval: 'per-hour-wage' })).toBeNull();
+    expect(c({ min: 100000, max: 120000, currency: 'SGD', interval: 'per-year-salary' })).toBeNull();
+    expect(c({ min: 120000, max: 100000, currency: 'USD', interval: 'per-year-salary' })).toBeNull();
+    // The plausibility minimum holds for structured figures too: 80 dollars a year is not a salary.
+    expect(c({ min: 50, max: 80, currency: 'USD', interval: 'per-year-salary' })).toBeNull();
+    expect(c({ min: 60000, max: 90000, currency: 'INR', interval: 'per-year-salary' })).toBeNull();
+    // No salaryRange at all: the text decides.
+    expect(one(raw('lever', base)).comp).toEqual({ min: 10000000, max: 10000000, currency: 'INR', period: 'year', basis: 'unknown' });
+  });
+
+  it('includes salaryDescription in the text', () => {
+    const p = one(raw('lever', { id: '1', text: 'Eng', hostedUrl: 'https://jobs.lever.co/x/1', categories: {}, description: '<p>Body</p>', salaryDescription: '<p>Base salary: $100,000 - $120,000</p>' }));
+    expect(p.descriptionText).toBe('Body\n\nBase salary: $100,000 - $120,000');
+    expect(p.comp).toEqual({ min: 100000, max: 120000, currency: 'USD', period: 'year', basis: 'base' });
+  });
+});
+
+describe('ashby', () => {
+  it('maps the full posting (remote India by text, no compensation)', () => {
+    expect(one(byId(ab, '0b2a4106-7f01-4205-813d-81e4fa1abdb4'))).toEqual({
+      jobKey: hex16('confluent|staff software engineer i - sre|in remote india'),
+      source: 'ashby', sourceId: '0b2a4106-7f01-4205-813d-81e4fa1abdb4', company: 'Confluent', slug: 'confluent', ats: 'ashby',
+      title: 'Staff Software Engineer I - SRE',
+      url: 'https://jobs.ashbyhq.com/confluent/0b2a4106-7f01-4205-813d-81e4fa1abdb4',
+      locationText: 'IN Remote India',
+      remote: { structured: null, countries: ['india'], signals: ['location:remote'] },
+      employmentType: 'FullTime',
+      descriptionText: golden('ashby-0b2a4106'),
+      postedAt: '2026-02-16T07:38:53.841+00:00',
+      comp: null,
+      yearsRequired: null,
+    });
+  });
+
+  it('takes the Salary component as base comp; equity never becomes comp', () => {
+    const p = one(byId(ab, '47920ccd-db54-4ed4-a865-70857e865fff'));
+    expect(p.comp).toEqual({ min: 197400, max: 271200, currency: 'USD', period: 'year', basis: 'base' });
+    expect(p.title).toBe('Distributed Systems Software Engineer - WarpStream');
+    expect(p.locationText).toBe('Remote, United States; Remote, Texas; Remote, North Carolina; Remote, Massachusetts; Remote, New York');
+    expect(p.remote).toEqual({ structured: 'remote', countries: ['united states'], signals: ['workplaceType:Remote', 'isRemote:true', 'location:remote'] });
+    expect(p.yearsRequired).toBe(5);
+    const equityOnly = { compensationType: 'EquityCashValue', interval: '1 YEAR', currencyCode: 'USD', minValue: 50000, maxValue: 90000 };
+    const bonus = { compensationType: 'Bonus', interval: '1 YEAR', currencyCode: 'USD', minValue: 10000, maxValue: 20000 };
+    const withComp = (components: unknown[]) =>
+      one(raw('ashby', { id: '1', title: 'Eng', jobUrl: 'https://jobs.ashbyhq.com/x/1', location: 'Remote', descriptionHtml: '<p>Body</p>', compensation: { summaryComponents: components } })).comp;
+    expect(withComp([equityOnly])).toBeNull();
+    expect(withComp([bonus])).toBeNull();
+    expect(withComp([equityOnly, { compensationType: 'Salary', interval: '1 YEAR', currencyCode: 'EUR', minValue: 110000, maxValue: 185000 }])).toEqual({ min: 110000, max: 185000, currency: 'EUR', period: 'year', basis: 'base' });
+    expect(withComp([{ compensationType: 'Salary', interval: '1 MONTH', currencyCode: 'INR', minValue: 300000, maxValue: 400000 }])).toEqual({ min: 3600000, max: 4800000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(withComp([{ compensationType: 'Salary', interval: '1 HOUR', currencyCode: 'USD', minValue: 50, maxValue: 70 }])).toBeNull();
+  });
+
+  it('never reads a CA$ figure as USD: a Salary component in an unsupported currency is null, not text', () => {
+    const p = one(byId(ab, 'a24f234c-08a3-4184-a357-763ce5e69454'));
+    expect(p.comp).toBeNull();
+    expect(p.remote).toEqual({ structured: null, countries: ['canada'], signals: ['location:remote'] });
+  });
+
+  it('maps isRemote and workplaceType, structured winning over text', () => {
+    const r = (o: Record<string, unknown>) => one(raw('ashby', { id: '1', title: 'Eng', jobUrl: 'https://jobs.ashbyhq.com/x/1', location: 'Remote - India', ...o })).remote;
+    expect(r({ workplaceType: 'Hybrid', isRemote: true })).toEqual({ structured: 'hybrid', countries: ['india'], signals: ['workplaceType:Hybrid', 'isRemote:true', 'location:remote'] });
+    expect(r({ workplaceType: 'OnSite' })).toEqual({ structured: 'onsite', countries: ['india'], signals: ['workplaceType:OnSite', 'location:remote'] });
+    expect(r({ isRemote: true })).toEqual({ structured: 'remote', countries: ['india'], signals: ['isRemote:true', 'location:remote'] });
+    expect(r({ isRemote: false })).toEqual({ structured: null, countries: ['india'], signals: ['isRemote:false', 'location:remote'] });
+  });
+
+  it('reads countries from addresses, keeping an unlisted address country', () => {
+    const p = one(raw('ashby', { id: '1', title: 'Eng', jobUrl: 'https://jobs.ashbyhq.com/x/1', location: 'Remote', address: { postalAddress: { addressCountry: 'Georgia' } }, secondaryLocations: [{ location: 'Remote, Spain', address: { postalAddress: { addressCountry: 'Spain' } } }] }));
+    expect(p.remote.countries).toEqual(['georgia', 'spain']);
+    expect(p.locationText).toBe('Remote; Remote, Spain');
+  });
+});
+
+describe('himalayas', () => {
+  it('maps the full posting (India restriction, remote-only feed)', () => {
+    const p = byId(hm, 'https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693');
+    expect(one(p)).toEqual({
+      jobKey: hex16('jitterbit|java software engineer - connectors - remote|india'),
+      source: 'himalayas', sourceId: 'https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693',
+      company: 'Jitterbit', slug: 'himalayas', ats: 'feed',
+      title: 'Java Software Engineer - Connectors - Remote',
+      url: 'https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693',
+      locationText: 'India',
+      remote: { structured: 'remote', countries: ['india'], signals: ['feed:remote-only', 'title:remote'] },
+      employmentType: 'Full Time',
+      descriptionText: golden('himalayas-jitterbit'),
+      postedAt: '2026-10-08T20:05:25.000Z',
+      comp: null,
+      yearsRequired: null,
+    });
+  });
+
+  it('reads an empty restriction list as worldwide, with an empty location', () => {
+    const p = one(byId(hm, 'https://himalayas.app/companies/nebius/jobs/senior-software-engineer-ydb-team-5851203954'));
+    expect(p.locationText).toBe('');
+    expect(p.remote.countries).toEqual(['worldwide']);
+  });
+
+  it('reads min/max salary fields with their period', () => {
+    // The adapter drops this US-only job; its recorded raw still shows the salary fields.
+    const coinbase = (fixtureJson('himalayas') as { jobs: Record<string, unknown>[] }).jobs.find((j) => j.companyName === 'Coinbase') ?? {};
+    expect(one(raw('himalayas', coinbase, 'Coinbase', 'himalayas')).comp).toEqual({ min: 167280, max: 196800, currency: 'USD', period: 'year', basis: 'base' });
+    const base = { guid: 'g', title: 'Eng', companyName: 'X', applicationLink: 'https://himalayas.app/x', locationRestrictions: ['India'], description: '<p>Salary: ₹30 LPA</p>' };
+    const c = (o: Record<string, unknown>) => one(raw('himalayas', { ...base, ...o }, 'X', 'himalayas')).comp;
+    expect(c({ minSalary: 200000, maxSalary: 300000, currency: 'INR', salaryPeriod: 'monthly' })).toEqual({ min: 2400000, max: 3600000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(c({ minSalary: 30, maxSalary: 40, currency: 'USD', salaryPeriod: 'hourly' })).toBeNull();
+    expect(c({ minSalary: 100000, maxSalary: null, currency: 'USD', salaryPeriod: 'annual' })).toBeNull();
+    expect(c({ minSalary: null, maxSalary: null, currency: null, salaryPeriod: 'annual' })).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+  });
+
+  it('maps object restrictions and keeps an unlisted one', () => {
+    const p = one(raw('himalayas', { guid: 'g', title: 'Eng', companyName: 'X', applicationLink: 'https://himalayas.app/x', locationRestrictions: [{ alpha2: 'IN', name: 'India' }, 'Georgia'] }, 'X', 'himalayas'));
+    expect(p.remote.countries).toEqual(['georgia', 'india']);
+    expect(p.locationText).toBe('India, Georgia');
+  });
+});
+
+describe('jobicy', () => {
+  it('maps the full posting (Anywhere, yearly USD salary)', () => {
+    expect(one(byId(jbAny, '152574'))).toEqual({
+      jobKey: hex16('relationalai|solution engineer|anywhere'),
+      source: 'jobicy', sourceId: '152574', company: 'RelationalAI', slug: 'jobicy', ats: 'feed',
+      title: 'Solution Engineer',
+      url: 'https://jobicy.com/jobs/152574-solution-engineer-3',
+      locationText: 'Anywhere',
+      remote: { structured: 'remote', countries: ['worldwide'], signals: ['feed:remote-only'] },
+      employmentType: 'Full-Time',
+      descriptionText: golden('jobicy-152574'),
+      postedAt: '2026-10-06T04:50:12+00:00',
+      comp: { min: 170000, max: 200000, currency: 'USD', period: 'year', basis: 'base' },
+      yearsRequired: null,
+    });
+  });
+
+  it('reads the geo list as countries and refuses an unsupported salary currency', () => {
+    const ph = one(byId(jbApac, '152460'));
+    expect(ph.remote.countries).toEqual(['philippines']);
+    expect(ph.comp).toBeNull();
+    expect(one(byId(jbApac, '154823')).remote.countries).toEqual(['ireland', 'japan', 'poland', 'united kingdom', 'united states']);
+    expect(one(byId(jbAny, '152401')).employmentType).toBe('Contract');
+  });
+
+  it('reads salary fields with their period', () => {
+    const base = { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: '' };
+    const c = (o: Record<string, unknown>) => one(raw('jobicy', { ...base, ...o }, 'X', 'jobicy')).comp;
+    expect(c({ salaryMin: 5000, salaryMax: 7000, salaryCurrency: 'USD', salaryPeriod: 'monthly' })).toEqual({ min: 60000, max: 84000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(c({ salaryMin: 50, salaryMax: 70, salaryCurrency: 'USD', salaryPeriod: 'hourly' })).toBeNull();
+    expect(c({ salaryMin: 50000, salaryMax: 70000, salaryCurrency: 'EUR', salaryPeriod: 'yearly' })).toEqual({ min: 50000, max: 70000, currency: 'EUR', period: 'year', basis: 'base' });
+  });
+});
+
+describe('careers', () => {
+  it('maps the full JSON-LD posting (TELECOMMUTE, Country object, yearly baseSalary)', () => {
+    expect(one(careersJsonLd())).toEqual({
+      jobKey: hex16('example careers co|senior backend engineer|india'),
+      source: 'careers', sourceId: 'abcdef0123456789', company: 'Example Careers Co', slug: 'example-careers', ats: 'careers',
+      title: 'Senior Backend Engineer',
+      url: 'https://careers.example/jobs/backend-engineer',
+      locationText: 'India',
+      remote: { structured: 'remote', countries: ['india'], signals: ['jobLocationType:TELECOMMUTE'] },
+      employmentType: 'FULL_TIME',
+      descriptionText: 'Build payment services.\n\n- Go\n- Postgres',
+      postedAt: '2026-10-01',
+      comp: { min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' },
+      yearsRequired: null,
+    });
+  });
+
+  const careers = (ld: Record<string, unknown> | null, text = 'Plain page text.'): Posting =>
+    one({ source: 'careers', sourceId: 's', company: 'Co', slug: 'co', raw: { url: 'https://co.example/jobs/1', jsonLd: ld, title: 'Backend Engineer', text } });
+  const salary = (unitText: string | undefined, extra: Record<string, unknown> = {}) => ({
+    '@type': 'JobPosting', title: 'Backend Engineer', description: '<p>x</p>',
+    baseSalary: { '@type': 'MonetaryAmount', currency: 'INR', value: { '@type': 'QuantitativeValue', minValue: 200000, maxValue: 300000, ...(unitText ? { unitText } : {}), ...extra } },
+  });
+
+  it('annualises baseSalary by unitText: MONTH x12, YEAR as is, HOUR and missing units null', () => {
+    expect(careers(salary('MONTH')).comp).toEqual({ min: 2400000, max: 3600000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(careers(salary('YEAR')).comp).toEqual({ min: 200000, max: 300000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(careers(salary('HOUR')).comp).toBeNull();
+    expect(careers(salary(undefined)).comp).toBeNull();
+    expect(careers(salary('YEAR', { minValue: undefined, maxValue: undefined, value: 2500000 })).comp).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+
+  it('reads applicantLocationRequirements as an object or an array, and jobLocation as the place text', () => {
+    const p = careers({
+      '@type': 'JobPosting', title: 'Backend Engineer', jobLocationType: 'TELECOMMUTE',
+      applicantLocationRequirements: [{ '@type': 'Country', name: 'India' }, { '@type': 'Country', name: 'SG' }],
+      jobLocation: { '@type': 'Place', address: { '@type': 'PostalAddress', addressLocality: 'Austin', addressRegion: 'TX', addressCountry: 'US' } },
+    });
+    expect(p.locationText).toBe('Austin, TX, US');
+    // A TELECOMMUTE job's jobLocation is an office, not a restriction on applicants.
+    expect(p.remote).toEqual({ structured: 'remote', countries: ['india', 'singapore'], signals: ['jobLocationType:TELECOMMUTE'] });
+    const onsite = careers({ '@type': 'JobPosting', title: 'Backend Engineer', jobLocation: [{ '@type': 'Place', address: { addressLocality: 'Pune', addressCountry: { '@type': 'Country', name: 'India' } } }] });
+    expect(onsite.locationText).toBe('Pune, India');
+    expect(onsite.remote).toEqual({ structured: null, countries: ['india'], signals: [] });
+  });
+
+  it('uses the page text when there is no JSON-LD', () => {
+    const p = careers(null, 'Remote from India.\nOwn the data pipeline.');
+    expect(p.descriptionText).toBe('Remote from India.\nOwn the data pipeline.');
+    expect(p.remote).toEqual({ structured: null, countries: [], signals: [] });
+    expect(p.postedAt).toBeNull();
+    expect(p.employmentType).toBeNull();
+    expect(p.locationText).toBe('');
+  });
+
+  it('sets an impossible datePosted to null', () => {
+    expect(careers({ '@type': 'JobPosting', title: 'Backend Engineer', datePosted: '2026-02-30' }).postedAt).toBeNull();
+    expect(careers({ '@type': 'JobPosting', title: 'Backend Engineer', datePosted: '2026-02-28' }).postedAt).toBe('2026-02-28');
+  });
+
+  it('decodes a JSON-LD description that was HTML-escaped', () => {
+    expect(careers({ '@type': 'JobPosting', title: 'Backend Engineer', description: '&lt;p&gt;Hi &amp;amp; bye&lt;/p&gt;&lt;ul&gt;&lt;li&gt;Go&lt;/li&gt;&lt;/ul&gt;' }).descriptionText).toBe('Hi & bye\n\n- Go');
+  });
+});
+
+describe('comp from text', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('reads only lines that mention salary, base, CTC, LPA, compensation or pay', () => {
+    expect(text('<p>CTC: ₹30-45 LPA</p>')).toEqual({ min: 3000000, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Base salary: $150,000 - $180,000 per annum</p>')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>We raised $50,000,000 last year.</p>')).toBeNull();
+    expect(text('<p>Competitive salary.</p>')).toBeNull();
+  });
+
+  it('never takes equity or a bonus as comp', () => {
+    expect(text('<p>Equity compensation: $50,000 in RSUs</p>')).toBeNull();
+    expect(text('<p>Salary: $100,000 plus $20,000 bonus</p>')).toBeNull();
+    expect(text('<p>Base pay: $95,000 - $140,000, plus equity</p>')).toEqual({ min: 95000, max: 140000, currency: 'USD', period: 'year', basis: 'base' });
+  });
+
+  it('refuses dollars that are not US dollars', () => {
+    expect(text('<p>Salary: CA$150,000 - CA$180,000</p>')).toBeNull();
+    expect(text('<p>Salary: A$150,000</p>')).toBeNull();
+    expect(text('<p>Salary: SGD 150,000</p>')).toBeNull();
+  });
+
+  it('drops implausible figures (below 1 LPA a year), and lines that disagree', () => {
+    expect(text('<p>Pay: ₹50,000 per annum</p>')).toBeNull();
+    expect(text('<p>We pay $500 for your home office.</p><p>Salary: $120,000</p>')).toEqual({ min: 120000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: $120,000</p><p>Salary: $150,000</p>')).toEqual({ min: 120000, max: 150000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: $120,000</p><p>Salary: €150,000</p>')).toBeNull();
+  });
+
+  it('annualises a monthly figure', () => {
+    expect(text('<p>Salary: ₹2,50,000 per month</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+  });
+});
+
+describe('unmappable raw postings', () => {
+  it('throws invalid_output for a missing title, a missing or non-http url, or an unknown source', () => {
+    const cases: RawPosting[] = [
+      raw('greenhouse', { id: 1, absolute_url: 'https://x.example/1' }),
+      raw('greenhouse', { id: 1, title: '   ', absolute_url: 'https://x.example/1' }),
+      raw('greenhouse', { id: 1, title: 'Eng' }),
+      raw('lever', { id: '1', text: 'Eng', hostedUrl: 'javascript:alert(1)' }),
+      raw('ashby', { id: '1', title: 'Eng', jobUrl: 'not a url' }),
+      raw('workday', { title: 'Eng', url: 'https://x.example/1' }),
+      { source: 'greenhouse', sourceId: '1', company: 'A', slug: 'a', raw: 'not an object' },
+    ];
+    for (const c of cases) {
+      let err: unknown;
+      try {
+        normalize(c);
+      } catch (e) {
+        err = e;
+      }
+      expect(err, JSON.stringify(c)).toBeInstanceOf(KernelError);
+      expect((err as KernelError).code).toBe('invalid_output');
+    }
+  });
+});
+
+describe('postedAt per source', () => {
+  it('maps each source date field, and an impossible one to null', () => {
+    expect(one(raw('greenhouse', { id: 1, title: 'E', absolute_url: 'https://x.example/1', first_published: '2026-02-30T10:00:00-04:00' })).postedAt).toBeNull();
+    expect(one(raw('lever', { id: '1', text: 'E', hostedUrl: 'https://x.example/1', createdAt: -1 })).postedAt).toBeNull();
+    expect(one(raw('jobicy', { id: 1, jobTitle: 'E', companyName: 'X', url: 'https://x.example/1', pubDate: 'not a date' }, 'X', 'jobicy')).postedAt).toBeNull();
+    expect(one(raw('ashby', { id: '1', title: 'E', jobUrl: 'https://x.example/1', publishedAt: '2026-13-01T00:00:00Z' })).postedAt).toBeNull();
+    expect(one(raw('himalayas', { guid: 'g', title: 'E', companyName: 'X', applicationLink: 'https://x.example/1', locationRestrictions: [], pubDate: 0 }, 'X', 'himalayas')).postedAt).toBeNull();
+  });
+});
+
+describe('description completeness on every recorded posting', () => {
+  /** Words of HTML read naively: raw-text elements gone, every tag a space, entities decoded. */
+  const words = (s: string): string[] => (s.match(/[\p{L}\p{N}]+/gu) ?? []).sort();
+  const naive = (html: string): string =>
+    decodeEntities(html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<(script|style|template|noscript)\b[\s\S]*?<\/\1\s*>/gi, ' ').replace(/<[^>]*>/g, ' '));
+  const sourceHtml = (p: RawPosting): string => {
+    const r = p.raw as Record<string, unknown> & { lists?: { text: string; content: string }[] };
+    switch (p.source) {
+      case 'greenhouse':
+        return decodeEntities(String(r.content ?? ''));
+      case 'lever':
+        return [r.description, ...(r.lists ?? []).flatMap((l) => [l.text.replace(/&/g, '&amp;').replace(/</g, '&lt;'), l.content]), r.additional, r.salaryDescription].map((x) => String(x ?? '')).join(' ');
+      case 'ashby':
+        return String(r.descriptionHtml ?? '');
+      case 'himalayas':
+        return String(r.description ?? '');
+      default:
+        return String(r.jobDescription ?? '');
+    }
+  };
+
+  it('keeps every word of the source, and adds none', () => {
+    for (const p of [...gh, ...lv, ...ab, ...hm, ...jbAny, ...jbApac]) {
+      expect(words(one(p).descriptionText), `${p.source} ${p.sourceId}`).toEqual(words(naive(sourceHtml(p))));
+    }
+  });
+});

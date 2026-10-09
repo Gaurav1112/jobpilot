@@ -1,0 +1,36 @@
+Who We Are
+
+At RelationalAI, we’re solving one of the most important challenges in artificial intelligence: how to teach large language models the logic, semantics, and business context of the modern enterprise.
+
+Frontier models are trained almost entirely on public data — they can speak about the world, but they don’t understand your business. We fix that.
+
+RelationalAI has pioneered a breakthrough called Superalignment — technology that enables LLMs to learn natively from private, structured enterprise data inside the data cloud.
+
+By combining this with relational knowledge graphs and our proprietary neuro/symbolic-relational reasoners, we deliver trustworthy decision intelligence: systems that use semantic models to truly understand how a business operates and can reason across its data to drive better outcomes.
+
+We’re a globally distributed team of engineers, scientists, and builders redefining how AI learns from data. We believe that high-stakes decisions deserve frontier intelligence — intelligence that’s explainable, aligned, and grounded in reality.
+
+If you’re driven by curiosity, thrive in complexity, and want to help build the system that brings true understanding to enterprise AI, you’ll feel right at home here.
+
+The Role
+
+You will be embedded inside our customers' hardest problems, and you will own the outcome until it works in production.
+
+You'll sit with executives, domain experts, and data teams to find the decisions that actually move their business - inventory that's in the wrong place, risk concentrations nobody can see, fraud patterns that only emerge across three systems, capacity plans built on guesses. Then you'll model their world in our ontology, formulate the reasoning problem, write the PyRel, and ship something that runs against their real data in their own Snowflake account.
+
+Every engagement here produces two deliverables.
+
+The first is the one the customer sees: a working decision system that changes how they operate.
+
+The second is the one that matters most to us: the pile of things you had to invent because our platform didn't have them yet. The modelling pattern you hand-rolled. The constraint formulation that should have been a primitive. The three-hour workaround where an API should have existed. You bring those back, you argue for them, and the strongest of them become product.
+
+That second deliverable is why this role exists. If you only ever deliver the first one, we've hired a consultant. We're not hiring consultants.
+
+You'll operate with unusual autonomy: you decide what's worth building, when a workaround is acceptable and when it's technical debt we'll regret, and when to tell a customer their real problem is not the one they asked about. You'll be technical enough that when something breaks in a customer environment, you find the root cause yourself rather than filing a ticket and waiting.
+
+What You'll Do
+
+- Own outcomes end to end - discovery, modelling, implementation, performance tuning, production hardening, and the measurement that proves it worked. Not a handoff at each stage. Yours.
+- Build, not describe - design and ship decision solutions on our modelling, reasoning, and learning stack: ontologies over customer data, rules, graph analytics, optimisation formulations, predictive models
+- Fill the gaps yourself - when a customer workflow is blocked on something the platform doesn't do, scope it and build it. Then push the general version upstream: read our source, form a hypothesis before you escalate, open the PR.
+- Close the loop with Product - every deployment generates a signal. Bring back r

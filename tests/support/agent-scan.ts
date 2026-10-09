@@ -15,10 +15,18 @@ export const isAgentCode = (path: string) =>
   path.startsWith('src/agents/') || path.startsWith('src/app/agents/') || path === 'src/demo/agents.ts' || path === 'src/demo/types.ts';
 
 /**
- * Shared app modules agent code may import: message types and predicates (zod plus kernel definitions), and the
- * import-free safe-regex compiler for user-supplied patterns. Each is scanned like agent code.
+ * Shared app modules agent code may import: message types and predicates (zod plus kernel definitions), the
+ * import-free safe-regex compiler for user-supplied patterns, the load-more label rule, and the normalizer's pure
+ * text helpers (HTML to text, normalisation, the comp parser). Each is scanned like agent code.
  */
-export const APP_ALLOWED = ['src/app/types.ts', 'src/app/pack/regex.ts', 'src/app/browser/labels.ts'];
+export const APP_ALLOWED = [
+  'src/app/types.ts',
+  'src/app/pack/regex.ts',
+  'src/app/browser/labels.ts',
+  'src/app/text/html.ts',
+  'src/app/text/norm.ts',
+  'src/app/comp/parse.ts',
+];
 
 /** The only kernel modules agent code may import: definitions, never providers, broker, store, executor or fakes. */
 const KERNEL_ALLOWED = ['agent', 'contract', 'errors', 'types', 'predicates', 'data-class'].map((m) => `src/kernel/${m}.ts`);

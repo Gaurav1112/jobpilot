@@ -20,7 +20,7 @@ import {
 const posting: Posting = {
   jobKey: '0123456789abcdef', source: 'greenhouse', sourceId: '1', company: 'Acme', slug: 'acme', ats: 'greenhouse',
   title: 'Backend Engineer', url: 'https://example.com/jobs/1', locationText: 'Remote - India',
-  remote: { structured: 'remote', countries: ['india'] }, employmentType: null, descriptionText: 'Build things.',
+  remote: { structured: 'remote', countries: ['india'], signals: ['workplaceType:remote', 'location:remote'] }, employmentType: null, descriptionText: 'Build things.',
   postedAt: '2026-10-01', comp: { min: 1, max: 2, currency: 'INR', period: 'year', basis: 'base' }, yearsRequired: 5,
 };
 const verdict: EligibilityVerdict = { posting, verdict: 'eligible', reasons: [], notes: [] };
@@ -67,6 +67,9 @@ describe('message types', () => {
   it('rejects unknown keys in nested objects', () => {
     expect(Posting.schema.safeParse({ ...posting, remote: { ...posting.remote, x: 1 } }).success).toBe(false);
     expect(Posting.schema.safeParse({ ...posting, comp: { ...posting.comp, x: 1 } }).success).toBe(false);
+    // remote.signals is required and holds strings: the evidence behind structured/countries stays visible.
+    expect(Posting.schema.safeParse({ ...posting, remote: { structured: 'remote', countries: ['india'] } }).success).toBe(false);
+    expect(Posting.schema.safeParse({ ...posting, remote: { ...posting.remote, signals: [1] } }).success).toBe(false);
     expect(Scored.schema.safeParse({ ...scored, posting: { ...posting, x: 1 } }).success).toBe(false);
     expect(Scored.schema.safeParse({ ...scored, jdTerms: { ...scored.jdTerms, x: [] } }).success).toBe(false);
     expect(Rendered.schema.safeParse({ ...rendered, files: [{ ...files[0], x: 1 }] }).success).toBe(false);

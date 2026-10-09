@@ -1,0 +1,23 @@
+GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.
+
+The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. Co-create the future with us as we build technology that transforms how the world develops software.
+
+*Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.
+
+An overview of this role
+
+The AI Transformation Owner drives the end-to-end AI agenda for the field organization, translating emerging AI capabilities into concrete enablement roadmaps, field use cases, and org-level strategy. You will partner closely with product and engineering teams to pilot and scale AI solutions, own the operational transformation plan needed to embed AI into day-to-day field workflows, and establish the governance framework that keeps AI adoption safe, compliant, and aligned with company standards. This is a hands-on role for someone who can move from strategy to execution without heavy oversight.
+
+This role reports to the Vice President, Enablement & AI.
+
+What You’ll Do
+
+- AI Enablement Roadmap: Own and continuously evolve the roadmap for AI-driven enablement initiatives, prioritizing based on field impact, feasibility, and alignment with broader Enterprise AI team and strategy..
+- AI Field Use Cases: Identify, scope, and execute on high-value AI use cases for the field (e.g., deal support, prospecting, content generation, guided selling, skills, change management), working with stakeholders to define success criteria and measure impact.
+- AI Field Champions: build relationships with champions in the field organization to activate power-usage and drive peer-led adoption; track this adoption (e.g., usage, proficiency, behavior change) with our AI Ops Specialist and Enablement Analyst.
+- Ops Transformation Plan: Design and drive the operational plan that turns AI pilots into scaled, repeatable processes, coordinating across enablement, ops, and technical teams to remove execution bottlenecks.
+- AI Governance: Influence and lead governance standards for AI tool adoption in the field, including data usage, risk review, tool vetting, and alignment with company-wide AI policy.
+
+What You’ll Bring
+
+- Mid-Senior Experience: Several years of experience in enablement, sales operations, or a related GTM function, with a track recor
