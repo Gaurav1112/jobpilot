@@ -38,6 +38,8 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       `country-list`: structured remote or a location that says remote, with a non-empty country list naming none
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
+ *    b1. final fix L2: working hours limited to time zones that exclude UTC+5:30 → `timezone-excludes-india`
+ *       (`timezoneExcludesIndia`); overlap, flexibility and APAC time zones never count.
  *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
  *       worldwide → `location-outside-india`, whatever remote words it has; with the same guard (the description
  *       names India or such a region → `review`).
@@ -262,6 +264,46 @@ function exclusionRule(s: string): string | undefined {
   }
   return undefined;
 }
+/**
+ * Final fix L2 (LIVE RUN 1): working hours limited to time zones that exclude India (UTC+5:30).
+ * - "(European|EU|US|American|Americas|EMEA|CET|EST|PST|Pacific|Eastern) time zone(s) only";
+ * - "must work in|within (the) (US|EU|…) (business|working) hours";
+ * - an explicit "UTC±a to UTC±b" (or "between GMT±a and GMT±b") range, or a "UTC±a ± n hours" span, that does not
+ *   contain +5:30.
+ * A clause that speaks of overlap or flexibility never counts ("some overlap with US hours", "flexible hours"), nor
+ * does a negated one; APAC or Asia time zones are not in the list. Unicode minus and dashes count as a minus sign.
+ */
+const TZ_ZONE = '(?:european|eu|us|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
+const TZ_ONLY = new RegExp(`\\b${TZ_ZONE}\\s+time\\s?zones?\\s+only\\b`, 'i');
+const TZ_MUST_WORK = new RegExp(`\\bmust work (?:in|within) (?:the )?${TZ_ZONE}(?:\\s+(?:business|working|office))? hours\\b`, 'i');
+const OFFSET = '(?:\\s*([+-])\\s*(\\d{1,2})(?::?(\\d{2}))?)?';
+const TZ_RANGE = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:to|-|and)\\s*(?:utc|gmt)${OFFSET}(?![\\d:])`, 'gi');
+const TZ_SPAN = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:±|\\+\\s*\\/\\s*-|\\+-|plus or minus)\\s*(\\d{1,2})\\s*h(?:ou)?rs?\\b`, 'gi');
+const TZ_SOFT = /\b(?:overlap\w*|flexib\w*)\b/i;
+const IST = 5.5;
+const offsetOf = (sign: string | undefined, h: string | undefined, m: string | undefined): number =>
+  sign === undefined ? 0 : (sign === '-' ? -1 : 1) * (Number(h) + Number(m ?? '0') / 60);
+
+function timezoneExcludesIndia(head: string): boolean {
+  // Unicode minus, hyphen and dashes as an ASCII minus, so "UTC−1" reads as UTC-1.
+  const s = withoutAlternatives(head.replace(/[−‐‑–—]/g, '-'));
+  const counts = (at: number, len: number): boolean => !TZ_SOFT.test(sentenceAt(s, at, len));
+  for (const re of [TZ_ONLY, TZ_MUST_WORK]) {
+    for (const m of s.matchAll(new RegExp(re.source, 'gi'))) if (counts(m.index ?? 0, m[0].length)) return true;
+  }
+  for (const m of s.matchAll(TZ_RANGE)) {
+    const a = offsetOf(m[1], m[2], m[3]);
+    const b = offsetOf(m[4], m[5], m[6]);
+    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && counts(m.index ?? 0, m[0].length)) return true;
+  }
+  for (const m of s.matchAll(TZ_SPAN)) {
+    const a = offsetOf(m[1], m[2], m[3]);
+    const n = Number(m[4]);
+    if ((IST < a - n || IST > a + n) && counts(m.index ?? 0, m[0].length)) return true;
+  }
+  return false;
+}
+
 /** Regions that include India (decision 1: asia and south asia, like apac). */
 const INDIA_REGIONS: ReadonlySet<string> = new Set(['apac', 'asia', 'south asia', 'worldwide']);
 const REMOTE_WORD = /\bremote\b/i;
@@ -303,6 +345,7 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
       (countries.includes('india') && REMOTE_WORD.test(p.descriptionText));
     return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
   }
+  if (timezoneExcludesIndia(head)) return 'timezone-excludes-india';
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {

@@ -326,6 +326,47 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ ...tide, locationText: 'London, UK (hybrid)' })).toEqual(rejected('hybrid'));
   });
 
+  it('final fix L2: working hours limited to time zones that exclude UTC+5:30 reject', () => {
+    const india = { remote: remote('remote', ['india']), locationText: 'Remote - India' };
+    const tz = rejected('timezone-excludes-india');
+    // LIVE RUN 1, in the title, with the Unicode minus
+    expect(decide({ ...india, title: 'Senior Backend Developer (Go) — Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
+    expect(decide({ ...india, locationText: 'Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
+    for (const d of [
+      'Full Remote, European Timezones Only.',
+      'EU timezone only.',
+      'US time zones only, please.',
+      'American time zones only.',
+      'Americas timezones only.',
+      'EMEA time zones only.',
+      'CET timezone only.',
+      'EST time zone only.',
+      'PST time zones only.',
+      'Pacific time zone only.',
+      'Eastern timezone only.',
+      'You must work in US hours.',
+      'Candidates must work within EU hours.',
+      'Working hours: UTC-1 to UTC+3.',
+      'Team hours UTC−8 to UTC−5.',
+      'We work between GMT and GMT+2.',
+      'Core hours UTC+1 ± 2 hours.',
+      'Hours UTC-5 +/- 3 hours.',
+    ]) expect(decide({ ...india, descriptionText: d }), d).toEqual(tz);
+    // never: overlap, flexibility, APAC, or a range or span that includes +5:30
+    for (const d of [
+      'Some overlap with US hours is expected.',
+      'At least 4 hours of overlap with US hours.',
+      'Overlap with UTC-5 to UTC-1 for two hours a day.',
+      'Flexible hours; US time zones only for on-call is not required.',
+      'Flexible working hours.',
+      'APAC timezones preferred.',
+      'APAC time zones only.',
+      'Working hours: UTC+4 to UTC+8.',
+      'Core hours UTC+4 ± 2 hours.',
+      'Asia time zones only.',
+    ]) expect(decide({ ...india, descriptionText: d }).reasons, d).not.toContain('timezone-excludes-india');
+  });
+
   it('final fix I6: remote with no country, region or worldwide is review whatever hiresInIndia says, unless allRemote', () => {
     const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
     // hiresInIndia (greenhouse example-gh): structured remote, plain remote location, and the Confluent USA1 shape
