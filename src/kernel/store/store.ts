@@ -256,6 +256,11 @@ export class Store {
     return out;
   }
 
+  /** Read-only: every queue item of one run, in the queue's total order (stage, agent, envelope id). */
+  queueItems(runId: string): QueueRow[] {
+    return this.db.prepare(`SELECT * FROM queue WHERE run_id = ? ORDER BY stage, agent_id, envelope_id`).all(runId) as QueueRow[];
+  }
+
   // events: append-only, hash-chained
   appendEvent(runId: string, at: string, kind: string, data: unknown, policyHash: string): void {
     this.tx(() => {
@@ -319,6 +324,16 @@ export class Store {
       this.db.prepare(`SELECT 1 FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`).get(kind, entityId, stepKey, event) !==
       undefined
     );
+  }
+
+  /**
+   * Read-only: the entity moves a step key made, by kind, entity and event. The only link from an input-side
+   * quarantine (which writes no step row) to the entity it held.
+   */
+  transitionsOfStep(stepKey: string): { kind: string; entity_id: string; event: string; from_state: string; to_state: string; outcome: 'done' | 'quarantined' }[] {
+    return this.db
+      .prepare(`SELECT kind, entity_id, event, from_state, to_state, outcome FROM entity_transitions WHERE step_key = ? ORDER BY kind, entity_id, event`)
+      .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string; to_state: string; outcome: 'done' | 'quarantined' }[];
   }
 
   /** The entity's state under `kind`; without a kind, the id must belong to at most one kind. */

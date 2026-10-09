@@ -210,3 +210,31 @@ describe('finishStep with its event', () => {
     expect(s.chainHead()).toBeUndefined();
   });
 });
+
+describe('Store read-only queries for the app projector', () => {
+  it('queueItems lists one run in stage, agent, envelope order', () => {
+    const s = Store.open(':memory:');
+    s.enqueue('r', 2, 'b', 'e1');
+    s.enqueue('r', 1, 'z', 'e9');
+    s.enqueue('r', 1, 'a', 'e5');
+    s.enqueue('other', 0, 'a', 'e0');
+    s.markQueue('r', 'z', 'e9', 'skipped');
+    expect(s.queueItems('r')).toEqual([
+      { run_id: 'r', stage: 1, agent_id: 'a', envelope_id: 'e5', status: 'pending' },
+      { run_id: 'r', stage: 1, agent_id: 'z', envelope_id: 'e9', status: 'skipped' },
+      { run_id: 'r', stage: 2, agent_id: 'b', envelope_id: 'e1', status: 'pending' },
+    ]);
+    expect(s.queueItems('none')).toEqual([]);
+  });
+
+  it('transitionsOfStep lists the entity moves a step key made, in kind and entity order', () => {
+    const s = Store.open(':memory:');
+    s.applyTransition('j2', 'job', 'k', 'discovered', jobMachine, 'done');
+    s.applyTransition('j1', 'job', 'k', 'discovered', jobMachine, 'quarantined');
+    s.applyTransition('j1', 'job', 'other', 'normalized', jobMachine, 'done');
+    expect(s.transitionsOfStep('k')).toEqual([
+      { kind: 'job', entity_id: 'j1', event: 'discovered', from_state: 'NEW', to_state: 'DISCOVERED', outcome: 'quarantined' },
+      { kind: 'job', entity_id: 'j2', event: 'discovered', from_state: 'NEW', to_state: 'DISCOVERED', outcome: 'done' },
+    ]);
+  });
+});
