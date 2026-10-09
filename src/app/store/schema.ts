@@ -107,4 +107,8 @@ export const APP_MIGRATIONS: readonly string[] = [
   ALTER TABLE runs_summary ADD COLUMN warnings TEXT NOT NULL DEFAULT '[]';
   ALTER TABLE runs_summary ADD COLUMN problems TEXT NOT NULL DEFAULT '[]';
   `,
+  // m8: when a notification announced the job; a job is announced once.
+  `
+  ALTER TABLE jobs ADD COLUMN notified_at TEXT;
+  `,
 ];

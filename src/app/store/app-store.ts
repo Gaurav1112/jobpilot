@@ -112,6 +112,8 @@ export interface JobView {
   readonly status: JobStatus;
   readonly note: string;
   readonly appliedAt: string | null;
+  /** When a run's notification announced this job (m8); null until then. */
+  readonly notifiedAt: string | null;
   readonly band: Band;
 }
 
@@ -180,6 +182,7 @@ interface JobRowDb {
   status: JobStatus;
   note: string;
   applied_at: string | null;
+  notified_at: string | null;
 }
 
 const json = (v: unknown): string | null => (v === null || v === undefined ? null : JSON.stringify(v));
@@ -498,6 +501,14 @@ export class AppStore {
       .run(factId, status, at);
   }
 
+  /** Marks the jobs a notification announced, once: an already announced job keeps its first time. */
+  markNotified(jobKeys: readonly string[], at: string): void {
+    this.tx(() => {
+      const upd = this.db.prepare(`UPDATE jobs SET notified_at = ? WHERE job_key = ? AND notified_at IS NULL`);
+      for (const k of jobKeys) upd.run(at, k);
+    });
+  }
+
   /** An app setting (`render.nonce`, …), or undefined when unset. */
   getSetting(key: string): string | undefined {
     return (this.db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(key) as { value: string } | undefined)?.value;
@@ -615,6 +626,7 @@ function view(r: JobRowDb, top: JobRowDb, dups: readonly JobRowDb[], floorInr?: 
     status: groupStatus(group),
     note: notes.join(' | '),
     appliedAt: group.find((g) => g.applied_at !== null)?.applied_at ?? null,
+    notifiedAt: r.notified_at,
     band: bandOf(r, floorInr),
   };
 }

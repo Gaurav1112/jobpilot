@@ -134,7 +134,8 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     expect(offline.browser.calls.length).toBe(rendered);
     expect(second.report.replayed).toBe(second.counts.totals.done + second.counts.totals.quarantined);
     for (const j of jobs().filter((x) => x.docsState === 'ready')) for (const d of docsOf(j.jobKey)) expect(readyShas.get(d.path), d.path).toBe(d.sha256);
-    expect(second.notification).toBe(first.notification);
+    // m8: a job is announced once; a second run the same day has nothing new
+    expect(second.notification).toBe('No new matches today');
     expect(second.warnings).toEqual([REFRESH_HINT]);
     expect(second.exitCode).toBe(0);
   });
@@ -153,6 +154,15 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     const sourceSteps = Object.entries(byAgent(r)).filter(([a]) => a.startsWith('src-') && a !== 'src-careers-job').reduce((n, [, c]) => n + c.done, 0);
     expect(r.report.replayed).toBe(r.counts.totals.done - sourceSteps);
     expect(r.warnings).toEqual([]);
+    expect(r.notification).toBe('No new matches today');
+    // every announced job carries the time it was announced, from run 1
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      const ready = app.listJobs({}).filter((j) => j.docsState === 'ready');
+      expect(ready.map((j) => j.notifiedAt)).toEqual(ready.map(() => '2026-10-09T01:30:00.000Z'));
+    } finally {
+      app.close();
+    }
     for (const j of jobs().filter((x) => x.docsState === 'ready')) for (const d of docsOf(j.jobKey)) expect(readyShas.get(d.path), d.path).toBe(d.sha256);
   });
 
@@ -273,10 +283,22 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     }
   });
 
+  it('a gone board alone is a problem but not a failure: exit code 0 (ruling 4)', async () => {
+    now = '2026-11-05T01:30:00.000Z';
+    const gone = Object.assign(
+      async (url: string, init: Parameters<typeof offline.fetch>[1]): Promise<{ status: number; text: () => Promise<string> }> => (url.includes('example-lv') ? { status: 404, text: async () => 'nope' } : offline.fetch(url, init)),
+      { calls: [] as string[] },
+    );
+    const s = await runDaily({ home, clock, fetch: gone, browser: offline.browser, notifier, sleep: async () => {}, pdftotext: pdftotext as string });
+    expect(s.problems.map((p) => p.kind)).toEqual(['gone']);
+    expect(s.notification).toBe('No new matches today · 1 problem');
+    expect(s.exitCode).toBe(0);
+  });
+
   it('m1: a crash right after a replayed step does not count that replay twice when the run resumes', async () => {
-    now = '2026-11-04T04:00:00.000Z';
+    now = '2026-11-06T04:00:00.000Z';
     await run(); // after this, every step of a same-day run replays
-    now = '2026-11-04T04:30:00.000Z';
+    now = '2026-11-06T04:30:00.000Z';
     await expect(
       runDaily({ home, clock, fetch: offline.fetch, browser: offline.browser, notifier, sleep: async () => {}, pdftotext: pdftotext as string, afterStep: (n) => {
         if (n === 20) throw new Error('crash after a replay');
@@ -292,7 +314,7 @@ describe.skipIf(pdftotext === undefined)('jobpilot run, end to end (offline fixt
     const app = AppStore.open(join(home, 'jobpilot.db'));
     app.kernel.startRun('daily-2026-10-01', 'jobpilot-daily@1.0.0', 'old-policy', '2026-10-01T01:30:00.000Z');
     app.close();
-    now = '2026-11-04T05:30:00.000Z';
+    now = '2026-11-06T05:30:00.000Z';
     const s = await run();
     expect(s.warnings).toContain('run daily-2026-10-01 never completed and is from an earlier date; it will not be resumed');
   });

@@ -83,7 +83,7 @@ export interface RunOutcome {
   readonly fullPackHash: string;
   readonly policyHash: string;
   readonly warnings: string[];
-  /** 1 when any step failed or was quarantined (gone and input-rejected steps are failed steps); else 0. */
+  /** 1 when any step failed (other than gone or input_rejected) or was quarantined; else 0. */
   readonly exitCode: 0 | 1;
 }
 
@@ -115,11 +115,14 @@ export interface RunOptions {
   readonly afterStep?: (count: number) => void;
 }
 
-/** The jobs first seen today (IST) whose documents are ready: what the notification counts. Duplicate listings excluded. */
-function newMatches(app: AppStore, runDate: string): { score: number | null; company: string; title: string }[] {
+/**
+ * What the notification announces (m8): jobs this run saw first (their `first_seen` is this run's projection time),
+ * whose documents are ready, and that no notification has announced before. Duplicate listings excluded.
+ */
+function newMatches(app: AppStore, seenAt: string): { jobKey: string; score: number | null; company: string; title: string }[] {
   return app
     .listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] })
-    .filter((j) => j.docsState === 'ready' && istDate(j.firstSeen) === runDate);
+    .filter((j) => j.docsState === 'ready' && j.firstSeen === seenAt && j.notifiedAt === null);
 }
 
 /** The kept docs-rebuild counter, validated (review m6). */
@@ -131,7 +134,8 @@ export function nonceOf(app: AppStore): number | undefined {
   return n;
 }
 
-const exitCodeOf = (report: RunReport): 0 | 1 => (report.queue.failed > 0 || report.queue.quarantined > 0 ? 1 : 0);
+/** Ruling 4: gone and input-rejected items are problems (listed and counted) but not failures of the run. */
+const exitCodeOf = (report: RunReport): 0 | 1 => (report.queue.failed - report.gone - report.inputRejected > 0 || report.queue.quarantined > 0 ? 1 : 0);
 
 /** Whether this run had source steps and every one of them was answered from the store. */
 function sourcesAllReplayed(counts: RunCounts): boolean {
@@ -148,7 +152,8 @@ function sourcesAllReplayed(counts: RunCounts): boolean {
  *    dated with today's IST date (and, with `refresh`, this run's ordinal as `attempt`).
  * 3. Run as `daily-<runDate>` (or `daily-<runDate>-<n>` when that one completed; a crashed one is resumed), project
  *    the outputs into the app tables.
- * 4. Name every problem; notify: `<N> new matches · top: … · <k> problems`, or `No new matches today`.
+ * 4. Name every problem; notify: `<N> new matches · top: … · <k> problems`, or `No new matches today`. A job is
+ *    announced once: only jobs this run saw first, never notified before (`notified_at`).
  * 5. Record the run summary, with its warnings and problems.
  * Same-day replay is the default: the seeds carry the date, so a second run that day fetches nothing (a hint says so).
  */
@@ -173,10 +178,13 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
       const problems = runProblems(app.kernel, runId, loaded.pack.naming);
-      const notification = notificationFor(newMatches(app, runDate), loaded.pack.naming, problems.length);
+      const seenAt = app.kernel.events(runId).find((e) => e.kind === 'run_started')?.at ?? now;
+      const fresh = newMatches(app, seenAt);
+      const notification = notificationFor(fresh, loaded.pack.naming, problems.length);
       let notified = true;
       try {
         await o.notifier(notification);
+        app.markNotified(fresh.map((j) => j.jobKey), now);
       } catch (e) {
         notified = false;
         warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);

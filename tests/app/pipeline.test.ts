@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { srcLever } from '../../src/app/agents/sources/lever.js';
 import { renderer } from '../../src/app/agents/writing/renderer.js';
 import { appGuardrails } from '../../src/app/guardrails.js';
-import { LOCK_FILE, LockError, withLock } from '../../src/app/lock.js';
+import { LOCK_FILE, LockError, withLock, type ProcessProbe } from '../../src/app/lock.js';
 import { appleScriptString, notificationFor } from '../../src/app/notify.js';
 import { offlineProviders } from '../../src/app/offline.js';
 import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
@@ -191,6 +191,25 @@ describe('the run lock', () => {
     const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { pid: number; token: string });
     expect(body.pid).toBe(process.pid);
     expect(body.token).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('ruling 6: a lock is held only when both its pid and that process start time match (pid reuse is stale)', async () => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
+    const h = home;
+    const probe = (start: string): ProcessProbe => ({ alive: (pid) => pid === 4242 || pid === process.pid, startTime: (pid) => (pid === 4242 ? start : 'me-start') });
+    writeFileSync(join(h, LOCK_FILE), JSON.stringify({ pid: 4242, command: 'run', at: 'x', token: 'old', started: 'Mon Oct  5 07:00:00 2026' }));
+    // same pid, same start: held
+    await expect(withLock(h, 'run', async () => 1, probe('Mon Oct  5 07:00:00 2026'))).rejects.toThrow(/pid 4242, run/);
+    // same pid, another start: the pid was reused, so the lock is stale and is taken over
+    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started: string }, probe('Fri Oct  9 06:00:00 2026'));
+    expect(body.started).toBe('me-start');
+  });
+
+  it('records the real process start time of the holder', async () => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-lock-'));
+    const h = home;
+    const body = await withLock(h, 'run', async () => JSON.parse(readFileSync(join(h, LOCK_FILE), 'utf8')) as { started?: string });
+    expect(body.started).toMatch(/^\w{3} \w{3} +\d+ \d\d:\d\d:\d\d \d{4}$/);
   });
 
   it('takes over a stale lock whose process is gone', async () => {
