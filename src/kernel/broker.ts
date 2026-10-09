@@ -4,6 +4,7 @@ import type { DataClass } from './data-class.js';
 import type { Cost } from './envelope.js';
 import { KernelError } from './errors.js';
 import { egressAllowed, normalizeHost, type Policy } from './policy.js';
+import { challengeReason } from './challenge.js';
 import type { BrowserPage, FetchResponse, LlmResponse, Providers } from './providers.js';
 
 export interface HttpTool {
@@ -69,16 +70,10 @@ async function readCapped(res: FetchResponse, maxBytes: number): Promise<string>
   return text;
 }
 
-/** Read-only page rendering. The only option is the URL: the broker fixes everything else. */
+/** Read-only page rendering. The agent names the URL and whether it is a listing; the broker fixes everything else. */
 export interface BrowserTool {
-  render(url: string): Promise<BrowserPage>;
+  render(url: string, opts?: { readonly expand?: boolean }): Promise<BrowserPage>;
 }
-
-/**
- * A page that matches this, or answers 403 or 429, is a CAPTCHA or bot wall: the render fails with
- * `challenged`, which is never retried. jobpilot stops; it does not try to get past it.
- */
-export const CHALLENGE_PATTERN = /captcha|cf-challenge|are you a robot|access denied/i;
 
 export interface LlmTool {
   complete(req: { system: string; prompt: string }): Promise<LlmResponse>;
@@ -243,7 +238,11 @@ export function issueContext(a: IssueArgs): AgentContext {
   if (browserCap) {
     let pages = 0;
     ctx.browser = {
-      async render(url) {
+      async render(url, opts) {
+        // The only option is `expand`; anything else (a header, a user agent, a proxy) is refused, not ignored.
+        if (opts !== undefined && (typeof opts !== 'object' || opts === null || Object.keys(opts).some((k) => k !== 'expand') || (opts.expand !== undefined && typeof opts.expand !== 'boolean'))) {
+          throw deny('G-NO-EVASION: render accepts only { expand: boolean }');
+        }
         const u = checkUrl(url);
         if (pages >= browserCap.maxPages) {
           throw new KernelError('budget_exceeded', `G-BUDGET: page budget of ${browserCap.maxPages} pages reached in this step`);
@@ -259,8 +258,18 @@ export function issueContext(a: IssueArgs): AgentContext {
         try {
           // A redirect may only land on an egress host the policy also allows for this data class.
           const navigationHosts = a.contract.egress.filter((h) => egressAllowed(a.policy, h, a.inputClass));
-          page = await provider.render({ url: u.href, navigationHosts, deniedHosts: [...a.policy.deniedEgressHosts], signal: a.signal });
+          page = await provider.render({
+            url: u.href,
+            navigationHosts,
+            deniedHosts: [...a.policy.deniedEgressHosts],
+            deniedBrands: [...a.policy.deniedEgressBrands],
+            maxBytes: a.policy.maxResponseBytes,
+            expand: opts?.expand === true,
+            signal: a.signal,
+          });
         } catch (e) {
+          // The provider refuses what the page itself tried (a form POST): that is a denial of this step too.
+          if (e instanceof KernelError && e.code === 'policy_denied') denied.push(e.message);
           throw mapProviderError(e);
         }
         // The landing page is checked like the request: a redirect may not leave egress or drop to http.
@@ -278,11 +287,21 @@ export function issueContext(a: IssueArgs): AgentContext {
         if (Buffer.byteLength(page.html, 'utf8') > a.policy.maxResponseBytes) {
           throw new KernelError('invalid_output', `response exceeds ${a.policy.maxResponseBytes} bytes`);
         }
-        if (page.status === 403 || page.status === 429 || CHALLENGE_PATTERN.test(page.html)) {
-          throw new KernelError('challenged', `G-CHALLENGE: ${final.hostname} answered ${page.status} with a bot wall or CAPTCHA; stopping without retry`);
+        const challenge = challengeReason(page);
+        if (challenge !== null) {
+          throw new KernelError('challenged', `G-CHALLENGE: ${final.hostname} answered with a bot wall or CAPTCHA (${challenge}); stopping without retry`);
         }
         if (page.status >= 500) throw new KernelError('overloaded', `${page.status} from ${final.hostname}`);
-        return { status: page.status, finalUrl: page.finalUrl, html: page.html, text: page.text, jsonLd: [...page.jsonLd] };
+        return {
+          status: page.status,
+          finalUrl: page.finalUrl,
+          html: page.html,
+          text: page.text,
+          jsonLd: [...page.jsonLd],
+          headers: { ...page.headers },
+          settled: page.settled,
+          ...(page.expansion ? { expansion: { ...page.expansion, unfollowedControls: [...page.expansion.unfollowedControls] } } : {}),
+        };
       },
     };
   }

@@ -28,7 +28,7 @@ export function fakeLlm(
   };
 }
 
-/** A browser that serves canned pages by URL; an unknown URL is a 404. `status` defaults to 200 and `finalUrl` to the URL. */
+/** A browser that serves canned pages by URL; an unknown URL is a 404. Defaults: status 200, finalUrl the URL, settled, no headers. */
 export function fakeBrowser(
   routes: Record<string, Partial<BrowserPage> & { readonly html: string }>,
 ): BrowserProvider & { calls: BrowserRenderRequest[] } {
@@ -38,8 +38,9 @@ export function fakeBrowser(
     async render(req) {
       calls.push(req);
       const r = routes[req.url];
-      if (!r) return { status: 404, finalUrl: req.url, html: '<h1>Not found</h1>', text: 'Not found', jsonLd: [] };
-      return { status: r.status ?? 200, finalUrl: r.finalUrl ?? req.url, html: r.html, text: r.text ?? '', jsonLd: r.jsonLd ?? [] };
+      const expansion = req.expand ? { expansion: r?.expansion ?? { clicks: 0, capReached: false, unfollowedControls: [] } } : {};
+      if (!r) return { status: 404, finalUrl: req.url, html: '<h1>Not found</h1>', text: 'Not found', jsonLd: [], headers: {}, settled: true, ...expansion };
+      return { status: r.status ?? 200, finalUrl: r.finalUrl ?? req.url, html: r.html, text: r.text ?? '', jsonLd: r.jsonLd ?? [], headers: r.headers ?? {}, settled: r.settled ?? true, ...expansion };
     },
   };
 }

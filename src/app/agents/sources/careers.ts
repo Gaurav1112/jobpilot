@@ -9,17 +9,20 @@ import { sha256Hex } from './sha256.js';
 
 /**
  * `src-careers`: a career site without a public job API, read with a real browser so JavaScript-built listings
- * are seen in full. Read-only: it renders the watchlist entry's `listUrl` (following rel=next and same-host
- * "load more" links), collects the job links, renders each one and emits a RawPosting per job. It never clicks,
- * fills or submits anything; the only pages it opens are the URLs it passes to `ctx.browser.render`.
+ * are seen in full. Read-only: it renders the watchlist entry's `listUrl` as a listing (`expand`: the browser waits
+ * until the list stops growing and clicks same-page "load more" buttons), follows every same-host next, "show all"
+ * and numbered page link, collects the job links matching the entry's `linkPattern`, renders each job page and emits
+ * a RawPosting per job. It never fills or submits anything.
  *
  * Egress is exact-host and comes from the pack: `makeSrcCareers(careersHosts(pack.watchlist))` builds the contract
  * when the pipeline is compiled (Task 11), so the contract lists exactly the watchlist's careers hosts. Adding a
  * careers entry therefore changes the contract's egress (and its hash) on the next compile.
  *
- * Completeness: every limit fails the step loudly (`invalid_output`) rather than returning a partial list: more
- * job links than the page budget, listing pagination past the budget or in a loop, a "load more" control that only
- * a click could follow, or two job links that only a query string tells apart (their ids would collide).
+ * Completeness: every limit fails the step loudly (`invalid_output`) rather than returning a partial list: a listing
+ * still loading at the settle cap, a listing with no job links, a load-more still present after the click cap,
+ * pagination the browser cannot follow, pagination past the page budget or in a loop, an ItemList that announces
+ * more items than it lists, more job links than the page budget, a job page that never settles, or two job links
+ * that only a query string tells apart (their ids would collide).
  */
 
 /** Page budget per step: the listing page(s) plus every job page. */
@@ -85,12 +88,6 @@ const withoutFragment = (u: URL): string => {
   return c.href;
 };
 
-/** The default job-link rule, used when the entry has no linkPattern. */
-const looksLikeJob = (u: URL): boolean => {
-  const p = u.pathname.toLowerCase();
-  return p.includes('/job') || p.includes('/jobs/') || p.includes('/careers/') || p.includes('/position');
-};
-
 // ---- HTML ----
 
 const ENTITIES: Readonly<Record<string, string>> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ', '#39': "'" };
@@ -138,18 +135,21 @@ interface Anchor {
   readonly head: boolean;
   readonly href: string | undefined;
   readonly rel: string;
-  readonly text: string;
+  /** The visible text, else aria-label, else title. */
+  readonly label: string;
 }
 
 function anchorsOf(html: string): Anchor[] {
   const out: Anchor[] = [];
   for (const m of html.matchAll(/<a\b([^>]*)>([\s\S]*?)<\/a\s*>/gi)) {
     const attrs = m[1] ?? '';
-    out.push({ head: false, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), text: htmlToText(m[2] ?? '').replace(/\s+/g, ' ') });
+    const text = htmlToText(m[2] ?? '').replace(/\s+/g, ' ').trim();
+    const label = text !== '' ? text : (attr(attrs, 'aria-label') ?? attr(attrs, 'title') ?? '').trim();
+    out.push({ head: false, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label });
   }
   for (const m of html.matchAll(/<link\b([^>]*)>/gi)) {
     const attrs = m[1] ?? '';
-    out.push({ head: true, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), text: '' });
+    out.push({ head: true, href: attr(attrs, 'href'), rel: (attr(attrs, 'rel') ?? '').toLowerCase(), label: '' });
   }
   return out;
 }
@@ -173,13 +173,35 @@ const resolveUrl = (href: string, base: string): URL | null => {
   }
 };
 
-const LOAD_MORE = /^(load|show|view|see) more( (jobs|positions|roles|openings|results|vacancies))?$/i;
+const NEXT_WORDS = /^(next( page)?|more jobs|(show|view|see) all( jobs| positions| openings| roles)?|(load|show|view|see) more( jobs| positions| openings| roles| results)?)$/i;
 
-function hasUnfollowableMore(html: string, anchors: readonly Anchor[]): boolean {
-  for (const m of html.matchAll(/<button\b[^>]*>([\s\S]*?)<\/button\s*>/gi)) {
-    if (LOAD_MORE.test(htmlToText(m[1] ?? '').replace(/\s+/g, ' '))) return true;
+/** An anchor label that means "more of this list": Next, ›, », Show all jobs, Load more (37), aria-label "Next page". */
+export function isNextLabel(label: string): boolean {
+  const t = label.replace(/\(\s*\d+\s*\)/g, '').replace(/\s+/g, ' ').trim();
+  if (/^[›»>]+$/.test(t)) return true;
+  return NEXT_WORDS.test(t.replace(/\s*[›»>]+$/, '').trim());
+}
+
+/** Query parameters that number the pages of a listing; a sibling URL differs from a listing page only in these. */
+const PAGING = ['page', 'start', 'offset'] as const;
+const FIRST: Readonly<Record<string, string>> = { page: '1', start: '0', offset: '0' };
+
+/**
+ * The page-position key of a listing URL: origin, path and non-paging query, plus the paging parameters with the
+ * first-page values (page=1, start=0, offset=0) dropped, so `/jobs` and `/jobs?page=1` are one page.
+ */
+function pagingKey(u: URL): { base: string; key: string; paged: boolean } {
+  const other = new URLSearchParams();
+  const paging: string[] = [];
+  let paged = false;
+  for (const [k, v] of [...u.searchParams].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if ((PAGING as readonly string[]).includes(k.toLowerCase()) && /^\d+$/.test(v)) {
+      paged = true;
+      if (FIRST[k.toLowerCase()] !== v) paging.push(`${k.toLowerCase()}=${v}`);
+    } else other.append(k, v);
   }
-  return anchors.some((a) => !a.head && LOAD_MORE.test(a.text) && (a.href === undefined || /^\s*(#|javascript:)/i.test(a.href)));
+  const base = `${u.origin}${u.pathname}?${other.toString()}`;
+  return { base, key: `${base}|${paging.join('&')}`, paged };
 }
 
 const oneLine = (s: string | undefined): string | undefined => {
@@ -243,14 +265,17 @@ function itemListUrls(jsonLd: readonly unknown[]): string[] {
 
 // ---- the scan ----
 
+/** The provider's listing settle cap (src/app/browser): a listing still changing after it fails the step. */
+export const LISTING_SETTLE_CAP_S = 45;
+
 interface CareersEntry {
   readonly slug: string;
   readonly listUrl: string;
-  readonly linkPattern?: string | undefined;
+  readonly linkPattern: string;
 }
 
 const PackView = z.object({ watchlist: z.array(z.unknown()) });
-const EntryView = z.object({ ats: z.literal('careers'), slug: z.string(), listUrl: z.string(), linkPattern: z.string().optional() });
+const EntryView = z.object({ ats: z.literal('careers'), slug: z.string(), listUrl: z.string(), linkPattern: z.string() });
 
 function entryOf(pack: unknown, slug: string): CareersEntry {
   const fail = (why: string) => new KernelError('invalid_output', `careers ${slug}: ${why}`);
@@ -265,67 +290,96 @@ function entryOf(pack: unknown, slug: string): CareersEntry {
   return matches[0] as CareersEntry;
 }
 
+/** ItemLists that announce more items (`numberOfItems`) than they list. */
+function shortItemLists(jsonLd: readonly unknown[]): string[] {
+  const out: string[] = [];
+  for (const n of nodes(jsonLd)) {
+    if (!hasType(n, 'ItemList')) continue;
+    const listed = Array.isArray(n.itemListElement) ? n.itemListElement.length : 0;
+    const total = typeof n.numberOfItems === 'number' ? n.numberOfItems : typeof n.numberOfItems === 'string' ? Number(n.numberOfItems) : Number.NaN;
+    if (Number.isFinite(total) && total > listed) out.push(`${listed} of ${total}`);
+  }
+  return out;
+}
+
 async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number): Promise<RawPosting[]> {
   const browser = ctx.browser;
   if (!browser) throw new KernelError('policy_denied', 'no browser capability issued');
   const loud = (why: string) => new KernelError('invalid_output', `careers ${req.slug}: ${why}`);
   const entry = entryOf(ctx.pack, req.slug);
-  const pattern = entry.linkPattern !== undefined ? compileSafePattern(entry.linkPattern) : null;
+  const pattern = compileSafePattern(entry.linkPattern);
   const list = new URL(entry.listUrl);
   const sameSite = (u: URL): boolean => u.protocol === list.protocol && u.host === list.host;
-  const isJob = (u: URL): boolean => (pattern ? pattern.test(u.pathname + u.search) : looksLikeJob(u));
 
-  // 1. The listing, page by page.
-  const listingPages = new Set<string>();
+  // 1. The listing, page by page: next/"show all" links and numbered siblings, breadth first.
+  const rendered = new Set<string>(); // listing URLs rendered or landed on (no fragment)
   const listingCanonical = new Set<string>();
+  const positions = new Set<string>(); // pagingKey().key of every listing page rendered or queued
+  const listingBases = new Set<string>(); // pagingKey().base of every listing page
   const candidates = new Set<string>();
-  let next: string | undefined = withoutFragment(list);
-  let rendered = 0;
-  while (next !== undefined) {
-    if (rendered >= maxPages) throw loud(`listing pagination exceeds page budget of ${maxPages}`);
-    listingPages.add(next);
-    listingCanonical.add(canonicalJobUrl(next));
-    const page: BrowserPage = await browser.render(next);
-    rendered += 1;
-    if (page.status >= 400) throw loud(`listing ${next} returned ${page.status}`);
+  const queue: string[] = [withoutFragment(list)];
+  positions.add(pagingKey(list).key);
+  listingBases.add(pagingKey(list).base);
+  let renders = 0;
+  while (queue.length > 0) {
+    const url = queue.shift() as string;
+    if (renders >= maxPages) throw loud(`listing pagination exceeds page budget of ${maxPages}`);
+    rendered.add(url);
+    listingCanonical.add(canonicalJobUrl(url));
+    const page: BrowserPage = await browser.render(url, { expand: true });
+    renders += 1;
+    if (page.status >= 400) throw loud(`listing ${url} returned ${page.status}`);
+    if (!page.settled) throw loud(`listing still loading at ${LISTING_SETTLE_CAP_S} s (${url})`);
+    const ex = page.expansion;
+    if (ex?.capReached) throw loud(`"load more" still present after ${ex.clicks} clicks on ${url}`);
+    if (ex && ex.unfollowedControls.length > 0) throw loud(`unsupported pagination on ${url}: ${ex.unfollowedControls.slice(0, 3).join(' | ')}`);
+    const short = shortItemLists(page.jsonLd);
+    if (short.length > 0) throw loud(`the listing's ItemList shows only ${short.join(', ')} items`);
     const finalUrl = new URL(page.finalUrl);
-    listingPages.add(withoutFragment(finalUrl));
+    rendered.add(withoutFragment(finalUrl));
     listingCanonical.add(canonicalJobUrl(finalUrl.href));
+    positions.add(pagingKey(finalUrl).key);
+    listingBases.add(pagingKey(finalUrl).base);
 
     const base = baseOf(page.html, page.finalUrl);
-    const anchors = anchorsOf(page.html);
-    if (hasUnfollowableMore(page.html, anchors)) {
-      throw loud('the listing has a "load more" control that only a click could follow; point listUrl at a page that lists every job');
-    }
-    const nexts = new Set<string>();
-    for (const a of anchors) {
+    const enqueue = (u: URL): void => {
+      const k = pagingKey(u).key;
+      if (positions.has(k)) return;
+      positions.add(k);
+      listingBases.add(pagingKey(u).base);
+      queue.push(withoutFragment(u));
+    };
+    for (const a of anchorsOf(page.html)) {
       if (a.href === undefined) continue;
       const u = resolveUrl(a.href, base);
       if (!u || !sameSite(u)) continue;
-      if (a.rel.split(/\s+/).includes('next') || LOAD_MORE.test(a.text)) nexts.add(withoutFragment(u));
-      else if (!a.head) candidates.add(withoutFragment(u));
+      const here = withoutFragment(u);
+      const isRelNext = a.rel.split(/\s+/).includes('next');
+      if (isRelNext && rendered.has(here) && here !== url && here !== withoutFragment(finalUrl)) throw loud(`listing pagination repeats ${here}`);
+      const pk = pagingKey(u);
+      if (isRelNext || (!a.head && isNextLabel(a.label))) enqueue(u);
+      else if (pk.paged && listingBases.has(pk.base)) enqueue(u); // a numbered sibling: ?page=N, ?start=N, ?offset=N
+      else if (!a.head) candidates.add(here);
     }
     for (const href of itemListUrls(page.jsonLd)) {
       const u = resolveUrl(href, base);
       if (u && sameSite(u)) candidates.add(withoutFragment(u));
     }
-    if (nexts.size > 1) throw loud(`the listing names ${nexts.size} different next pages: ${[...nexts].sort().join(', ')}`);
-    next = [...nexts][0];
-    if (next !== undefined && listingPages.has(next)) throw loud(`listing pagination repeats ${next}`);
   }
 
-  // 2. Job links: same host, matching the rule, not a listing page; one URL per canonical job URL.
+  // 2. Job links: same host, matching linkPattern, not a listing page; one URL per canonical job URL.
   const byCanonical = new Map<string, string[]>();
   for (const c of candidates) {
     const u = new URL(c);
     const canon = canonicalJobUrl(c);
-    if (listingPages.has(c) || listingCanonical.has(canon) || !isJob(u)) continue;
+    if (rendered.has(c) || positions.has(pagingKey(u).key) || listingCanonical.has(canon) || !pattern.test(u.pathname + u.search)) continue;
     byCanonical.set(canon, [...(byCanonical.get(canon) ?? []), c]);
   }
   const clashing = [...byCanonical].filter(([, v]) => v.length > 1).map(([k]) => k).sort();
   if (clashing.length > 0) throw loud(`job links differ only by query string: ${clashing.join(', ')}`);
   const links = [...byCanonical.keys()].sort().map((k) => (byCanonical.get(k) as string[])[0] as string);
-  if (links.length > maxPages - rendered) throw loud(`${links.length} job links exceed page budget`);
+  if (links.length === 0) throw loud(`no job links found on ${entry.listUrl} (linkPattern ${entry.linkPattern})`);
+  if (links.length > maxPages - renders) throw loud(`${links.length} job links exceed page budget`);
 
   // 3. Each job page.
   const postings: RawPosting[] = [];
@@ -336,6 +390,7 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number):
       skipped.push(`careers ${req.slug}: ${link} returned ${page.status}`);
       continue;
     }
+    if (!page.settled) throw loud(`job page ${link} was still changing when rendering stopped; refusing a truncated posting`);
     if (listingCanonical.has(canonicalJobUrl(page.finalUrl))) {
       skipped.push(`careers ${req.slug}: ${link} redirected to the listing`);
       continue;

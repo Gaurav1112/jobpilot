@@ -41,6 +41,24 @@ export interface BrowserPage {
   readonly text: string;
   /** Every `application/ld+json` block that parsed, in document order. */
   readonly jsonLd: readonly unknown[];
+  /** Response headers of the top-level document, lower-cased names. */
+  readonly headers: Readonly<Record<string, string>>;
+  /**
+   * Whether the page finished rendering. A job page: network idle reached, or its text stopped changing. A listing
+   * (`expand`): the same-host link count was stable over three polls with no request in flight, within the cap.
+   */
+  readonly settled: boolean;
+  /** Listing pages only (`expand: true`): what expanding the list did and what it could not follow. */
+  readonly expansion?: BrowserExpansion;
+}
+
+export interface BrowserExpansion {
+  /** "Load more"-style buttons clicked. */
+  readonly clicks: number;
+  /** True when a load-more control was still there after the click cap. */
+  readonly capReached: boolean;
+  /** Controls that look like pagination but have no link to follow (for example a script-only "Next" button). */
+  readonly unfollowedControls: readonly string[];
 }
 
 /**
@@ -53,12 +71,21 @@ export interface BrowserRenderRequest {
   readonly navigationHosts: readonly string[];
   /** Hosts, and their subdomains, that no request from the page may reach. */
   readonly deniedHosts: readonly string[];
+  /** Brand labels (`policy.deniedEgressBrands`) no request from the page may reach under any suffix. */
+  readonly deniedBrands: readonly string[];
+  /** The document size cap (policy.maxResponseBytes); a larger document fails the render. */
+  readonly maxBytes: number;
+  /**
+   * A listing page: wait until the list stops growing, then click same-page "load more" buttons (never inside a
+   * form, never a form button) until none is left, and report pagination controls that cannot be followed.
+   */
+  readonly expand: boolean;
   readonly signal: AbortSignal;
 }
 
 /**
  * Renders one page read-only: a fresh browser context, the honest user-agent, no stored cookies, no form
- * filling, no clicks. Tests use `fakeBrowser`; production uses `PlaywrightBrowserProvider` (src/app/browser).
+ * filling, no clicks except "load more" buttons on a listing (`expand`). Tests use `fakeBrowser`; production uses `PlaywrightBrowserProvider` (src/app/browser).
  */
 export interface BrowserProvider {
   render(req: BrowserRenderRequest): Promise<BrowserPage>;

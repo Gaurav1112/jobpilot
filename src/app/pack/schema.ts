@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
 import { compileSafePattern } from './regex.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
@@ -96,13 +97,16 @@ const ListUrl = z.string().superRefine((s, ctx) => {
   if (u.protocol !== 'https:') ctx.addIssue({ code: 'custom', message: 'listUrl must be https' });
   if (u.port !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not name a port' });
   if (u.username !== '' || u.password !== '') ctx.addIssue({ code: 'custom', message: 'listUrl may not carry credentials' });
+  if (/^[\d.]+$/.test(u.hostname) || u.hostname.startsWith('[')) ctx.addIssue({ code: 'custom', message: 'listUrl must name a host, not an IP address' });
+  if (hostDenied(PRODUCT_POLICY_V1, u.hostname)) ctx.addIssue({ code: 'custom', message: `listUrl host ${u.hostname} is a job board jobpilot never contacts` });
 });
 
 /**
  * One employer to watch. API boards (`greenhouse`, `lever`, `ashby`) are found by `slug`. A `careers` entry is a
  * career site without a public API, rendered by `src-careers`: `slug` is a kebab id, `listUrl` the https page that
- * lists every job, and `linkPattern` an optional regex (safety-checked, flags 'iu') tested against each same-host
- * link's path plus query to pick the job links. The careers hosts also become `src-careers`'s exact egress.
+ * lists every job, and `linkPattern` a required regex (safety-checked, flags 'iu') tested against each same-host
+ * link's path plus query to pick the job links. It is required because no default rule tells a job page from a
+ * benefits or team page. The careers hosts also become `src-careers`'s exact egress.
  */
 export const WatchEntrySchema = z
   .strictObject({
@@ -117,6 +121,7 @@ export const WatchEntrySchema = z
   .superRefine((w, ctx) => {
     if (w.ats === 'careers') {
       if (w.listUrl === undefined) ctx.addIssue({ code: 'custom', path: ['listUrl'], message: 'listUrl is required when ats is careers' });
+      if (w.linkPattern === undefined) ctx.addIssue({ code: 'custom', path: ['linkPattern'], message: 'linkPattern is required when ats is careers' });
       if (!/^[a-z][a-z0-9-]*$/.test(w.slug)) ctx.addIssue({ code: 'custom', path: ['slug'], message: 'a careers slug must be a kebab id' });
     } else {
       if (w.listUrl !== undefined) ctx.addIssue({ code: 'custom', path: ['listUrl'], message: `listUrl is only for ats careers, not ${w.ats}` });

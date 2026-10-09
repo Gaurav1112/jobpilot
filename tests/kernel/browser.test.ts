@@ -4,7 +4,8 @@ import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { defineAgent } from '../../src/kernel/agent.js';
-import { CHALLENGE_PATTERN, createHostPacer, issueContext } from '../../src/kernel/broker.js';
+import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
+import { challengeReason } from '../../src/kernel/challenge.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { contractHash, defineContract } from '../../src/kernel/contract.js';
 import { type Envelope, ZERO_COST } from '../../src/kernel/envelope.js';
@@ -12,7 +13,7 @@ import { ERROR_CODES, KernelError, RETRYABLE } from '../../src/kernel/errors.js'
 import { executeStep } from '../../src/kernel/executor.js';
 import { fakeBrowser } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
-import { PRODUCT_POLICY_V1, mergePolicy, policyHash } from '../../src/kernel/policy.js';
+import { PRODUCT_POLICY_V1, egressAllowed, hostMatchesBrand, mergePolicy, policyHash } from '../../src/kernel/policy.js';
 import type { BrowserProvider, BrowserRenderRequest } from '../../src/kernel/providers.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { defineType } from '../../src/kernel/types.js';
@@ -102,12 +103,15 @@ describe('capability broker: ctx.browser', () => {
   it('renders an allowed https page and passes the exact navigation hosts and the deny list to the provider', async () => {
     const b = fakeBrowser({ [`${H}/jobs`]: page('<h1>Jobs</h1>') });
     const ctx = issue(b);
-    await expect(ctx.browser!.render(`${H}/jobs`)).resolves.toEqual({ status: 200, finalUrl: `${H}/jobs`, html: '<h1>Jobs</h1>', text: 'text', jsonLd: [] });
+    await expect(ctx.browser!.render(`${H}/jobs`)).resolves.toEqual({ status: 200, finalUrl: `${H}/jobs`, html: '<h1>Jobs</h1>', text: 'text', jsonLd: [], headers: {}, settled: true });
     expect(b.calls).toHaveLength(1);
     const req = b.calls[0] as BrowserRenderRequest;
     expect(req.url).toBe(`${H}/jobs`);
     expect(req.navigationHosts).toEqual([HOST, 'jobs.example.org']);
-    expect(req.deniedHosts).toEqual(expect.arrayContaining(['linkedin.com', 'glassdoor.com']));
+    expect(req.deniedHosts).toEqual(expect.arrayContaining(['linkedin.com', 'glassdoor.com', 'lnkd.in']));
+    expect(req.deniedBrands).toEqual(['glassdoor', 'indeed', 'linkedin', 'naukri']);
+    expect(req.maxBytes).toBe(PRODUCT_POLICY_V1.maxResponseBytes);
+    expect(req.expand).toBe(false);
   });
 
   it('denies hosts outside egress, plain http, explicit ports and credentials, before the provider is called (G-EGRESS)', async () => {
@@ -160,8 +164,37 @@ describe('capability broker: ctx.browser', () => {
       await expect(ctx.browser!.render(`${H}/${p}`)).rejects.toMatchObject({ code: 'challenged', message: expect.stringMatching(/G-CHALLENGE/) });
     }
     expect(b.calls).toHaveLength(3);
-    for (const s of ['cf-challenge', 'Are you a robot?', 'Access Denied', 'captcha']) expect(CHALLENGE_PATTERN.test(s), s).toBe(true);
-    expect(CHALLENGE_PATTERN.test('<h1>Senior Engineer</h1>')).toBe(false);
+  });
+
+  it('stops a Cloudflare 200 interstitial, a vendor header and wall wording; lets a job page with an apply-form reCAPTCHA through', async () => {
+    const cf200 = '<html><head><title>Just a moment...</title></head><body><script>window._cf_chl_opt={cvId:"3"}</script></body></html>';
+    const applyForm = '<html><body><main><h1>Senior Engineer</h1><p>Build things.</p><form action="/apply"><input name="name"><input name="email"><div class="g-recaptcha" data-sitekey="x"></div><p>This site is protected by reCAPTCHA</p></form></main></body></html>';
+    const b = fakeBrowser({
+      [`${H}/cf`]: page(cf200),
+      [`${H}/hdr`]: { ...page('<h1>Jobs</h1>'), headers: { 'CF-Mitigated': 'challenge' } },
+      [`${H}/title`]: page('<html><head><title>Attention Required! | Cloudflare</title></head><body>x</body></html>'),
+      [`${H}/apply`]: page(applyForm),
+      [`${H}/pets`]: page('<h1>Office Manager</h1><p>Our offices have access denied to pets.</p>'),
+    });
+    for (const p of ['cf', 'hdr', 'title']) await expect(issue(b).browser!.render(`${H}/${p}`), p).rejects.toMatchObject({ code: 'challenged' });
+    for (const p of ['apply', 'pets']) await expect(issue(b).browser!.render(`${H}/${p}`), p).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('challengeReason: the five rules', () => {
+    const r = (html: string, status = 200, headers: Record<string, string> = {}) => challengeReason({ status, headers, html });
+    expect(r('<h1>Job</h1>', 403)).toMatch(/^A/);
+    expect(r('<h1>Job</h1>', 200, { server: 'DataDome' })).toMatch(/^B/);
+    expect(r('<h1>Job</h1>', 200, { 'x-px-blocked': '1' })).toMatch(/^B/);
+    expect(r('<h1>Job</h1>', 200, { 'x-amzn-waf-action': 'captcha' })).toMatch(/^B/);
+    expect(r('<iframe src="https://geo.captcha-delivery.com/captcha/?x"></iframe>')).toMatch(/^C/);
+    expect(r('<h1>Verify you are human</h1>')).toMatch(/^D/);
+    expect(r('<p>Please complete the CAPTCHA to continue.</p>')).toMatch(/^E/);
+    // Ordinary pages: the passive Cloudflare script, a reCAPTCHA in an apply form, a JobPosting page, long pages.
+    expect(r('<h1>Job</h1><script src="/cdn-cgi/challenge-platform/scripts/jsd/main.js"></script>')).toBeNull();
+    expect(r('<h1>Job</h1><form><input name=a><input name=b><div class="g-recaptcha"></div>captcha</form>')).toBeNull();
+    expect(r('<script type="application/ld+json">{"@type":"JobPosting"}</script><p>captcha</p>')).toBeNull();
+    expect(r(`<p>${'word '.repeat(500)} captcha</p>`)).toBeNull();
+    expect(r('<h1>Senior Engineer</h1><p>access denied to pets</p>')).toBeNull();
   });
 
   it('maps a 5xx to overloaded and passes a 404 through to the agent', async () => {
@@ -210,19 +243,63 @@ describe('capability broker: ctx.browser', () => {
     await expect(none.browser!.render(`${H}/a`)).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/no browser provider/) });
   });
 
-  it('exposes only render(url): no option for stealth, proxy, user agent, headers or fingerprint', async () => {
+  it('exposes only render(url, { expand }): no option for stealth, proxy, user agent, headers or fingerprint', async () => {
     const ctx = issue(fakeBrowser({}));
     expect(Object.keys(ctx.browser!)).toEqual(['render']);
-    expect(ctx.browser!.render.length).toBe(1);
     const b = fakeBrowser({});
-    await issue(b).browser!.render(`${H}/a`);
-    expect(Object.keys(b.calls[0] as object).sort()).toEqual(['deniedHosts', 'navigationHosts', 'signal', 'url']);
+    const c2 = issue(b);
+    await c2.browser!.render(`${H}/a`, { expand: true });
+    expect(Object.keys(b.calls[0] as object).sort()).toEqual(['deniedBrands', 'deniedHosts', 'expand', 'maxBytes', 'navigationHosts', 'signal', 'url']);
+    expect(b.calls[0]?.expand).toBe(true);
+    for (const bad of [{ proxy: 'x' }, { userAgent: 'Mozilla' }, { expand: true, headers: {} }, { expand: 'yes' }, null]) {
+      await expect(c2.browser!.render(`${H}/a`, bad as never), JSON.stringify(bad)).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/G-NO-EVASION/) });
+    }
+    expect(b.calls).toHaveLength(1);
     // The kernel types and the real provider name none of these options anywhere in code (comments may explain why).
     const code = (f: string) => ts.createPrinter({ removeComments: true }).printFile(ts.createSourceFile(f, readFileSync(join(root, f), 'utf8'), ts.ScriptTarget.Latest));
     const banned = /stealth|proxy|fingerprint|setUserAgent|userAgent\s*\?|extraHTTPHeaders|ignoreHTTPSErrors|bypassCSP|--disable-blink-features|webdriver/i;
     for (const f of ['src/kernel/providers.ts', 'src/kernel/broker.ts', 'src/app/browser/playwright-provider.ts']) {
       expect(code(f).match(banned), f).toBeNull();
     }
+  });
+});
+
+describe('job boards are denied by brand under any suffix, for http and browser', () => {
+  it('hostMatchesBrand matches whole labels before a public suffix only', () => {
+    for (const h of ['glassdoor.com', 'www.glassdoor.co.in', 'in.indeed.com', 'indeed.co.in', 'uk.indeed.com', 'indeed.jobs', 'www.naukri.com', 'linkedin.cn', 'm.linkedin.com.au']) {
+      expect(['glassdoor', 'indeed', 'naukri', 'linkedin'].some((b) => hostMatchesBrand(h, b)), h).toBe(true);
+    }
+    for (const h of ['notindeed.com', 'indeed.example.com', 'glassdoorway.com', 'careers.example.com', 'indeedcareers.org']) {
+      expect(['glassdoor', 'indeed', 'naukri', 'linkedin'].some((b) => hostMatchesBrand(h, b)), h).toBe(false);
+    }
+    for (const h of ['www.glassdoor.co.in', 'in.indeed.com', 'lnkd.in']) expect(egressAllowed(PRODUCT_POLICY_V1, h, 'P0'), h).toBe(false);
+  });
+
+  it('refuses www.glassdoor.co.in, in.indeed.com and lnkd.in even when a contract lists them', async () => {
+    const hosts = ['www.glassdoor.co.in', 'in.indeed.com', 'lnkd.in'];
+    const b = fakeBrowser({});
+    const both = defineContract({ ...spec, id: 'boards', capabilities: { browser: { maxPages: 9 }, http: true }, egress: hosts });
+    const fetched: string[] = [];
+    const ctx = issueContext({ contract: both, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async (u) => { fetched.push(u); return { status: 200, text: async () => '' }; }, browser: b }, clock: at, signal: new AbortController().signal });
+    for (const h of hosts) {
+      await expect(ctx.browser!.render(`https://${h}/jobs`), h).rejects.toMatchObject({ code: 'policy_denied' });
+      await expect(ctx.http!.getText(`https://${h}/jobs`), h).rejects.toMatchObject({ code: 'policy_denied' });
+    }
+    expect(b.calls).toHaveLength(0);
+    expect(fetched).toHaveLength(0);
+  });
+
+  it('a user policy may add brands, never drop them', () => {
+    expect(mergePolicy(PRODUCT_POLICY_V1, { deniedEgressBrands: ['monster'] }).deniedEgressBrands).toEqual(['glassdoor', 'indeed', 'linkedin', 'monster', 'naukri']);
+  });
+});
+
+describe('a provider-reported read-only violation is a recorded denial', () => {
+  it('records G-READONLY from the provider as a denial', async () => {
+    const provider = { render: async () => { throw new KernelError('policy_denied', 'G-READONLY: page tried a POST navigation'); } };
+    const ctx = issue(provider);
+    await expect(ctx.browser!.render(`${H}/a`)).rejects.toMatchObject({ code: 'policy_denied' });
+    expect(ctx.denials()).toEqual(['G-READONLY: page tried a POST navigation']);
   });
 });
 
@@ -244,7 +321,7 @@ describe('executor: a challenge fails the step once, with no retry', () => {
 
   it('records challenged after one attempt even though the contract retries network errors', async () => {
     const store = Store.open(':memory:');
-    const b = fakeBrowser({ [`${H}/wall`]: page('<p>Are you a robot?</p>') });
+    const b = fakeBrowser({ [`${H}/wall`]: page('<html><head><title>Are you a robot?</title></head><body></body></html>') });
     const out = await executeStep(
       {
         store, policy: PRODUCT_POLICY_V1, policyHash: pHash,

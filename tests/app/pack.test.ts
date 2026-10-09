@@ -283,20 +283,23 @@ describe('watchlist: careers entries', () => {
     expect(careers[0]?.listUrl).toMatch(/^https:\/\//);
   });
 
-  it('accepts an https listUrl, with or without a safe linkPattern', () => {
-    expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs' })).toBe(true);
+  it('accepts an https listUrl with a safe linkPattern, and requires the linkPattern', () => {
     expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs', linkPattern: '^/jobs/\\d+' })).toBe(true);
+    expect(ok({ ...base, listUrl: 'https://careers.example.com/jobs' })).toBe(false);
   });
 
-  it('requires listUrl for careers, and https with no port or credentials', () => {
-    expect(ok(base)).toBe(false);
-    for (const u of ['http://careers.example.com/jobs', 'https://careers.example.com:8443/jobs', 'https://u:p@careers.example.com/jobs', 'not a url', 'ftp://x.example/']) {
-      expect(ok({ ...base, listUrl: u }), u).toBe(false);
+  it('requires listUrl for careers, and https with no port, credentials, IP literal or denied job board', () => {
+    expect(ok({ ...base, linkPattern: 'x' })).toBe(false);
+    for (const u of [
+      'http://careers.example.com/jobs', 'https://careers.example.com:8443/jobs', 'https://u:p@careers.example.com/jobs', 'not a url', 'ftp://x.example/',
+      'https://192.168.1.10/jobs', 'https://[::1]/jobs', 'https://www.glassdoor.co.in/Jobs', 'https://in.indeed.com/jobs', 'https://lnkd.in/x',
+    ]) {
+      expect(ok({ ...base, linkPattern: 'x', listUrl: u }), u).toBe(false);
     }
   });
 
   it('requires a kebab slug for careers', () => {
-    expect(ok({ ...base, slug: 'Example Careers', listUrl: 'https://careers.example.com/jobs' })).toBe(false);
+    expect(ok({ ...base, slug: 'Example Careers', listUrl: 'https://careers.example.com/jobs', linkPattern: 'x' })).toBe(false);
   });
 
   it('rejects an unsafe or invalid linkPattern', () => {

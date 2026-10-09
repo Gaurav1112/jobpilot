@@ -106,6 +106,44 @@ Teams and agents (each has one skill, one output type and one contract):
 | evaluation | `eligibility`, `scorer-lexicon` | det | Eligible@1 / Rejected@1, Scored@1 |
 | writing | `evidence-matcher`, `resume-planner`, `cover-writer`, `renderer`, `qa-gate` | det | as above |
 
+**Career-page browsing (`src-careers`, Task 5b).** Rules for the read-only browser:
+
+- *Egress.* The contract's `egress` is the exact list of the watchlist's careers hosts. It governs every
+  top-level navigation: the URL, each redirect hop (checked before it is requested), and `finalUrl`. The policy
+  deny list applies by host and by brand under any suffix or subdomain (`linkedin`, `naukri`, `indeed`,
+  `glassdoor`, plus `lnkd.in`), for http and browser alike.
+- *Third-party subresources.* Scripts, styles and data calls the page makes to other hosts are allowed, so that
+  script-built listings render. They are the page's own behaviour and carry nothing of the user's:
+  - each page gets a fresh browser context with no cookies or storage;
+  - requests carry the honest user-agent;
+  - the agent can only name a URL;
+  - images, fonts, media, WebSockets, pop-ups and denied hosts are blocked;
+  - a non-GET navigation (a form submission) is refused and fails the step (G-READONLY).
+- *Challenge stop.* A CAPTCHA or bot wall fails the step with `challenged`, never retried. The provider checks the
+  raw document before the page may run, so no challenge script executes or re-requests the page. The broker checks
+  the rendered page again. A page is a challenge when any of these holds:
+  - **A**, status 403 or 429;
+  - **B**, a vendor header: `cf-mitigated: challenge`, DataDome, `x-px-blocked`, or `x-amzn-waf-action`
+    captcha or challenge;
+  - **C**, a vendor interstitial marker: `_cf_chl_opt`, the Cloudflare orchestrate path, `challenge-form`,
+    `challenge-running` or `challenge-stage`, `captcha-delivery.com`, `px-captcha`, an Incapsula incident ID, or
+    AWS `gokuProps`;
+  - **D**, a `<title>` or first `<h1>` worded as a wall;
+  - **E**, "captcha" in the visible text of a short page (under 2 KB) that has no JobPosting JSON-LD and no form
+    with two or more inputs. A reCAPTCHA inside an apply form is not a challenge.
+- *Completeness.* A listing is read only once its same-host link count is stable: 3 equal polls at 1 s
+  intervals, at least 5 s, no data request in flight, capped at 45 s. The provider then clicks same-page
+  "load more" buttons (never inside a form, never a form button, at most 50 clicks). The agent follows next,
+  "show all" and numbered (`page`, `start`, `offset`) links within `maxPages`. Every one of these fails the step
+  loudly:
+  - a listing still loading at the cap;
+  - zero job links;
+  - the click cap reached;
+  - a pagination control only a script could follow;
+  - an ItemList with fewer items than it announces;
+  - links over the page budget;
+  - a job page that never settles.
+
 **Fan-out typing.** One agent produces one type, so `eligibility` produces `EligibilityVerdict@1
 {verdict: eligible, rejected or review, reasons[]}`. The wiring routes it onward, and the
 scorer's `requires` predicate accepts only `eligible` and `review`. Rejected verdicts are

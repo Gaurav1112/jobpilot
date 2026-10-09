@@ -3,7 +3,7 @@ import { defineAgent } from '../../src/kernel/agent.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
-import { fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
+import { fakeBrowser, fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import type { LlmProvider } from '../../src/kernel/providers.js';
@@ -634,5 +634,40 @@ describe('v1 kernel extensions: supervisor', () => {
     expect(inv.calls.map((c) => c.split(':')[0])).toEqual(['pace-detailer', 'pace-detailer']);
     expect(edited.replayed).toBe(1);
     expect(packSeen.slice(2)).toEqual([{ name: 'Asha R.' }, { name: 'Asha R.' }]);
+  });
+
+  it('paces browser renders by minBrowserIntervalMs, and http requests to the same host against them', async () => {
+    const Done = defineType('PaceDone', 1, z.object({ n: z.number() }).strict());
+    const renderer = defineAgent(
+      defineContract({ ...common, id: 'pace-renderer', description: 'Renders two pages of one board', skills: ['rendering'], team: 'pace-src', kind: 'io', consumes: Req, produces: Done, capabilities: { browser: { maxPages: 5 }, http: true }, egress: [HOST] }),
+      async (req: { n: number }, ctx) => {
+        await ctx.browser!.render(`https://${HOST}/a`);
+        await ctx.browser!.render(`https://${HOST}/b`);
+        await ctx.http!.getText(`https://${HOST}/c`);
+        return [{ n: req.n }];
+      },
+    );
+    const registry = new Registry();
+    registry.register(renderer);
+    const guardrails = builtinGuardrails();
+    const slept: number[] = [];
+    const sup = new Supervisor({
+      store: Store.open(':memory:'),
+      registry,
+      compiled: compileWiring(registry, { id: 'pace-b', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'pace-src-lead', members: ['pace-renderer'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'pace-renderer' }] }, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: fakeFetch({ [`https://${HOST}/c`]: { body: 'ok' } }), browser: fakeBrowser({ [`https://${HOST}/a`]: { html: '<h1>a</h1>' }, [`https://${HOST}/b`]: { html: '<h1>b</h1>' } }) },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    const r = await sup.start('run-b', [{ n: 1 }]);
+    expect(r.queue).toMatchObject({ done: 1, failed: 0 });
+    // The fixed clock never advances, so each wait is the full gap to its slot: the second render waits out the
+    // browser interval (10 s), then its host slot (1 s); the http request waits for the slot after that (2 s).
+    expect(slept).toEqual([PRODUCT_POLICY_V1.minBrowserIntervalMs, 1000, 2000]);
   });
 });

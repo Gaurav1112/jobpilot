@@ -51,6 +51,16 @@ describe('G-CONTAINMENT: submit-capable code lives only in src/agents/submit/', 
   });
 });
 
+describe('G-CONTAINMENT: the browser test flag is never wired', () => {
+  it('names allowInsecureLocalhostForTests only where the provider defines it', () => {
+    const where = walk(join(root, 'src')).flatMap((f) => (readFileSync(f, 'utf8').includes('allowInsecureLocalhostForTests') ? [rel(f)] : []));
+    expect(where).toEqual(['src/app/browser/playwright-provider.ts']);
+    const text = readFileSync(join(root, 'src/app/browser/playwright-provider.ts'), 'utf8');
+    // The option declaration and the one read inside navigationAllowed, nothing else.
+    expect(text.match(/allowInsecureLocalhostForTests/g)).toHaveLength(2);
+  });
+});
+
 describe('G-CONTAINMENT: agent code reaches the outside world only through the broker', () => {
   const agentFiles = ['src/agents', 'src/demo', 'src/app/agents']
     .map((d) => join(root, d))
