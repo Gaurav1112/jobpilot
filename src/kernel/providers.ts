@@ -48,6 +48,8 @@ export interface BrowserPage {
    * (`expand`): the same-host link count was stable over three polls with no request in flight, within the cap.
    */
   readonly settled: boolean;
+  /** The settle cap the provider applied to this page, in ms, so a "still loading" message can name it. */
+  readonly settleCapMs?: number;
   /** Listing pages only (`expand: true`): what expanding the list did and what it could not follow. */
   readonly expansion?: BrowserExpansion;
 }

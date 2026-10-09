@@ -308,6 +308,7 @@ export function issueContext(a: IssueArgs): AgentContext {
           jsonLd: [...page.jsonLd],
           headers: { ...page.headers },
           settled: page.settled,
+          ...(page.settleCapMs !== undefined ? { settleCapMs: page.settleCapMs } : {}),
           ...(page.expansion ? { expansion: { ...page.expansion, unfollowedControls: [...page.expansion.unfollowedControls] } } : {}),
         };
       },

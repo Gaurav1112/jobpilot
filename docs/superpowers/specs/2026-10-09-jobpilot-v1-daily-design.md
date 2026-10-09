@@ -101,12 +101,24 @@ Teams and agents (each has one skill, one output type and one contract):
 
 | Team | Agent | Kind | Output |
 |---|---|---|---|
-| sourcing | `src-greenhouse`, `src-lever`, `src-ashby`, `src-himalayas`, `src-jobicy`, `src-careers` (Playwright, read-only, for career sites without an API) | io | RawPosting@1 |
+| sourcing | `src-greenhouse`, `src-lever`, `src-ashby`, `src-himalayas`, `src-jobicy`; `src-careers-list` → `src-careers-job` (Playwright, read-only, for career sites without an API) | io | RawPosting@1 (`src-careers-list`: CareerLink@1) |
 | understanding | `normalizer` | det | Posting@1 |
 | evaluation | `eligibility`, `scorer-lexicon` | det | Eligible@1 / Rejected@1, Scored@1 |
 | writing | `evidence-matcher`, `resume-planner`, `cover-writer`, `renderer`, `qa-gate` | det | as above |
 
-**Career-page browsing (`src-careers`, Task 5b).** Rules for the read-only browser:
+**Career-page browsing (`src-careers-list`, `src-careers-job`, Task 5b).** The wiring is:
+
+```
+DiscoveryRequest@1 (ats careers) ──► src-careers-list ──► CareerLink@1 ──► src-careers-job ──► RawPosting@1
+```
+
+- `src-careers-list` emits one CareerLink per job link.
+- `src-careers-job` renders one job page per step.
+- CareerLink@1 is `{company, slug, listUrl, url, linkPattern}`. It carries no date, so an unchanged link replays
+  from the store on later days without a new render, and a removed link stops appearing.
+- Both contracts are built from `careersHosts(watchlist)`.
+
+Rules for the read-only browser:
 
 - *Egress.* The contract's `egress` is the exact list of the watchlist's careers hosts. It governs every
   top-level navigation: the URL, each redirect hop (checked before it is requested), and `finalUrl`.
@@ -149,11 +161,12 @@ Teams and agents (each has one skill, one output type and one contract):
   - a listing samples its same-host job-link count, waits at least 5 s, and is capped at 45 s per settle;
   - a job page samples its main text length, waits at least 2 s, and is capped at 45 s.
 - *Expanding a listing.* After it settles, the provider:
-  1. clicks controls one at a time. A control qualifies only if it is a `<button type=button>`, a
-     `[role=button]`, or an `<a>` with no navigating href; it is never tied to a form (inside one, a `form`
+  1. clicks controls one at a time. A control qualifies only if it is a `<button type=button>`, a typeless
+     `<button>` whose form owner is null, a `[role=button]`, or an `<a>` with no navigating href; it is never tied to a form (inside one, a `form`
      attribute, submit or reset), never inside a dialog or a cookie or consent banner, and its label matches one
      anchored rule (`load|show|view|see [N] more [jobs…] [(N)]`, `show|view|see all [jobs…] [(N)]`). Every click
-     must add job links;
+     must add *visible* job links: a link with a box, not hidden by CSS, not aria-hidden. Collection still reads
+     every job link in the DOM;
   2. scrolls to the bottom while that adds job links (infinite scroll).
 
   Clicks and scrolls are capped at 50 each and at 150 s of wall time. The agent follows next, "show all" and
@@ -165,14 +178,16 @@ Teams and agents (each has one skill, one output type and one contract):
   - the click, scroll or time cap reached;
   - a control matching the label rule (or a next or numbered pager button) that could not be clicked or followed;
   - an ItemList with fewer items than it announces;
-  - more than 2 listing pages;
-  - links over the page budget;
-  - a job page still loading at its cap;
-  - a title that is unrendered template text.
-- *Budget arithmetic.* A job page costs at most 10 s (pacing) + 20 s (navigation) + 45 s (settle) = 75 s. A listing
-  page costs at most 10 + 20 + 45 + 200 s (the 150 s expansion budget plus one last 5 s click and a 45 s settle)
-  = 275 s. A step reads at most 2 listing pages and 18 pages in all: 2 × 275 + 16 × 75 = 1,750 s, under the
-  30-minute step cap. A site needing more fails loudly.
+  - more than 6 listing pages;
+  - more than 5,000 job links.
+
+  Per job, in that job's own step only: a gone page (4xx), a redirect back to the listing, a page still loading at
+  its cap, a missing title, and unrendered template text.
+- *Budget arithmetic.* A job page costs at most 10 s (pacing) + 20 s (navigation) + 45 s (settle) = 75 s, and a
+  `src-careers-job` step is given 90 s (75 s plus 15 s for the host pacer and starting a context). A listing page
+  costs at most 10 + 20 + 45 + 200 s (the 150 s expansion budget plus one last 5 s click and a 45 s settle) = 275 s.
+  A `src-careers-list` step reads at most 6 listing pages: 6 × 275 = 1,650 s, under the 30-minute step cap. The
+  number of jobs per site is limited only by the 5,000-link cap.
 
 **Fan-out typing.** One agent produces one type, so `eligibility` produces `EligibilityVerdict@1
 {verdict: eligible, rejected or review, reasons[]}`. The wiring routes it onward, and the

@@ -361,6 +361,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       jsonLd,
       headers: state.headers,
       settled,
+      settleCapMs: req.expand ? this.timing.settleCapMs : this.timing.jobSettleCapMs,
       ...(expansion ? { expansion } : {}),
     };
   }
@@ -413,7 +414,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       const target = await page.evaluate(nextExpandable, labels);
       if (target === null) break;
       if (clicks >= t.maxClicks || Date.now() >= until) return { clicks, scrolls: 0, capReached: true, settled: true };
-      const before = await jobLinks(page, links);
+      const before = await jobLinks(page, links, true);
       try {
         await page.click(`[data-jobpilot-expand="${target.id}"]`, { timeout: 5_000 });
       } catch (e) {
@@ -421,14 +422,14 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       }
       clicks += 1;
       if (!(await this.settleListing(page, state, links))) return { clicks, scrolls: 0, capReached: false, settled: false };
-      if ((await jobLinks(page, links)) <= before) throw new KernelError('invalid_output', `load-more did not add jobs ("${target.label}") on ${url}`);
+      if ((await jobLinks(page, links, true)) <= before) throw new KernelError('invalid_output', `load-more did not add jobs ("${target.label}") on ${url}`);
     }
     let scrolls = 0;
     for (;;) {
-      const before = await jobLinks(page, links);
+      const before = await jobLinks(page, links, true);
       await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
       if (!(await this.settleListing(page, state, links))) return { clicks, scrolls, capReached: false, settled: false };
-      if ((await jobLinks(page, links)) <= before) break;
+      if ((await jobLinks(page, links, true)) <= before) break;
       scrolls += 1;
       if (scrolls >= t.maxScrolls || Date.now() >= until) return { clicks, scrolls, capReached: true, settled: true };
     }
@@ -442,22 +443,32 @@ interface LinkRule {
   flags: string;
 }
 
-/** Same-host job-link count; -1 while the document is being replaced. */
-async function jobLinks(page: Page, rule: LinkRule): Promise<number> {
+/**
+ * Same-host job-link count; -1 while the document is being replaced. `visible` counts only links a reader can see
+ * (a box, not display:none or visibility:hidden, not aria-hidden): that is what a load-more click or a scroll must
+ * grow. Settling and collection count every job link in the DOM.
+ */
+async function jobLinks(page: Page, rule: LinkRule, visible = false): Promise<number> {
   return page
-    .evaluate((r) => {
+    .evaluate(({ r, visible: v }) => {
       const re = r.source === '' ? null : new RegExp(r.source, r.flags);
       let n = 0;
       for (const a of Array.from(document.querySelectorAll('a[href]'))) {
         try {
           const u = new URL((a as HTMLAnchorElement).href, location.href);
-          if (u.host === location.host && (re === null || re.test(u.pathname + u.search))) n += 1;
+          if (u.host !== location.host || (re !== null && !re.test(u.pathname + u.search))) continue;
+          if (v) {
+            const box = a.getBoundingClientRect();
+            const style = getComputedStyle(a);
+            if (box.width === 0 || box.height === 0 || style.display === 'none' || style.visibility === 'hidden' || a.closest('[aria-hidden="true"]') !== null) continue;
+          }
+          n += 1;
         } catch {
           // An unparsable href is not a link.
         }
       }
       return n;
-    }, rule)
+    }, { r: rule, visible })
     .catch(() => -1);
 }
 
@@ -473,7 +484,7 @@ async function textLength(page: Page): Promise<number> {
 
 /**
  * In the page: the next control the provider may click, marked with a fresh id, or null. Only a `<button
- * type=button>`, a `[role=button]` or an `<a>` with no navigating href; never one tied to a form (inside it, a
+ * type=button>` (or a typeless `<button>` with no form owner), a `[role=button]` or an `<a>` with no navigating href; never one tied to a form (inside it, a
  * `form` attribute, a submit or reset type), never one inside a dialog or a cookie or consent banner; visible,
  * enabled, and labelled by the shared load-more or show-all rule.
  */
@@ -484,7 +495,9 @@ function nextExpandable(labels: { loadMore: string; showAll: string }): { id: st
   for (const el of Array.from(document.querySelectorAll('button, [role="button"], a'))) {
     if (!(el instanceof HTMLElement) || el.hasAttribute('data-jobpilot-clicked-out')) continue;
     const kind = el.tagName === 'BUTTON' ? 'button' : el.tagName === 'A' ? 'a' : 'role';
-    if (kind === 'button' && (el.getAttribute('type') ?? '').toLowerCase() !== 'button') continue;
+    // A <button> is clicked when it is type=button, or has no type and no form owner (then a click cannot submit).
+    const type = el.getAttribute('type');
+    if (kind === 'button' && !(type !== null ? type.toLowerCase() === 'button' : (el as HTMLButtonElement).form === null)) continue;
     if (kind === 'a') {
       const href = el.getAttribute('href');
       if (href !== null && !/^\s*(#|javascript:)/i.test(href)) continue; // a real link: the agent follows it

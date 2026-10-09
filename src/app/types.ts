@@ -27,6 +27,18 @@ export const RawPosting = defineType(
 );
 export type RawPosting = z.infer<typeof RawPosting.schema>;
 
+/**
+ * One job link found on a career site's listing, handed from `src-careers-list` to `src-careers-job`. There is
+ * deliberately no run date or timestamp: an unchanged link has the same step key every day, so its job page replays
+ * instead of being rendered again, and a link that leaves the listing simply stops being emitted.
+ */
+export const CareerLink = defineType(
+  'CareerLink',
+  1,
+  z.object({ company: z.string(), slug: z.string(), listUrl: z.string(), url: z.string(), linkPattern: z.string() }).strict(),
+);
+export type CareerLink = z.infer<typeof CareerLink.schema>;
+
 export const Posting = defineType(
   'Posting',
   1,

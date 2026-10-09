@@ -4,26 +4,34 @@ import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { isMoreLabel } from '../../browser/labels.js';
 import { compileSafePattern } from '../../pack/regex.js';
-import { DiscoveryRequest, knownAts, RawPosting } from '../../types.js';
-import { checkParsed, finish, isRecord } from './common.js';
+import { CareerLink, DiscoveryRequest, knownAts, RawPosting } from '../../types.js';
+import { isRecord } from './common.js';
 import { sha256Hex } from './sha256.js';
 
 /**
- * `src-careers`: a career site without a public job API, read with a real browser so JavaScript-built listings
- * are seen in full. Read-only: it renders the watchlist entry's `listUrl` as a listing (`expand`: the browser waits
- * until the list stops growing and clicks same-page "load more" buttons), follows every same-host next, "show all"
- * and numbered page link, collects the job links matching the entry's `linkPattern`, renders each job page and emits
- * a RawPosting per job. It never fills or submits anything.
+ * The career-site source, for employers without a public job API, read with a real browser so JavaScript-built
+ * listings are seen in full. Two agents, one step per page kind:
  *
- * Egress is exact-host and comes from the pack: `makeSrcCareers(careersHosts(pack.watchlist))` builds the contract
- * when the pipeline is compiled (Task 11), so the contract lists exactly the watchlist's careers hosts. Adding a
- * careers entry therefore changes the contract's egress (and its hash) on the next compile.
+ *   DiscoveryRequest@1 (ats careers) -> src-careers-list -> CareerLink@1 (one per job) -> src-careers-job -> RawPosting@1
  *
- * Completeness: every limit fails the step loudly (`invalid_output`) rather than returning a partial list: a listing
- * still loading at the settle cap, a listing with no job links, a load-more still present after the click cap,
- * pagination the browser cannot follow, pagination past the page budget or in a loop, an ItemList that announces
- * more items than it lists, more job links than the page budget, a job page that never settles, or two job links
- * that only a query string tells apart (their ids would collide).
+ * - `src-careers-list` renders the watchlist entry's `listUrl` as a listing (`expand`: the browser waits until the
+ *   list stops growing, clicks safe "load more" buttons and scrolls), follows next, "show all" and numbered page
+ *   links (at most CAREERS_LIST_MAX_PAGES listing pages), and emits one CareerLink per job link matching the entry's
+ *   `linkPattern`, deduplicated and sorted (at most CAREERS_MAX_LINKS).
+ * - `src-careers-job` renders one job page and emits one RawPosting. A CareerLink carries no date, so an unchanged
+ *   link replays from the store on later days without a new render; a gone job fails its own step, loudly, and
+ *   no other.
+ *
+ * Wiring for Task 11: build both with `makeSrcCareersList(hosts)` / `makeSrcCareersJob(hosts)` where
+ * `hosts = careersHosts(pack.watchlist)` (exact hosts, sorted, deduplicated), and route DiscoveryRequest@1 to
+ * src-careers-list and CareerLink@1 to src-careers-job. The broker's pacing is per supervisor, so the 10 s between
+ * renders of one host holds across the two agents' steps. Adding a careers entry changes both contracts' egress
+ * (and hashes) on the next compile. Neither agent fills or submits anything.
+ *
+ * Completeness: every limit fails loudly (`invalid_output`) rather than returning a partial list: a listing still
+ * loading at its settle cap, no job links, a load-more or scroll still adding jobs at its cap, pagination the browser
+ * cannot follow, more listing pages or job links than the caps, an ItemList announcing more items than it lists, two
+ * job links that only a query string tells apart, and per job: a gone page, a page still loading, an unparsable page.
  */
 
 /** The fallback (and JSON-LD description) text kept per posting, in UTF-8 bytes. */
@@ -41,20 +49,14 @@ export const CAREERS_RENDER_INTERVAL_MS = 10_000;
 export const CAREERS_JOB_PAGE_WORST_MS = 10_000 + 20_000 + 45_000;
 export const CAREERS_LISTING_PAGE_WORST_MS = 10_000 + 20_000 + 45_000 + 150_000 + 5_000 + 45_000;
 
-/**
- * Page budget per step, sized so the worst case fits the kernel's 30-minute step cap:
- * 2 listing pages x 275 s + 16 job pages x 75 s = 550 + 1,200 = 1,750 s (29 min 10 s) <= 1,800 s.
- * So one step reads at most 2 listing pages and 18 pages in all (17 jobs from a single-page listing, 16 from a
- * two-page one); a larger site fails loudly rather than being cut short.
- */
-export const CAREERS_MAX_PAGES = 18;
-export const CAREERS_MAX_LISTING_PAGES = 2;
+/** Listing pages one src-careers-list step reads: 6 x 275 s = 1,650 s, under the 30-minute step cap. */
+export const CAREERS_LIST_MAX_PAGES = 6;
+/** Job links one listing step may emit. */
+export const CAREERS_MAX_LINKS = 5000;
+/** src-careers-job: one page at its worst (75 s) plus 15 s for the host pacer and starting a browser context. */
+export const CAREERS_JOB_TIMEOUT_MS = CAREERS_JOB_PAGE_WORST_MS + 15_000;
 
-/** The step timeout for a page budget: every listing page and every other page at its worst case. */
-export const careersTimeoutMs = (maxPages: number, maxListingPages: number): number =>
-  maxListingPages * CAREERS_LISTING_PAGE_WORST_MS + (maxPages - maxListingPages) * CAREERS_JOB_PAGE_WORST_MS;
-
-/** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: src-careers's egress. */
+/** The exact hosts of the watchlist's careers entries, lower-cased, sorted and deduplicated: the careers agents' egress. */
 export function careersHosts(watchlist: readonly { readonly ats: string; readonly listUrl?: string | undefined }[]): string[] {
   const hosts = new Set<string>();
   for (const w of watchlist) {
@@ -63,35 +65,62 @@ export function careersHosts(watchlist: readonly { readonly ats: string; readonl
   return [...hosts].sort();
 }
 
-/** Builds `src-careers` for the given careers hosts (see `careersHosts`). */
-export function makeSrcCareers(
-  hosts: readonly string[],
-  opts: { readonly maxPages?: number; readonly maxListingPages?: number } = {},
-): Agent<DiscoveryRequest, RawPosting> {
+const egressOf = (id: string, hosts: readonly string[]): string[] => {
   const egress = [...new Set(hosts.map((h) => h.toLowerCase()))].sort();
-  if (egress.length === 0) throw new TypeError('src-careers needs at least one careers host');
-  const maxPages = opts.maxPages ?? CAREERS_MAX_PAGES;
-  const maxListingPages = Math.min(opts.maxListingPages ?? CAREERS_MAX_LISTING_PAGES, maxPages);
+  if (egress.length === 0) throw new TypeError(`${id} needs at least one careers host`);
+  return egress;
+};
+
+/** Builds `src-careers-list` for the given careers hosts (see `careersHosts`). */
+export function makeSrcCareersList(
+  hosts: readonly string[],
+  opts: { readonly maxListingPages?: number; readonly maxLinks?: number } = {},
+): Agent<DiscoveryRequest, CareerLink> {
+  const maxListingPages = opts.maxListingPages ?? CAREERS_LIST_MAX_PAGES;
+  const maxLinks = opts.maxLinks ?? CAREERS_MAX_LINKS;
   const contract = defineContract({
-    id: 'src-careers',
+    id: 'src-careers-list',
     version: '1.0.0',
-    description: 'Renders one career site to collect its job postings',
+    description: 'Collects the job links of one career site',
     skills: ['job-sourcing'],
     team: 'sourcing',
     kind: 'io',
     consumes: DiscoveryRequest,
-    produces: RawPosting,
+    produces: CareerLink,
     requires: [knownAts],
-    capabilities: { browser: { maxPages }, pack: true },
-    egress,
+    capabilities: { browser: { maxPages: maxListingPages }, pack: true },
+    egress: egressOf('src-careers-list', hosts),
     dataClasses: { in: ['P0'], out: ['P0'] },
     budget: { usdPerCall: 0, usdPerRun: 0 },
-    // Worst case of every page (see CAREERS_MAX_PAGES); a budget that does not fit 30 minutes fails here, loudly.
-    timeoutMs: careersTimeoutMs(maxPages, maxListingPages),
+    // Every listing page at its worst; a page count that does not fit 30 minutes fails here, loudly.
+    timeoutMs: maxListingPages * CAREERS_LISTING_PAGE_WORST_MS,
     // A timeout is not retried: a second pass would take as long again.
     retry: { max: 2, on: ['overloaded', 'network'], backoffMs: [2000, 8000] },
   });
-  return defineAgent(contract, (req, ctx) => (req.ats === 'careers' ? scan(req, ctx, maxPages, maxListingPages) : Promise.resolve([])));
+  return defineAgent(contract, (req, ctx) => (req.ats === 'careers' ? listLinks(req, ctx, maxListingPages, maxLinks) : Promise.resolve([])));
+}
+
+/** Builds `src-careers-job` for the given careers hosts (see `careersHosts`). */
+export function makeSrcCareersJob(hosts: readonly string[]): Agent<CareerLink, RawPosting> {
+  const contract = defineContract({
+    id: 'src-careers-job',
+    version: '1.0.0',
+    description: 'Renders one career-site job page into a posting',
+    skills: ['job-sourcing'],
+    team: 'sourcing',
+    kind: 'io',
+    consumes: CareerLink,
+    produces: RawPosting,
+    capabilities: { browser: { maxPages: 1 } },
+    egress: egressOf('src-careers-job', hosts),
+    dataClasses: { in: ['P0'], out: ['P0'] },
+    budget: { usdPerCall: 0, usdPerRun: 0 },
+    timeoutMs: CAREERS_JOB_TIMEOUT_MS,
+    retry: { max: 2, on: ['network', 'timeout'], backoffMs: [2000, 8000] },
+    // One gone job is that job's failure; a run of them (a site that is down) opens the breaker.
+    breaker: { consecutiveFailures: 10 },
+  });
+  return defineAgent(contract, (link, ctx) => renderJob(link, ctx));
 }
 
 // ---- URLs ----
@@ -287,8 +316,8 @@ function itemListUrls(jsonLd: readonly unknown[]): string[] {
 
 // ---- the scan ----
 
-/** The provider's listing settle cap (src/app/browser): a listing still changing after it fails the step. */
-export const LISTING_SETTLE_CAP_S = 45;
+/** "at 45 s" when the provider reports its cap, else "at its settle cap". */
+const capOf = (page: BrowserPage): string => (page.settleCapMs !== undefined ? `at ${Math.round(page.settleCapMs / 1000)} s` : 'at its settle cap');
 
 interface CareersEntry {
   readonly slug: string;
@@ -329,7 +358,7 @@ const UNRENDERED = /\{\{|"\+|\$\{|<%/;
 /** A body that is only a loading placeholder. */
 const LOADING = /^loading(…|\.{3})?$/i;
 
-async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number, maxListingPages: number): Promise<RawPosting[]> {
+async function listLinks(req: DiscoveryRequest, ctx: AgentContext, maxListingPages: number, maxLinks: number): Promise<CareerLink[]> {
   const browser = ctx.browser;
   if (!browser) throw new KernelError('policy_denied', 'no browser capability issued');
   const loud = (why: string) => new KernelError('invalid_output', `careers ${req.slug}: ${why}`);
@@ -356,9 +385,9 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number, 
     const page: BrowserPage = await browser.render(url, { expand: true, linkPattern: entry.linkPattern });
     renders += 1;
     if (page.status >= 400) throw loud(`listing ${url} returned ${page.status}`);
-    if (!page.settled) throw loud(`listing still loading at ${LISTING_SETTLE_CAP_S} s (${url})`);
+    if (!page.settled) throw loud(`listing still loading ${capOf(page)} (${url})`);
     const ex = page.expansion;
-    if (ex?.capReached) throw loud(`"load more" still present after ${ex.clicks} clicks on ${url}`);
+    if (ex?.capReached) throw loud(`"load more" still adding jobs after ${ex.clicks} clicks and ${ex.scrolls} scrolls on ${url}`);
     if (ex && ex.unfollowedControls.length > 0) throw loud(`unsupported pagination on ${url}: ${ex.unfollowedControls.slice(0, 3).join(' | ')}`);
     const short = shortItemLists(page.jsonLd);
     if (short.length > 0) throw loud(`the listing's ItemList shows only ${short.join(', ')} items`);
@@ -406,41 +435,37 @@ async function scan(req: DiscoveryRequest, ctx: AgentContext, maxPages: number, 
   if (clashing.length > 0) throw loud(`job links differ only by query string: ${clashing.join(', ')}`);
   const links = [...byCanonical.keys()].sort().map((k) => (byCanonical.get(k) as string[])[0] as string);
   if (links.length === 0) throw loud(`no job links found on ${entry.listUrl} (linkPattern ${entry.linkPattern})`);
-  if (links.length > maxPages - renders) throw loud(`${links.length} job links exceed page budget`);
+  if (links.length > maxLinks) throw loud(`${links.length} job links exceed the cap of ${maxLinks}`);
+  return links.map((url) => ({ company: req.company, slug: req.slug, listUrl: entry.listUrl, url, linkPattern: entry.linkPattern }));
+}
 
-  // 3. Each job page.
-  const postings: RawPosting[] = [];
-  const skipped: string[] = [];
-  for (const link of links) {
-    const page = await browser.render(link);
-    if (page.status >= 400) {
-      skipped.push(`careers ${req.slug}: ${link} returned ${page.status}`);
-      continue;
-    }
-    if (!page.settled) throw loud(`job page still loading: ${link}`);
-    if (listingCanonical.has(canonicalJobUrl(page.finalUrl))) {
-      skipped.push(`careers ${req.slug}: ${link} redirected to the listing`);
-      continue;
-    }
-    const jobPosting = findJobPosting(page.jsonLd);
-    const ldTitle = jobPosting && typeof jobPosting.title === 'string' ? htmlToText(jobPosting.title).replace(/\s+/g, ' ').trim() : '';
-    const title = ldTitle !== '' ? ldTitle : pageTitleOf(page.html);
-    if (title === undefined) {
-      skipped.push(`careers ${req.slug}: ${link} has no JobPosting title, h1, og:title or title`);
-      continue;
-    }
-    const text = capText(jobPosting ? htmlToText(typeof jobPosting.description === 'string' ? jobPosting.description : '') : page.text);
-    if (UNRENDERED.test(title) || LOADING.test(text.trim())) {
-      skipped.push(`careers ${req.slug}: ${link} looks unrendered (title "${title.slice(0, 40)}")`);
-      continue;
-    }
-    postings.push({
+/** Renders one job page. Anything that keeps it from being a complete posting fails this job's step, loudly. */
+async function renderJob(link: CareerLink, ctx: AgentContext): Promise<RawPosting[]> {
+  const browser = ctx.browser;
+  if (!browser) throw new KernelError('policy_denied', 'no browser capability issued');
+  const loud = (why: string) => new KernelError('invalid_output', `careers ${link.slug}: ${why}`);
+  const u = new URL(link.url);
+  const list = new URL(link.listUrl);
+  if (u.protocol !== list.protocol || u.host !== list.host) throw loud(`job link ${link.url} is not on the listing's host`);
+  if (!compileSafePattern(link.linkPattern).test(u.pathname + u.search)) throw loud(`job link ${link.url} does not match linkPattern ${link.linkPattern}`);
+
+  const page = await browser.render(link.url);
+  if (page.status >= 400) throw loud(`job page ${link.url} returned ${page.status} (gone?)`);
+  if (!page.settled) throw loud(`job page still loading: ${link.url}`);
+  if (canonicalJobUrl(page.finalUrl) === canonicalJobUrl(link.listUrl)) throw loud(`job page ${link.url} redirected to the listing (closed?)`);
+  const jobPosting = findJobPosting(page.jsonLd);
+  const ldTitle = jobPosting && typeof jobPosting.title === 'string' ? htmlToText(jobPosting.title).replace(/\s+/g, ' ').trim() : '';
+  const title = ldTitle !== '' ? ldTitle : pageTitleOf(page.html);
+  if (title === undefined) throw loud(`job page ${link.url} has no JobPosting title, h1, og:title or title`);
+  const text = capText(jobPosting ? htmlToText(typeof jobPosting.description === 'string' ? jobPosting.description : '') : page.text);
+  if (UNRENDERED.test(title) || LOADING.test(text.trim())) throw loud(`job page ${link.url} looks unrendered (title "${title.slice(0, 40)}")`);
+  return [
+    {
       source: 'careers',
-      sourceId: careersSourceId(link),
-      company: req.company,
-      slug: req.slug,
-      raw: { url: link, jsonLd: jobPosting, title, text },
-    });
-  }
-  return finish(checkParsed('careers', links.length, { postings, skipped }).postings);
+      sourceId: careersSourceId(link.url),
+      company: link.company,
+      slug: link.slug,
+      raw: { url: link.url, jsonLd: jobPosting, title, text },
+    },
+  ];
 }

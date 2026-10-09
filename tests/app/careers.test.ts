@@ -6,56 +6,92 @@ import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   CAREERS_JOB_PAGE_WORST_MS,
+  CAREERS_JOB_TIMEOUT_MS,
+  CAREERS_LIST_MAX_PAGES,
   CAREERS_LISTING_PAGE_WORST_MS,
-  CAREERS_MAX_LISTING_PAGES,
-  CAREERS_MAX_PAGES,
-  careersTimeoutMs,
+  CAREERS_MAX_LINKS,
   CAREERS_RENDER_INTERVAL_MS,
   CAREERS_TEXT_MAX_BYTES,
   careersHosts,
   careersSourceId,
   canonicalJobUrl,
-  makeSrcCareers,
+  makeSrcCareersJob,
+  makeSrcCareersList,
 } from '../../src/app/agents/sources/careers.js';
 import { sha256Hex } from '../../src/app/agents/sources/sha256.js';
 import { DEFAULT_TIMING } from '../../src/app/browser/playwright-provider.js';
 import { loadPack } from '../../src/app/pack/load.js';
-import type { DiscoveryRequest, RawPosting } from '../../src/app/types.js';
+import { DiscoveryRequest as DiscoveryRequestType, knownAts, type CareerLink, type DiscoveryRequest, type RawPosting } from '../../src/app/types.js';
 import type { AgentContext } from '../../src/kernel/agent.js';
 import { freezePack, issueContext } from '../../src/kernel/broker.js';
 import { challengeReason } from '../../src/kernel/challenge.js';
 import { fixedClock } from '../../src/kernel/clock.js';
+import type { AnyContract } from '../../src/kernel/contract.js';
 import { fakeBrowser } from '../../src/kernel/fakes.js';
-import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
+import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
+import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import type { BrowserPage } from '../../src/kernel/providers.js';
+import { Registry } from '../../src/kernel/registry.js';
+import { Store } from '../../src/kernel/store/store.js';
+import { Supervisor } from '../../src/kernel/supervisor.js';
+import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
 
 const HOST = 'careers.example.com';
 const H = `https://${HOST}`;
 const LIST = `${H}/jobs`;
-const req = (ats: DiscoveryRequest['ats'] = 'careers', slug = 'example-careers'): DiscoveryRequest => ({ ats, slug, company: 'Example Careers Co', runDate: '2026-10-09' });
+const req = (ats: DiscoveryRequest['ats'] = 'careers', slug = 'example-careers', runDate = '2026-10-09'): DiscoveryRequest => ({ ats, slug, company: 'Example Careers Co', runDate });
 const entry = (extra: Record<string, unknown> = {}) => ({ company: 'Example Careers Co', ats: 'careers', slug: 'example-careers', listUrl: LIST, linkPattern: '^/jobs/', hiresInIndia: true, allRemote: false, ...extra });
 const packOf = (...watchlist: unknown[]) => freezePack({ watchlist });
 type Route = Partial<BrowserPage> & { html: string };
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sha16 = (s: string) => createHash('sha256').update(s).digest('hex').slice(0, 16);
+const linkOf = (url: string, extra: Partial<CareerLink> = {}): CareerLink => ({ company: 'Example Careers Co', slug: 'example-careers', listUrl: LIST, url, linkPattern: '^/jobs/', ...extra });
 
-function run(routes: Record<string, Route>, opts: { pack?: unknown; maxPages?: number; maxListingPages?: number; r?: DiscoveryRequest } = {}) {
-  const agent = makeSrcCareers([HOST], {
-    ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}),
+/**
+ * Runs src-careers-list, then src-careers-job on every link it emits, in order, over one fake browser.
+ * `links` is the list step, `jobs` every job step's posting or error, `out` the postings (rejecting on any error).
+ */
+function run(routes: Record<string, Route>, opts: { pack?: unknown; maxListingPages?: number; maxLinks?: number; r?: DiscoveryRequest } = {}) {
+  const list = makeSrcCareersList([HOST], {
     ...(opts.maxListingPages !== undefined ? { maxListingPages: opts.maxListingPages } : {}),
+    ...(opts.maxLinks !== undefined ? { maxLinks: opts.maxLinks } : {}),
   });
+  const job = makeSrcCareersJob([HOST]);
   const browser = fakeBrowser(routes);
-  const ctx = issueContext({
-    contract: agent.contract,
-    policy: PRODUCT_POLICY_V1,
-    inputClass: 'P0',
-    providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser },
-    clock: fixedClock('2026-10-09T00:00:00Z'),
-    signal: new AbortController().signal,
-    pack: opts.pack ?? packOf(entry()),
+  const ctxFor = (contract: AnyContract) =>
+    issueContext({
+      contract,
+      policy: PRODUCT_POLICY_V1,
+      inputClass: 'P0',
+      providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser },
+      clock: fixedClock('2026-10-09T00:00:00Z'),
+      signal: new AbortController().signal,
+      pack: opts.pack ?? packOf(entry()),
+    });
+  const links = list.run(opts.r ?? req(), ctxFor(list.contract)) as Promise<CareerLink[]>;
+  const jobs = links.then(async (ls) => {
+    const postings: RawPosting[] = [];
+    const errors: { url: string; error: unknown }[] = [];
+    for (const l of ls) {
+      try {
+        postings.push(...((await job.run(l, ctxFor(job.contract))) as RawPosting[]));
+      } catch (error) {
+        errors.push({ url: l.url, error });
+      }
+    }
+    return { postings, errors };
   });
-  return { browser, out: agent.run(opts.r ?? req(), ctx) };
+  const out = jobs.then(({ postings, errors }) => {
+    if (errors[0]) throw errors[0].error;
+    return [...postings].sort((x, y) => (x.sourceId < y.sourceId ? -1 : 1));
+  });
+  // Tests await what they check; the rest must not surface as unhandled rejections.
+  jobs.catch(() => undefined);
+  out.catch(() => undefined);
+  return { browser, links, jobs, out };
 }
+const titles = (ps: readonly RawPosting[]) => ps.map((p) => (p.raw as { title: string }).title).sort();
+const messages = (es: readonly { error: unknown }[]) => es.map((e) => (e.error as Error).message);
 
 const a = (href: string, text = 'A role', attrs = '') => `<a href="${href}"${attrs}>${text}</a>`;
 const listing = (...links: string[]) => `<html><body><nav>${a('/about', 'About')}${a('/jobs', 'Jobs')}</nav><main>${links.join('\n')}</main></body></html>`;
@@ -66,27 +102,37 @@ const jsonLdJob = (title: string, more: Record<string, unknown> = {}) => ({
   jsonLd: [{ '@context': 'https://schema.org', '@graph': [{ '@type': 'Organization', name: 'X' }, { '@type': ['JobPosting'], title, description: '<p>Build <b>things</b>.</p><ul><li>Go</li></ul>', datePosted: '2026-10-01', ...more }] }],
 });
 
-describe('src-careers contract', () => {
-  it('is an io sourcing agent that reads the pack, with a page budget whose worst case fits the 30-minute cap', () => {
-    const { contract } = makeSrcCareers([HOST]);
-    // 2 listing pages x 275 s + 16 job pages x 75 s = 1,750 s.
-    expect(contract).toMatchObject({ id: 'src-careers', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 18 }, pack: true }, egress: [HOST], timeoutMs: 1_750_000 });
-    expect(CAREERS_MAX_PAGES).toBe(18);
-    expect(CAREERS_MAX_LISTING_PAGES).toBe(2);
-    expect(careersTimeoutMs(18, 2)).toBe(2 * 275_000 + 16 * 75_000);
-    // The worst cases follow the provider's product timing.
+describe('src-careers contracts', () => {
+  it('src-careers-list: io, reads the pack, at most 6 listing pages whose worst case fits the 30-minute cap', () => {
+    const { contract } = makeSrcCareersList([HOST]);
+    expect(contract).toMatchObject({ id: 'src-careers-list', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 6 }, pack: true }, egress: [HOST], timeoutMs: 1_650_000 });
+    expect(contract.consumes.id).toBe('DiscoveryRequest@1');
+    expect(contract.produces.id).toBe('CareerLink@1');
+    expect(contract.retry.on).not.toContain('timeout');
+    expect(CAREERS_LIST_MAX_PAGES).toBe(6);
+    expect(CAREERS_MAX_LINKS).toBe(5000);
+    // 6 x 275 s = 1,650 s; a seventh page would not fit, and the contract says so when it is built.
+    expect(() => makeSrcCareersList([HOST], { maxListingPages: 7 })).toThrow(/timeoutMs/);
+  });
+
+  it('src-careers-job: io, one page, 75 s worst case plus 15 s, retries network and timeout only, no pack', () => {
+    const { contract } = makeSrcCareersJob([HOST]);
+    expect(contract).toMatchObject({ id: 'src-careers-job', kind: 'io', team: 'sourcing', capabilities: { browser: { maxPages: 1 } }, egress: [HOST], timeoutMs: 90_000 });
+    expect(contract.capabilities.pack).toBeUndefined();
+    expect(contract.retry.on).toEqual(['network', 'timeout']);
+    expect(contract.consumes.id).toBe('CareerLink@1');
+    expect(contract.produces.id).toBe('RawPosting@1');
+    expect(CAREERS_JOB_TIMEOUT_MS).toBe(CAREERS_JOB_PAGE_WORST_MS + 15_000);
+  });
+
+  it('the worst cases follow the provider product timing and the policy interval', () => {
     const t = DEFAULT_TIMING;
     expect(CAREERS_JOB_PAGE_WORST_MS).toBe(CAREERS_RENDER_INTERVAL_MS + t.navigationMs + t.jobSettleCapMs);
     expect(CAREERS_LISTING_PAGE_WORST_MS).toBe(CAREERS_RENDER_INTERVAL_MS + t.navigationMs + t.settleCapMs + t.expandBudgetMs + 5_000 + t.settleCapMs);
-    // A budget that cannot fit fails when the contract is built.
-    expect(() => makeSrcCareers([HOST], { maxPages: 30 })).toThrow(/timeoutMs/);
     expect(CAREERS_RENDER_INTERVAL_MS).toBe(PRODUCT_POLICY_V1.minBrowserIntervalMs);
-    expect(contract.retry.on).not.toContain('timeout');
-    expect(contract.consumes.id).toBe('DiscoveryRequest@1');
-    expect(contract.produces.id).toBe('RawPosting@1');
   });
 
-  it('takes the exact careers hosts of the watchlist, sorted and deduplicated', () => {
+  it('takes the exact careers hosts of the watchlist, sorted and deduplicated, for both agents', () => {
     const hosts = careersHosts([
       { ats: 'greenhouse' },
       { ats: 'careers', listUrl: 'https://jobs.b.example/list' },
@@ -94,8 +140,10 @@ describe('src-careers contract', () => {
       { ats: 'careers', listUrl: 'https://jobs.b.example/other' },
     ]);
     expect(hosts).toEqual(['careers.a.example', 'jobs.b.example']);
-    expect(makeSrcCareers(['jobs.b.example', 'careers.a.example', 'jobs.b.example']).contract.egress).toEqual(hosts);
-    expect(() => makeSrcCareers([])).toThrow(/at least one careers host/);
+    expect(makeSrcCareersList(['jobs.b.example', 'careers.a.example', 'jobs.b.example']).contract.egress).toEqual(hosts);
+    expect(makeSrcCareersJob(['jobs.b.example', 'careers.a.example']).contract.egress).toEqual(hosts);
+    expect(() => makeSrcCareersList([])).toThrow(/at least one careers host/);
+    expect(() => makeSrcCareersJob([])).toThrow(/at least one careers host/);
   });
 
   it('the fixture pack yields its careers host', () => {
@@ -115,20 +163,25 @@ describe('src-careers contract', () => {
   });
 });
 
-describe('src-careers with a fake browser', () => {
+describe('src-careers-list and src-careers-job with a fake browser', () => {
   it('ignores other requests without rendering anything', async () => {
-    const { browser, out } = run({}, { r: req('greenhouse', 'example-careers') });
-    await expect(out).resolves.toEqual([]);
+    const { browser, links } = run({}, { r: req('greenhouse', 'example-careers') });
+    await expect(links).resolves.toEqual([]);
     expect(browser.calls).toHaveLength(0);
   });
 
-  it('renders the listing, then each same-host job link, and emits sorted RawPostings', async () => {
+  it('emits one dateless CareerLink per job link, sorted, carrying the entry it came from', async () => {
+    const { links } = run({ [LIST]: { html: listing(a('/jobs/zeta'), a('/jobs/alpha#apply'), a('/jobs/alpha')) } });
+    expect(await links).toEqual([linkOf(`${H}/jobs/alpha`), linkOf(`${H}/jobs/zeta`)]);
+  });
+
+  it('renders the listing, then each same-host job link, and emits RawPostings', async () => {
     const { browser, out } = run({
       [LIST]: { html: listing(a('/jobs/zeta-engineer'), a('/jobs/alpha-engineer#apply'), a('https://elsewhere.example/jobs/x'), a('/team'), a('mailto:jobs@careers.example.com'), a('/jobs/alpha-engineer')) },
       [`${H}/jobs/alpha-engineer`]: jsonLdJob('Alpha Engineer'),
       [`${H}/jobs/zeta-engineer`]: plainJob('Zeta &amp; Co Engineer'),
     });
-    const postings = (await out) as RawPosting[];
+    const postings = await out;
     expect(browser.calls.map((c) => c.url)).toEqual([LIST, `${H}/jobs/alpha-engineer`, `${H}/jobs/zeta-engineer`]);
     expect(postings.map((p) => p.sourceId)).toEqual([sha16(`${H}/jobs/alpha-engineer`), sha16(`${H}/jobs/zeta-engineer`)].sort());
     const alpha = postings.find((p) => (p.raw as { url: string }).url.endsWith('alpha-engineer'));
@@ -143,12 +196,12 @@ describe('src-careers with a fake browser', () => {
     expect(zeta?.raw).toEqual({ url: `${H}/jobs/zeta-engineer`, jsonLd: null, title: 'Zeta & Co Engineer', text: 'Zeta &amp; Co Engineer\nRole text' });
   });
 
-  it('uses linkPattern when the entry has one', async () => {
+  it('uses the entry linkPattern', async () => {
     const { browser, out } = run(
       { [LIST]: { html: listing(a('/jobs/one'), a('/positions/two'), a('/careers/three')) }, [`${H}/positions/two`]: plainJob('Two'), [`${H}/careers/three`]: plainJob('Three') },
       { pack: packOf(entry({ linkPattern: '^/(positions|careers)/t' })) },
     );
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort()).toEqual(['Three', 'Two']);
+    expect(titles(await out)).toEqual(['Three', 'Two']);
     expect(browser.calls.map((c) => c.url)).toEqual([LIST, `${H}/careers/three`, `${H}/positions/two`]);
     expect(browser.calls.map((c) => c.expand)).toEqual([true, false, false]);
   });
@@ -159,20 +212,18 @@ describe('src-careers with a fake browser', () => {
       [`${H}/jobs/from-list`]: plainJob('From List'),
       [`${H}/jobs/relative`]: plainJob('Relative'),
     });
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort()).toEqual(['From List', 'Relative']);
+    expect(titles(await out)).toEqual(['From List', 'Relative']);
   });
 
-  it('fails loudly when job links exceed the page budget, before rendering any job', async () => {
+  it('fails loudly past the link cap, before any job is rendered', async () => {
     const links = Array.from({ length: 4 }, (_, i) => a(`/jobs/j${i}`));
-    const { browser, out } = run({ [LIST]: { html: listing(...links) } }, { maxPages: 4 });
-    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: 4 job links exceed page budget' });
+    const { browser, links: out } = run({ [LIST]: { html: listing(...links) } }, { maxLinks: 3 });
+    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: 4 job links exceed the cap of 3' });
     expect(browser.calls).toHaveLength(1);
-    // Exactly maxPages - 1 links fit.
-    const fits = run({ [LIST]: { html: listing(...links.slice(0, 3)) }, ...Object.fromEntries([0, 1, 2].map((i) => [`${H}/jobs/j${i}`, plainJob(`J${i}`)])) }, { maxPages: 4 });
-    await expect(fits.out).resolves.toHaveLength(3);
+    await expect(run({ [LIST]: { html: listing(...links.slice(0, 3)) } }, { maxLinks: 3 }).links).resolves.toHaveLength(3);
   });
 
-  it('follows rel=next and same-host "load more" links across listing pages, within the budget', async () => {
+  it('follows rel=next and same-host "load more" links across listing pages', async () => {
     const { browser, out } = run({
       [LIST]: { html: `<html><head><link rel="next" href="/jobs?page=2"></head><body>${a('/jobs/one')}</body></html>` },
       [`${H}/jobs?page=2`]: { html: `<html><body>${a('/jobs/two')}${a('/jobs?page=3', 'Load more jobs (12)')}</body></html>` },
@@ -180,27 +231,20 @@ describe('src-careers with a fake browser', () => {
       [`${H}/jobs/one`]: plainJob('One'),
       [`${H}/jobs/two`]: plainJob('Two'),
       [`${H}/jobs/three`]: plainJob('Three'),
-    }, { maxPages: 10, maxListingPages: 3 });
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort()).toEqual(['One', 'Three', 'Two']);
+    });
+    expect(titles(await out)).toEqual(['One', 'Three', 'Two']);
     expect(browser.calls.slice(0, 3).map((c) => c.url)).toEqual([LIST, `${H}/jobs?page=2`, `${H}/jobs?page=3`]);
   });
 
-  it('fails loudly when pagination loops, or when listing pages plus job links exceed the budget', async () => {
+  it('fails loudly when pagination loops, or runs past the listing-page cap', async () => {
     const loop = run({
       [LIST]: { html: `<html><head><link rel="next" href="/jobs?page=2"></head><body>${a('/jobs/one')}</body></html>` },
       [`${H}/jobs?page=2`]: { html: `<html><head><link rel="next" href="/jobs"></head><body>${a('/jobs/two')}</body></html>` },
     });
-    await expect(loop.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: listing pagination repeats/) });
-
-    const pages = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [i === 0 ? LIST : `${H}/jobs?page=${i + 1}`, { html: `<html><head><link rel="next" href="/jobs?page=${i + 2}"></head><body></body></html>` }]));
-    const long = run(pages, { maxPages: 4 });
-    await expect(long.out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: listing pagination exceeds 2 listing pages' });
-
-    const tight = run({
-      [LIST]: { html: `<html><head><link rel="next" href="/jobs?page=2"></head><body>${a('/jobs/one')}${a('/jobs/two')}</body></html>` },
-      [`${H}/jobs?page=2`]: { html: `<html><body>${a('/jobs/three')}</body></html>` },
-    }, { maxPages: 4 });
-    await expect(tight.out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: 3 job links exceed page budget' });
+    await expect(loop.links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: listing pagination repeats/) });
+    const pages = Object.fromEntries(Array.from({ length: 8 }, (_, i) => [i === 0 ? LIST : `${H}/jobs?page=${i + 1}`, { html: `<html><head><link rel="next" href="/jobs?page=${i + 2}"></head><body>${a(`/jobs/p${i}`)}</body></html>` }]));
+    await expect(run(pages).links).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: listing pagination exceeds 6 listing pages' });
+    await expect(run(pages, { maxListingPages: 4 }).links).rejects.toMatchObject({ message: 'careers example-careers: listing pagination exceeds 4 listing pages' });
   });
 
   it('follows numbered pages (?page=N, ?start=N, ?offset=N), unlabelled next arrows and "show all" links', async () => {
@@ -213,38 +257,49 @@ describe('src-careers with a fake browser', () => {
     ];
     for (const [name, routes] of shapes) {
       const jobs = { [`${H}/jobs/one`]: plainJob('One'), [`${H}/jobs/two`]: plainJob('Two'), [`${H}/jobs/three`]: plainJob('Three') };
-      const { out } = run({ ...routes, ...jobs }, { maxPages: 10, maxListingPages: 3 });
-      expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort(), name).toEqual(['One', 'Three', 'Two']);
+      expect(titles(await run({ ...routes, ...jobs }).out), name).toEqual(['One', 'Three', 'Two']);
     }
   });
 
-  it('fails loudly on pagination the browser could not follow, a load-more past the click cap, or a listing still loading', async () => {
+  it('fails loudly on pagination the browser could not follow, an expansion past its cap, or a listing still loading', async () => {
     const unfollowed = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 0, scrolls: 0, capReached: false, unfollowedControls: ['<button aria-label="next">'] } } });
-    await expect(unfollowed.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: unsupported pagination on .*aria-label="next"/) });
-    const capped = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 50, scrolls: 0, capReached: true, unfollowedControls: [] } } });
-    await expect(capped.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/"load more" still present after 50 clicks/) });
-    const loading = run({ [LIST]: { html: listing(a('/jobs/one')), settled: false } });
-    await expect(loading.out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/^careers example-careers: listing still loading at 45 s/) });
+    await expect(unfollowed.links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: unsupported pagination on .*aria-label="next"/) });
+    const capped = run({ [LIST]: { html: listing(a('/jobs/one')), expansion: { clicks: 50, scrolls: 3, capReached: true, unfollowedControls: [] } } });
+    await expect(capped.links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/"load more" still adding jobs after 50 clicks and 3 scrolls/) });
+    const loading = run({ [LIST]: { html: listing(a('/jobs/one')), settled: false, settleCapMs: 45_000 } });
+    await expect(loading.links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/^careers example-careers: listing still loading at 45 s/) });
+    const short = run({ [LIST]: { html: listing(a('/jobs/one')), settled: false, settleCapMs: 6_000 } });
+    await expect(short.links).rejects.toMatchObject({ message: expect.stringMatching(/listing still loading at 6 s/) });
   });
 
   it('fails loudly on a listing with no job links, or an ItemList that announces more items than it lists', async () => {
-    await expect(run({ [LIST]: { html: '<div id="app">Loading…</div>' } }).out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: no job links found/) });
+    await expect(run({ [LIST]: { html: '<div id="app">Loading…</div>' } }).links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/careers example-careers: no job links found/) });
     const itemList = { '@type': 'ItemList', numberOfItems: 37, itemListElement: [{ '@type': 'ListItem', url: `${H}/jobs/one` }] };
-    await expect(run({ [LIST]: { html: listing(a('/jobs/one')), jsonLd: [itemList] } }).out).rejects.toMatchObject({ message: expect.stringMatching(/ItemList shows only 1 of 37 items/) });
+    await expect(run({ [LIST]: { html: listing(a('/jobs/one')), jsonLd: [itemList] } }).links).rejects.toMatchObject({ message: expect.stringMatching(/ItemList shows only 1 of 37 items/) });
   });
 
-  it('counts a template title or a bare "Loading…" body as a parse failure', async () => {
-    const { out } = run({
-      [LIST]: { html: listing(a('/jobs/tpl'), a('/jobs/dollar'), a('/jobs/loading'), a('/jobs/fine')) },
+  it('a template title, a bare "Loading…" body, a missing title or a gone page fails that job alone, loudly', async () => {
+    const { jobs } = run({
+      [LIST]: { html: listing(a('/jobs/tpl'), a('/jobs/dollar'), a('/jobs/loading'), a('/jobs/untitled'), a('/jobs/gone'), a('/jobs/fine')) },
       [`${H}/jobs/tpl`]: { html: '<h1>{{ job.title }}</h1>', text: 'x' },
       [`${H}/jobs/dollar`]: { html: '<html><head><title>${title}</title></head><body></body></html>', text: 'x' },
       [`${H}/jobs/loading`]: { html: '<html><head><title>Careers | Acme</title></head><body><div>Loading…</div></body></html>', text: 'Loading…' },
+      [`${H}/jobs/untitled`]: { html: '<html><body><p>No heading</p></body></html>' },
       [`${H}/jobs/fine`]: plainJob('Fine'),
     });
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Fine']);
+    const r = await jobs;
+    expect(titles(r.postings)).toEqual(['Fine']);
+    expect(messages(r.errors)).toEqual([
+      `careers example-careers: job page ${H}/jobs/dollar looks unrendered (title "\${title}")`,
+      `careers example-careers: job page ${H}/jobs/gone returned 404 (gone?)`,
+      `careers example-careers: job page ${H}/jobs/loading looks unrendered (title "Careers | Acme")`,
+      `careers example-careers: job page ${H}/jobs/tpl looks unrendered (title "{{ job.title }}")`,
+      `careers example-careers: job page ${H}/jobs/untitled has no JobPosting title, h1, og:title or title`,
+    ]);
+    for (const e of r.errors) expect((e.error as { code: string }).code).toBe('invalid_output');
     // The h1 inside a script is not the title.
     const scripted = run({ [LIST]: { html: listing(a('/jobs/s')) }, [`${H}/jobs/s`]: { html: '<html><head><title>Real Title</title></head><body><script>el.innerHTML = "<h1>" + d.t + "</h1>";</script></body></html>', text: 'Real text' } });
-    expect(((await scripted.out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Real Title']);
+    expect(titles(await scripted.out)).toEqual(['Real Title']);
   });
 
   it('passes its linkPattern with every listing render', async () => {
@@ -253,25 +308,23 @@ describe('src-careers with a fake browser', () => {
     expect(browser.calls.map((c) => [c.expand, c.linkPattern])).toEqual([[true, '^/jobs/'], [false, undefined]]);
   });
 
-  it('fails loudly on a job page that never settled', async () => {
+  it('fails a job page that never settled, naming the cap', async () => {
     const { out } = run({ [LIST]: { html: listing(a('/jobs/one')) }, [`${H}/jobs/one`]: { ...plainJob('One'), settled: false } });
-    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/^careers example-careers: job page still loading: https:\/\/careers.example.com\/jobs\/one$/) });
+    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: `careers example-careers: job page still loading: ${H}/jobs/one` });
+  });
+
+  it('the job agent refuses a link off the listing host or outside its linkPattern, before rendering', async () => {
+    const job = makeSrcCareersJob([HOST, 'other.example.com']);
+    const browser = fakeBrowser({});
+    const ctx = issueContext({ contract: job.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser }, clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal });
+    await expect(job.run(linkOf('https://other.example.com/jobs/x'), ctx)).rejects.toMatchObject({ message: expect.stringMatching(/not on the listing's host/) });
+    await expect(job.run(linkOf(`${H}/team/x`), ctx)).rejects.toMatchObject({ message: expect.stringMatching(/does not match linkPattern/) });
+    expect(browser.calls).toHaveLength(0);
   });
 
   it('fails loudly when two job links differ only by query string, since their ids would collide', async () => {
-    const { out } = run({ [LIST]: { html: listing(a('/jobs/view?id=1'), a('/jobs/view?id=2')) } });
-    await expect(out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/differ only by query string: https:\/\/careers.example.com\/jobs\/view/) });
-  });
-
-  it('skips a job page that is gone or has no title, but fails when every job fails', async () => {
-    const some = run({
-      [LIST]: { html: listing(a('/jobs/gone'), a('/jobs/untitled'), a('/jobs/fine')) },
-      [`${H}/jobs/untitled`]: { html: '<html><body><p>No heading</p></body></html>' },
-      [`${H}/jobs/fine`]: plainJob('Fine'),
-    });
-    expect(((await some.out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Fine']);
-    const none = run({ [LIST]: { html: listing(a('/jobs/gone')) } });
-    await expect(none.out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers: all 1 jobs failed to parse' });
+    const { links } = run({ [LIST]: { html: listing(a('/jobs/view?id=1'), a('/jobs/view?id=2')) } });
+    await expect(links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/differ only by query string: https:\/\/careers.example.com\/jobs\/view/) });
   });
 
   it('falls back to og:title, then <title>, when a page has neither JSON-LD nor an h1', async () => {
@@ -280,21 +333,23 @@ describe('src-careers with a fake browser', () => {
       [`${H}/jobs/og`]: { html: '<html><head><meta property="og:title" content="Site Reliability Engineer"><title>Work With Us &#8211; SRE</title></head><body><h2>Site Reliability Engineer</h2></body></html>', text: 'SRE text' },
       [`${H}/jobs/titled`]: { html: '<html><head><title>Work With Us &#8211; Product Designer</title></head><body><h2>x</h2></body></html>', text: 'PD text' },
     });
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title).sort()).toEqual(['Site Reliability Engineer', 'Work With Us \u2013 Product Designer']);
+    expect(titles(await out)).toEqual(['Site Reliability Engineer', 'Work With Us – Product Designer']);
   });
 
-  it('skips a job link that redirects back to the listing (a closed job)', async () => {
-    const { out } = run({
+  it('a job link that redirects back to the listing (a closed job) fails that job alone', async () => {
+    const { jobs } = run({
       [LIST]: { html: listing(a('/jobs/closed'), a('/jobs/open')) },
       [`${H}/jobs/closed`]: { html: listing(), finalUrl: LIST },
       [`${H}/jobs/open`]: plainJob('Open'),
     });
-    expect(((await out) as RawPosting[]).map((p) => (p.raw as { title: string }).title)).toEqual(['Open']);
+    const r = await jobs;
+    expect(titles(r.postings)).toEqual(['Open']);
+    expect(messages(r.errors)).toEqual([`careers example-careers: job page ${H}/jobs/closed redirected to the listing (closed?)`]);
   });
 
-  it('fails on a listing error, a missing watchlist entry, or a challenge, without partial output', async () => {
-    await expect(run({ [LIST]: { html: 'x', status: 404 } }).out).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/listing .* returned 404/) });
-    await expect(run({}, { pack: packOf(entry({ slug: 'other' })) }).out).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: no careers entry in the watchlist' });
+  it('fails on a listing error, a missing watchlist entry, or a challenge', async () => {
+    await expect(run({ [LIST]: { html: 'x', status: 404 } }).links).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/listing .* returned 404/) });
+    await expect(run({}, { pack: packOf(entry({ slug: 'other' })) }).links).rejects.toMatchObject({ code: 'invalid_output', message: 'careers example-careers: no careers entry in the watchlist' });
     const wall = run({ [LIST]: { html: listing(a('/jobs/one')) }, [`${H}/jobs/one`]: { html: '<title>Are you a robot?</title>' } });
     await expect(wall.out).rejects.toMatchObject({ code: 'challenged' });
     expect(wall.browser.calls).toHaveLength(2);
@@ -303,7 +358,7 @@ describe('src-careers with a fake browser', () => {
   it('caps the fallback text at 50 KB on a character boundary', async () => {
     const long = 'é'.repeat(40_000);
     const { out } = run({ [LIST]: { html: listing(a('/jobs/long')) }, [`${H}/jobs/long`]: { html: '<h1>Long</h1>', text: long } });
-    const text = ((await out) as RawPosting[])[0]?.raw as { text: string };
+    const text = (await out)[0]?.raw as { text: string };
     expect(CAREERS_TEXT_MAX_BYTES).toBe(51_200);
     expect(new TextEncoder().encode(text.text).length).toBeLessThanOrEqual(51_200);
     expect(text.text).toBe('é'.repeat(25_600));
@@ -311,9 +366,68 @@ describe('src-careers with a fake browser', () => {
 
   it('is deterministic whatever order the listing shows its links in', async () => {
     const routes = (order: string[]) => ({ [LIST]: { html: listing(...order.map((p) => a(p))) }, [`${H}/jobs/a`]: plainJob('A'), [`${H}/jobs/b`]: plainJob('B') });
-    const one = await run(routes(['/jobs/a', '/jobs/b'])).out;
-    const two = await run(routes(['/jobs/b', '/jobs/a'])).out;
-    expect(one).toEqual(two);
+    expect(await run(routes(['/jobs/a', '/jobs/b'])).links).toEqual(await run(routes(['/jobs/b', '/jobs/a'])).links);
+    expect(await run(routes(['/jobs/a', '/jobs/b'])).out).toEqual(await run(routes(['/jobs/b', '/jobs/a'])).out);
+  });
+});
+
+describe('src-careers through the supervisor', () => {
+  const pipeline: Pipeline = {
+    id: 'careers',
+    version: '1.0.0',
+    seed: { type: DiscoveryRequestType, guarantees: [knownAts] },
+    teams: [{ id: 'sourcing', lead: 'sourcing-lead', members: ['src-careers-list', 'src-careers-job'], exitGuarantees: [], breaker: { consecutiveFailures: 10 } }],
+    edges: [
+      { type: 'DiscoveryRequest@1', to: 'src-careers-list' },
+      { type: 'CareerLink@1', to: 'src-careers-job' },
+    ],
+  };
+  const forty = Array.from({ length: 40 }, (_, i) => `/jobs/j${String(i).padStart(2, '0')}`);
+  const routes: Record<string, Route> = { [LIST]: { html: listing(...forty.map((p) => a(p))) } };
+  for (const p of forty) routes[`${H}${p}`] = plainJob(`Job ${p.slice(-2)}`);
+
+  const supervisor = (store: Store, browser: ReturnType<typeof fakeBrowser>, slept: number[]) => {
+    const registry = new Registry();
+    registry.register(makeSrcCareersList([HOST]));
+    registry.register(makeSrcCareersJob([HOST]));
+    const guardrails = builtinGuardrails();
+    const pack = { watchlist: [entry()] };
+    return new Supervisor({
+      store,
+      registry,
+      compiled: compileWiring(registry, pipeline, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: async () => ({ status: 404, text: async () => '' }), browser },
+      clock: fixedClock('2026-10-09T07:00:00.000Z'),
+      sleep: async (ms) => void slept.push(ms),
+      pack,
+      packHash: 'pack-1',
+    });
+  };
+
+  it('one listing with 40 links runs 40 job steps; the next day all 40 replay with no new job render', async () => {
+    const store = Store.open(':memory:');
+    const browser = fakeBrowser(routes);
+    const slept: number[] = [];
+    const day1 = await supervisor(store, browser, slept).start('run-1', [req('careers', 'example-careers', '2026-10-09')]);
+    expect(day1.queue).toMatchObject({ done: 41, failed: 0 });
+    expect(browser.calls).toHaveLength(41);
+    // Pacing holds across steps: with the clock fixed, the k-th render after the first waits k browser intervals.
+    expect(slept).toEqual(expect.arrayContaining(Array.from({ length: 40 }, (_, i) => (i + 1) * PRODUCT_POLICY_V1.minBrowserIntervalMs)));
+
+    const day2 = await supervisor(store, browser, []).start('run-2', [req('careers', 'example-careers', '2026-10-10')]);
+    expect(day2.queue).toMatchObject({ done: 41, failed: 0 });
+    expect(day2.replayed).toBe(40);
+    expect(browser.calls).toHaveLength(42);
+    expect(browser.calls[41]?.url).toBe(LIST);
+  });
+
+  it('a gone job fails its own step; the other jobs are done', async () => {
+    const browser = fakeBrowser({ ...routes, [`${H}/jobs/j07`]: { html: 'gone', status: 410 } });
+    const r = await supervisor(Store.open(':memory:'), browser, []).start('run-g', [req()]);
+    expect(r.queue).toMatchObject({ done: 40, failed: 1 });
   });
 });
 
@@ -372,6 +486,8 @@ describe('src-careers with real chromium', async () => {
     '/form-attr-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<form id="f" method="post" action="/apply-submit"><input name="email" value="me@x"></form><button form="f">Show more</button>`) }),
     '/in-form-opportunities': () => ({ body: doc(`<h1>Jobs</h1>${two}<form method="get" action="/s"><input name="a"><button type="button" onclick="1">Load more opportunities</button></form>`) }),
     '/submit-type': () => ({ body: doc(`<h1>Jobs</h1>${two}<button type="submit">Show more</button>`) }),
+    '/typeless-more': () => ({ body: doc(`<h1>Jobs</h1><div id="l">${two}</div><button onclick="document.getElementById('l').insertAdjacentHTML('beforeend', '<a href=&quot;/jobs/c&quot;>c</a>'); this.remove();">Load more</button>`) }),
+    '/reveal-all': () => ({ body: doc(`<h1>Jobs</h1>${two}<div id="more" style="display:none"><a href="/jobs/c">c</a> <a href="/jobs/d">d</a></div><button type="button" onclick="document.getElementById('more').style.display = 'block'; this.remove();">Show all jobs</button>`) }),
     '/show20-untyped': () => ({ body: doc(`<h1>Jobs</h1>${two}<button onclick="1">Show 20 more</button>`) }),
     '/cookie-banner': () => ({ body: doc(`<h1>Jobs</h1>${two}<div class="consent"><button type="button" onclick="fetch('/api/consent', { method: 'POST' })">Show all vendors</button><button type="button">Show all</button></div>`) }),
     '/div-post': () => ({ body: doc(`<h1>Jobs</h1>${two}<div role="button" style="display:inline-block" onclick="fetch('/api/state-change', { method: 'POST' })">Show all</div>`) }),
@@ -443,6 +559,15 @@ describe('src-careers with real chromium', async () => {
     maxCall: () => 0,
     denials: () => [],
   });
+
+  /** src-careers-list, then src-careers-job on each link, over the real provider; the first failure is thrown. */
+  const runReal = async (ctx: AgentContext): Promise<RawPosting[]> => {
+    const links = (await makeSrcCareersList(['127.0.0.1']).run(req(), ctx)) as CareerLink[];
+    const job = makeSrcCareersJob(['127.0.0.1']);
+    const out: RawPosting[] = [];
+    for (const l of links) out.push(...((await job.run(l, ctx)) as RawPosting[]));
+    return out;
+  };
 
   it.skipIf(!installed)('renders links that JavaScript adds after load, with the honest user-agent, and loads no images', async () => {
     const page = await render(`${base}/listing.html`, { expand: true });
@@ -551,7 +676,7 @@ describe('src-careers with real chromium', async () => {
   }, 60_000);
 
   it.skipIf(!installed)('clicks only safe controls: never one tied to a form, a submit button or a cookie banner; reports them instead', async () => {
-    for (const path of ['/form-attr-get', '/form-attr-post', '/in-form-opportunities', '/submit-type', '/show20-untyped']) {
+    for (const path of ['/form-attr-get', '/form-attr-post', '/in-form-opportunities', '/submit-type']) {
       const before = hits.length;
       const page = await render(`${base}${path}`, { expand: true });
       expect(page.expansion?.clicks, path).toBe(0);
@@ -562,6 +687,16 @@ describe('src-careers with real chromium', async () => {
     const banner = await render(`${base}/cookie-banner`, { expand: true });
     expect(banner.expansion).toEqual({ clicks: 0, scrolls: 0, capReached: false, unfollowedControls: [] });
     expect(since(before)).toEqual(['GET 127.0.0.1/cookie-banner']);
+  }, 60_000);
+
+  it.skipIf(!installed)('clicks a typeless button with no form owner, and a "Show all" that reveals hidden links', async () => {
+    const typeless = await render(`${base}/typeless-more`, { expand: true, linkPattern: '^/jobs/' });
+    expect(typeless.expansion).toMatchObject({ clicks: 1, unfollowedControls: [] });
+    expect(typeless.html).toContain('href="/jobs/c"');
+    // Typeless and adding nothing: clicked, then loud.
+    await expect(render(`${base}/show20-untyped`, { expand: true, linkPattern: '^/jobs/' })).rejects.toMatchObject({ message: expect.stringMatching(/load-more did not add jobs \("Show 20 more"\)/) });
+    const reveal = await render(`${base}/reveal-all`, { expand: true, linkPattern: '^/jobs/' });
+    expect(reveal.expansion).toMatchObject({ clicks: 1, capReached: false, unfollowedControls: [] });
   }, 60_000);
 
   it.skipIf(!installed)('a clicked control that adds no jobs fails loudly (the XHR POST it makes is the page\'s own)', async () => {
@@ -580,14 +715,14 @@ describe('src-careers with real chromium', async () => {
   }, 60_000);
 
   it.skipIf(!installed)('the agent fails loudly on "Load more opportunities" inside a form', async () => {
-    await expect(makeSrcCareers(['127.0.0.1']).run(req(), agentCtx(`${base}/in-form-opportunities`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/unsupported pagination .*Load more opportunities/) });
+    await expect(runReal(agentCtx(`${base}/in-form-opportunities`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/unsupported pagination .*Load more opportunities/) });
   }, 30_000);
 
   it.skipIf(!installed)('waits for a job description that arrives after 25 s (product timing), and fails loudly at a short cap', async () => {
     const page = await render(`${base}/slow-job`, { via: slowProvider });
     expect(page.settled).toBe(true);
     expect(page.html).toContain('Real Title');
-    await expect(makeSrcCareers(['127.0.0.1']).run(req(), agentCtx(`${base}/slow-job-list`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/job page still loading: .*\/jobs\/slow/) });
+    await expect(runReal(agentCtx(`${base}/slow-job-list`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/job page still loading: .*\/jobs\/slow/) });
   }, 90_000);
 
   it.skipIf(!installed)('stops expanding at the click cap', async () => {
@@ -602,8 +737,7 @@ describe('src-careers with real chromium', async () => {
   }, 60_000);
 
   it.skipIf(!installed)('runs the whole agent: listing, then both job pages, JSON-LD and fallback', async () => {
-    const agent = makeSrcCareers(['127.0.0.1']);
-    const postings = (await agent.run(req(), agentCtx(`${base}/listing.html`))) as RawPosting[];
+    const postings = await runReal(agentCtx(`${base}/listing.html`));
     expect(postings).toHaveLength(2);
     const byTitle = Object.fromEntries(postings.map((p) => [(p.raw as { title: string }).title, p]));
     expect(byTitle['Senior Backend Engineer']?.raw).toMatchObject({ url: `${base}/jobs/backend-engineer`, jsonLd: expect.objectContaining({ jobLocationType: 'TELECOMMUTE' }) });
@@ -612,6 +746,6 @@ describe('src-careers with real chromium', async () => {
   }, 60_000);
 
   it.skipIf(!installed)('the agent fails loudly on a listing with no job links', async () => {
-    await expect(makeSrcCareers(['127.0.0.1']).run(req(), agentCtx(`${base}/empty-listing`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/no job links found/) });
+    await expect(runReal(agentCtx(`${base}/empty-listing`))).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/no job links found/) });
   }, 30_000);
 });
