@@ -6,6 +6,7 @@ import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
 import { assertNoForbidden, citeable, ForbiddenTermError, loadPack } from '../../src/app/pack/load.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
+import { compileRoleDeny } from '../../src/app/pack/regex.js';
 
 const FIXTURE = resolve(import.meta.dirname, '../fixtures/pack');
 const tmp: string[] = [];
@@ -189,6 +190,24 @@ describe('assertNoForbidden', () => {
     expect(() => assertNoForbidden('about AAB', n)).not.toThrow();
     expect(() => assertNoForbidden('about A+B co', n)).toThrow(ForbiddenTermError);
   });
+  it('catches whitespace, newline and NBSP variants of a multi-word term', () => {
+    const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech India'] };
+    for (const t of ['Initech  India', 'Initech\nIndia', 'Initech\u00a0India', 'INITECH\tindia']) {
+      expect(() => assertNoForbidden(`at ${t} now`, n)).toThrow(ForbiddenTermError);
+    }
+  });
+  it('sees through zero-width characters and Unicode normalisation', () => {
+    const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech', 'café', 'Straße'] };
+    expect(() => assertNoForbidden('Init\u200bech', n)).toThrow(ForbiddenTermError);
+    expect(() => assertNoForbidden('Cafe\u0301 au lait', n)).toThrow(ForbiddenTermError);
+    expect(() => assertNoForbidden('STRASSE', n)).toThrow(ForbiddenTermError);
+    expect(() => assertNoForbidden('\uff29nitech', n)).toThrow(ForbiddenTermError);
+  });
+  it('uses Unicode letter boundaries', () => {
+    const n: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech'] };
+    expect(() => assertNoForbidden('Initeché', n)).not.toThrow();
+    expect(() => assertNoForbidden('(Initech)', n)).toThrow(ForbiddenTermError);
+  });
   it('exposes the offending term', () => {
     try {
       assertNoForbidden('x initech y', naming);
@@ -202,5 +221,53 @@ describe('assertNoForbidden', () => {
 describe('fixture hygiene', () => {
   it('exists', () => {
     expect(existsSync(join(FIXTURE, 'naming.yaml'))).toBe(true);
+  });
+});
+
+describe('roleDeny', () => {
+  const deny = loadPack(FIXTURE).pack.filters.roleDeny.map(compileRoleDeny);
+  const denied = (t: string): boolean => deny.some((r) => r.test(t));
+  it('keeps legitimate titles', () => {
+    for (const t of ['Internal Tools Engineer', 'International Payments Engineer', 'Salesforce Platform Engineer', 'Accounting Systems Engineer', 'Senior Backend Engineer']) {
+      expect(denied(t), t).toBe(false);
+    }
+  });
+  it('drops the excluded roles', () => {
+    for (const t of ['Software Engineer Intern', 'Front End Engineer', 'Frontend Engineer', 'Sales Engineer', 'Account Executive', 'Engineering Manager']) {
+      expect(denied(t), t).toBe(true);
+    }
+  });
+});
+
+describe('compileRoleDeny', () => {
+  it('compiles with flags iu', () => {
+    expect(compileRoleDeny('intern').flags).toBe('iu');
+  });
+  it.each(['(a+)+$', '(a*)*', '(a|a)+', '(\\w+\\s?)*', '(x{2,})+', 'a'.repeat(201)])('rejects unsafe %s', (p) => {
+    expect(() => compileRoleDeny(p)).toThrow();
+  });
+  it.each(['\\bintern(ship)?\\b', '\\baccount (executive|manager)\\b', '[+*]+', 'a\\+b', '(?:foo)?bar'])('accepts safe %s', (p) => {
+    expect(() => compileRoleDeny(p)).not.toThrow();
+  });
+  it('is enforced when loading a pack', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'filters.yaml'), 'roleDeny: ["(a+)+$"]\ncompanyDeny: []\nemploymentDeny: []\n');
+    expect(() => loadPack(d)).toThrow(/filters\.yaml/);
+  });
+});
+
+describe('load hardening', () => {
+  it('rejects blank forbidden terms', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'naming.yaml'), 'employerDisplay: {}\nforbiddenTerms: ["  "]\n');
+    expect(() => loadPack(d)).toThrow(/naming\.yaml/);
+  });
+  it('rejects an invalid override status', () => {
+    expect(() => loadPack(FIXTURE, { 'f-nw-01': 'bogus' as never })).toThrow(/bogus|status/);
+  });
+  it('names policy.user.yaml for non-JSON values', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'policy.user.yaml'), 'x: .nan\n');
+    expect(() => loadPack(d)).toThrow(/policy\.user\.yaml/);
   });
 });

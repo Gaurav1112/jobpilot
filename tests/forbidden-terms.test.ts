@@ -31,6 +31,7 @@ describe('forbidden terms never appear in the repo', () => {
   }
   it('src, tests and docs are clean', () => {
     const terms = termsFromPack().map((t) => t.toLowerCase());
+    expect(terms.length, 'naming.yaml has no forbiddenTerms').toBeGreaterThan(0);
     const hits: string[] = [];
     for (const top of ['src', 'tests', 'docs']) {
       const dir = join(root, top);

@@ -7,6 +7,7 @@ import {
   AnswersSchema,
   ContactSchema,
   EligibilitySchema,
+  FactStatus,
   FactsFile,
   FeedsSchema,
   FiltersSchema,
@@ -75,8 +76,9 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     if (seen.has(f.id)) throw new PackError(`facts.yaml: duplicate fact id ${f.id}`);
     seen.add(f.id);
   }
-  for (const id of Object.keys(overrides)) {
+  for (const [id, status] of Object.entries(overrides)) {
     if (!seen.has(id)) throw new PackError(`fact override names unknown fact id ${id}`);
+    if (!FactStatus.safeParse(status).success) throw new PackError(`fact override for ${id} has invalid status ${String(status)}`);
   }
   const lexicon = readYaml(dir, 'lexicon.yaml', LexiconSchema);
   const pack: Pack = {
@@ -107,11 +109,22 @@ export function citeable(f: Fact): boolean {
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/** Throws `ForbiddenTermError` if `text` contains any forbidden term, case-insensitively at word boundaries. */
+/** Folds text for matching: NFKC, invisible format characters (zero-width etc.) removed, case-folded, ß as ss. */
+function fold(s: string): string {
+  return s.normalize('NFKC').replace(/\p{Cf}/gu, '').toLowerCase().replaceAll('ß', 'ss').normalize('NFKC');
+}
+
+/**
+ * Throws `ForbiddenTermError` if `text` contains any forbidden term. Both sides are folded (see `fold`),
+ * whitespace runs inside a term match any whitespace (including NBSP and newlines), and boundaries are
+ * Unicode letter/digit lookarounds.
+ */
 export function assertNoForbidden(text: string, naming: Naming): void {
+  const hay = fold(text);
   for (const term of naming.forbiddenTerms) {
-    if (new RegExp(`(?<![\\p{L}\\p{N}_])${escapeRe(term)}(?![\\p{L}\\p{N}_])`, 'iu').test(text)) {
-      throw new ForbiddenTermError(term);
-    }
+    const words = fold(term).split(/\s+/u).filter((w) => w !== '');
+    if (words.length === 0) continue;
+    const body = words.map(escapeRe).join('\\s+');
+    if (new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'u').test(hay)) throw new ForbiddenTermError(term);
   }
 }

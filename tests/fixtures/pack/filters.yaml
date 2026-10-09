@@ -1,5 +1,5 @@
 roleDeny:
-  - front-?end
+  - front[- ]?end
   - mobile
   - \bios\b
   - android
@@ -11,8 +11,8 @@ roleDeny:
   - engineering manager
   - director
   - ^manager\b
-  - sales
-  - account
+  - \bsales\b
+  - \baccount (executive|manager)\b
   - solutions engineer
   - support engineer
   - customer success
@@ -22,7 +22,7 @@ roleDeny:
   - designer
   - data scientist
   - ml scientist
-  - intern
+  - \bintern(ship)?\b
   - embedded
   - firmware
   - hardware

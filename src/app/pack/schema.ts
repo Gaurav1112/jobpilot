@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { compileRoleDeny } from './regex.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
 const Currency = z.enum(['INR', 'USD', 'EUR', 'GBP']);
@@ -42,17 +43,13 @@ export const TargetsSchema = z.strictObject({
   yearsPenalty: z.number(),
 });
 
-const RegexSource = z.string().refine(
-  (s) => {
-    try {
-      new RegExp(s, 'i');
-      return true;
-    } catch {
-      return false;
-    }
-  },
-  { message: 'not a valid regular expression' },
-);
+const RegexSource = z.string().superRefine((s, ctx) => {
+  try {
+    compileRoleDeny(s);
+  } catch (e) {
+    ctx.addIssue({ code: 'custom', message: e instanceof Error ? e.message : 'not a valid regular expression' });
+  }
+});
 export const FiltersSchema = z.strictObject({
   roleDeny: z.array(RegexSource),
   companyDeny: z.array(z.string()),
@@ -61,7 +58,7 @@ export const FiltersSchema = z.strictObject({
 
 export const NamingSchema = z.strictObject({
   employerDisplay: z.record(z.string(), z.string()),
-  forbiddenTerms: z.array(z.string().min(1)),
+  forbiddenTerms: z.array(z.string().trim().min(1)),
 });
 
 export const OffersSchema = z.strictObject({
@@ -114,7 +111,7 @@ export const EligibilitySchema = z.strictObject({
 });
 
 /** Raw user policy overrides; validated and tightened by the kernel's `mergePolicy`, not here. */
-export const PolicyUserSchema = z.record(z.string(), z.unknown());
+export const PolicyUserSchema = z.record(z.string(), z.json());
 
 export type Fact = z.infer<typeof FactSchema>;
 export type Role = z.infer<typeof RoleSchema>;
@@ -130,7 +127,6 @@ export type WatchEntry = z.infer<typeof WatchEntrySchema>;
 export type Feeds = z.infer<typeof FeedsSchema>;
 export type Contact = z.infer<typeof ContactSchema>;
 export type Eligibility = z.infer<typeof EligibilitySchema>;
-export type FactStatusT = Fact['status'];
 
 export interface Pack {
   contact: Contact;
