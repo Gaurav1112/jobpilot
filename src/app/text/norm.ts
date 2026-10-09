@@ -150,6 +150,9 @@ const CLAUSE_END = /[;|()[\]\n]/g;
 /** One place: separate locations are joined by these ("Bengaluru or Singapore", "Pune; Austin"). */
 const SEGMENT_SPLIT = /[;|\n/&]|\bor\b|\band\b/gi;
 
+/** After "anywhere"/"global": "in|within|across [the] <listed place>". */
+const SCOPED_ANYWHERE = new RegExp(`^\\s+(?:in|within|across)\\s+(?:the\\s+)?${PLACE_RE.source}`, 'iu');
+
 interface PlaceScan {
   places: string[];
   /** Excluded countries or regions (canonical names): these leave `places`. */
@@ -173,6 +176,8 @@ function scanPlaces(text: string): PlaceScan {
       const name = ALIAS.get(alias);
       if (name === undefined) continue;
       const at = segStart + (m.index ?? 0);
+      // "Anywhere in India", "anywhere within APAC": the place scopes the anywhere, so it is not worldwide.
+      if (name === 'worldwide' && SCOPED_ANYWHERE.test(t.slice(at + (m[1] ?? '').length))) continue;
       const before = t.slice(0, at);
       const clauseStart = Math.max(-1, ...[...before.matchAll(CLAUSE_END)].map((c) => c.index ?? -1)) + 1;
       if (EXCLUDING.test(before.slice(clauseStart))) {

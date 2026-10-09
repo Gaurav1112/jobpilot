@@ -1148,3 +1148,48 @@ describe('fix round 3: bullet-only 15+ years is null (M14, accepted N2 trade-off
     expect(yearsRequired('- 15+ years of experience designing distributed systems')).toBe(15);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Fix round 4 (re-review Q1, M16, M17)
+// ---------------------------------------------------------------------------
+
+describe('fix round 4: an included component is never a bound (Q1)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('reads the figure, not the part it includes', () => {
+    expect(text('<p>Salary ₹20 LPA incl. HRA ₹5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Compensation ₹20 LPA incl. PF ₹1.5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>CTC ₹20 LPA including gratuity ₹0.5 LPA</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Salary incl. HRA: ₹20 LPA</p>')?.max).toBe(2000000);
+  });
+
+  it('skips a clause naming only allowances, PF, gratuity, insurance and the like', () => {
+    expect(text('<p>HRA: ₹5 LPA</p>')).toBeNull();
+    expect(text('<p>Base: ₹20 LPA. PF ₹1.5 LPA. Insurance cover ₹5 LPA. LTA ₹1 LPA.</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+});
+
+describe('fix round 4: no break before a currency token (M17)', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('keeps US$, other dollars and codes with their abbreviation', () => {
+    expect(text('<p>Base salary approx. US$150,000</p>')).toEqual({ min: 150000, max: 150000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Base pay e.g. L3: ₹30 LPA</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary approx. CA$150,000</p>')).toBeNull();
+    // A code that starts a new sentence rather than an amount still breaks it: the INR figure stands alone.
+    expect(text('<p>Base salary ₹20 LPA p.a. USD equivalent available.</p>')).toEqual({ min: 2000000, max: 2000000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary ₹20 LPA p.a. Rs. 5 LPA bonus.</p>')).toBeNull();
+  });
+});
+
+describe('fix round 4: "anywhere in <country>" is that country (M16)', () => {
+  it('does not add worldwide', () => {
+    expect(countriesIn('Anywhere in India except Delhi NCR')).toEqual(['india']);
+    expect(countriesIn('Anywhere in the US')).toEqual(['united states']);
+    expect(countriesIn('Remote, anywhere within APAC')).toEqual(['apac']);
+    expect(countriesIn('Anywhere')).toEqual(['worldwide']);
+    expect(countriesIn('Anywhere in the world')).toEqual(['worldwide']);
+  });
+});

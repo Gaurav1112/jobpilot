@@ -142,7 +142,7 @@ const NOT_PAY =
   /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
 /** Pay that is not salary; a sentence that names only these (no base, salary, fixed or CTC) states no salary. */
 const OTHER_PAY =
-  /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|variable|incentives?|ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
+  /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|hra|pf|epf|esic|gratuity|da|lta|allowances?|reimbursements?|insurance|meal|flexi|variable|incentives?|ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
 const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
@@ -151,18 +151,35 @@ const FOREIGN_MONEY =
 const DOLLAR_COUNTRY = /\b(?:canada|canadian|australia|australian|singapore|hong kong|new zealand|mexico|taiwan)\b/i;
 const US_DOLLAR = /\bUSD\b|US\$/;
 /**
- * Sentence ends, plus `;` clauses. "Rs.", "No.", "min.", "max.", "i.e." never end a sentence. "p.a.", "approx.",
- * "incl." and "e.g." end one only before a capitalised word that is not a currency code: "₹12 LPA p.a. Equity ..."
- * splits, so the equity sentence cannot touch the salary or its basis, while "approx. ₹20 LPA" and
- * "approx. INR 20,00,000" stay one sentence with the figure they introduce.
+ * Sentence ends, plus `;` clauses. "Rs.", "No.", "min.", "max.", "i.e.", "incl." and "e.g." never end a sentence
+ * ("incl." and "e.g." introduce a part or an example of the figure). "p.a." and "approx." end one only before a
+ * capitalised word that does not start an amount (`US$150,000`, `CA$`, `INR 20,00,000`, `Rs. 5`): "₹12 LPA p.a.
+ * Equity ..." splits, so the equity sentence cannot touch the salary or its basis, while "approx. US$150,000"
+ * stays one sentence with the figure it introduces.
  */
 const PAY_SENTENCE_SPLIT =
-  /\n+|;\s*|(?<=[.!?])(?<!\b(?:[Rr][Ss]|[Nn]o|[Aa]pprox|e\.g|i\.e|[Ii]ncl|[Mm]in|[Mm]ax|vs|etc|[Mm]r|[Mm]s|[Dd]r|[Pp]\.[Aa])\.)\s+|(?<=\b(?:[Pp]\.[Aa]|[Aa]pprox|[Ii]ncl|e\.g)\.)\s+(?=[A-Z])(?!(?:INR|USD|EUR|GBP|Rs|RS)\b)/;
+  /\n+|;\s*|(?<=[.!?])(?<!\b(?:[Rr][Ss]|[Nn]o|[Aa]pprox|e\.g|i\.e|[Ii]ncl|[Mm]in|[Mm]ax|vs|etc|[Mm]r|[Mm]s|[Dd]r|[Pp]\.[Aa])\.)\s+|(?<=\b(?:[Pp]\.[Aa]|[Aa]pprox)\.)\s+(?=[A-Z])(?![A-Z]{1,3}\$|(?:[A-Z]{3}|R[Ss])\.?\s*\d)/;
 /** Where a money figure starts: a currency sign or code before digits, or digits with a magnitude word. */
 const FIGURE = /(?:[₹$€£]|\b(?:rs\.?|inr|usd|eur|gbp)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr|k|m|l)?\b|\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr)\b/i;
 const UP_TO = /\b(?:up ?to|upto|max(?:imum)?\.?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
 const FROM = /\b(?:from|starting(?: at| from)?|starts at|at least|min(?:imum)?\.?(?: of)?|no less than)\s*:?\s*$/i;
 const OR_MORE = /^\s*(?:\+|or more\b|and above\b|or higher\b|onwards\b)/i;
+
+/** "incl. HRA ₹5 LPA", "including PF ...": a part of the figure before it, named only as non-salary pay. */
+const INCLUDED_PART = /\s*\(?\b(?:incl\.?|including|inclusive of|includes)\s+[^;()]*\)?$/i;
+
+/**
+ * The sentence without a trailing "incl./including ..." part that names only non-salary pay (HRA, PF, gratuity ...)
+ * and carries its own figure, when a figure remains: "Salary ₹20 LPA incl. HRA ₹5 LPA" is read as "Salary ₹20 LPA",
+ * so the included part never becomes a bound. "Salary incl. HRA: ₹20 LPA" keeps its only figure.
+ */
+function withoutIncluded(sentence: string): string {
+  const m = INCLUDED_PART.exec(sentence);
+  if (m === null) return sentence;
+  const part = m[0];
+  const rest = sentence.slice(0, m.index);
+  return OTHER_PAY.test(part) && !SALARY_WORD.test(part) && FIGURE.test(part) && FIGURE.test(rest) ? rest : sentence;
+}
 
 /**
  * Comp stated in the description, read one sentence (and `;` clause) at a time with `parseComp`. A sentence counts only when it has a
@@ -180,9 +197,10 @@ export function compFromText(text: string): Comp | null {
   for (const sentence of text.split(PAY_SENTENCE_SPLIT)) {
     // A clause whose only pay words are variable, incentive, OTE, commission, bonus or equity states no salary.
     if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
-    if (OTHER_PAY.test(sentence) && !SALARY_WORD.test(sentence)) continue;
+    const core = withoutIncluded(sentence);
+    if (OTHER_PAY.test(core) && !SALARY_WORD.test(core)) continue;
     if (FOREIGN_MONEY.test(sentence) || (sentence.includes('$') && DOLLAR_COUNTRY.test(sentence) && !US_DOLLAR.test(sentence))) continue;
-    const r = parseComp(sentence);
+    const r = parseComp(core);
     if (r.kind !== 'parsed') continue;
     let { min, max } = r.range as { min: number | null; max: number | null };
     if (min === max) {
