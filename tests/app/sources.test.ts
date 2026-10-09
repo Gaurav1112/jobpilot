@@ -453,6 +453,18 @@ describe('paging: no silent truncation', () => {
       expect(rec.urls).toHaveLength(3);
     });
 
+    it('a full page of 99 duplicates plus 1 new → invalid_output', async () => {
+      const second = [...leverJobs(1, 99), ...leverJobs(500, 1)];
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: JSON.stringify(second) }, [LV(200)]: { body: '[]' } });
+      await expect(run(srcLever, veeva, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'lever veeva: page 2 brought 1 new postings, minimum 90' });
+    });
+
+    it('a normal board (every full page new, a few shifted duplicates) passes the per-page floor', async () => {
+      const second = [...leverJobs(95, 5), ...leverJobs(100, 95)];
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: JSON.stringify(second) }, [LV(200)]: { body: leverPage(195, 40) }, [LV(300)]: { body: '[]' } });
+      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(235);
+    });
+
     it('a posting on two pages (the board shifted) is kept once, first copy wins', async () => {
       const second = leverJobs(100, 3) as { id: string; text: string }[];
       second.splice(1, 0, { id: 'id-000050', text: 'moved' });

@@ -17,7 +17,8 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySe
  *   confirms the end; if it is not empty the step fails ('lever <slug>: page cap reached at N
  *   postings'), so an exactly-full board is not a false alarm and a bigger one is never cut quietly;
  * - a page whose ids were all seen on earlier pages (the API ignored `skip`, or cycles A, B, A) is
- *   `invalid_output`.
+ *   `invalid_output`, and so is a full page bringing fewer than LEVER_MIN_NEW_PER_PAGE new ids
+ *   (say 99 duplicates plus 1 new), since Lever's list is stable.
  * Pages are processed in request order and deduped by id (the first copy wins), then sorted.
  * A failed page fails the whole step; the GETs are idempotent, so a retry starts again at page 1.
  * Live requests took 10.6 to 12 s each on 2026-10-09 (pages share the 1 s host pacer). The step
@@ -30,6 +31,8 @@ export const LEVER_HOST = 'api.lever.co';
 export const LEVER_PAGE_SIZE = 100;
 export const LEVER_MAX_PAGES = 70;
 export const LEVER_TIMEOUT_MS = 900_000;
+/** Every full (non-final) page must bring at least this many ids not seen on earlier pages. */
+export const LEVER_MIN_NEW_PER_PAGE = 90;
 
 export const leverUrl = (slug: string, skip: number): string =>
   `https://${LEVER_HOST}/v0/postings/${encodeURIComponent(slug)}?mode=json&skip=${skip}&limit=${LEVER_PAGE_SIZE}`;
@@ -78,7 +81,13 @@ export const srcLever = defineAgent(srcLeverContract, async (req, ctx) => {
     }
     if (short) throw new KernelError('invalid_output', `${what}: short page before end`);
     if (page === LEVER_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
-    if (onlySeenBefore(seen, parsed.postings.map((p) => p.sourceId))) throw repeatedPage(what, page + 1);
+    const pageIds = parsed.postings.map((p) => p.sourceId);
+    const fresh = new Set(pageIds.filter((id) => !seen.has(id))).size;
+    if (onlySeenBefore(seen, pageIds)) throw repeatedPage(what, page + 1);
+    // A full page is never the last one; Lever's list is stable, so it must be mostly new.
+    if (jobs.length === LEVER_PAGE_SIZE && fresh < LEVER_MIN_NEW_PER_PAGE) {
+      throw new KernelError('invalid_output', `${what}: page ${page + 1} brought ${fresh} new postings, minimum ${LEVER_MIN_NEW_PER_PAGE}`);
+    }
     all.push(...parsed.postings);
     short = jobs.length < LEVER_PAGE_SIZE;
   }
