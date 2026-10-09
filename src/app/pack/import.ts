@@ -877,7 +877,7 @@ function importLocked(o: ImportOptions, deps: ImportDeps): ImportReport {
   const built = build(o);
   deps.beforeWrite?.(built.files);
   const ts = stamp(o.now);
-  mkdirSync(dirname(o.out), { recursive: true });
+  mkdirSync(dirname(o.out), { recursive: true, mode: 0o700 });
   const staging = freePath(`${o.out}.staging-${ts}`);
   try {
     mkdirSync(staging, { mode: 0o700 });

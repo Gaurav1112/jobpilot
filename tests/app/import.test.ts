@@ -630,6 +630,22 @@ describe('jobpilot pack import (CLI)', () => {
     expect(again.stderr).toMatch(/--force/);
   }, 60_000);
 
+  it('a fresh JOBPILOT_HOME made by pack import, then run --offline-fixtures, is 0700 throughout and warns nothing (fix round 5, I6)', async () => {
+    const home = join(tmp, 'fresh', 'home');
+    const r = cli(home, ...args());
+    expect(r.status).toBe(0);
+    expect(r.stderr).toBe('');
+    for (const d of [home, join(home, 'pack')]) expect(statSync(d).mode & 0o777, d).toBe(0o700);
+    const run = cli(home, 'run', '--offline-fixtures', join(root, 'tests/fixtures/e2e'), '--no-notify');
+    expect(run.status, run.stderr).not.toBe(2);
+    expect(run.stderr).not.toMatch(/warning: JOBPILOT_HOME/);
+    for (const d of [home, join(home, 'out')]) expect(statSync(d).mode & 0o777, d).toBe(0o700);
+    for (const d of readdirSync(join(home, 'out'), { withFileTypes: true }).filter((e) => e.isDirectory())) {
+      expect(statSync(join(home, 'out', d.name)).mode & 0o777, d.name).toBe(0o700);
+    }
+    for (const f of ['jobpilot.db', 'jobpilot.db-wal', 'jobpilot.db-shm']) if (existsSync(join(home, f))) expect(statSync(join(home, f)).mode & 0o777, f).toBe(0o600);
+  }, 120_000);
+
   it('--dry-run checks every input and writes nothing', async () => {
     const r = cli(tmp, ...args(), '--dry-run');
     expect(r.stderr).toBe('');

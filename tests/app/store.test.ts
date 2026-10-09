@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { ensureHome, setWarningSink } from '../../src/app/home.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -349,7 +349,8 @@ describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', ()
       AppStore.open(join(d, 'jobpilot.db')).close();
     }
     expect(statSync(d).mode & 0o777).toBe(0o755);
-    expect(warnings).toEqual([`JOBPILOT_HOME ${d} is readable by other users; run chmod 700 ${d}`]);
+    const abs = realpathSync(d);
+    expect(warnings).toEqual([`JOBPILOT_HOME ${abs} is readable by other users; run chmod 700 ${abs}`]);
   });
 
   it('a symlinked home pointing at a 2775 folder is left unchanged', () => {
@@ -365,7 +366,7 @@ describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', ()
     AppStore.open(join(home, 'jobpilot.db')).close();
     expect(statSync(target).mode & 0o7777).toBe(before);
     expect(lstatSync(home).isSymbolicLink()).toBe(true);
-    expect(warnings).toHaveLength(1);
+    expect(warnings).toEqual([`JOBPILOT_HOME ${realpathSync(target)} is readable by other users; run chmod 700 ${realpathSync(target)}`]);
   });
 
   it('"." as the home leaves the working directory unchanged', () => {
@@ -381,7 +382,9 @@ describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', ()
       process.chdir(cwd);
     }
     expect(statSync(d).mode & 0o777).toBe(0o755);
-    expect(warnings).toEqual(['JOBPILOT_HOME . is readable by other users; run chmod 700 .']);
+    // the absolute, resolved path, never "."
+    const abs = realpathSync(d);
+    expect(warnings).toEqual([`JOBPILOT_HOME ${abs} is readable by other users; run chmod 700 ${abs}`]);
   });
 
   it.skipIf(!existsSync('/private/tmp') || statSync('/private/tmp').uid === process.getuid?.())('a home the user does not own: a warning, never a throw', () => {
@@ -392,7 +395,7 @@ describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', ()
       a.upsertJob(jobRow());
       a.close();
       expect(statSync('/private/tmp').mode).toBe(before);
-      expect(warnings).toEqual(['JOBPILOT_HOME /private/tmp is readable by other users; run chmod 700 /private/tmp']);
+      expect(warnings).toEqual(['JOBPILOT_HOME /private/tmp is readable by other users; move JOBPILOT_HOME to a private folder, e.g. ~/.jobpilot']);
     } finally {
       for (const f of [path, `${path}-wal`, `${path}-shm`]) rmSync(f, { force: true });
     }
@@ -411,8 +414,24 @@ describe('jobpilot home and DB permissions (Task 13 fix rounds 3-4, M10/I5)', ()
     chmodSync(real, 0o644);
     const link = join(d, 'link.db');
     symlinkSync(real, link);
+    warnings = [];
+    setWarningSink((m) => warnings.push(m));
     AppStore.open(link).close();
     expect(statSync(real).mode & 0o777).toBe(0o644);
+    expect(warnings).toEqual([`${realpathSync(real)} is readable by other users; run chmod 600 ${realpathSync(real)}`]);
+  });
+
+  it('a dangling DB symlink: SQLite creates the target through it; the target is warned about, never chmodded (M14)', () => {
+    const d = mkdtempSync(join(tmpdir(), 'jp-perm-'));
+    tmp.push(d);
+    const target = join(d, 'target.db');
+    const link = join(d, 'jobpilot.db');
+    symlinkSync(target, link);
+    AppStore.open(link).close();
+    expect(lstatSync(link).isSymbolicLink()).toBe(true);
+    const mode = statSync(target).mode & 0o777;
+    if ((mode & 0o077) !== 0) expect(warnings).toEqual([`${realpathSync(target)} is readable by other users; run chmod 600 ${realpathSync(target)}`]);
+    else expect(warnings).toEqual([]);
   });
 });
 

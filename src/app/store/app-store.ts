@@ -3,7 +3,7 @@ import type { Fact } from '../pack/schema.js';
 import type { Posting } from '../types.js';
 import { dirname } from 'node:path';
 import { Store } from '../../kernel/store/store.js';
-import { checkHome, homeWarning, warnOnce } from '../home.js';
+import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import { APP_MIGRATIONS, DOCS_STATES, JOB_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
@@ -264,7 +264,10 @@ export class AppStore {
   static open(path: string, opts: { readonly timeoutMs?: number } = {}): AppStore {
     const onDisk = path !== ':memory:' && path !== '';
     if (onDisk) checkHome(dirname(path));
-    const kernel = Store.open(path, { ...opts, onLooseFile: () => warnOnce(homeWarning(dirname(path))) });
+    const kernel = Store.open(path, {
+      ...opts,
+      onLooseFile: (f, why) => warnOnce(why === 'link' ? fileWarning(f) : homeWarning(dirname(path))),
+    });
     try {
       return AppStore.migrate(kernel, true);
     } catch (err) {

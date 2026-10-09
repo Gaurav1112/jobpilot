@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, constants, lstatSync, openSync } from 'node:fs';
+import { chmodSync, closeSync, constants, lstatSync, openSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from '../canonical.js';
 import type { Cost, Envelope } from '../envelope.js';
@@ -61,7 +61,9 @@ export function eventHash(prevHash: string, e: Pick<EventRow, 'run_id' | 'at' | 
  * other accounts can read. Anything else it cannot or may not fix, a file someone else owns or a refused chmod,
  * is reported through `onLoose` instead; it never throws for that.
  */
-export function tightenOwnedFile(path: string, mode: number, onLoose: (path: string) => void): void {
+export type LooseReason = 'link' | 'not-owned' | 'refused';
+
+export function tightenOwnedFile(path: string, mode: number, onLoose: (path: string, why: LooseReason) => void): void {
   let st;
   try {
     st = lstatSync(path);
@@ -69,13 +71,22 @@ export function tightenOwnedFile(path: string, mode: number, onLoose: (path: str
     if ((e as { code?: string }).code === 'ENOENT') return;
     throw e;
   }
+  if (st.isSymbolicLink()) {
+    // Never chmod through a link (it may point anywhere); report an open target instead. A dangling link has none.
+    try {
+      if ((statSync(path).mode & 0o077) !== 0) onLoose(path, 'link');
+    } catch {
+      // dangling: nothing to report
+    }
+    return;
+  }
   if (!st.isFile() || (st.mode & 0o077) === 0) return;
-  if (process.getuid !== undefined && st.uid !== process.getuid()) return onLoose(path);
+  if (process.getuid !== undefined && st.uid !== process.getuid()) return onLoose(path, 'not-owned');
   try {
     chmodSync(path, mode);
   } catch (e) {
     const c = (e as { code?: string }).code;
-    if (c === 'EPERM' || c === 'EACCES') return onLoose(path);
+    if (c === 'EPERM' || c === 'EACCES') return onLoose(path, 'refused');
     throw e;
   }
 }
@@ -89,7 +100,7 @@ export class Store {
    * gives its -wal and -shm files the database file's mode); an existing looser one is tightened when it is a regular
    * file the user owns, else `onLooseFile` is told (default: nothing).
    */
-  static open(path: string, opts: { readonly timeoutMs?: number; readonly onLooseFile?: (path: string) => void } = {}): Store {
+  static open(path: string, opts: { readonly timeoutMs?: number; readonly onLooseFile?: (path: string, why: LooseReason) => void } = {}): Store {
     const onDisk = path !== ':memory:' && path !== '';
     if (onDisk) {
       try {

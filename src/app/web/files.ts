@@ -123,13 +123,13 @@ export function snapshotApplied(outDir: string, jobKey: string, docs: readonly D
   const dirName = `applied-${day}`;
   const snapDir = join(jobDir, dirName);
   try {
-    mkdirSync(snapDir, { mode: 0o755 });
+    mkdirSync(snapDir, { mode: 0o700 });
   } catch (e) {
     if (code(e) !== 'EEXIST') throw e;
   }
   const real = confinedDir(root, [jobKey, dirName]);
   // An interrupted snapshot left the folder read-only: open it for the missing files, then close it again.
-  chmodSync(real, 0o755);
+  chmodSync(real, 0o700);
   const out: SnapshotFile[] = [];
   const name = (d: Doc): string => `${d.kind}.${d.format}`;
   for (const d of [...docs].sort((a, b) => (name(a) < name(b) ? -1 : name(a) > name(b) ? 1 : 0))) {

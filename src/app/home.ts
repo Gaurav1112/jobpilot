@@ -1,5 +1,5 @@
-import { mkdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, realpathSync, statSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 
 /**
  * The jobpilot home's permissions (Task 13 fix round 4, I5). jobpilot makes its home and `out/` owner-only (0700)
@@ -26,7 +26,36 @@ export function warnOnce(message: string): void {
   sink(message);
 }
 
-export const homeWarning = (home: string): string => `JOBPILOT_HOME ${home} is readable by other users; run chmod 700 ${home}`;
+/** The absolute, resolved path (a symlink's target; `.` as the working directory). */
+function absolute(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return resolve(p);
+  }
+}
+
+const owned = (p: string): boolean => {
+  try {
+    return process.getuid === undefined || statSync(p).uid === process.getuid();
+  } catch {
+    return true;
+  }
+};
+
+/** The home warning: chmod when the user owns the folder, else move the home somewhere private. */
+export function homeWarning(home: string): string {
+  const abs = absolute(home);
+  const fix = owned(abs) ? `run chmod 700 ${abs}` : 'move JOBPILOT_HOME to a private folder, e.g. ~/.jobpilot';
+  return `JOBPILOT_HOME ${abs} is readable by other users; ${fix}`;
+}
+
+/** A DB file jobpilot will not chmod (a symlink's open target). */
+export function fileWarning(file: string): string {
+  const abs = absolute(file);
+  const fix = owned(abs) ? `run chmod 600 ${abs}` : 'move JOBPILOT_HOME to a private folder, e.g. ~/.jobpilot';
+  return `${abs} is readable by other users; ${fix}`;
+}
 
 /** Warns (once) when the existing home, or the folder a symlinked home points at, is group- or world-accessible. */
 export function checkHome(home: string): void {

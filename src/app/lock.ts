@@ -125,7 +125,7 @@ function createWhole(path: string, body: LockBody): boolean {
  * - A lock file that cannot be read refuses (it is never deleted).
  */
 function acquire(home: string, command: string, probe: ProcessProbe): () => void {
-  mkdirSync(home, { recursive: true });
+  mkdirSync(home, { recursive: true, mode: 0o700 });
   const path = join(home, LOCK_FILE);
   const guard = `${path}.takeover`;
   const started = probe.startTime(process.pid);

@@ -70,7 +70,7 @@ export function checkRelPath(relPath: unknown, deny: (m: string) => KernelError)
 const appliedDenial = (relPath: string) => `G-FILES: ${relPath} is inside an applied-* snapshot, which is never written`;
 
 async function rootRealOf(root: string, create: boolean): Promise<string> {
-  if (create) await mkdir(root, { recursive: true });
+  if (create) await mkdir(root, { recursive: true, mode: 0o700 });
   try {
     return await realpath(root);
   } catch (e) {
@@ -94,7 +94,7 @@ async function confine(rootReal: string, relPath: string, segs: readonly string[
     dir = join(dir, s);
     if (mode === 'create') {
       try {
-        await mkdir(dir);
+        await mkdir(dir, { mode: 0o700 });
       } catch (e) {
         if (code(e) !== 'EEXIST') throw e;
       }
@@ -184,7 +184,7 @@ async function realDir(p: string, what: string): Promise<boolean> {
 /** Creates `p` if absent (one level), then requires it to be a real directory. */
 async function ensureRealDir(p: string, what: string): Promise<void> {
   try {
-    await mkdir(p);
+    await mkdir(p, { mode: 0o700 });
   } catch (e) {
     if (code(e) !== 'EEXIST') throw e;
   }
