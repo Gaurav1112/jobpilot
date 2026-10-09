@@ -18,7 +18,8 @@ import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
 import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
-import { formatImportReport, importPack } from './app/pack/import.js';
+import { formatImportReport, importPack, planImport } from './app/pack/import.js';
+import { packTextProblems } from './app/pack/scan.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
@@ -258,6 +259,9 @@ pack
       console.log(`full pack hash ${loaded.fullPackHash}`);
       console.log(`experience as of ${loaded.asOf}; ${loaded.pack.facts.length} facts; watchlist ${loaded.pack.watchlist.length} entries (${careers} careers); feeds ${loaded.pack.feeds.enabled.join(', ') || 'none'}`);
       console.log(`pipeline ${prepared.compiled.pipeline.id}@${prepared.compiled.pipeline.version}: ${prepared.registry.list().length} agents; policy ${prepared.policyHash.slice(0, 12)}`);
+      // m8: user edits after the import are re-checked for undrawable characters and forbidden terms (glued too).
+      const text = packTextProblems(loaded.pack);
+      if (text.length > 0) throw new Error(`pack text problems:\n  - ${text.join('\n  - ')}`);
     }),
   );
 
@@ -285,16 +289,18 @@ pack
   .option('--extra-watchlist <yaml>', 'extra watchlist entries ({watchlist: [...]}); they replace Desk entries for the same board')
   .option('--fx-file <yaml>', 'fx rates ({asOf, toINR}); default: pinned rates dated 1970-01-01 (the dashboard warns)')
   .option('--force', 'replace an existing pack, moving it to <out>.bak-<timestamp> first')
+  .option('--allow-unplaced', 'proceed even when citeable facts sit under an employer no resume role names (normally an error)')
+  .option('--dry-run', 'run every input check and print the summary; write nothing')
   .action(
     (o: {
       careerOps: string; resumeText: string; desk: string; out?: string; forbid: string[]; employerDisplay: string[];
       name: string; email: string; phone: string; city: string; link: string[]; asOf: string; availableFrom: string;
       noticePeriod: string; floorInr: string; educationText?: string; claimableTitle: string[]; extraWatchlist?: string;
-      fxFile?: string; force?: boolean;
+      fxFile?: string; force?: boolean; allowUnplaced?: boolean; dryRun?: boolean;
     }) =>
-      guarded(() => {
+      guarded(async () => {
         const floor = /^\d+$/.test(o.floorInr.trim()) ? Number(o.floorInr.trim()) : Number.NaN;
-        const report = importPack({
+        const opts = {
           careerOps: o.careerOps,
           resumeText: o.resumeText,
           desk: o.desk,
@@ -311,8 +317,11 @@ pack
           extraWatchlist: o.extraWatchlist,
           fxFile: o.fxFile,
           force: o.force === true,
+          allowUnplaced: o.allowUnplaced === true,
           now: systemClock.now(),
-        });
+          lockHome: jobpilotHome(),
+        };
+        const report = o.dryRun === true ? planImport(opts) : await importPack(opts);
         for (const line of formatImportReport(report)) console.log(line);
       }),
   );

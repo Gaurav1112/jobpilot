@@ -33,8 +33,6 @@ export class PackError extends Error {
   override readonly name = 'PackError';
 }
 
-// The fx default (an optional file) is deliberately ancient so the dashboard warns it is stale.
-
 function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: unknown): T {
   const path = join(dir, file);
   let raw: unknown;
@@ -142,6 +140,7 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     filters: readYaml(dir, 'filters.yaml', FiltersSchema),
     naming: readYaml(dir, 'naming.yaml', NamingSchema),
     offers: readYaml(dir, 'offers.yaml', OffersSchema, { floor: null }),
+    // The fx default (an optional file) is deliberately ancient so the dashboard warns it is stale.
     fx: readYaml(dir, 'fx.yaml', FxSchema, DEFAULT_FX),
     answers: readYaml(dir, 'answers.yaml', AnswersSchema),
     watchlist: readYaml(dir, 'watchlist.yaml', WatchlistFile).watchlist,

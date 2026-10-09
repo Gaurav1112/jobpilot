@@ -81,6 +81,23 @@ export function renderHtml(m: DocModel): string {
  * kept as text (a title is shown too), block tags turned into spaces and inline tags removed (so markup cannot split a
  * word apart), the five escapes and numeric references decoded.
  */
+/**
+ * The attribute values of every tag, entities decoded, one per line (Task 12 fix I1): fact ids reach the HTML only in
+ * `data-fact` / `data-facts`, which `htmlText` strips, so the naming scan reads these too.
+ */
+export function htmlAttributeText(html: string): string {
+  const values: string[] = [];
+  for (const tag of html.match(/<[a-z][^>]*>/gi) ?? []) {
+    for (const m of tag.matchAll(/\s[^\s=/>]+\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+))/g)) values.push(decodeEntities(m[1] ?? m[2] ?? m[3] ?? ''));
+  }
+  return values.join('\n');
+}
+
+const decodeEntities = (s: string): string =>
+  s.replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|#39|apos);/g, (_m, e: string) =>
+    e.startsWith('#x') ? String.fromCodePoint(Number.parseInt(e.slice(2), 16)) : e.startsWith('#') ? String.fromCodePoint(Number(e.slice(1))) : ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" } as Record<string, string>)[e] ?? '',
+  );
+
 export function htmlText(html: string): string {
   return html
     // block tags separate words; inline tags do not, so "I<b></b>nitech" reads as one word

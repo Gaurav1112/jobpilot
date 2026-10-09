@@ -114,6 +114,44 @@ export function assertNoForbidden(text: string, naming: Pick<NamingRules, 'forbi
   }
 }
 
+/**
+ * Text squashed for the strict substring check (Task 12 fix I1): each character folded (`fold`), stand-ins mapped
+ * (`STAND_INS`), and everything but letters and digits dropped; `at[i]` is the index in `s` of the character that
+ * produced `text[i]`.
+ */
+export function squashChars(s: string): { text: string; at: number[] } {
+  let text = '';
+  const at: number[] = [];
+  let i = 0;
+  for (const ch of s) {
+    for (const c of fold(ch)) {
+      const m = STAND_INS[c] ?? c;
+      if (/[\p{L}\p{N}]/u.test(m)) {
+        text += m;
+        at.push(i);
+      }
+    }
+    i += ch.length;
+  }
+  return { text, at };
+}
+
+/**
+ * The strict check (Task 12 fix I1): the first forbidden term found glued inside any whitespace-separated token
+ * ("InitechPay", "northwindInitechOrders", a URL path), on squashed text, or undefined. `assertNoForbidden` needs word
+ * boundaries so ordinary prose never false-hits; this one is for one-shot gates on vetted, distinctive terms (the
+ * pack import and `pack check`), where a rare false hit costs the user one edit. Multi-word terms match with their
+ * words joined.
+ */
+export function forbiddenSubstring(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): string | undefined {
+  const tokens = text.split(/\s+/u).map((t) => squashChars(t).text).filter((t) => t !== '');
+  for (const term of naming.forbiddenTerms) {
+    const want = squashChars(term).text;
+    if (want !== '' && tokens.some((t) => t.includes(want))) return term;
+  }
+  return undefined;
+}
+
 export class EmployerNameError extends Error {
   override readonly name = 'EmployerNameError';
 }

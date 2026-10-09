@@ -10,7 +10,7 @@ import type { Eligibility, Feeds, Filters, Fx, Lexicon, Targets } from './schema
 export const DEFAULT_LEXICON: Lexicon = {
   strong: [
     { key: 'java', synonyms: [], display: 'Java' },
-    { key: 'spring', synonyms: ['spring boot'], display: 'Spring Boot' },
+    { key: 'spring', synonyms: ['spring boot'], display: 'Spring' },
     { key: 'kafka', synonyms: [], display: 'Kafka' },
     { key: 'microservices', synonyms: ['microservice', 'micro-services', 'micro-service'], display: 'Microservices' },
     { key: 'distributed systems', synonyms: ['distributed system'], display: 'Distributed Systems' },
@@ -77,8 +77,8 @@ export const DEFAULT_TARGETS: Omit<Targets, 'claimableTitles'> = {
  * - `companyDeny`: the v2 services, consulting and staffing names verbatim, plus `HCLTech` (the current brand).
  * - `employmentDeny`: kept, with the meaning eligibility gives it since Task 7 fix round 2: words that reject only
  *   when they stand bare in the job **title** as its employment label ("(Contract)", "... - Freelance",
- *   "Contract Java Developer"). The description is checked with eligibility's own fixed phrases, not with this list,
- *   so duration words ("3 months") and "hourly" are left out: they are not title labels.
+ *   "Contract Java Developer", "Backend Engineer (6 months)"). The description is checked with eligibility's own fixed
+ *   phrases, not with this list. The list is the v2 §5 employment-type list verbatim (Task 12 fix I2).
  */
 export const DEFAULT_FILTERS: Filters = {
   roleDeny: [
@@ -121,7 +121,7 @@ export const DEFAULT_FILTERS: Filters = {
     'Randstad', 'TeamLease', 'Quess', 'Adecco', 'Michael Page', 'ABC Consultants', 'Sourcebae', 'Uplers', 'Xformics',
     'UnionSys', 'Jobgether', 'GiantMind', 'Synthires', 'Staffnix', 'TalixoHR', 'JobCrexa', 'MindBrain', 'Hire Feed',
   ],
-  employmentDeny: ['contract', 'contractor', 'c2h', 'contract-to-hire', 'freelance', 'temporary', 'fixed-term'],
+  employmentDeny: ['contract', 'contractor', 'c2h', 'contract-to-hire', 'freelance', 'temporary', 'fixed-term', '3 months', '6 months', 'hourly'],
 };
 
 /** v2 §3: resident in India, remote scopes that include India, full-time only, no onsite city. */

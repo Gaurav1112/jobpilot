@@ -1,12 +1,13 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { parse, stringify } from 'yaml';
 import { z } from 'zod';
 import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
-import { uncoveredGlyph } from '../render/pdf.js';
+import { type ProcessProbe, systemProbe, withLock } from '../lock.js';
 import { ALL_REMOTE_SLUGS, DEFAULT_ELIGIBILITY, DEFAULT_FEEDS, DEFAULT_FILTERS, DEFAULT_FX, DEFAULT_LEXICON, DEFAULT_TARGETS } from './defaults.js';
 import { loadPack, ongoingRoleTitles } from './load.js';
-import { assertNoForbidden, citeable, employerDisplay, EmployerNameError, ForbiddenTermError, type NamingRules } from './rules.js';
+import { citeable, squashChars } from './rules.js';
+import { forbiddenTermIn, glyphProblems, packTextProblems } from './scan.js';
 import { FactStatus, FxSchema, WatchEntrySchema, type Answers, type Contact, type Fact, type Fx, type Role, type WatchEntry } from './schema.js';
 
 /**
@@ -19,14 +20,18 @@ import { FactStatus, FxSchema, WatchEntrySchema, type Answers, type Contact, typ
  * - flags for contact, naming, asOf, notice and availability, floor, fx and extra watchlist entries,
  * - the generic v2 defaults (`defaults.ts`) for lexicon, targets, filters, eligibility and feeds.
  *
- * Every check runs before anything is written; all problems are reported together (`ImportError`). The files are then
- * written to a staging directory next to the output, loaded with `loadPack` and scanned for forbidden terms (every file
- * but naming.yaml); only a clean pack is moved into place (an old one first moved to `<out>.bak-<timestamp>` under
- * `force`). Any failure deletes the staging directory, so a failed import leaves no output and never touches an
- * existing pack.
+ * Forbidden terms are checked two ways everywhere (`forbiddenTermIn`): word-bounded with homoglyph and stand-in
+ * folding, and strictly, glued inside any token ("InitechPay", a URL path). A hit in user text is a hard error; ids
+ * are rewritten instead (they are slugs).
  *
- * Privacy: no message or report line carries a claim, an answer value, a contact value or a forbidden term (terms are
- * named by their 1-based position, ids holding one are withheld).
+ * Every check runs before anything is written; all problems are reported together (`ImportError`). Under the daily
+ * run's process lock, the files are written to a private staging directory (`<out>.staging-<ts>`, 0700, files 0600),
+ * loaded with `loadPack` and scanned again (every file but naming.yaml); only a clean pack is moved into place (an old
+ * one first moved to `<out>.bak-<ts>` under `force`, and moved back if the move-in fails). Any failure deletes the
+ * staging directory, so a failed import leaves no output and never loses an existing pack.
+ *
+ * Privacy: no message or report line carries a claim, an answer value, a contact value, a forbidden term or an
+ * undrawable character (terms by 1-based position, characters by code point, ids holding a term withheld).
  */
 
 export class ImportError extends Error {
@@ -59,17 +64,32 @@ export interface ImportOptions {
   readonly extraWatchlist?: string | undefined;
   readonly fxFile?: string | undefined;
   readonly force?: boolean | undefined;
-  /** The current time (ISO), for the backup directory name only. */
+  /** Proceed when citeable facts are unplaced because of an employer mismatch (normally a hard error). */
+  readonly allowUnplaced?: boolean | undefined;
+  /** The current time (ISO): the staging and backup names, and the age of stale staging directories. */
   readonly now: string;
+  /** Where the process lock lives (the daily run's JOBPILOT_HOME); default: the output's parent directory. */
+  readonly lockHome?: string | undefined;
+}
+
+/** Seams for tests: the rename used to swap the pack in, the lock's process probe, and a hook on the files to write. */
+export interface ImportDeps {
+  readonly rename?: (from: string, to: string) => void;
+  readonly probe?: ProcessProbe;
+  /** Called with the built files just before they are written (tests use it to reach the final scan). */
+  readonly beforeWrite?: (files: Record<string, string>) => void;
 }
 
 export interface ImportReport {
   readonly out: string;
   readonly backup?: string;
+  /** Stale staging directories removed before the import. */
+  readonly staleRemoved: number;
   readonly facts: { readonly total: number; readonly byStatus: Record<string, number>; readonly byKind: Record<string, number> };
   readonly roles: number;
-  /** Experience and project fact ids no resume role at their employer covers: they never become bullets. */
+  /** Experience and project fact ids no resume role at their employer holds: they never become bullets. */
   readonly unplaced: string[];
+  readonly unplacedByReason: { readonly employerMismatch: number; readonly outsideEveryRole: number };
   /** Fact ids whose claim writes "(RAG)" next to colour words (red/amber/green is clearer in a document). */
   readonly ragFacts: string[];
   readonly answers: { readonly written: number; readonly removedForbidden: string[]; readonly dropped: string[] };
@@ -77,11 +97,17 @@ export interface ImportReport {
   readonly warnings: string[];
 }
 
+export type ImportPlan = Omit<ImportReport, 'out' | 'backup' | 'staleRemoved'>;
+
 const YEAR_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const PERIOD = /^(\d{4}-(?:0[1-9]|1[0-2]))\.\.(\d{4}-(?:0[1-9]|1[0-2])|present)$/;
 const MAX_CONTACT_TOKEN = 60;
+const STALE_STAGING_MS = 60 * 60 * 1000;
+/** Keys that would be lost or dangerous as plain object keys; refused as employer names and dropped as answer keys. */
+const RESERVED_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+const hasControl = (s: string): boolean => /\p{Cc}/u.test(s);
 
 // ---------------------------------------------------------------------------------------------------------------
 // Naming
@@ -103,6 +129,10 @@ function checkForbidTerms(terms: readonly string[], problems: string[]): string[
   if (terms.length === 0) problems.push('at least one --forbid term is required (the client name that must never appear in any output)');
   const out: string[] = [];
   terms.forEach((raw, i) => {
+    if (hasControl(raw)) {
+      problems.push(`--forbid term #${i + 1} contains a control character (a line break or tab)`);
+      return;
+    }
     const t = raw.trim().replace(/\s+/gu, ' ');
     const letters = t.replace(/[^\p{L}\p{N}]/gu, '');
     if ([...letters].length < 4) {
@@ -119,9 +149,9 @@ function checkForbidTerms(terms: readonly string[], problems: string[]): string[
   return out;
 }
 
-/** Parses `"<raw>=<display>"` entries (split at the first "="). */
+/** Parses `"<raw>=<display>"` entries (split at the first "="), into a prototype-free map. */
 function parseEmployerDisplay(entries: readonly string[], problems: string[]): Record<string, string> {
-  const map: Record<string, string> = {};
+  const map = Object.create(null) as Record<string, string>;
   entries.forEach((e, i) => {
     const at = e.indexOf('=');
     const raw = at < 0 ? '' : e.slice(0, at).trim();
@@ -130,21 +160,18 @@ function parseEmployerDisplay(entries: readonly string[], problems: string[]): R
       problems.push(`--employer-display entry ${i + 1} must look like "<raw employer>=<display name>"`);
       return;
     }
+    if (hasControl(e)) {
+      problems.push(`--employer-display entry ${i + 1} contains a control character (a line break or tab)`);
+      return;
+    }
+    if (RESERVED_KEYS.has(raw)) {
+      problems.push(`--employer-display entry ${i + 1} uses a reserved name as the raw employer`);
+      return;
+    }
     if (Object.hasOwn(map, raw) && map[raw] !== display) problems.push(`--employer-display entry ${i + 1} maps an employer already mapped to another name`);
     map[raw] = display;
   });
   return map;
-}
-
-/** The 1-based index of the forbidden term in `text`, or undefined. */
-function forbiddenIn(text: string, naming: NamingRules): number | undefined {
-  try {
-    assertNoForbidden(text, naming);
-    return undefined;
-  } catch (e) {
-    if (e instanceof ForbiddenTermError) return naming.forbiddenTerms.indexOf(e.term) + 1;
-    throw e;
-  }
 }
 
 /** A kebab slug: accents dropped, lower case, every other run of characters a hyphen. */
@@ -157,38 +184,30 @@ export function slugOf(s: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Glyphs
-
-/** What to write instead of a character Noto Sans cannot draw. */
-const GLYPH_HINTS: Readonly<Record<number, string>> = {
-  0x2192: "replace with 'to'",
-  0x2190: "replace with 'from'",
-  0x2194: "replace with 'and'",
-  0x21d2: "replace with 'so'",
-  0x2265: "replace with 'at least'",
-  0x2264: "replace with 'at most'",
-  0x2248: "replace with 'about'",
-  0x2260: "replace with 'not'",
-  0x2713: 'remove it',
-  0x2714: 'remove it',
-  0x2717: 'remove it',
-  0x2605: 'remove it',
-  0x09: 'replace with a space',
-};
-
-/** One problem per distinct character in `text` the embedded fonts cannot draw. */
-function glyphProblems(text: string, where: string, problems: string[]): void {
-  const seen = new Set<string>();
-  for (const ch of text) {
-    if (seen.has(ch)) continue;
-    seen.add(ch);
-    const bad = uncoveredGlyph([ch]);
-    if (bad === null) continue;
-    const cp = ch.codePointAt(0) ?? 0;
-    const shown = /[\p{L}\p{N}\p{P}\p{S}]/u.test(ch) ? `${ch} ` : '';
-    problems.push(`${shown}${bad} in ${where}: ${GLYPH_HINTS[cp] ?? 'replace or remove it'} (the embedded font cannot draw it)`);
+/**
+ * `id` with every forbidden term inside it (strictly: folded, glued or not) replaced by `to`, hyphen-separated from
+ * the letters around it, then repeated hyphens collapsed. `initechorders-01` → `<to>-orders-01`,
+ * `northwindInitechOrders` → `northwind-<to>-Orders`.
+ */
+export function rewriteId(id: string, terms: readonly string[], to: string): string {
+  let out = id;
+  for (let guard = 0; guard < 50; guard++) {
+    const { text, at } = squashChars(out);
+    let span: { s: number; e: number } | undefined;
+    for (const term of terms) {
+      const want = squashChars(term).text;
+      const k = want === '' ? -1 : text.indexOf(want);
+      if (k < 0) continue;
+      const last = at[k + want.length - 1] as number;
+      span = { s: at[k] as number, e: last + ((out.codePointAt(last) ?? 0) > 0xffff ? 2 : 1) };
+      break;
+    }
+    if (span === undefined) break;
+    const before = out.slice(0, span.s);
+    const after = out.slice(span.e);
+    out = `${before}${/[\p{L}\p{N}]$/u.test(before) ? '-' : ''}${to}${/^[\p{L}\p{N}]/u.test(after) ? '-' : ''}${after}`;
   }
+  return out.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -231,20 +250,24 @@ export interface ResumeRole {
 /**
  * The role headers of the resume experience text: lines of exactly four `|`-separated fields,
  * `Title | Employer | City, Country | Mon YYYY - Mon YYYY|Present`. Titles are kept verbatim (also "Associate X,
- * promoted to Y"). Other lines are role body text and are ignored. A four-field line whose dates do not read throws.
+ * promoted to Y"). Other lines are role body text and are ignored. Four-field lines whose dates do not read are
+ * collected and thrown together (`ImportError`).
  */
 export function parseResumeRoles(text: string): ResumeRole[] {
   const roles: ResumeRole[] = [];
+  const problems: string[] = [];
   text.split(/\r?\n/).forEach((raw, i) => {
     const fields = raw.split('|').map((f) => f.trim().replace(/\s+/gu, ' '));
     if (fields.length !== 4) return;
     const [title, employer, location, dates] = fields as [string, string, string, string];
     const range = dateRange(dates);
     if (range === null || title === '' || employer === '') {
-      throw new ImportError([`resume line ${i + 1}: a role header must read "Title | Employer | City, Country | Mon YYYY - Mon YYYY" (or "- Present"); its dates or fields could not be read`]);
+      problems.push(`resume line ${i + 1}: a role header must read "Title | Employer | City, Country | Mon YYYY - Mon YYYY" (or "- Present"); its dates or fields could not be read`);
+      return;
     }
     roles.push({ title, employer, location, ...range, line: i + 1 });
   });
+  if (problems.length > 0) throw new ImportError(problems);
   return roles;
 }
 
@@ -294,7 +317,7 @@ function writesRagColours(claim: string): boolean {
 // ---------------------------------------------------------------------------------------------------------------
 // Watchlist
 
-/** The ATS board a Desk job url belongs to, or null for any other site. */
+/** The ATS board a Desk job url belongs to, or null for any other site (or an API url). */
 export function boardOf(url: string): { ats: 'greenhouse' | 'lever' | 'ashby'; slug: string } | null {
   let u: URL;
   try {
@@ -313,7 +336,8 @@ export function boardOf(url: string): { ats: 'greenhouse' | 'lever' | 'ashby'; s
   });
   const ok = (s: string | undefined | null): s is string => s !== undefined && s !== null && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(s);
   if (/(^|\.)greenhouse\.io$/.test(host)) {
-    const slug = segs[0] === 'embed' ? u.searchParams.get('for') : segs[0];
+    // boards-api.greenhouse.io/v1/boards/<slug>/...
+    const slug = host.startsWith('boards-api.') ? (segs[0] === 'v1' && segs[1] === 'boards' ? segs[2] : undefined) : segs[0] === 'embed' ? u.searchParams.get('for') : segs[0];
     return ok(slug) ? { ats: 'greenhouse', slug: slug.toLowerCase() } : null;
   }
   if (host === 'jobs.lever.co' || host === 'jobs.eu.lever.co') return ok(segs[0]) ? { ats: 'lever', slug: segs[0].toLowerCase() } : null;
@@ -325,15 +349,20 @@ const watchKey = (w: { ats: string; slug: string }): string => `${w.ats}:${w.slu
 const ExtraWatchlist = z.union([z.strictObject({ watchlist: z.array(z.unknown()) }), z.array(z.unknown())]);
 
 // ---------------------------------------------------------------------------------------------------------------
-// The import
+// Answers
 
-/** Desk answers that never enter the pack (P2: compensation is never shown in a document). */
-const DROPPED_ANSWERS: readonly string[] = ['current_ctc', 'expected_ctc'];
+/** A Desk answer key about pay (P2: compensation never enters the pack). */
+const COMP_KEY = /ctc|salary|compensation|pay|package|lpa|stipend|bonus|rsu|equity|esop/i;
+/** A value that looks like money: a currency symbol or code with digits, or LPA, lakh or crore. */
+const MONEY_VALUE = /[₹$€£¥]\s*\d|\b(?:inr|usd|eur|gbp|rs)\.?\s*\d|\d[\d,.]*\s*(?:inr|usd|eur|gbp|lpa|lakhs?|lacs?|crores?|cr)\b|\blpa\b|\blakhs?\b|\bcrores?\b/i;
+
+// ---------------------------------------------------------------------------------------------------------------
+// The import
 
 interface Built {
   readonly files: Record<string, string>;
-  readonly naming: NamingRules;
-  readonly report: Omit<ImportReport, 'out' | 'backup'>;
+  readonly naming: { readonly employerDisplay: Readonly<Record<string, string>>; readonly forbiddenTerms: readonly string[] };
+  readonly report: ImportPlan;
 }
 
 const yamlOf = (header: string, value: unknown): string => `${header === '' ? '' : `${header.split('\n').map((l) => `# ${l}`).join('\n')}\n`}${stringify(value, { lineWidth: 0 })}`;
@@ -346,28 +375,35 @@ function build(o: ImportOptions): Built {
   // Naming and flags.
   const forbiddenTerms = checkForbidTerms(o.forbid, problems);
   const map = parseEmployerDisplay(o.employerDisplay, problems);
-  const naming: NamingRules = { employerDisplay: map, forbiddenTerms };
+  const naming = { employerDisplay: map, forbiddenTerms };
   if (problems.length > 0) throw new ImportError(problems);
+  const termIn = (text: string): number | undefined => forbiddenTermIn(text, naming);
   Object.values(map).forEach((display, i) => {
-    const n = forbiddenIn(display, naming);
+    const n = termIn(display);
     if (n !== undefined) problems.push(`--employer-display entry ${i + 1} maps to a name that still holds forbidden term #${n}`);
+    else if (slugOf(display) === '') problems.push(`--employer-display entry ${i + 1} maps to a name with no letters or digits`);
   });
   if (!YEAR_MONTH.test(o.asOf)) problems.push('--as-of must be a month, YYYY-MM');
   if (!Number.isSafeInteger(o.floorInr) || o.floorInr <= 0) problems.push('--floor-inr must be a positive whole number of rupees a year (e.g. 1200000)');
   if (problems.length > 0) throw new ImportError(problems);
+  /** The display name of a raw employer: its mapping, else the raw name; undefined when that holds a term. */
   const display = (raw: string): string | undefined => {
-    try {
-      return employerDisplay(raw, naming);
-    } catch (e) {
-      if (e instanceof EmployerNameError) return undefined;
-      throw e;
-    }
+    const shown = Object.hasOwn(map, raw) ? (map[raw] as string) : raw;
+    return termIn(shown) === undefined ? shown : undefined;
   };
 
   // Roles.
   const resume = readFile(o.resumeText, '--resume-text', problems);
-  const resumeRoles = resume === undefined ? [] : parseResumeRoles(resume);
-  if (resume !== undefined && resumeRoles.length === 0) problems.push('--resume-text: no role header found ("Title | Employer | City, Country | Mon YYYY - Mon YYYY")');
+  let resumeRoles: ResumeRole[] = [];
+  if (resume !== undefined) {
+    try {
+      resumeRoles = parseResumeRoles(resume);
+    } catch (e) {
+      if (!(e instanceof ImportError)) throw e;
+      problems.push(...e.problems);
+    }
+    if (resumeRoles.length === 0 && problems.length === 0) problems.push('--resume-text: no role header found ("Title | Employer | City, Country | Mon YYYY - Mon YYYY")');
+  }
   const roles: Role[] = [];
   for (const [i, r] of resumeRoles.entries()) {
     const where = `role ${i + 1} (resume line ${r.line})`;
@@ -377,18 +413,17 @@ function build(o: ImportOptions): Built {
       continue;
     }
     for (const [field, value] of [['title', r.title], ['location', r.location]] as const) {
-      const n = forbiddenIn(value, naming);
+      const n = termIn(value);
       if (n !== undefined) problems.push(`${where}: the ${field} holds forbidden term #${n}`);
-      glyphProblems(value, `${where} ${field}`, problems);
+      problems.push(...glyphProblems(value, `${where} ${field}`));
     }
-    glyphProblems(employer, `${where} employer`, problems);
+    problems.push(...glyphProblems(employer, `${where} employer`));
     if (r.end !== 'present' && r.end < r.start) problems.push(`${where}: ends before it starts`);
     roles.push({ employer, title: r.title, location: r.location, start: r.start, end: r.end });
   }
 
   // Facts from career-ops.
-  const factsPath = join(o.careerOps, 'profile', 'facts.yaml');
-  const factsText = readFile(factsPath, 'career-ops profile/facts.yaml', problems);
+  const factsText = readFile(join(o.careerOps, 'profile', 'facts.yaml'), 'career-ops profile/facts.yaml', problems);
   let rawFacts: z.infer<typeof CareerOpsFact>[] = [];
   if (factsText !== undefined) {
     let doc: unknown;
@@ -401,51 +436,60 @@ function build(o: ImportOptions): Built {
     if (r.success) rawFacts = r.data.facts;
     else if (doc !== undefined) problems.push(...zodProblems('career-ops profile/facts.yaml', r.error.issues));
   }
-  // Ids: a forbidden term inside an id becomes the display employer's slug; rewritten ids never collide.
-  const keep = new Set(rawFacts.filter((f) => forbiddenIn(f.id, naming) === undefined).map((f) => f.id));
+  const labelOf = (id: string, i: number): string => (termIn(id) === undefined ? `fact #${i + 1} (${id})` : `fact #${i + 1} (id withheld: it holds a forbidden term)`);
+  // Source ids must be unique, ignoring case (m4); only collisions the rewriting creates get a suffix.
+  const firstAt = new Map<string, number>();
+  const dupSource = new Set<number>();
+  rawFacts.forEach((f, i) => {
+    const k = f.id.toLowerCase();
+    const j = firstAt.get(k);
+    if (j === undefined) firstAt.set(k, i);
+    else {
+      dupSource.add(i);
+      problems.push(`${labelOf(f.id, i)}: duplicate id (the same as fact #${j + 1}, ignoring case)`);
+    }
+  });
+  const keep = new Set(rawFacts.filter((f) => termIn(f.id) === undefined).map((f) => f.id.toLowerCase()));
   const taken = new Set<string>(keep);
   const facts: Fact[] = [];
+  /** The raw career-ops employer of each written fact id (for the employer-mismatch suggestion). */
+  const rawEmployerOf = new Map<string, string>();
   rawFacts.forEach((f, i) => {
-    const idClean = keep.has(f.id);
-    const label = `fact #${i + 1} (${idClean ? f.id : 'id withheld: it holds a forbidden term'})`;
+    if (dupSource.has(i)) return;
+    const label = labelOf(f.id, i);
+    if (hasControl(f.employer)) problems.push(`${label}: the employer contains a control character`);
     const employer = display(f.employer);
     if (employer === undefined) {
       problems.push(`${label}: the employer holds a forbidden term and has no --employer-display mapping`);
       return;
     }
     let id = f.id;
-    if (!idClean) {
-      const to = slugOf(employer);
-      for (const term of forbiddenTerms) {
-        const from = slugOf(term);
-        if (from !== '') id = id.replace(new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), to);
-      }
-      id = id.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
-      const still = forbiddenIn(id, naming);
+    if (!keep.has(f.id.toLowerCase())) {
+      id = rewriteId(f.id, forbiddenTerms, slugOf(employer));
+      const still = termIn(id);
       if (id === '' || still !== undefined) {
         problems.push(`fact #${i + 1}: the id still holds forbidden term #${still ?? '?'} after rewriting; rename it in career-ops`);
         return;
       }
       const base = id;
-      for (let n = 2; taken.has(id); n++) id = `${base}-${n}`;
-    } else if (facts.some((x) => x.id === id)) {
-      problems.push(`fact #${i + 1}: duplicate id ${id}`);
-      return;
+      for (let n = 2; taken.has(id.toLowerCase()); n++) id = `${base}-${n}`;
     }
-    taken.add(id);
+    taken.add(id.toLowerCase());
     const [start, end] = f.period.split('..') as [string, string];
     if (end !== 'present' && end < start) problems.push(`fact ${id}: the period ends before it starts`);
     const kind: Fact['kind'] = f.id.startsWith('cert-') ? 'cert' : (f.kind ?? 'experience');
-    const nClaim = forbiddenIn(f.claim, naming);
+    const nClaim = termIn(f.claim);
     if (nClaim !== undefined) problems.push(`fact ${id}: the claim holds forbidden term #${nClaim}; edit the claim in career-ops (claims are the user's words and are never rewritten)`);
     f.tech.forEach((t, j) => {
-      const n = forbiddenIn(t, naming);
+      const n = termIn(t);
       if (n !== undefined) problems.push(`fact ${id}: tech entry ${j + 1} holds forbidden term #${n}`);
-      glyphProblems(t, `fact ${id} tech`, problems);
+      if (hasControl(t)) problems.push(`fact ${id}: tech entry ${j + 1} contains a control character`);
+      problems.push(...glyphProblems(t, `fact ${id} tech`));
     });
-    glyphProblems(f.claim, `fact ${id}`, problems);
-    glyphProblems(employer, `fact ${id} employer`, problems);
+    problems.push(...glyphProblems(f.claim, `fact ${id}`));
+    problems.push(...glyphProblems(employer, `fact ${id} employer`));
     facts.push({ id, claim: f.claim, tech: [...f.tech], employer, period: f.period, kind, status: f.provenance.status });
+    rawEmployerOf.set(id, f.employer);
   });
 
   // Education facts.
@@ -463,6 +507,7 @@ function build(o: ImportOptions): Built {
         problems.push(`${where}: expected "qualification | institution | YYYY-MM..YYYY-MM" (or "Mon YYYY - Mon YYYY")`);
         return;
       }
+      if (hasControl(line)) problems.push(`${where}: contains a control character`);
       const employer = display(inst);
       if (employer === undefined) {
         problems.push(`${where}: the institution holds a forbidden term and has no --employer-display mapping`);
@@ -473,31 +518,62 @@ function build(o: ImportOptions): Built {
       for (let k = 2; taken.has(id); k++) id = `edu-${String(n).padStart(2, '0')}-${k}`;
       taken.add(id);
       const claim = `${qual}, ${employer}`;
-      const hit = forbiddenIn(qual, naming);
+      const hit = termIn(qual);
       if (hit !== undefined) problems.push(`${where}: the qualification holds forbidden term #${hit}`);
-      glyphProblems(claim, `education fact ${id}`, problems);
+      problems.push(...glyphProblems(claim, `education fact ${id}`));
       facts.push({ id, claim, tech: [], employer, period, kind: 'education', status: 'user-stated' });
     });
   }
 
   // Role placement: a fact's role is the resume role at its display employer whose dates hold its whole period
-  // (the newest when several do). Experience and project facts no role holds are reported: they never become bullets.
+  // (the newest when several do). An unplaced experience or project fact never becomes a bullet.
+  // I5: when a citeable unplaced fact's display employer is no resume role's employer, yet exactly one role holds its
+  // period by date, the two raw employer strings almost surely name the same place: a hard error suggesting the
+  // mapping (unless --allow-unplaced). Any other unplaced fact (its period is outside every role at its employer) is
+  // a warning.
   const newestFirst = [...roles].sort((a, b) => cmp(b.start, a.start));
+  const roleEmployers = new Set(roles.map((r) => r.employer));
   const unplaced: string[] = [];
-  if (YEAR_MONTH.test(o.asOf)) {
-    for (const f of facts) {
-      if (f.kind !== 'experience' && f.kind !== 'project') continue;
-      const [start, end] = f.period.split('..') as [string, string];
-      const fs = span(start, end, o.asOf);
-      const role = newestFirst.find((r) => {
-        const rs = span(r.start, r.end, o.asOf);
-        return r.employer === f.employer && rs.s <= fs.s && fs.e <= rs.e;
-      });
-      if (role !== undefined) f.role = role.title;
-      else unplaced.push(f.id);
+  const mismatch = new Map<string, { role: string; ids: string[] }[]>();
+  let outsideEveryRole = 0;
+  let employerMismatch = 0;
+  for (const f of facts) {
+    if (f.kind !== 'experience' && f.kind !== 'project') continue;
+    const [start, end] = f.period.split('..') as [string, string];
+    const fs = span(start, end, o.asOf);
+    const holds = (r: Role): boolean => {
+      const rs = span(r.start, r.end, o.asOf);
+      return rs.s <= fs.s && fs.e <= rs.e;
+    };
+    const role = newestFirst.find((r) => r.employer === f.employer && holds(r));
+    if (role !== undefined) {
+      f.role = role.title;
+      continue;
     }
+    unplaced.push(f.id);
+    const byDate = roles.filter(holds);
+    const only = byDate[0];
+    if (citeable(f) && !roleEmployers.has(f.employer) && byDate.length === 1 && only !== undefined) {
+      employerMismatch++;
+      const raw = rawEmployerOf.get(f.id) ?? f.employer;
+      const groups = mismatch.get(raw) ?? [];
+      const g = groups.find((x) => x.role === only.employer);
+      if (g === undefined) groups.push({ role: only.employer, ids: [f.id] });
+      else g.ids.push(f.id);
+      mismatch.set(raw, groups);
+    } else outsideEveryRole++;
   }
   unplaced.sort(cmp);
+  if (mismatch.size > 0) {
+    const lines = [...mismatch].flatMap(([raw, groups]) =>
+      groups.map((g) => {
+        const shownRaw = termIn(raw) === undefined && !raw.includes('"') ? raw : `<raw employer from career-ops fact ids ${g.ids.join(', ')}>`;
+        return `${g.ids.length} citeable fact(s) (${g.ids.join(', ')}) sit under an employer no resume role names, yet fit exactly one resume role by date; map it: --employer-display "${shownRaw}=${g.role}"`;
+      }),
+    );
+    if (o.allowUnplaced === true) warnings.push(...lines.map((l) => `employer mismatch (allowed by --allow-unplaced): ${l}`));
+    else problems.push(...lines.map((l) => `${l} (or pass --allow-unplaced)`));
+  }
   if (unplaced.length > 0) warnings.push(`unplaced facts (no resume role at their employer holds their whole period, so they never become bullets): ${unplaced.join(', ')}`);
   const ragFacts = facts.filter((f) => writesRagColours(f.claim)).map((f) => f.id);
   if (ragFacts.length > 0) warnings.push(`facts writing "(RAG)" next to colour words (write red/amber/green; RAG reads as retrieval-augmented generation): ${ragFacts.join(', ')}`);
@@ -513,10 +589,11 @@ function build(o: ImportOptions): Built {
   ];
   for (const [field, value] of contactFields) {
     if (value === '') problems.push(`contact.${field} is empty`);
+    if (hasControl(value)) problems.push(`contact.${field} contains a control character (a line break or tab); it must be one line`);
     if (value.split(/\s+/u).some((t) => [...t].length > MAX_CONTACT_TOKEN)) problems.push(`contact.${field} has a token longer than ${MAX_CONTACT_TOKEN} characters (it would overflow the document line)`);
-    const n = forbiddenIn(value, naming);
+    const n = termIn(value);
     if (n !== undefined) problems.push(`contact.${field} holds forbidden term #${n}`);
-    glyphProblems(value, `contact.${field}`, problems);
+    problems.push(...glyphProblems(value, `contact.${field}`));
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.email)) problems.push('contact.email is not an email address');
   if (contact.links.length === 0) problems.push('at least one --link is required');
@@ -530,7 +607,7 @@ function build(o: ImportOptions): Built {
   });
 
   // Answers.
-  const answers: Record<string, Answers[string]> = {};
+  const answers = Object.create(null) as Record<string, Answers[string]>;
   const removedForbidden: string[] = [];
   const dropped: string[] = [];
   const answersText = readFile(join(o.desk, 'settings', 'answers.json'), 'Desk settings/answers.json', problems);
@@ -546,18 +623,16 @@ function build(o: ImportOptions): Built {
     if (isObj(data)) {
       Object.entries(data).forEach(([key, value], i) => {
         if (key.startsWith('_')) return;
-        if (DROPPED_ANSWERS.includes(key)) {
-          dropped.push(key);
+        const keyHit = termIn(key) !== undefined;
+        const name = keyHit ? `answer #${i + 1}` : key;
+        if (keyHit || (typeof value === 'string' && termIn(value) !== undefined)) {
+          removedForbidden.push(name);
           return;
         }
-        if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
-          if (forbiddenIn(key, naming) === undefined) dropped.push(key);
-          else dropped.push(`answer #${i + 1}`);
-          return;
-        }
-        const keyHit = forbiddenIn(key, naming) !== undefined;
-        if (keyHit || forbiddenIn(String(value), naming) !== undefined) {
-          removedForbidden.push(keyHit ? `answer #${i + 1}` : key);
+        // P2 (I3): any pay-like key or money-like value is dropped, whatever the key is called.
+        const scalar = typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+        if (RESERVED_KEYS.has(key) || COMP_KEY.test(key) || !scalar || (typeof value === 'string' && MONEY_VALUE.test(value))) {
+          dropped.push(name);
           return;
         }
         answers[key] = value;
@@ -567,12 +642,13 @@ function build(o: ImportOptions): Built {
   for (const [key, flag, value] of [['available_from', '--available-from', o.availableFrom], ['notice_period', '--notice-period', o.noticePeriod]] as const) {
     const v = value.trim();
     if (v === '') problems.push(`${flag} is empty`);
-    const n = forbiddenIn(v, naming);
+    if (hasControl(v)) problems.push(`${flag} contains a control character (a line break or tab); it must be one line`);
+    const n = termIn(v);
     if (n !== undefined) problems.push(`${flag} holds forbidden term #${n}`);
-    glyphProblems(v, `answers.${key}`, problems);
+    problems.push(...glyphProblems(v, `answers.${key}`));
     answers[key] = v;
   }
-  if (dropped.length > 0) warnings.push(`answers dropped (compensation, or not a single value): ${dropped.join(', ')}`);
+  if (dropped.length > 0) warnings.push(`answers dropped (pay or money-like, or not a single value): ${dropped.join(', ')}`);
   if (removedForbidden.length > 0) warnings.push(`answers removed because they hold a forbidden term: ${removedForbidden.join(', ')}`);
 
   // Watchlist: the Desk's board urls, then the extra entries (an extra entry replaces a Desk one for the same board).
@@ -606,7 +682,7 @@ function build(o: ImportOptions): Built {
     for (const [key, b] of firstSlug) {
       // the most frequent company spelling, ties to the first in sort order
       const company = [...(companies.get(key) ?? new Map<string, number>())].sort((x, y) => y[1] - x[1] || cmp(x[0], y[0]))[0]?.[0] ?? b.slug;
-      if (forbiddenIn(company, naming) !== undefined || forbiddenIn(b.slug, naming) !== undefined) {
+      if (termIn(company) !== undefined || termIn(b.slug) !== undefined) {
         droppedForbidden++;
         continue;
       }
@@ -633,6 +709,11 @@ function build(o: ImportOptions): Built {
           const w = WatchEntrySchema.safeParse(e);
           if (!w.success) {
             problems.push(...zodProblems(`--extra-watchlist entry ${i + 1}`, w.error.issues));
+            return;
+          }
+          const n = termIn([w.data.company, w.data.slug, w.data.listUrl ?? '', w.data.linkPattern ?? ''].join('\n'));
+          if (n !== undefined) {
+            problems.push(`--extra-watchlist entry ${i + 1} holds forbidden term #${n}`);
             return;
           }
           board.set(watchKey(w.data), w.data);
@@ -665,7 +746,7 @@ function build(o: ImportOptions): Built {
   // Claimable titles: the ongoing roles' titles (the loader's default), then the extra flags, each a safe slot.
   let claimableTitles: string[] | undefined;
   if (o.claimableTitles !== undefined && o.claimableTitles.length > 0) {
-    claimableTitles = ongoingRoleTitles(roles);
+    const titles = ongoingRoleTitles(roles);
     o.claimableTitles.forEach((t, i) => {
       const clean = sanitisePostingText(t);
       const why = unsafePostingText(clean);
@@ -673,11 +754,12 @@ function build(o: ImportOptions): Built {
         problems.push(`--claimable-title ${i + 1} is not a safe title (${why})`);
         return;
       }
-      const n = forbiddenIn(clean, naming);
+      const n = termIn(clean);
       if (n !== undefined) problems.push(`--claimable-title ${i + 1} holds forbidden term #${n}`);
-      glyphProblems(clean, `--claimable-title ${i + 1}`, problems);
-      if (!claimableTitles?.includes(clean)) claimableTitles?.push(clean);
+      problems.push(...glyphProblems(clean, `--claimable-title ${i + 1}`));
+      if (!titles.includes(clean)) titles.push(clean);
     });
+    claimableTitles = titles;
   }
 
   if (problems.length > 0) throw new ImportError(problems);
@@ -706,18 +788,15 @@ function build(o: ImportOptions): Built {
       claimableTitles === undefined ? DEFAULT_TARGETS : { ...DEFAULT_TARGETS, claimableTitles },
     ),
     'filters.yaml': yamlOf(
-      'v2 discovery rules §5 hard excludes. employmentDeny: words that reject only when they label the job title\n("(Contract)", "... - Freelance", "Contract Java Developer"); descriptions are checked with fixed phrases.',
+      'v2 discovery rules §5 hard excludes. employmentDeny: words that reject only when they label the job title\n("(Contract)", "... - 6 months", "Contract Java Developer"); descriptions are checked with fixed phrases.',
       DEFAULT_FILTERS,
     ),
-    'naming.yaml': yamlOf('Never commit or share this file: it names the forbidden terms.', { employerDisplay: map, forbiddenTerms }),
+    'naming.yaml': yamlOf('Never commit or share this file: it names the forbidden terms.', { employerDisplay: { ...map }, forbiddenTerms }),
     'offers.yaml': yamlOf('The floor is base salary only; equity, RSUs, bonus and total compensation never count.', {
       floor: { amount: o.floorInr, currency: 'INR', period: 'year', basis: 'base' },
     }),
     'fx.yaml': yamlOf('Rates to INR; the dashboard warns when asOf is more than 30 days old.', fx),
-    'answers.yaml': yamlOf(
-      'Screening answers (P1), from the Desk settings. Only available_from and notice_period may appear in a document.',
-      answers,
-    ),
+    'answers.yaml': yamlOf('Screening answers (P1), from the Desk settings. Only available_from and notice_period may appear in a document.', { ...answers }),
     'watchlist.yaml': yamlOf('Boards to watch: the Desk job boards (all found as remote-India), plus the extra verified entries.', { watchlist }),
     'feeds.yaml': yamlOf('', DEFAULT_FEEDS),
     'policy.user.yaml': yamlOf('Tightening-only policy overrides (kernel mergePolicy).', {}),
@@ -729,6 +808,7 @@ function build(o: ImportOptions): Built {
       facts: { total: facts.length, byStatus: count(facts.map((f) => f.status)), byKind: count(facts.map((f) => f.kind)) },
       roles: roles.length,
       unplaced,
+      unplacedByReason: { employerMismatch, outsideEveryRole },
       ragFacts,
       answers: { written: Object.keys(answers).length, removedForbidden, dropped },
       watchlist: { total: watchlist.length, fromDesk, extra, careers: watchlist.filter((w) => w.ats === 'careers').length, droppedForbidden },
@@ -739,16 +819,16 @@ function build(o: ImportOptions): Built {
 
 /**
  * Every input check of the import, writing nothing: the report the import would print, or `ImportError`. The checks
- * that need written files (`loadPack`, the final forbidden-term scan) run only in `importPack`.
+ * that need written files (`loadPack`, the final scan) run only in `importPack`.
  */
-export function planImport(o: ImportOptions): Omit<ImportReport, 'out' | 'backup'> {
+export function planImport(o: ImportOptions): ImportPlan {
   return build(o).report;
 }
 
 /** "2026-10-09T08:30:00.000Z" as "20261009T083000Z". */
 const stamp = (iso: string): string => iso.replace(/\.\d+(?=Z$)/, '').replace(/[-:]/g, '');
 
-/** A path next to `base` with `suffix` that does not exist yet. */
+/** `base`, or `base-2`, `base-3`, ... : the first that does not exist yet. */
 function freePath(base: string): string {
   let p = base;
   for (let n = 2; existsSync(p); n++) p = `${base}-${n}`;
@@ -756,21 +836,55 @@ function freePath(base: string): string {
 }
 
 /**
- * Builds the pack and writes it to `o.out`. Throws `ImportError` (nothing written, an existing pack untouched) on any
- * problem: bad input, a forbidden term, an undrawable character, a pack `loadPack` refuses, or a forbidden term in any
- * written file but naming.yaml.
+ * Removes `<out>.staging-*` siblings older than an hour. They are left by a crashed import and may hold P1 data. The
+ * import holds the process lock while it runs, so no live import owns one; the hour spares a directory whose import
+ * lost the lock race in some unforeseen way.
  */
-export function importPack(o: ImportOptions): ImportReport {
+function removeStaleStaging(out: string, now: string): number {
+  const dir = dirname(out);
+  if (!existsSync(dir)) return 0;
+  const prefix = `${basename(out)}.staging-`;
+  const nowMs = Date.parse(now);
+  let removed = 0;
+  for (const name of readdirSync(dir)) {
+    if (!name.startsWith(prefix)) continue;
+    const p = join(dir, name);
+    try {
+      if (statSync(p).mtimeMs < nowMs - STALE_STAGING_MS) {
+        rmSync(p, { recursive: true, force: true });
+        removed++;
+      }
+    } catch {
+      // vanished meanwhile
+    }
+  }
+  return removed;
+}
+
+/**
+ * Builds the pack and writes it to `o.out`, holding the daily run's process lock (`o.lockHome`). Throws `ImportError`
+ * (nothing written, an existing pack kept) on any problem: bad input, a forbidden term, an undrawable character, a
+ * pack `loadPack` refuses, or a forbidden term (word-bounded or glued) in any written file but naming.yaml.
+ */
+export async function importPack(o: ImportOptions, deps: ImportDeps = {}): Promise<ImportReport> {
+  return withLock(o.lockHome ?? dirname(o.out), 'pack import', async () => importLocked(o, deps), deps.probe ?? systemProbe);
+}
+
+function importLocked(o: ImportOptions, deps: ImportDeps): ImportReport {
+  const rename = deps.rename ?? renameSync;
+  const staleRemoved = removeStaleStaging(o.out, o.now);
   if (existsSync(o.out) && o.force !== true) throw new ImportError([`${o.out} already exists; pass --force to move it to ${basename(o.out)}.bak-<timestamp> and import again`]);
   const built = build(o);
+  deps.beforeWrite?.(built.files);
   const ts = stamp(o.now);
   mkdirSync(dirname(o.out), { recursive: true });
-  const staging = freePath(`${o.out}.import-${ts}`);
+  const staging = freePath(`${o.out}.staging-${ts}`);
   try {
-    mkdirSync(staging);
-    for (const [name, text] of Object.entries(built.files)) writeFileSync(join(staging, name), text);
+    mkdirSync(staging, { mode: 0o700 });
+    for (const [name, text] of Object.entries(built.files)) writeFileSync(join(staging, name), text, { mode: 0o600 });
+    let loaded: ReturnType<typeof loadPack>;
     try {
-      loadPack(staging, {}, { asOf: o.asOf });
+      loaded = loadPack(staging, {}, { asOf: o.asOf });
     } catch (e) {
       throw new ImportError([`the written pack does not load: ${e instanceof Error ? e.message : String(e)}`]);
     }
@@ -778,9 +892,10 @@ export function importPack(o: ImportOptions): ImportReport {
       .filter((name) => name !== 'naming.yaml')
       .sort(cmp)
       .flatMap((name) => {
-        const n = forbiddenIn(readFileSync(join(staging, name), 'utf8'), built.naming);
+        const n = forbiddenTermIn(readFileSync(join(staging, name), 'utf8'), built.naming);
         return n === undefined ? [] : [`${name} holds forbidden term #${n}; nothing was written`];
       });
+    hits.push(...packTextProblems(loaded.pack));
     if (hits.length > 0) throw new ImportError(hits);
   } catch (e) {
     rmSync(staging, { recursive: true, force: true });
@@ -789,28 +904,50 @@ export function importPack(o: ImportOptions): ImportReport {
   let backup: string | undefined;
   if (existsSync(o.out)) {
     backup = freePath(join(dirname(o.out), `${basename(o.out)}.bak-${ts}`));
-    renameSync(o.out, backup);
+    try {
+      rename(o.out, backup);
+    } catch (e) {
+      rmSync(staging, { recursive: true, force: true });
+      throw new ImportError([`could not move the existing pack ${o.out} aside (${e instanceof Error ? e.message : String(e)}); nothing changed`]);
+    }
   }
-  renameSync(staging, o.out);
-  return { out: o.out, ...(backup !== undefined ? { backup } : {}), ...built.report };
+  try {
+    rename(staging, o.out);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    if (backup === undefined) {
+      rmSync(staging, { recursive: true, force: true });
+      throw new ImportError([`could not move the new pack into ${o.out} (${why}); nothing was written`]);
+    }
+    try {
+      rename(backup, o.out);
+    } catch (e2) {
+      throw new ImportError([
+        `could not move the new pack into ${o.out} (${why}), nor restore the old one (${e2 instanceof Error ? e2.message : String(e2)}): the old pack is at ${backup} and the validated new pack at ${staging}; move one of them to ${o.out}`,
+      ]);
+    }
+    rmSync(staging, { recursive: true, force: true });
+    throw new ImportError([`could not move the new pack into ${o.out} (${why}); the old pack was moved back from ${backup} to ${o.out}`]);
+  }
+  return { out: o.out, ...(backup !== undefined ? { backup } : {}), staleRemoved, ...built.report };
 }
 
 /** The report as printable lines: counts, ids and answer keys only. */
-export function formatImportReport(r: ImportReport): string[] {
+export function formatImportReport(r: ImportPlan & { out?: string; backup?: string; staleRemoved?: number }): string[] {
   const kv = (m: Record<string, number>): string =>
     Object.entries(m)
       .map(([k, v]) => `${k} ${v}`)
       .join(', ');
-  const lines = [
-    `pack written: ${r.out}`,
+  return [
+    r.out !== undefined ? `pack written: ${r.out}` : 'dry run: every input check passed; nothing was written',
     ...(r.backup !== undefined ? [`previous pack moved to ${r.backup}`] : []),
+    ...(r.staleRemoved !== undefined && r.staleRemoved > 0 ? [`stale staging directories removed: ${r.staleRemoved}`] : []),
     `facts ${r.facts.total} (by status: ${kv(r.facts.byStatus)}; by kind: ${kv(r.facts.byKind)})`,
     `roles ${r.roles}`,
-    `unplaced facts ${r.unplaced.length}`,
+    `unplaced facts ${r.unplaced.length} (employer mismatch ${r.unplacedByReason.employerMismatch}, outside every role ${r.unplacedByReason.outsideEveryRole})`,
     `answers ${r.answers.written} written, ${r.answers.dropped.length} dropped, ${r.answers.removedForbidden.length} removed for a forbidden term`,
     `watchlist ${r.watchlist.total} entries (${r.watchlist.fromDesk} from the Desk, ${r.watchlist.extra} extra, ${r.watchlist.careers} careers; ${r.watchlist.droppedForbidden} left out for a forbidden term)`,
     `warnings ${r.warnings.length}`,
     ...r.warnings.map((w) => `  - ${w}`),
   ];
-  return lines;
 }

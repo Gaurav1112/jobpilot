@@ -12,7 +12,7 @@ import { COVER_P4, COVER_P4_THANKS } from '../../src/app/agents/writing/template
 import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
-import { htmlText, renderHtml } from '../../src/app/render/html.js';
+import { htmlAttributeText, htmlText, renderHtml } from '../../src/app/render/html.js';
 import { cleanText, contactLine, coverModel, longDate, modelText, monthYear, normText, resumeModel } from '../../src/app/render/model.js';
 import { pdfIdOf, renderPdf, uncoveredGlyph } from '../../src/app/render/pdf.js';
 import type { Pack } from '../../src/app/pack/schema.js';
@@ -613,6 +613,16 @@ describe('qa-gate', () => {
     const report = await runQa(rendered, out, { pdfText: fake });
     expect(report.checks.find((c) => c.id === 'qa.naming')).toEqual({ id: 'qa.naming', ok: false, detail: 'forbidden term #1 appears in 0123456789abcdef/cover.html' });
     expect(htmlText('<p>a&amp;b &lt;x&gt; &#39;q&#39;</p>')).toBe(" a&b <x> 'q' ");
+  });
+
+  it('fails qa.naming when an HTML attribute value (data-fact) names a forbidden term', async () => {
+    const { rendered, out } = await render();
+    const htmlPath = join(out, '0123456789abcdef/resume.html');
+    writeFileSync(htmlPath, readFileSync(htmlPath, 'utf8').replace('</main>', '<ul><li data-fact="initech-orders-01">x</li></ul></main>'));
+    const fake: PdfTextProvider = async (abs) => (abs.endsWith('resume.pdf') ? `${rendered.text.resume}\f` : `${rendered.text.cover}\f`);
+    const report = await runQa(rendered, out, { pdfText: fake });
+    expect(report.checks.find((c) => c.id === 'qa.naming')).toEqual({ id: 'qa.naming', ok: false, detail: 'forbidden term #1 appears in 0123456789abcdef/resume.html (attributes)' });
+    expect(htmlAttributeText('<li data-fact="a-b" class=\'x &amp; y\'>t</li>')).toBe('a-b\nx & y');
   });
 
   it('a renderer page count that disagrees with the text layer fails qa.pages', async () => {

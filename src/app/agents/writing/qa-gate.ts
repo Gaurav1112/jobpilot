@@ -4,7 +4,7 @@ import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { assertNoForbidden, ForbiddenTermError } from '../../pack/rules.js';
 import { docxText } from '../../render/docx.js';
-import { htmlText } from '../../render/html.js';
+import { htmlAttributeText, htmlText } from '../../render/html.js';
 import { normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
 import { QaReport, qaRan, Rendered } from '../../types.js';
 
@@ -21,7 +21,7 @@ import { QaReport, qaRan, Rendered } from '../../types.js';
  * | qa.hyphen | no PDF line ends in "-" unless the source text has that hyphen (" -" or "-") at that wrap point |
  * | qa.docx-text | each DOCX `word/document.xml` text equals the document text (`Rendered.text`) |
  * | qa.pdf-text | each PDF text layer equals the document text |
- * | qa.naming | no forbidden term in any PDF or DOCX text layer, nor in the HTML previews' text (tags stripped) |
+ * | qa.naming | no forbidden term in any PDF or DOCX text layer, nor in the HTML previews' text (tags stripped) or attribute values (data-fact ids) |
  *
  * Every text comparison uses `normText` (render/model.ts): NFC, format characters (soft hyphens U+00AD, zero-width
  * characters) removed, a line break after a word's hyphen joined, whitespace runs collapsed, ends trimmed. The renderer
@@ -146,7 +146,11 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
     }
     const htmlPath = renderedPath(rendered.jobKey, kind, 'html');
     const html = bytesOf(htmlPath);
-    if (html !== undefined) scan(htmlPath, htmlText(new TextDecoder().decode(html)));
+    if (html !== undefined) {
+      const source = new TextDecoder().decode(html);
+      scan(htmlPath, htmlText(source));
+      scan(`${htmlPath} (attributes)`, htmlAttributeText(source));
+    }
     const docx = bytesOf(docxPath);
     if (docx === undefined) docxProblems.push(`${docxPath} cannot be read`);
     else {
