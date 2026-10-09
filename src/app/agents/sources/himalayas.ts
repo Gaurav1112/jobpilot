@@ -16,7 +16,8 @@ import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySe
  *   transient glitch, or an empty page 1 while `totalCount > 0`) is `invalid_output`;
  * - a short page is not the end. Live, the server drops a few slots from some pages: on 2026-10-09
  *   it served 827 jobs for `totalCount` 842 (15 slots missing over 11 short pages), so "jobs seen ==
- *   totalCount" cannot be asserted; window coverage is the invariant instead;
+ *   totalCount" cannot be asserted; window coverage plus the delivery tolerances below are the
+ *   invariant instead;
  * - HIMALAYAS_MAX_PAGES (1,600 jobs) is a safety cap. After it, one more request confirms the end;
  *   if that is not empty the step fails ('himalayas himalayas: page cap reached at N postings');
  * - a page whose guids were all seen on earlier pages (repeat, or an A, B, A cycle) is
@@ -72,6 +73,20 @@ export function himalayasParse(json: unknown): Parsed {
 
 export const srcHimalayasContract = sourceContract('src-himalayas', HIMALAYAS_HOST, 'Fetches India-eligible backend jobs from the Himalayas feed', HIMALAYAS_TIMEOUT_MS);
 
+/**
+ * Delivery tolerances. The offset chain proves every window was requested, not that it was
+ * delivered, so the walk also bounds the shortfall. Measured live on 2026-10-09 (q=backend,
+ * country=IN): 11 of 43 pages short by 1 to 4 jobs (the worst page held 16 of 20), 827 unique
+ * jobs for a totalCount of 842 (98.2%), and totalCount moving by 1 between pages.
+ * - A page that is not the last one (offset + limit < totalCount) must bring at least
+ *   limit - HIMALAYAS_PAGE_SLACK new guids (15 of 20).
+ * - At the end, unique guids must reach HIMALAYAS_MIN_COVERAGE of the largest totalCount seen.
+ * - The final totalCount may sit at most one page (limit) below the largest one seen; a bigger
+ *   fall (say a glitch answering totalCount 0) would end the walk early.
+ */
+export const HIMALAYAS_PAGE_SLACK = 5;
+export const HIMALAYAS_MIN_COVERAGE = 0.95;
+
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 
 export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) => {
@@ -82,6 +97,7 @@ export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) =
   const seen = new Set<string>();
   // Newest-first drift mid-walk: an insert pushes jobs down a page (duplicates, deduped); a removal (expiry) pulls one up, so it can be missed until the next run. Accepted.
   let expectedOffset = 0;
+  let maxTotal = 0;
   for (let page = 1; ; page++) {
     const json = await getBoard(ctx, himalayasUrl(page), HIMALAYAS_FEED);
     const parsed = himalayasParse(json);
@@ -94,13 +110,22 @@ export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) =
     }
     if (offset !== expectedOffset) throw fail(`page ${page} starts at offset ${offset}, expected ${expectedOffset}`);
     expectedOffset = offset + limit;
+    maxTotal = Math.max(maxTotal, total);
     if (body.jobs.length === 0) {
+      if (maxTotal - total > limit) throw fail(`totalCount fell from ${maxTotal} to ${total} during the walk`);
       if (offset < total) throw fail(`empty page ${page} at offset ${offset} before totalCount ${total}`);
+      if (seen.size < maxTotal * HIMALAYAS_MIN_COVERAGE) {
+        throw fail(`${seen.size} unique jobs for totalCount ${maxTotal} (minimum ${HIMALAYAS_MIN_COVERAGE * 100}%)`);
+      }
       break;
     }
     if (page > HIMALAYAS_MAX_PAGES) throw capReached(what, 'page', finish(all).length);
     const guids = body.jobs.flatMap((j) => (isRecord(j) && idOf(j.guid) !== undefined ? [idOf(j.guid) as string] : []));
+    const fresh = new Set(guids.filter((g) => !seen.has(g))).size;
     if (onlySeenBefore(seen, guids)) throw repeatedPage(what, page);
+    if (offset + limit < total && fresh < limit - HIMALAYAS_PAGE_SLACK) {
+      throw fail(`page ${page} brought ${fresh} new jobs, minimum ${limit - HIMALAYAS_PAGE_SLACK}`);
+    }
     all.push(...parsed.postings);
   }
   return finish(all);

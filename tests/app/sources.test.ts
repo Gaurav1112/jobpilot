@@ -386,10 +386,27 @@ describe('paging: no silent truncation', () => {
       expect(ids(out)).toEqual(sorted(ids(out)));
     });
 
-    it('exact page boundary: full pages, then an empty page', async () => {
-      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: '[]' } });
-      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(100);
-      expect(rec.urls).toEqual([LV(0), LV(100)]);
+    it('a board size that is an exact multiple of 100: the empty page after a full one is re-requested once, then accepted', async () => {
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: leverPage(100, 100) }, [LV(200)]: { body: '[]' } });
+      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(200);
+      expect(rec.urls).toEqual([LV(0), LV(100), LV(200), LV(200)]);
+    });
+
+    it('a spurious empty page after a full one → the re-request is non-empty → invalid_output', async () => {
+      let calls = 0;
+      const rec = dyn((u) => {
+        const skip = Number(u.searchParams.get('skip'));
+        if (skip === 300 && calls++ === 0) return { body: '[]' };
+        return { body: skip < 937 ? leverPage(skip, Math.min(100, 937 - skip)) : '[]' };
+      });
+      await expect(run(srcLever, veeva, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'lever veeva: empty page at skip 300 after a full page was not empty on re-request' });
+      expect(rec.urls).toEqual([LV(0), LV(100), LV(200), LV(300), LV(300)]);
+    });
+
+    it('an empty page after a short page is the end without a re-request', async () => {
+      const rec = serve({ [LV(0)]: { body: leverPage(0, 100) }, [LV(100)]: { body: leverPage(100, 1) }, [LV(200)]: { body: '[]' } });
+      await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(101);
+      expect(rec.urls).toEqual([LV(0), LV(100), LV(200)]);
     });
 
     it('an empty board is one request', async () => {
@@ -415,7 +432,7 @@ describe('paging: no silent truncation', () => {
         return { body: skip < 7_000 ? leverPage(skip, 100) : '[]' };
       });
       await expect(run(srcLever, veeva, rec)).resolves.toHaveLength(7_000);
-      expect(rec.urls).toHaveLength(LEVER_MAX_PAGES + 1);
+      expect(rec.urls).toHaveLength(LEVER_MAX_PAGES + 2);
     });
 
     it('past the cap → invalid_output, never a partial', async () => {
@@ -448,6 +465,53 @@ describe('paging: no silent truncation', () => {
 
   describe('himalayas', () => {
     const feed = req('feed', 'himalayas');
+
+    it('a total that drops to 0 mid-walk (ending the walk early) → invalid_output', async () => {
+      const rec = serve({ [HM(1)]: { body: hmFull(1, 842) }, [HM(2)]: { body: hmFull(2, 842) }, [HM(3)]: { body: hmPage(40, [], 0) } });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: totalCount fell from 842 to 0 during the walk' });
+    });
+
+    it('a total that moves by one between pages (seen live) is fine', async () => {
+      const rec = serve({ [HM(1)]: { body: hmFull(1, 41) }, [HM(2)]: { body: hmFull(2, 40) }, [HM(3)]: { body: hmPage(40, [], 40) } });
+      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(40);
+    });
+
+    it('pages of 1 job each → invalid_output on the first such page', async () => {
+      const rec = dyn((u) => {
+        const page = Number(u.searchParams.get('page'));
+        return { body: page === 1 ? hmFull(1, 842) : hmFull(page, 842, 1) };
+      });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 15' });
+      expect(rec.urls).toHaveLength(2);
+    });
+
+    it('19 duplicates plus 1 new job → invalid_output', async () => {
+      const page2 = hmPage(20, [...range(1, 19).map((k) => hmJob(k)), hmJob(500)], 842);
+      const rec = serve({ [HM(1)]: { body: hmFull(1, 842) }, [HM(2)]: { body: page2 } });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 15' });
+    });
+
+    it('live-like shortfall (pages short by 1 to 4, 1.8% missing overall) passes', async () => {
+      const short = new Map([[2, 19], [7, 19], [9, 19], [10, 19], [23, 19], [26, 18], [27, 19], [29, 19], [30, 19], [38, 19], [42, 16]]);
+      const rec = dyn((u) => {
+        const page = Number(u.searchParams.get('page'));
+        if (page === 43) return { body: hmFull(43, 842, 2) };
+        if (page >= 44) return { body: hmPage((page - 1) * 20, [], 842) };
+        return { body: hmFull(page, 842, short.get(page) ?? 20) };
+      });
+      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(827);
+      expect(rec.urls).toHaveLength(44);
+    });
+
+    it('fewer than 95% of totalCount unique overall → invalid_output', async () => {
+      // every page passes the per-page floor (16 new of 20) but the walk ends 80% complete
+      const rec = dyn((u) => {
+        const page = Number(u.searchParams.get('page'));
+        if (page > 5) return { body: hmPage((page - 1) * 20, [], 100) };
+        return { body: hmFull(page, 100, 16) };
+      });
+      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: 80 unique jobs for totalCount 100 (minimum 95%)' });
+    });
 
     it('natural end: short pages mid-list are fine, the end is an empty page at offset ≥ totalCount', async () => {
       const rec = serve({ [HM(1)]: { body: hmFull(1, 39) }, [HM(2)]: { body: hmFull(2, 39, 19) }, [HM(3)]: { body: hmPage(40, [], 39) } });
