@@ -130,4 +130,16 @@ export const APP_MIGRATIONS: readonly string[] = [
   CREATE TRIGGER job_snapshots_append_only_u BEFORE UPDATE ON job_snapshots BEGIN SELECT RAISE(ABORT, 'job_snapshots is append-only'); END;
   CREATE TRIGGER job_snapshots_append_only_d BEFORE DELETE ON job_snapshots BEGIN SELECT RAISE(ABORT, 'job_snapshots is append-only'); END;
   `,
+  // Task 13 fix round 2: every document download from the dashboard, so a snapshot can say when the kept copy differs
+  // from what the user downloaded.
+  `
+  CREATE TABLE job_downloads (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    job_key TEXT NOT NULL REFERENCES jobs (job_key),
+    file TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    at TEXT NOT NULL
+  );
+  CREATE INDEX job_downloads_by_job ON job_downloads (job_key, seq);
+  `,
 ];

@@ -12,8 +12,8 @@ export interface Recommended {
 
 export interface JobPageData {
   readonly job: JobDetail;
+  readonly sent: SentData;
   readonly csrf: string;
-  readonly snapshots: readonly Snapshot[];
   /** Screening answers from the pack, as label and value; null when the pack could not be read. */
   readonly answers: readonly (readonly [string, string])[] | null;
   /** A lexicon key's display name. */
@@ -118,14 +118,36 @@ ${terms(j, d.display)}
 </section>`;
 }
 
+export interface SentData {
+  readonly jobKey: string;
+  readonly snapshots: readonly Snapshot[];
+  /** Per snapshot day: the date of the last download before it whose file differs from the kept copy, if any. */
+  readonly changedSince: Readonly<Record<string, string>>;
+  /** Applied, ready documents and no snapshot: offer to keep a copy now. */
+  readonly canKeep: boolean;
+  readonly csrf: string;
+  readonly istDay: (iso: string) => string;
+}
+
 /** The applied snapshots: the exact files the user sent. An htmx status change swaps it out of band. */
-export function sentSection(j: Pick<JobDetail, 'jobKey'>, snapshots: readonly Snapshot[], istDay: (iso: string) => string, oob = false): Html {
-  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${snapshots.length === 0 ? html` hidden` : ''}>
+export function sentSection(d: SentData, oob = false): Html {
+  const shown = d.snapshots.length > 0 || d.canKeep;
+  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${shown ? '' : html` hidden`}>
 <h2 id="sent-h">Documents you sent</h2>
-${snapshots.map(
-  (s) => html`<div class="sent"><h3>Applied ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p><ul class="plain sent-files">${s.files.map(
+${
+  d.canKeep
+    ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept.</p>
+<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
+    : ''
+}
+${d.snapshots.map(
+  (s) => html`<div class="sent"><h3>Applied ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p>${
+    d.changedSince[s.day] !== undefined
+      ? html`<p class="fact-warn">These documents changed after you downloaded them on ${dateText(d.istDay(d.changedSince[s.day] as string))}: the copy kept here is the current version.</p>`
+      : ''
+  }<ul class="plain sent-files">${s.files.map(
     (f) =>
-      html`<li><a href="/jobs/${j.jobKey}/sent/${s.day}/${f.kind}.${f.format}"${f.format === 'html' ? '' : html` download`}>${KIND_NAME[f.kind]} · ${FORMAT_NAME[f.format]}</a>${
+      html`<li><a href="/jobs/${d.jobKey}/sent/${s.day}/${f.kind}.${f.format}"${f.format === 'html' ? '' : html` download`}>${KIND_NAME[f.kind]} · ${FORMAT_NAME[f.format]}</a>${
         f.format === 'html' ? html` <span class="muted">(preview)</span>` : ''
       }</li>`,
   )}</ul></div>`,
@@ -178,7 +200,7 @@ export function jobBody(d: JobPageData): Html {
 ${duplicates(j, d.preferred)}
 <div class="job-grid">
 ${documents(d)}
-${sentSection(j, d.snapshots, d.istDay)}
+${sentSection(d.sent)}
 ${whyMatched(j, d.display)}
 ${eligibility(j)}
 ${statusSection(j, d.csrf, d.istDay, d.flash)}

@@ -587,6 +587,16 @@ export class AppStore {
     return out;
   }
 
+  /** Records one download of a job's document (`resume.pdf`, …) with the sha256 of the bytes served. */
+  recordDownload(jobKey: string, file: string, sha256: string, at: string): void {
+    this.db.prepare(`INSERT INTO job_downloads (job_key, file, sha256, at) VALUES (?, ?, ?, ?)`).run(jobKey, file, sha256, at);
+  }
+
+  /** The job's downloads, oldest first. */
+  downloads(jobKey: string): { file: string; sha256: string; at: string }[] {
+    return this.db.prepare(`SELECT file, sha256, at FROM job_downloads WHERE job_key = ? ORDER BY seq`).all(jobKey) as { file: string; sha256: string; at: string }[];
+  }
+
   /** The status history of each listed job that has one, oldest first (the jobs list shows Desk imports' history). */
   histories(jobKeys: readonly string[]): Record<string, HistoryEntry[]> {
     const out: Record<string, HistoryEntry[]> = {};

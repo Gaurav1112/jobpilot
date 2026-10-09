@@ -751,6 +751,69 @@ describe('dashboard: fix round 1', () => {
   });
 });
 
+describe('dashboard: fix round 2 (keep a copy, downloads)', () => {
+  const rerender = (text: string): void => {
+    writeFileSync(join(out, K1, 'resume.pdf'), text);
+    withStore((s) => s.putDocs(K1, s.getJob(K1)?.docs.map((d) => (d.kind === 'resume' && d.format === 'pdf' ? { ...d, sha256: sha(text) } : d)) ?? []));
+  };
+
+  it('an applied job with ready docs and no snapshot offers "Keep a copy of these documents now", once', async () => {
+    withStore((s) => s.setStatus(K1, 'applied', 'user', NOW)); // applied outside the dashboard (e.g. the Desk): no snapshot
+    const page = (await get(`/jobs/${K1}`)).body;
+    expect(page).toContain('Keep a copy of these documents now');
+    expect(page).toContain(`action="/jobs/${K1}/keep"`);
+    expect((await post(`/jobs/${K1}/keep`, {}, hx)).status).toBe(403);
+    const r = await post(`/jobs/${K1}/keep`, { _csrf: token }, hx);
+    expect(r.status).toBe(200);
+    expect(await r.text()).toContain('Documents you sent');
+    const snaps = withStore((s) => s.snapshots(K1));
+    expect(snaps.map((x) => x.day)).toEqual([DAY]);
+    expect(snaps[0]?.files).toHaveLength(6);
+    expect(statSync(join(out, K1, `applied-${DAY}`, 'resume.pdf')).mode & 0o777).toBe(0o444);
+    expect((await get(`/jobs/${K1}`)).body).not.toContain('Keep a copy of these documents now');
+    // the one-snapshot rule: a second keep (even on a later day) is refused and writes nothing
+    now = '2026-10-12T06:30:00.000Z';
+    expect((await post(`/jobs/${K1}/keep`, { _csrf: token }, hx)).status).toBe(409);
+    expect(withStore((s) => s.snapshots(K1))).toHaveLength(1);
+    expect(existsSync(join(out, K1, 'applied-2026-10-12'))).toBe(false);
+    // no-JS: a redirect back
+    withStore((s) => s.setStatus(K2, 'applied', 'user', NOW));
+    expect((await get(`/jobs/${K2}`)).body).not.toContain('Keep a copy'); // no ready docs
+  });
+
+  it('keep is refused for a job that is not applied or whose docs are not ready', async () => {
+    expect((await post(`/jobs/${K1}/keep`, { _csrf: token }, hx)).status).toBe(409);
+    withStore((s) => s.setStatus(K3, 'applied', 'user', NOW));
+    expect((await post(`/jobs/${K3}/keep`, { _csrf: token }, hx)).status).toBe(409);
+    expect(withStore((s) => s.snapshots(K1).length + s.snapshots(K3).length)).toBe(0);
+  });
+
+  it('records each download (job, file, sha256, time); previews are not downloads', async () => {
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
+    await app.request(`/jobs/${K1}/files/cover.docx`, { headers: { cookie } });
+    await app.request(`/jobs/${K1}/files/resume.html`, { headers: { cookie } });
+    expect(withStore((s) => s.downloads(K1))).toEqual([
+      { file: 'resume.pdf', sha256: sha(`resume.pdf of ${K1}`), at: NOW },
+      { file: 'cover.docx', sha256: sha(`cover.docx of ${K1}`), at: NOW },
+    ]);
+  });
+
+  it('warns when the kept copy differs from what was downloaded before applying', async () => {
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
+    now = '2026-10-10T06:30:00.000Z';
+    rerender('a re-rendered resume');
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    const page = (await get(`/jobs/${K1}`)).body;
+    expect(page).toContain('These documents changed after you downloaded them on 9 Oct 2026: the copy kept here is the current version.');
+  });
+
+  it('no warning when the downloaded files are the ones kept', async () => {
+    await app.request(`/jobs/${K1}/files/resume.pdf`, { headers: { cookie } });
+    await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
+    expect((await get(`/jobs/${K1}`)).body).not.toContain('changed after you downloaded');
+  });
+});
+
 describe('dashboard: number formatting', () => {
   it('writes INR in lakh and crore and foreign pay with an INR equivalent', () => {
     expect(inr(1_200_000)).toBe('₹12 LPA');

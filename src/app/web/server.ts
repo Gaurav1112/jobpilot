@@ -23,7 +23,7 @@ import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
 import { factRow, factsBody, type FactRow } from './views/facts.js';
-import { jobBody, noteSection, sentSection, statusSection, type Recommended } from './views/job.js';
+import { jobBody, noteSection, sentSection, statusSection, type Recommended, type SentData } from './views/job.js';
 import { jobsBody, type ListedJob } from './views/jobs.js';
 import { layout, type Banner, type Nav } from './views/layout.js';
 import { runsBody } from './views/runs.js';
@@ -246,6 +246,23 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     return next();
   });
 
+  /** The "Documents you sent" data: the snapshots, a changed-since-download note per snapshot, and the keep offer. */
+  const sentData = (s: AppStore, c: Context<Env>, key: string): SentData => {
+    const job = s.getJob(key);
+    const snapshots = s.snapshots(key);
+    const downloads = s.downloads(key);
+    const changedSince: Record<string, string> = {};
+    for (const snap of snapshots) {
+      for (const f of snap.files) {
+        const last = downloads.filter((d) => d.file === `${f.kind}.${f.format}` && d.at <= snap.at).at(-1);
+        if (last !== undefined && last.sha256 !== f.sha256 && (changedSince[snap.day] === undefined || last.at > (changedSince[snap.day] as string))) changedSince[snap.day] = last.at;
+      }
+    }
+    return { jobKey: key, snapshots, changedSince, canKeep: job !== undefined && keepable(job, snapshots.length), csrf: csrf(c), istDay: istDate };
+  };
+  const keepable = (job: { status: string; docsState: string; docs: readonly { kind: string }[] }, snapshotCount: number): boolean =>
+    job.status === 'applied' && snapshotCount === 0 && job.docsState === 'ready' && job.docs.some((d) => d.kind === 'resume' || d.kind === 'cover');
+
   const isHx = (c: Context<Env>): boolean => c.req.header('hx-request') === 'true';
   const csrf = (c: Context<Env>): string => sessions.token(c.get('sid'));
   const now = (): string => deps.clock.now();
@@ -339,7 +356,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
       const job = s.getJob(key);
       if (!job) return undefined;
       const pref = job.duplicateOf === null ? undefined : s.getJob(job.duplicateOf);
-      return { job, snapshots: s.snapshots(key), preferred: pref ? { jobKey: pref.jobKey, source: pref.source } : null, overrides: s.factOverrides() };
+      return { job, sent: sentData(s, c, key), preferred: pref ? { jobKey: pref.jobKey, source: pref.source } : null, overrides: s.factOverrides() };
     });
     if (!data) return notFound(c, 'No such job.');
     const job = r.deep(data.job);
@@ -355,7 +372,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     }
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
-    const body = jobBody({ job, csrf: csrf(c), snapshots: data.snapshots, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}) });
+    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -386,12 +403,35 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
           }
         }
       }
-      return { job: s.getJob(key), snapshots: s.snapshots(key), notice };
+      return { job: s.getJob(key), sent: sentData(s, c, key), notice };
     });
     if (!result?.job) return c.text('No such job', 404);
     if (!isHx(c)) return c.redirect(`/jobs/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`, 303);
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
-    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash)}${sentSection(result.job, result.snapshots, istDate, true)}`.value);
+    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash)}${sentSection(result.sent, true)}`.value);
+  });
+
+  // "Keep a copy of these documents now": the snapshot an apply could not make (applied elsewhere, or a failed copy).
+  // Same confined helper, same rule: an applied job with ready documents and no snapshot yet.
+  app.post('/jobs/:key/keep', (c) => {
+    const key = c.req.param('key');
+    if (!JOB_KEY.test(key)) return c.text('Bad request', 400);
+    const at = now();
+    const result = withStore((s) => {
+      const job = s.getJob(key);
+      if (!job) return { status: 404 as const, text: 'No such job' };
+      if (!keepable(job, s.snapshots(key).length)) return { status: 409 as const, text: 'Nothing to keep: the job is not applied, its documents are not ready, or a copy is already kept.' };
+      try {
+        s.putSnapshot(key, istDate(at), snapshotApplied(paths.out, key, job.docs.filter((d) => d.kind === 'resume' || d.kind === 'cover'), istDate(at)), at);
+      } catch (e) {
+        if (isBusy(e)) throw e;
+        return { status: 409 as const, text: `The documents could not be kept: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      return { status: 200 as const, sent: sentData(s, c, key) };
+    });
+    if (result.status !== 200) return c.text(redactor(packState(deps.home, at).naming).text(result.text), result.status);
+    if (!isHx(c)) return c.redirect(`/jobs/${key}#sent-h`, 303);
+    return c.html(sentSection(result.sent).value);
   });
 
   app.post('/jobs/:key/note', async (c) => {
@@ -442,7 +482,17 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
     const doc = job?.docs.find((d) => d.path === `${key}/${name}`);
     if (!job || !doc) return c.text('Not found', 404);
     const naming = packState(deps.home, now()).naming;
-    return sendFile(c, readRecorded(paths.out, doc.path, doc.sha256), name, `${doc.kind}-${companySlug(job.company, naming, key)}.${doc.format}`);
+    const read = readRecorded(paths.out, doc.path, doc.sha256);
+    if (read.ok && doc.format !== 'html') {
+      // A download (not a preview): remembered, so a later snapshot can say whether the kept copy is what was downloaded.
+      try {
+        withStore((s) => s.recordDownload(key, name, doc.sha256, now()));
+      } catch (e) {
+        if (!isBusy(e)) throw e;
+        console.error(`jobpilot dashboard: download of ${key}/${name} not recorded (busy)`);
+      }
+    }
+    return sendFile(c, read, name, `${doc.kind}-${companySlug(job.company, naming, key)}.${doc.format}`);
   });
 
   app.get('/jobs/:key/sent/:day/:name', (c) => {
