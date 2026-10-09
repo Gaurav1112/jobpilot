@@ -1,0 +1,2 @@
+# One qualification per line: qualification | institution | period (YYYY-MM..YYYY-MM or Mon YYYY - Mon YYYY)
+B.E. in Computer Engineering | Savitribai Phule Pune University | 2012-08..2016-05

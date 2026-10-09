@@ -1,0 +1,62 @@
+# Fictional career-ops fact store (same shape as career-ops src/facts/schema.ts). The candidate is "Asha Rao";
+# "Initech" is the fictional forbidden client name: it must be gone from every written pack file but naming.yaml.
+facts:
+  - id: initech-orders-01
+    claim: Led the design of an event-driven order pipeline on Kafka handling 40M events a day.
+    metric: {before: 5M events a day, after: 40M events a day}
+    tech: [java, kafka, event-driven]
+    scope: Order platform for the retail group
+    employer: Initech India (GCC for Northwind)
+    period: 2025-12..present
+    archetype_weight: {java-backend: 0.9, distributed-systems: 0.8}
+    provenance: {source: interview notes 2026-09-01, asserted: 2026-09-01, status: user-stated}
+  - id: northwind-labs-orders-01
+    claim: Cut p99 latency of the pricing service from 800 ms to 180 ms with a Redis read-through cache.
+    tech: [java, redis, spring boot]
+    employer: Northwind Labs
+    period: 2023-01..2025-06
+    archetype_weight: {java-backend: 1}
+    provenance: {source: performance review 2024, asserted: 2026-09-01, status: verified}
+  - id: initech-status-02
+    claim: Built a delivery health board with red, amber and green (RAG) status for twelve teams.
+    tech: [typescript, react]
+    employer: Initech India (GCC for Northwind)
+    period: 2026-01..present
+    archetype_weight: {}
+    provenance: {source: interview notes 2026-09-01, asserted: 2026-09-01, status: user-stated}
+  - id: initech-cost-03
+    claim: Reduced AWS spend by roughly 30 percent through right-sizing and spot capacity.
+    tech: [aws, kubernetes]
+    employer: Initech India (GCC for Northwind)
+    period: 2026-02..present
+    archetype_weight: {platform-devops: 0.7}
+    provenance: {source: derived from a slide deck, asserted: 2026-09-01, status: derived-unverified}
+  - id: contoso-billing-01
+    claim: Built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly.
+    tech: [java, postgres, fintech]
+    employer: Contoso Retail
+    period: 2020-04..2022-01
+    archetype_weight: {java-backend: 1}
+    provenance: {source: resume v3, asserted: 2026-09-01, status: verified}
+  - id: contoso-retry-02
+    claim: Introduced RabbitMQ based retry queues that removed a class of duplicate-charge incidents.
+    tech: [rabbitmq, java]
+    employer: Contoso Retail
+    period: 2019-01..2019-06
+    archetype_weight: {}
+    provenance: {source: resume v3, asserted: 2026-09-01, status: user-stated}
+  - id: fabrikam-reports-01
+    claim: Wrote a Python tool that generated nightly sales reports for regional managers.
+    tech: [python]
+    employer: Fabrikam
+    period: 2017-03..2017-09
+    kind: project
+    archetype_weight: {}
+    provenance: {source: resume v3, asserted: 2026-09-01, status: user-stated}
+  - id: cert-aws-saa
+    claim: AWS Certified Solutions Architect - Associate.
+    tech: [aws]
+    employer: Amazon Web Services
+    period: 2021-05..2024-05
+    archetype_weight: {}
+    provenance: {source: credential page, asserted: 2026-09-01, status: verified}

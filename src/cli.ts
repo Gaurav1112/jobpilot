@@ -18,6 +18,7 @@ import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
 import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
+import { formatImportReport, importPack } from './app/pack/import.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
@@ -258,6 +259,62 @@ pack
       console.log(`experience as of ${loaded.asOf}; ${loaded.pack.facts.length} facts; watchlist ${loaded.pack.watchlist.length} entries (${careers} careers); feeds ${loaded.pack.feeds.enabled.join(', ') || 'none'}`);
       console.log(`pipeline ${prepared.compiled.pipeline.id}@${prepared.compiled.pipeline.version}: ${prepared.registry.list().length} agents; policy ${prepared.policyHash.slice(0, 12)}`);
     }),
+  );
+
+const collect = (v: string, prev: string[]): string[] => [...prev, v];
+pack
+  .command('import')
+  .description('Build the user pack once from career-ops facts, the resume text and the Application Desk export (fails, writing nothing, on any forbidden term)')
+  .requiredOption('--career-ops <dir>', 'the career-ops repo (reads profile/facts.yaml)')
+  .requiredOption('--resume-text <file>', 'resume experience text with "Title | Employer | City, Country | Mon YYYY - Mon YYYY" role headers')
+  .requiredOption('--desk <dir>', 'the Application Desk export (settings/answers.json, jobs/*.json)')
+  .option('--out <packDir>', 'the pack directory to create (default: $JOBPILOT_HOME/pack)')
+  .option('--forbid <term>', 'a forbidden term (the client name); repeatable, at least one', collect, [])
+  .option('--employer-display <raw=display>', 'show employer <raw> as <display>; repeatable', collect, [])
+  .requiredOption('--name <name>', 'contact name')
+  .requiredOption('--email <email>', 'contact email')
+  .requiredOption('--phone <phone>', 'contact phone')
+  .requiredOption('--city <city>', 'contact city')
+  .option('--link <url>', 'a contact link; repeatable, at least one', collect, [])
+  .requiredOption('--as-of <YYYY-MM>', 'the experience month written to experience.yaml (the daily run uses the current month)')
+  .requiredOption('--available-from <text>', 'answers available_from, e.g. "1 November 2026"')
+  .requiredOption('--notice-period <text>', 'answers notice_period, e.g. "30 days"')
+  .requiredOption('--floor-inr <amount>', 'the base salary floor in INR a year, e.g. 1200000 (equity never counts)')
+  .option('--education-text <file>', 'one "qualification | institution | YYYY-MM..YYYY-MM" per line (status user-stated)')
+  .option('--claimable-title <title>', 'a title the candidate can truthfully claim, added to the ongoing roles\' titles; repeatable', collect, [])
+  .option('--extra-watchlist <yaml>', 'extra watchlist entries ({watchlist: [...]}); they replace Desk entries for the same board')
+  .option('--fx-file <yaml>', 'fx rates ({asOf, toINR}); default: pinned rates dated 1970-01-01 (the dashboard warns)')
+  .option('--force', 'replace an existing pack, moving it to <out>.bak-<timestamp> first')
+  .action(
+    (o: {
+      careerOps: string; resumeText: string; desk: string; out?: string; forbid: string[]; employerDisplay: string[];
+      name: string; email: string; phone: string; city: string; link: string[]; asOf: string; availableFrom: string;
+      noticePeriod: string; floorInr: string; educationText?: string; claimableTitle: string[]; extraWatchlist?: string;
+      fxFile?: string; force?: boolean;
+    }) =>
+      guarded(() => {
+        const floor = /^\d+$/.test(o.floorInr.trim()) ? Number(o.floorInr.trim()) : Number.NaN;
+        const report = importPack({
+          careerOps: o.careerOps,
+          resumeText: o.resumeText,
+          desk: o.desk,
+          out: o.out ?? homePaths(jobpilotHome()).pack,
+          forbid: o.forbid,
+          employerDisplay: o.employerDisplay,
+          contact: { name: o.name, email: o.email, phone: o.phone, city: o.city, links: o.link },
+          asOf: o.asOf,
+          availableFrom: o.availableFrom,
+          noticePeriod: o.noticePeriod,
+          floorInr: floor,
+          educationText: o.educationText,
+          claimableTitles: o.claimableTitle,
+          extraWatchlist: o.extraWatchlist,
+          fxFile: o.fxFile,
+          force: o.force === true,
+          now: systemClock.now(),
+        });
+        for (const line of formatImportReport(report)) console.log(line);
+      }),
   );
 
 const migrate = program.command('migrate').description('One-off imports');

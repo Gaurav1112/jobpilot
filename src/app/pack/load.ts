@@ -5,6 +5,7 @@ import type { ZodType } from 'zod';
 import { hashOf } from '../../kernel/canonical.js';
 import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
 import { FEED_SOURCES, knownFeeds } from '../feeds.js';
+import { DEFAULT_FX } from './defaults.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -32,8 +33,7 @@ export class PackError extends Error {
   override readonly name = 'PackError';
 }
 
-/** Defaults for the optional files. The fx default is deliberately ancient so the dashboard warns it is stale. */
-const DEFAULT_FX = { asOf: '1970-01-01', toINR: { USD: 83, EUR: 90, GBP: 105, INR: 1 } };
+// The fx default (an optional file) is deliberately ancient so the dashboard warns it is stale.
 
 function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: unknown): T {
   const path = join(dir, file);
