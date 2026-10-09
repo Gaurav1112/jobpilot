@@ -53,8 +53,9 @@ export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
-  // `filters.employmentDeny` is not read: the text path uses the fixed EMPLOYMENT_PHRASES (task 7 fix round 1, I1).
-  filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()) }),
+  // `filters.employmentDeny` are the words that reject when bare in the title (fix round 2); the description uses the
+  // fixed EMPLOYMENT_PHRASES instead, because bare words there are mostly not about employment (fix round 1, I1).
+  filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
   eligibility: z.object({ employmentTypes: z.array(z.string()) }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   offers: z.object({ floor: z.object({ amount: z.number(), currency: z.enum(['INR', 'USD', 'EUR', 'GBP']) }).nullable() }),
@@ -108,7 +109,19 @@ const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
   ['freelance', /\bfreelance\b/i],
 ];
 
+/** Title phrases where a contract word is not employment ("Smart Contract Engineer", "Contract Testing"). */
+const TITLE_NOT_EMPLOYMENT = /\bsmart[\s-]+contracts?\b|\bcontract[\s-]+testing\b/gi;
+
+/** The longest `filters.employmentDeny` word found bare in the title, or undefined. */
+function titleDenyWord(title: string, words: readonly string[]): string | undefined {
+  const t = title.replace(TITLE_NOT_EMPLOYMENT, ' ');
+  return [...words].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find((w) => hasTerm(t, w));
+}
+
 function employmentReason(p: Posting, pack: EligibilityPack): string | null {
+  // A bare contract word in the title is the posting's own label; it wins over a structured type (fix round 2).
+  const titleWord = titleDenyWord(p.title, pack.filters.employmentDeny);
+  if (titleWord !== undefined) return `employment:${titleWord}`;
   const parts = (p.employmentType ?? '').split(/[,;/|]/).map((s) => s.trim()).filter((s) => s !== '');
   const known = parts.map(canonicalEmployment).filter((c): c is string => c !== null);
   if (known.some((c) => pack.eligibility.employmentTypes.includes(c))) return null;
@@ -151,12 +164,45 @@ const officeRequirement = (s: string): boolean =>
 /** The country forms of the US match only as written in capitals ("Contact us only" is not the US). */
 const US_FORMS: ReadonlySet<string> = new Set(['US', 'USA', 'U.S.', 'U.S.A.']);
 const countryToken = (t: string): boolean => (/^(?:us|usa|u\.s\.(?:a\.)?)$/i.test(t) ? US_FORMS.has(t) : true);
-const EXCLUSIONS: readonly (readonly [string, (s: string) => boolean])[] = [
-  ['us-only', (s) => /(?<![\p{L}\p{N}])(?:US|USA|U\.S\.(?:A\.)?)[\s-]only\b/u.test(s) || /\bunited states[\s-]only\b/i.test(s)],
-  ['must-reside', (s) => [...s.matchAll(/\bmust (?:be|reside) (?:located )?in the (us|usa|u\.s\.(?:a\.)?|united states|uk|eu)(?![\p{L}\p{N}])/giu)].some((m) => countryToken(m[1] ?? ''))],
-  ['us-work-authorization', (s) => [...s.matchAll(/\bauthori[sz]ed to work in the (us|usa|u\.s\.(?:a\.)?|united states)(?![\p{L}\p{N}])/giu)].some((m) => countryToken(m[1] ?? ''))],
-  ['eu-only', (s) => /\b(?:eu|europe)[\s-]only\b/i.test(s)],
+const US = 'us|usa|u\\.s\\.(?:a\\.)?|united states';
+const END = '(?![\\p{L}\\p{N}])';
+/** Each rule: its id, and patterns whose group 1 is the country token (checked by `countryToken`). */
+const EXCLUSION_RULES: readonly (readonly [string, readonly RegExp[]])[] = [
+  ['us-only', [new RegExp(`(?<![\\p{L}\\p{N}])(${US})[\\s-]only\\b`, 'giu'), new RegExp(`(?<![\\p{L}\\p{N}])(${US}) residents only\\b`, 'giu')]],
+  [
+    'must-reside',
+    [
+      new RegExp(`\\bmust (?:be|reside) (?:located |based )?in the (${US}|uk|eu)${END}`, 'giu'),
+      new RegExp(`\\b(?:based|located) in the (${US})${END}`, 'giu'),
+      new RegExp(`\\bwithin the (${US})${END}`, 'giu'),
+      // "US-based" about the role or the candidate; a US-based company, team or office says where the employer is.
+      new RegExp(`(?<![\\p{L}\\p{N}])(${US})-based(?!\\s+(?:company|companies|startup|firm|organi[sz]ation|business|headquarters|hq|employer|customers?|clients?|investors?|parent))${END}`, 'giu'),
+    ],
+  ],
+  [
+    'us-work-authorization',
+    [new RegExp(`\\bauthori[sz]ed to work in the (${US})${END}`, 'giu'), new RegExp(`\\beligible to work in the (${US})${END}`, 'giu')],
+  ],
+  ['eu-only', [/\b(eu|europe)[\s-]only\b/gi]],
 ];
+/** The sentence around a match: a phrase whose own sentence names India or a region with India is not an exclusion. */
+const sentenceAt = (s: string, at: number, len: number): string => {
+  const from = Math.max(0, ...[...s.slice(0, at).matchAll(/[.!?;\n]/g)].map((m) => (m.index ?? -1) + 1));
+  const rest = s.slice(at + len).search(/[!?;\n]|\.(?=\s|$)/);
+  return s.slice(from, rest < 0 ? s.length : at + len + rest);
+};
+function exclusionRule(s: string): string | undefined {
+  for (const [id, patterns] of EXCLUSION_RULES) {
+    for (const re of patterns) {
+      for (const m of s.matchAll(re)) {
+        if (!countryToken(m[1] ?? '')) continue;
+        if (indiaInScope(countriesIn(sentenceAt(s, m.index ?? 0, m[0].length)))) continue;
+        return id;
+      }
+    }
+  }
+  return undefined;
+}
 /** Regions that include India (decision 1: asia and south asia, like apac). */
 const INDIA_REGIONS: ReadonlySet<string> = new Set(['apac', 'asia', 'south asia', 'worldwide']);
 const REMOTE_WORD = /\bremote\b/i;
@@ -186,8 +232,8 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
 
   if (signals.includes('location:excludes:india')) return 'remote-excludes-india:location';
   const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
-  const phrase = EXCLUSIONS.find(([, test]) => test(head));
-  if (phrase !== undefined) return `remote-excludes-india:${phrase[0]}`;
+  const rule = exclusionRule(head);
+  if (rule !== undefined) return `remote-excludes-india:${rule}`;
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
@@ -205,15 +251,23 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   return anythingRemote ? 'review' : 'onsite';
 }
 
-/** The pay check: a reject reason, or the note to add (null when there is nothing to say). */
+/**
+ * The pay check: a reject reason, or the note to add (null when there is nothing to say).
+ *
+ * Fix round 2: a stated maximum below the floor rejects whatever the basis. A total-type figure (CTC, total comp, OTE,
+ * a package, "compensation") is always at least the base inside it, so when its maximum is below the floor, the base
+ * is too, and rejecting is sound. Pay components (variable, bonus, equity alone, allowances) never reach this point:
+ * the normalizer skips them. A kept posting with an unknown basis gets the note `pay basis unclear`.
+ */
 function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | { note: string | null } {
   const c = p.comp;
   if (c === null) return { note: NOTE_PAY_UNDISCLOSED };
-  if (c.basis !== 'base') return { note: NOTE_PAY_BASIS };
   const floor = pack.offers.floor;
-  if (floor === null || c.max === null) return { note: null };
-  const inr = toInrPerYear({ min: c.min ?? c.max, max: c.max, currency: c.currency, period: 'year' }, pack.fx);
-  return belowFloor(inr, floor, pack.fx) ? { reject: `below-floor:${inr.max}` } : { note: null };
+  if (floor !== null && c.max !== null) {
+    const inr = toInrPerYear({ min: c.min ?? c.max, max: c.max, currency: c.currency, period: 'year' }, pack.fx);
+    if (belowFloor(inr, floor, pack.fx)) return { reject: `below-floor:${inr.max}` };
+  }
+  return { note: c.basis === 'base' ? null : NOTE_PAY_BASIS };
 }
 
 /** The verdict for one posting under the pack's rules. Pure. It trusts `pack` to be well formed: the agent validates it first (a malformed pack here throws a TypeError, not a KernelError). */

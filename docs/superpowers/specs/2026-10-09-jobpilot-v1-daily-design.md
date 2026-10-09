@@ -242,8 +242,14 @@ Per-source mapping:
 
    It goes to `review` when the remote scope is unclear. That matches the v2 rule "keep with
    note: remote scope unclear - verify".
-6. **Comp.** Disclosed maximum base, converted to INR with `fx.yaml`, is below the floor →
-   reject. Undisclosed comp passes with the note "pay not disclosed".
+6. **Comp.** A disclosed maximum, converted to INR with `fx.yaml`, is below the floor → reject
+   `below-floor:<maxInr>`. This holds for a base figure and for an unknown basis alike: a
+   total-type figure (CTC, total comp, OTE, a package, "compensation") is always at least the
+   base inside it, so a total whose maximum is below the floor has a base below it too. Pay
+   components (variable, bonus, equity alone, allowances) are never comp: the normalizer
+   skips them. A kept posting with an unknown basis gets the note "pay basis unclear". An
+   open range with no maximum ("from X") is never below the floor. Undisclosed comp passes
+   with the note "pay not disclosed".
 7. **Experience.** A requirement above `maxYearsRequired` is not a rejection. It is a −20
    applied in the scorer.
 

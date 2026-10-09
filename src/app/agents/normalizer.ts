@@ -149,13 +149,23 @@ const BLURB_NOT_BASE = /\b(?:ote|on[- ]target|total\s+comp\w*|tc)\b/i;
 
 /** Sentences that may state pay. */
 const PAY_WORD =
-  /\b(?:salary|salaries|base|pay|pays|compensation|ctc|lpa|remuneration)\b|\bper annum\b|\bp\.a\.|\/\s*(?:yr|year)\b|\bper year\b|\ba year\b|\bannually\b/i;
+  /\b(?:salary|salaries|base|pay|pays|compensation|ctc|lpa|remuneration|ote|tc|on[- ]target)\b|\bper annum\b|\bp\.a\.|\/\s*(?:yr|year)\b|\bper year\b|\ba year\b|\bannually\b/i;
 /** Sentences about money that is not pay. */
 const NOT_PAY =
   /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
-/** Pay that is not salary; a sentence that names only these (no base, salary, fixed or CTC) states no salary. */
+/**
+ * Pay components that are not salary: a sentence that names only these (no base, salary, fixed, CTC or total-type
+ * wording) states no salary.
+ */
 const OTHER_PAY =
-  /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|hra|pf|epf|esic|gratuity|da|lta|allowances?|reimbursements?|insurance|meal|flexi|variable|incentives?|ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
+  /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|hra|pf|epf|esic|gratuity|da|lta|allowances?|reimbursements?|insurance|meal|flexi|variable|incentives?)\b/i;
+/**
+ * Total-type pay (OTE, on-target, TC, target cash, total comp/cash/pay/package): never base, but always at least base,
+ * so its figure is kept with an `unknown` basis (task 7 fix round 2: eligibility rejects a total whose max is below
+ * the floor, because the base under it is lower still).
+ */
+const TOTAL_PAY =
+  /\b(?:ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
 const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
@@ -176,7 +186,8 @@ const PAY_SENTENCE_SPLIT =
 const FIGURE = /(?:[₹$€£]|\b(?:rs\.?|inr|usd|eur|gbp)\s*)\s*\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr|k|m|l)?\b|\d[\d,]*(?:\.\d+)?\s*(?:lpa|lakhs?|lacs?|crores?|cr)\b/i;
 const UP_TO = /\b(?:up ?to|upto|max(?:imum)?\.?(?: of)?|as high as|not exceeding|no more than)\s*:?\s*$/i;
 const FROM = /\b(?:from|starting(?: at| from)?|starts at|at least|min(?:imum)?\.?(?: of)?|no less than)\s*:?\s*$/i;
-const OR_MORE = /^\s*(?:\+|or more\b|and above\b|or higher\b|onwards\b)/i;
+/** "+" right after the figure means "or more", unless a word follows it ("₹30 LPA + equity" is an add-on). */
+const OR_MORE = /^\s*(?:\+(?!\s*\p{L})|or more\b|and above\b|or higher\b|onwards\b)/iu;
 
 /** "incl. HRA ₹5 LPA", "including PF ...": a part of the figure before it, named only as non-salary pay. */
 const INCLUDED_PART = /\s*\(?\b(?:incl\.?|including|inclusive of|includes)\s+[^;()]*\)?$/i;
@@ -208,10 +219,10 @@ function withoutIncluded(sentence: string): string {
 export function compFromText(text: string): Comp | null {
   const ranges: Range[] = [];
   for (const sentence of text.split(PAY_SENTENCE_SPLIT)) {
-    // A clause whose only pay words are variable, incentive, OTE, commission, bonus or equity states no salary.
+    // A clause whose only pay words are components (variable, incentive, commission, bonus, equity ...) states no salary.
     if (!PAY_WORD.test(sentence) || NOT_PAY.test(sentence)) continue;
     const core = withoutIncluded(sentence);
-    if (OTHER_PAY.test(core) && !SALARY_WORD.test(core)) continue;
+    if (OTHER_PAY.test(core) && !SALARY_WORD.test(core) && !TOTAL_PAY.test(core)) continue;
     if (FOREIGN_MONEY.test(sentence) || (sentence.includes('$') && DOLLAR_COUNTRY.test(sentence) && !US_DOLLAR.test(sentence))) continue;
     const r = parseComp(core);
     if (r.kind !== 'parsed') continue;

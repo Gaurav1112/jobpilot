@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { canonicalEmployment, decideEligibility, eligibility } from '../../src/app/agents/eligibility.js';
+import { normalize } from '../../src/app/agents/normalizer.js';
 import { appEvalSpecs } from '../../src/app/evals.js';
 import { assertNoForbidden, loadPack } from '../../src/app/pack/load.js';
 import { EligibilityVerdict, Posting } from '../../src/app/types.js';
@@ -241,18 +242,68 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ remote: remote(null, ['india']), locationText: 'Bangalore, India', descriptionText: 'Join our team.' })).toEqual(rejected('onsite'));
   });
 
-  it('6. comp: disclosed base max below the floor rejects; unknown basis and open ranges never do', () => {
+  it('6. comp: a disclosed max below the floor rejects, base or unknown basis; open ranges never do', () => {
     expect(decide({ comp: base(3_000_000, 4_000_000) })).toEqual(rejected('below-floor:4000000'));
     expect(decide({ comp: base(50_000, 60_000, 'USD') })).toEqual(rejected('below-floor:5010000'));
     expect(decide({ comp: base(null, 4_000_000) })).toEqual(rejected('below-floor:4000000'));
     expect(decide({ comp: base(null, 1_200_000) })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
     expect(decide({ comp: base(70_000, 80_000, 'USD') })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
     expect(decide({ comp: base(1_000_000, null) })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
-    expect(decide({ comp: base(3_000_000, 4_000_000, 'INR', 'unknown') })).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
+    // fix round 2: a total-type figure (CTC, total comp, OTE, package) is at least base, so its max below the floor rejects too
+    expect(decide({ comp: base(3_000_000, 4_000_000, 'INR', 'unknown') })).toEqual(rejected('below-floor:4000000'));
+    expect(decide({ comp: base(5_000_000, 7_000_000, 'INR', 'unknown') })).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
+    expect(decide({ comp: base(2_000_000, null, 'INR', 'unknown') })).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
     // a review posting still gets the comp check
     expect(decide({ remote: remote('remote', []), comp: base(1_000_000, 2_000_000) })).toEqual(rejected('below-floor:2000000'));
     // no floor in the pack: nothing is below it
     expect(decide({ comp: base(1, 2) }, { ...pack, offers: { floor: null } })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
+  });
+
+  it('6. comp, end to end through the normalizer: total comp, OTE and pay plus equity below the floor reject (fix round 2)', () => {
+    const through = (descriptionText: string) =>
+      decideEligibility(normalize({ source: 'jobicy', sourceId: '1', company: 'X', slug: 'jobicy', raw: { id: 1, jobTitle: 'Backend Engineer', companyName: 'X', url: 'https://jobicy.com/jobs/1', jobGeo: 'India', jobDescription: `<p>${descriptionText}</p>` } }), pack);
+    expect(through('Total compensation $40k–$60k')).toEqual(rejected('below-floor:5010000'));
+    expect(through('OTE ₹50 LPA')).toEqual(rejected('below-floor:5000000'));
+    expect(through('Salary: ₹30 LPA + equity')).toEqual(rejected('below-floor:3000000'));
+    expect(through('Total compensation $100k–$150k')).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
+    // components alone are still not pay
+    expect(through('Bonus: ₹5 LPA')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(through('Variable pay: ₹4 LPA')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(through('₹10 LPA in ESOPs')).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('4. employment: a bare contract word from filters.employmentDeny in the title rejects (fix round 2)', () => {
+    expect(decide({ title: 'Java Developer (Contract)' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Contract Backend Engineer', employmentType: 'Full-time' })).toEqual(rejected('employment:contract'));
+    expect(decide({ title: 'Backend Contractor' })).toEqual(rejected('employment:contractor'));
+    expect(decide({ title: 'Backend Engineer - C2H' })).toEqual(rejected('employment:c2h'));
+    expect(decide({ title: 'Backend Engineer - Contract-to-Hire' })).toEqual(rejected('employment:contract-to-hire'));
+    expect(decide({ title: 'Freelance Backend Engineer' })).toEqual(rejected('employment:freelance'));
+    expect(decide({ title: 'Smart Contract Engineer' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ title: 'Backend Engineer, Smart Contracts' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ title: 'Contract Testing Platform Engineer' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ title: 'Backend Engineer, Contracts Platform' })).toEqual(ELIGIBLE_UNDISCLOSED); // "contracts" is not the word
+  });
+
+  it('5.2 more US exclusion phrases, case-sensitive on US forms (fix round 2)', () => {
+    const d = (descriptionText: string) => decide({ descriptionText });
+    expect(d('You must be based in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('Candidates based in the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('Applicants located in the U.S. are preferred.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('Applicants located in the U.S. only.')).toEqual(rejected('remote-excludes-india:us-only')); // us-only is checked first
+    expect(d('Remote within the US.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('This is a US-based remote role.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('Remote within the USA.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('Must be based in the United States.')).toEqual(rejected('remote-excludes-india:must-reside'));
+    expect(d('US residents only.')).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(d('You must be eligible to work in the US.')).toEqual(rejected('remote-excludes-india:us-work-authorization'));
+    // negatives
+    expect(d('We have teams in the US and India.')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(d('Our engineers are based in the US and India.')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(d('We are a US-based company hiring across APAC.')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(d('A US-based company with a Pune team.')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(d('Tell us within the us channel.')).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(d('Customers based in the us? no.')).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   it('every reason and note is one of the fixed codes', () => {

@@ -1023,13 +1023,14 @@ describe('fix round 2: variable pay never joins the salary (N1)', () => {
   const text = (description: string): Posting['comp'] =>
     one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
 
-  it('skips variable, incentive, OTE, commission, bonus and equity clauses, and keeps only explicit base', () => {
+  it('skips variable, incentive, commission, bonus and equity clauses, and keeps only explicit base', () => {
     expect(text('<p>Fixed: ₹25 LPA; variable ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Fixed: ₹25 LPA;variable ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Base: ₹25 LPA.</p><p>Variable: ₹5 LPA</p>')).toEqual({ min: 2500000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Base: ₹20-25 LPA. Incentive compensation: ₹5 LPA. On-target pay: ₹35 LPA. Commission: ₹4 LPA.</p>')).toEqual({ min: 2000000, max: 2500000, currency: 'INR', period: 'year', basis: 'base' });
     expect(text('<p>Variable pay: ₹4 LPA</p>')).toBeNull();
-    expect(text('<p>OTE: $250,000</p>')).toBeNull();
+    // task 7 fix round 2: a total-type figure (OTE) is kept, with an unknown basis
+    expect(text('<p>OTE: $250,000</p>')).toEqual({ min: 250000, max: 250000, currency: 'USD', period: 'year', basis: 'unknown' });
   });
 
   it('uses only the base figures when base is stated, not a union with unknown ones', () => {
@@ -1226,5 +1227,27 @@ describe('task 7 fix round 1: salary wording is base', () => {
   it('the recorded Volga posting (₹19–24 LPA) is now base', () => {
     const volga = hm.find((p) => p.sourceId.includes('volga-partners'))!;
     expect(one(volga).comp).toEqual({ min: 1900000, max: 2400000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+});
+
+describe('task 7 fix round 2: totals are kept, "+ equity" is not "or more"', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('keeps a total-type figure (total comp, OTE, TC) with an unknown basis', () => {
+    expect(text('<p>Total compensation $40k–$60k</p>')).toEqual({ min: 40000, max: 60000, currency: 'USD', period: 'year', basis: 'unknown' });
+    expect(text('<p>OTE ₹50 LPA</p>')).toEqual({ min: 5000000, max: 5000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>TC: $250,000</p>')).toEqual({ min: 250000, max: 250000, currency: 'USD', period: 'year', basis: 'unknown' });
+  });
+
+  it('still skips components named alone', () => {
+    expect(text('<p>Bonus: ₹5 LPA</p>')).toBeNull();
+    expect(text('<p>₹10 LPA in ESOPs</p>')).toBeNull();
+  });
+
+  it('reads "+ equity" as an add-on, but a bare trailing + as "or more"', () => {
+    expect(text('<p>Salary: ₹30 LPA + equity</p>')).toEqual({ min: 3000000, max: 3000000, currency: 'INR', period: 'year', basis: 'unknown' });
+    expect(text('<p>Salary: $120k+</p>')).toEqual({ min: 120000, max: null, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Salary: $120k + bonus</p>')).toEqual({ min: 120000, max: 120000, currency: 'USD', period: 'year', basis: 'unknown' });
   });
 });
