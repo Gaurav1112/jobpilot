@@ -1,0 +1,279 @@
+{
+  "comments": "21/08/2026: Cursor pagination is now available and is the preferred way to page through the feed. Pass the nextCursor value from each response back as ?cursor=. It is faster than offset and will never return the same job twice. The offset parameter is deprecated and will be removed in a future release. 13/03/2026: The API has been updated to include the companySlug field in the response.",
+  "updatedAt": 1791509657,
+  "offset": 0,
+  "limit": 20,
+  "totalCount": 843,
+  "jobs": [
+    {
+      "title": "Senior Software Engineer (YDB Team)",
+      "excerpt": "About Nebius:Nebius is leading a new era in cloud infrastructure for the global AI economy.",
+      "companyName": "Nebius",
+      "companySlug": "nebius",
+      "companyLogo": "https://cdn-images.himalayas.app/v19urq1wsdlrbez7z69tot5wmxpy",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Senior"
+      ],
+      "currency": null,
+      "locationRestrictions": [],
+      "timezoneRestrictions": [
+        -11,
+        -10,
+        -9.5,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        -4,
+        -3.5,
+        -3,
+        -2,
+        -1,
+        0,
+        1,
+        2,
+        3,
+        3.5,
+        4,
+        4.5,
+        5,
+        5.5,
+        5.75,
+        6,
+        6.5,
+        7,
+        8,
+        8.75,
+        9,
+        9.5,
+        10,
+        10.5,
+        11,
+        12,
+        12.75,
+        13,
+        14
+      ],
+      "categories": [
+        "Software-Engineer",
+        "Backend-Engineer",
+        "Systems-Engineer",
+        "C++-Developer",
+        "Distributed-Systems-Engineer",
+        "Senior-Database-Engineer",
+        "Senior-Database-Engineering",
+        "Senior-Systems-Software-Engineer",
+        "Senior-Software-Developer"
+      ],
+      "parentCategories": [
+        "Developer",
+        "Operations"
+      ],
+      "description": "<div class=\"content-intro\">\n<h3>About <a href=\"https://himalayas.app/companies/nebius\">Nebius</a>:</h3>\n<p><a href=\"https://himalayas.app/companies/nebius\">Nebius</a> is leading a new era in cloud infrastructure for the global AI economy. We are building a full-stack AI cloud platform that supports developers and enterprises from data and model training through to production deployment, without the cost and complexity of building large in-house AI/ML infrastructure.</p>\n<p>Built by engineers, for engineers. From large-scale GPU orchestration to inference optimization, we own the hard problems across compute, storage, networking and applied AI.</p>\n<p>Listed on Nasdaq (NBIS) and headquartered in Amsterdam, we have a global footprint with R&amp;D hubs across Europe, the UK, North America and Israel. Our team of 1,500+ includes hundreds of engineers with deep expertise across hardware, software and AI R&amp;D.</p>\n</div><div class=\"flex h-svh w-screen flex-col\">\n<h3>The role</h3>\n<div>\n<p><strong>The YDB Development Team at <a href=\"https://himalayas.app/companies/nebius\">Nebius</a> is looking for Mid and Senior Software Developer with a strong expertise in C++.</strong></p>\n<p>YDB is an open-source product that serves two main purposes within <a href=\"https://himalayas.app/companies/nebius\">Nebius</a>:</p>\n<ul>\n<li>A <strong>scalable and reliable binary object storage foundation</strong> powering S3 Object Storage, Filestore, Network Block Storage Tailored to process AI- related Workloads</li>\n<li>A <strong>distributed relational database and message broker</strong> supporting <a href=\"https://himalayas.app/companies/nebius\">Nebius</a> cloud operations such as IAM, Billing, Audit Trails and Logging</li>\n</ul>\n<h3>How You Will Change the World with Us</h3>\n<ul>\n<li>Adapt YDB to leverage modern hardware to its fullest potential: QLC NVMe drives, Dual 800Gb/s network adapters, BlueField DPUs</li>\n<li>Maximize performance on widely used devices such as HDDs and TLC NVMe</li>\n<li>Reengineer YDB components with more efficient algorithms to solve complex system challenges</li>\n</ul>\n<h3>Requirements</h3>\n<ul>\n<li>5+ years of experience in C/C++ programming for highly loaded systems</li>\n<li>Understanding of core dumps, flamegraphs, and sanitized builds</li>\n<li>Experience developing high-performance, low-latency components</li>\n<li>Understanding of CPU caches, Modern CPU atomic operations and NUMA architectures</li>\n</ul>\n<h3>Nice to Have</h3>\n<ul>\n<li>Experience with on-disk data structures (LSM trees, B+ trees)</li>\n<li>Hands-on experience with debugging and profiling tools such as perf, VTune, bpftrace, gdb</li>\n<li>Knowledge of storage-related algorithms (erasure coding, checksumming)</li>\n<li>Understanding of storage device internals (NVMe, HDD)</li>\n<li>Familiarity with Linux kernel, SPDK/DPDK, libaio, io_uring</li>\n<li>Knowledge of networking concepts and protocols (IP, TCP, UDP, DNS, ideally InfiniBand, RoCE/RDMA)</li>\n<li>Experience with Kubernetes and Grafana</li>\n<li>Track record of active participation in incident resolution</li>\n<li>Experience designing production-grade distributed storage components</li>\n<li>Knowledge of availability and durability calculations</li>\n</ul>\n<p><em>We conduct coding interviews as part of the process.</em></p>\n</div>\n</div><div class=\"content-conclusion\">\n<h3>Benefits &amp; Perks:</h3>\n<ul>\n<li>Competitive compensation</li>\n<li>Career growth and learning opportunities</li>\n<li>Flexibility and ownership</li>\n<li>Collaborative and innovative culture</li>\n<li>Opportunity to work on impactful AI projects</li>\n<li>International environment and talented teams</li>\n</ul>\n<h3>What's it like to work at <a href=\"https://himalayas.app/companies/nebius\">Nebius</a>:</h3>\n<p>Fast moving - Bold thinking - Constant growth - Meaningful impact - Trust and real ownership - Opportunity to shape the future of AI </p>\n<h3>Equal Opportunity Statement:</h3>\n<p><a href=\"https://himalayas.app/companies/nebius\">Nebius</a> is an equal opportunity employer. We are committed to fostering an inclusive and diverse wor",
+      "pubDate": 1791509657,
+      "expiryDate": 1796693657,
+      "applicationLink": "https://himalayas.app/companies/nebius/jobs/senior-software-engineer-ydb-team-5851203954",
+      "guid": "https://himalayas.app/companies/nebius/jobs/senior-software-engineer-ydb-team-5851203954"
+    },
+    {
+      "title": "Software Development Engineer- C++/Python - Full Time",
+      "excerpt": "Company: Volga Partners Location: Fully Remote (Occasional office visits 1–2 times per year) Compensation: ₹19–₹24 LPA (based on experience) Job Type: Full-time Start Date: Urgently hiring — must be available to start within 1–2 weeks Work Hours: 8:00 AM – 5:00 PM IST or 9:00 AM – 6:00 PM IST with overlapping Meetings in PST (Collaboration with USA Pacific Time teams) About the Role Volga Partners is looking for a skilled Software Development Engineer with strong expertise in Python backend systems and AI/LLM applications.",
+      "companyName": "Volga Partners",
+      "companySlug": "volga-partners",
+      "companyLogo": "https://cdn-images.himalayas.app/xwgsge3p7jbvbu6h1xlg91y9mxph",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Mid-level"
+      ],
+      "currency": "INR",
+      "locationRestrictions": [
+        "India"
+      ],
+      "timezoneRestrictions": [
+        5.5
+      ],
+      "categories": [
+        "Backend-Engineer",
+        "AI-Engineer",
+        "Software-Engineer",
+        "Python-Developer",
+        "LLM-Engineer",
+        "Software-Developer",
+        "Developer"
+      ],
+      "parentCategories": [
+        "Developer",
+        "Data Science"
+      ],
+      "description": "<p><strong>Company:</strong> <a href=\"https://himalayas.app/companies/volga-partners\">Volga Partners</a><br><strong>Location:</strong> Fully Remote (Occasional office visits 1–2 times per year)<br><strong>Compensation:</strong> ₹19–₹24 LPA (based on experience)<br><strong>Job Type:</strong> Full-time<br><strong>Start Date:</strong> Urgently hiring — must be available to start within 1–2 weeks<br><strong>Work Hours:</strong> 8:00 AM – 5:00 PM IST or 9:00 AM – 6:00 PM IST <strong>with overlapping Meetings in PST</strong><br><em>(Collaboration with USA Pacific Time teams)</em></p><h3>About the Role </h3><p><a href=\"https://himalayas.app/companies/volga-partners\">Volga Partners</a> is looking for a skilled Software Development Engineer with strong expertise in Python backend systems and AI/LLM applications. </p><p>In this role, you will build and maintain production-grade AI-powered systems, integrating large language models into real-world workflows. You will work across backend services, orchestration layers, and data pipelines—ensuring that AI features are reliable, scalable, and performant. </p><p>This is a hands-on engineering role requiring strong problem-solving, system design, and the ability to operate in fast-evolving AI environments. </p><h3>Key Responsibilities </h3><ul><li>Build and maintain backend services and internal tools in Python for AI-powered applications.  </li></ul><ul><li>Integrate LLM APIs into production workflows, including prompt handling, response processing, validation, and retries.  </li></ul><ul><li>Design and implement scalable REST APIs, async workflows, and background job systems.  </li></ul><ul><li>Maintain and enhance components of a multi-language codebase (C#/C++, Python, web technologies) where applicable.  </li></ul><ul><li>Work with structured and unstructured data to prepare inputs, transform outputs, and support downstream systems.  </li></ul><ul><li>Develop systems for prompt management, model routing, response validation, and failure handling.  </li></ul><ul><li>Debug complex issues across backend logic, API integrations, and distributed services.  </li></ul><ul><li>Monitor system performance using telemetry tools and proactively identify and resolve bottlenecks.  </li></ul><ul><li>Automate recurring workflows related to data processing, evaluation, and reporting.  </li></ul><ul><li>Collaborate with cross-functional teams to turn ambiguous product ideas into production-ready features.  </li></ul><ul><li>Contribute to architecture decisions around scalability, performance, and safe use of AI systems.  </li></ul><ul><li>Write clean, testable, and maintainable code while helping establish engineering best practices for AI systems.  </li></ul><h3>What You Bring </h3><p></p><p><strong>Education </strong></p><ul><li><strong>Bachelor’s degree in Computer Science or a related field.  </strong></li></ul><h3><strong>Experience </strong></h3><ul><li><strong>3+ years of professional experience in backend or systems engineering.  </strong></li></ul><ul><li><strong>Strong experience in Python development for production systems.  </strong></li></ul><ul><li><strong>Experience integrating LLM APIs or AI-driven services into real applications.  </strong></li></ul><ul><li><strong>Proven ability to work within large codebases and collaborative environments.  </strong></li></ul><h3><strong>Technical Skillset </strong></h3><h3><strong>Core Skills </strong></h3><ul><li><strong>Python (strong), backend system design, API development  </strong></li></ul><ul><li><strong>Async workflows, job queues, and service orchestration  </strong></li></ul><ul><li><strong>Debugging across APIs, services, and data pipelines  </strong></li></ul><h3><strong>Languages </strong></h3><ul><li><strong>Python, C#, C/C++, JavaScript/TypeScript, SQL  </strong></li></ul><h3><strong>Frameworks &amp; Libraries </strong></h3><ul><li><strong>.NET Web API, ASP.NET (MVC &amp; WebForms), Entity Framework  </strong></li></ul><ul><li><strong>React, Bootstrap, Ajax  </strong></li></ul><ul><li><strong>Testing frameworks (xUnit or similar) ",
+      "pubDate": 1791501775,
+      "expiryDate": 1796685774,
+      "applicationLink": "https://himalayas.app/companies/volga-partners/jobs/software-development-engineer-c-python-full-time",
+      "guid": "https://himalayas.app/companies/volga-partners/jobs/software-development-engineer-c-python-full-time"
+    },
+    {
+      "title": "Senior Risk Analyst",
+      "excerpt": "Ready to do the most impactful work of your career?",
+      "companyName": "Coinbase",
+      "companySlug": "coinbase",
+      "companyLogo": "https://cdn-images.himalayas.app/bw3uazt2dbln3uvrihkgimiwit2b",
+      "employmentType": "Full Time",
+      "minSalary": 167280,
+      "maxSalary": 196800,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Senior"
+      ],
+      "currency": "USD",
+      "locationRestrictions": [
+        "United States"
+      ],
+      "timezoneRestrictions": [
+        -10,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        14
+      ],
+      "categories": [
+        "Risk-Analyst",
+        "Fraud-Analyst",
+        "Security-Analyst",
+        "Trust-And-Safety-Analyst",
+        "Fraud-Specialist",
+        "Senior-Risk-Management-Analyst",
+        "Risk-Management-Analyst"
+      ],
+      "parentCategories": [
+        "Legal",
+        "Finance",
+        "Developer"
+      ],
+      "description": "<div class=\"content-intro\"><p>Ready to do the most impactful work of your career? At <a href=\"https://himalayas.app/companies/coinbase\">Coinbase</a>, we are uncompromising on our mission to increase economic freedom. The bar is high, the environment is intense, and we like it that way. This isn't a place for complacency, it’s a place to be pushed past your perceived limits. If you're ready to build the future of finance alongside people who refuse to settle for \"good enough,\" you belong here. <a href=\"https://himalayas.app/companies/coinbase\">Coinbase</a> is a remote-first, but not remote-only company. Expect to get together quarterly for intense in-person working sessions called “surges.” learn more about working at <a href=\"https://himalayas.app/companies/coinbase\">Coinbase</a>.</p></div><p class=\"mb-2 whitespace-pre-wrap\">As a Senior Analyst on the Risk Analytics team within the Consumer &amp; Business group, you'll own the identification and mitigation of account takeover (ATO) and scam risk across the <a href=\"https://himalayas.app/companies/coinbase\">Coinbase</a> ecosystem. You'll build critical defenses that protect our users and platform integrity, using data to drive risk decisions that impact millions of customers. This is a high-impact role where you'll define risk metrics, shape prevention strategies, and partner cross-functionally with Product, Engineering, and Data Science to stay ahead of evolving threats.</p><h3>What you'll do:</h3><ul>\n<li>Own end-to-end risk controls for ATO and scam prevention, scaling processes to maintain coverage as the business expands into new products and regions.</li>\n<li>Define risk success metrics, build reporting frameworks, and drive continuous improvement by identifying and prioritizing control enhancements.</li>\n<li>Leverage data to assess risk and make decisions impacting large customer segments, measuring and quantifying associated tradeoffs through rigorous analysis.</li>\n<li>Partner with Product, Engineering, and Data Science to develop custom risk management strategies and techniques across the <a href=\"https://himalayas.app/companies/coinbase\">Coinbase</a> product suite.</li>\n<li>Synthesize data findings into clear narratives and recommendations that influence senior risk and product leadership decisions.</li>\n<li>Investigate and mitigate fraudulent and scam activities by reviewing alerts on anomalous customer and transaction behavior.</li>\n</ul><h3>Required Skills and Experience:</h3><ul>\n<li>6+ years of hands-on risk experience in e-commerce or financial services, with at least 2 years focused on combating ATO and scams in a Fraud, Trust and Safety, or Account Security function.</li>\n<li>2+ years of professional experience in data analysis using SQL and Python, including working with large-scale databases.</li>\n<li>Proficiency with business intelligence and data visualization tools (e.g., Tableau, Looker, Superset) to build dashboards and reporting frameworks.</li>\n<li>Proven ability to independently scope and deliver analytics projects while collaborating cross-functionally with Product, Data Science, and Engineering teams.</li>\n<li>Familiarity with blockchain analytics and fraud trends within the cryptocurrency ecosystem.</li>\n<li>Utilizes generative AI responsibly, maintaining human oversight to deliver business-ready outputs and drive measurable improvements in workflow efficiency, cost, and quality.</li>\n</ul><div class=\"content-pay-transparency\"><div class=\"pay-input\">\n<div class=\"description\"><p><strong>Pay Transparency Notice:</strong>Base salary varies by location (see range below). Total compensation may also include equity and bonus eligibility, and benefits (medical, dental, vision, 401(k)). </p></div>\n<div class=\"title\">Annual base salary range (excluding equity and bonus):</div>\n<div class=\"pay-range\">$167,280—$196,800 USD</div>\n</div></div><div class=\"content-conclusion\"><ul>\n<li>\n<strong><em>Application Limit: </em></strong>Candidates may submit a maximum of 3 applications within a 6-month period.</li>\n<li><em><strong>Equal Opportunity Employer: </s",
+      "pubDate": 1791514995,
+      "expiryDate": 1796698994,
+      "applicationLink": "https://himalayas.app/companies/coinbase/jobs/senior-risk-analyst",
+      "guid": "https://himalayas.app/companies/coinbase/jobs/senior-risk-analyst"
+    },
+    {
+      "title": "Senior Software Developer (Backend)",
+      "excerpt": "deine aufgaben • Architektur & Entwicklung skalierbarer Backend-Services mit Django / Django REST Framework • Planung und Review technischer Konzepte in Kundenprojekten & eigenen Start-ups • Aufbau robuster Task-Queues mit Celery + Redis / RabbitMQ / Kafka • Event-Streaming & Integrationen via Kafka oder RabbitMQ (Publizieren, Konsumieren, Schema-Management) • Performance-Tuning, Caching-Strategien und Datenbank-Optimierung (PostgreSQL, ggf.",
+      "companyName": "CloudCops",
+      "companySlug": "cloudcops",
+      "companyLogo": "",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Senior"
+      ],
+      "currency": null,
+      "locationRestrictions": [],
+      "timezoneRestrictions": [
+        -11,
+        -10,
+        -9.5,
+        -9,
+        -8,
+        -7,
+        -6,
+        -5,
+        -4,
+        -3.5,
+        -3,
+        -2,
+        -1,
+        0,
+        1,
+        2,
+        3,
+        3.5,
+        4,
+        4.5,
+        5,
+        5.5,
+        5.75,
+        6,
+        6.5,
+        7,
+        8,
+        8.75,
+        9,
+        9.5,
+        10,
+        10.5,
+        11,
+        12,
+        12.75,
+        13,
+        14
+      ],
+      "categories": [
+        "Backend-Engineer",
+        "Software-Engineer",
+        "Software-Developer",
+        "Python-Developer",
+        "Software-Architect",
+        "Senior-Backend-Development",
+        "Senior-Backend-Engineering",
+        "Senior-Software-Developer"
+      ],
+      "parentCategories": [
+        "Developer"
+      ],
+      "description": "<h3>deine aufgaben</h3><p></p><ul>\n<li>Architektur &amp; Entwicklung skalierbarer Backend-Services mit Django / Django REST Framework</li>\n<li>Planung und Review technischer Konzepte in Kundenprojekten &amp; eigenen Start-ups</li>\n<li>Aufbau robuster Task-Queues mit Celery + Redis / RabbitMQ / Kafka</li>\n<li>Event-Streaming &amp; Integrationen via Kafka oder RabbitMQ (Publizieren, Konsumieren, Schema-Management)</li>\n<li>Performance-Tuning, Caching-Strategien und Datenbank-Optimierung (PostgreSQL, ggf. NoSQL)</li>\n<li>Hands-on-Ownership des gesamten Lifecycles: Docker/Kubernetes, CI/CD, Observability</li>\n<li>Code-Reviews &amp; Mentoring für Mid- und Junior-Entwickler:innen</li>\n<li>Verantwortungsbewusster Einsatz von AI-Coding-Tools – du weißt, wann sie sinnvoll sind und wann nicht</li>\n</ul><p></p><h3>dein profil</h3><p></p><ul>\n<li>≥ 5 Jahre Produktionserfahrung mit Django</li>\n<li>Nachweisbare Open-Source-Contributions</li>\n<li>Tiefes Verständnis von Celery, verteilten Messagesystemen (Kafka/RabbitMQ) und asynchroner Verarbeitung</li>\n<li>Git-Power-User, sicher auf der Shell &amp; im Scripting (Bash/Python)</li>\n<li>Erfahrung mit Containerisierung &amp; Cloud (Docker, Kubernetes, AWS/GCP/Azure)</li>\n<li>Clean-Code-Mentalität</li>\n</ul><p></p><h3>warum wir?</h3><p></p><ul>\n<li>Remote-first - arbeite, wo du am produktivsten bist</li>\n<li>Output-orientierte Kultur: Wir messen Ergebnisse, nicht Arbeitsstunden</li>\n<li>Flache Hierarchien, viel Gestaltungsfreiheit bei Tech-Entscheidungen</li>\n<li>Jahresbudget für Konferenzen, Zertifizierungen &amp; Hardware</li>\n<li>Freie Mitgestaltung deines Vertrages: Bei Arbeitszeit, Urlaub, etc. sind wir flexibel. DU stehst bei uns im Vordergrund</li>\n<li>Ein Team, das Open Source lebt</li>\n</ul><p></p><p>Originally posted on <a href=\"https://himalayas.app\">Himalayas</a></p>",
+      "pubDate": 1791491984,
+      "expiryDate": 1796675983,
+      "applicationLink": "https://himalayas.app/companies/cloudcops/jobs/senior-software-developer-backend",
+      "guid": "https://himalayas.app/companies/cloudcops/jobs/senior-software-developer-backend"
+    },
+    {
+      "title": "Java Software Engineer - Connectors - Remote",
+      "excerpt": "Jitterbit is seeking a Java Backend Software Engineer to join our Engineer team.",
+      "companyName": "Jitterbit",
+      "companySlug": "jitterbit",
+      "companyLogo": "https://cdn-images.himalayas.app/12me7oz3rekq6u2uo23r0j8r1ucn",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "seniority": [
+        "Senior"
+      ],
+      "currency": null,
+      "locationRestrictions": [
+        "India"
+      ],
+      "timezoneRestrictions": [
+        5.5
+      ],
+      "categories": [
+        "Java-Software-Engineer",
+        "Backend-Engineer",
+        "Software-Engineer",
+        "Integration-Engineer",
+        "Remote-Senior-Java-Developer",
+        "Senior-Java-Software-Engineer"
+      ],
+      "parentCategories": [
+        "Developer"
+      ],
+      "description": "<p><a href=\"https://himalayas.app/companies/jitterbit\">Jitterbit</a> is seeking a Java Backend Software Engineer to join our Engineer team. <a href=\"https://himalayas.app/companies/jitterbit\">Jitterbit</a> is an iPaaS (Integration Platform as a Service) and API Management platform that has been recognized in the leader quadrant of Gartner for five straight years. Our customers use our iPaaS and API Manager platform to solve mission-critical business problems. What is our challenge?  To make it easy to integrate our customers’ systems. In order to do this, we need to build and create a SaaS offering that is reliable, stable, and scalable for our customers. Do you have the design, architecting, and code-writing capabilities to take on this challenge? And can succeed in a big way?</p><h3>About the Team</h3><p>The engineering team at <a href=\"https://himalayas.app/companies/jitterbit\">Jitterbit</a> believes that the quality of our code reflects directly on us as professionals. We are relentless about crafting a product that is innovative and delivers a memorable user experience; an experience that is fast and robust. As a key engineer on our team, you will collaborate with other engineers, product management, and operations.  </p><p>Our culture is fun, fast-paced, performance-oriented, open, and collegial. We are constantly pushing the technology envelope to the edge! We are very distributed and our culture is set up to make all of us very effective working remotely. We believe in hiring talent where it exists.</p><h3>Key team values:</h3><ul>\n<li>Quality-first mindset: We believe code quality directly reflects on us as professionals</li>\n<li>Distributed ownership: Engineers own their subsystems end-to-end, from design to production support</li>\n<li>Mentorship culture: Senior engineers actively develop junior talent and foster technical growth</li>\n<li>Innovation mindset: We constantly explore new technologies and architectural patterns to stay ahead</li>\n</ul><h3>About the Job</h3><p>As a Java Backend Software Engineer, you will join our team to design, architect, and implement robust, scalable distributed systems that power our SaaS platform. This role offers significant technical depth and opportunities for engineers ready to grow into more senior responsibilities.</p><h3>Key Responsibilities:</h3><ul>\n<li><p>Design and implement high-performance, fault-tolerant connector integrations and adapters that reliably handle mission-critical business workflows 24x7x365.</p></li>\n<li><p>Architect distributed microservices following cloud-native design patterns (circuit breakers, bulkheads, observability, etc.) for multi-tenant SaaS environments.</p></li>\n<li><p>Build and optimize data pipelines handling multiple protocols (REST, SOAP, GraphQL, gRPC, webhooks) and communication patterns (synchronous, asynchronous, event-driven).</p></li>\n<li><p>Drive technical decisions on critical subsystems; contribute to RFCs and architectural reviews; mentor junior engineers on system design principles.</p></li>\n<li><p>Implement comprehensive monitoring, logging, and tracing; own the operational health and observability of deployed systems.</p></li>\n<li><p>Collaborate with Product, DevOps, and SRE teams to deliver features, resolve production incidents, and improve platform reliability.</p></li>\n<li><p>Champion best practices: code reviews, testing strategies (unit, integration, chaos), security hardening, and performance optimization.</p></li>\n<li><p>Contribute to platform infrastructure and developer experience initiatives that benefit the entire engineering organization.</p></li>\n</ul><h3>About You</h3><p>You are an engineer who can turn ideas into extremely reliable and scalable designs. You code in such a way that other engineers find your code easy to comprehend, modify, and build upon. You believe in the power of Integration and APIs to transform how systems are integrated and how applications are built.</p><p>You will be successful in this role if you: </p><ul>\n<li><p>Enjoy helping and mentoring others around you as you grow and become",
+      "pubDate": 1791489925,
+      "expiryDate": 1796673924,
+      "applicationLink": "https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693",
+      "guid": "https://himalayas.app/companies/jitterbit/jobs/java-software-engineer-connectors-remote-1342384693"
+    }
+  ]
+}
