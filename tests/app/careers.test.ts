@@ -687,6 +687,20 @@ describe('src-careers with real chromium', async () => {
     '/shared-frame': () => ({ body: doc(`<script>try { new SharedWorker('/shared.js?frame'); } catch (e) {}</script>`) }),
     '/shared.js': () => ({ type: 'application/javascript', body: `fetch('/sw-redir').catch(() => 0); fetch('http://direct.linkedin.localhost:' + self.location.port + '/direct').catch(() => 0);` }),
     '/sw-redir': () => ({ status: 302, body: '', headers: { location: `http://shared.linkedin.localhost:${new URL(base).port}/s` } }),
+    // rereview-2 M2: careers pages that feature-detect worker APIs and call them synchronously must still render.
+    ...Object.fromEntries(Object.entries({
+      'inline-sw-register': `if ('serviceWorker' in navigator) { navigator.serviceWorker.register('/sw.js'); } FILL`,
+      'cra-unregister': `FILL if ('serviceWorker' in navigator) { navigator.serviceWorker.ready.then((r) => r.unregister()); }`,
+      'sw-before-render': `if ('serviceWorker' in navigator) { navigator.serviceWorker.getRegistrations().then((rs) => rs.forEach((r) => r.unregister())); } FILL`,
+      'onload-register': `FILL window.addEventListener('load', () => { if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js'); });`,
+      'optional-chain': `navigator.serviceWorker?.register('/sw.js').catch(() => 0); FILL`,
+      'sharedworker-typeof': `if (typeof SharedWorker !== 'undefined') { new SharedWorker('/noop.js'); } FILL`,
+      'sharedworker-in': `if ('SharedWorker' in window) { new SharedWorker('/noop.js'); } FILL`,
+      'sw-controller': `if (navigator.serviceWorker.controller) { console.log('controlled'); } FILL`,
+    }).map(([name, js]) => [`/worker-shape/${name}`, () => ({ body: doc(`<h1>Careers</h1><ul id="jobs"></ul><script>${js.replace('FILL', `document.getElementById('jobs').innerHTML = '<li><a href="/jobs/backend-engineer">Backend Engineer WORKER-SHAPE-OK</a></li>';`)}</script>`) })])),
+    '/sw.js': () => ({ type: 'application/javascript', body: `self.addEventListener('fetch', () => {});` }),
+    '/noop.js': () => ({ type: 'application/javascript', body: '' }),
+    '/worker-probe': () => ({ body: doc(`<p id="p">pending</p><script>document.getElementById('p').textContent = 'in-window:' + ('SharedWorker' in window);</script>`) }),
     '/api/slow-desc': () => ({ type: 'application/json', body: JSON.stringify({ t: 'Real Title', d: 'Full description' }), delayMs: 25_000 }),
   };
 
@@ -856,6 +870,23 @@ describe('src-careers with real chromium', async () => {
     expect(seen.filter((h) => h.includes('/shared.js'))).toEqual([]);
     expect(page.text).toContain('SharedWorker unavailable undefined');
     expect(page.text).toContain('blank frame has none');
+  }, 30_000);
+
+  it.skipIf(!installed)('careers pages that feature-detect service or shared workers still render their job list (rereview-2 M2)', async () => {
+    const shapes = ['inline-sw-register', 'cra-unregister', 'sw-before-render', 'onload-register', 'optional-chain', 'sharedworker-typeof', 'sharedworker-in', 'sw-controller'];
+    const before = hits.length;
+    for (const shape of shapes) {
+      const page = await render(`${base}/worker-shape/${shape}`);
+      expect(page.text, shape).toContain('WORKER-SHAPE-OK');
+    }
+    await sleep(300);
+    // service workers stay blocked by the context and shared workers stay removed: neither script is ever fetched
+    expect(since(before).filter((h) => /\/(sw|noop)\.js$/.test(h))).toEqual([]);
+  }, 60_000);
+
+  it.skipIf(!installed)('SharedWorker is absent from window, not just undefined (rereview-2 M2)', async () => {
+    const page = await render(`${base}/worker-probe`);
+    expect(page.text).toContain('in-window:false');
   }, 30_000);
 
   it.skipIf(!installed)('survives window.open: pop-ups load nothing and the render completes', async () => {
