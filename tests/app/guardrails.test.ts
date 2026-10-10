@@ -175,8 +175,16 @@ describe('G-GROUND', () => {
     const claim = clone(cover);
     claim.paragraphs[1]!.text = claim.paragraphs[1]!.text.replace('2M', '20M');
     expect(onCover(G_GROUND, claim).detail).toMatch(/paragraphs\[1\]: fact f-ct-01's claim is not in the text verbatim/);
+    // (a) one word of the letter: a verb, the employer, or the "where I work now" clause
+    for (const [from, to] of [['I built the payments', 'I designed the payments'], ['At Contoso Retail,', 'At Fabrikam,'], [', where I work now,', ',']] as const) {
+      const w = clone(cover);
+      expect(w.paragraphs[1]!.text).toContain(from);
+      w.paragraphs[1]!.text = w.paragraphs[1]!.text.replace(from, to);
+      expect(onCover(G_GROUND, w).verdict, from).toBe('trip');
+      expect(coverProblems(w, pack, pack).join('; '), from).toMatch(/paragraphs\[1\] is not the template rendering/);
+    }
     const extra = clone(cover);
-    extra.paragraphs.splice(3, 0, { text: 'I am the best engineer you will ever meet.', factIds: [] });
+    extra.paragraphs.splice(3, 0, { text: "I'm the best engineer you will ever meet.", factIds: [] });
     expect(onCover(G_GROUND, extra).detail).toMatch(/paragraphs\[3\] is not the template rendering/);
   });
 
@@ -200,7 +208,7 @@ describe('G-GROUND', () => {
   it('fails closed without a pack, without an output, or on a type it does not know', () => {
     expect(G_GROUND.check(ctxOut(resumePlanner.contract, evidenceIn, resume, null)).detail).toMatch(/no pack/);
     expect(G_GROUND.check({ ...ctxOut(resumePlanner.contract, evidenceIn, resume), output: undefined } as unknown as GuardrailContext).verdict).toBe('trip');
-    expect(G_GROUND.check(ctxOut(evidenceMatcher.contract, env('Scored@1', scored, evidenceMatcher.contract), evidence)).detail).toMatch(/only ResumePlan@1 and CoverPlan@1/);
+    expect(G_GROUND.check(ctxOut(evidenceMatcher.contract, env('Scored@1', scored, evidenceMatcher.contract), evidence)).detail).toMatch(/only ResumePlan@1, CoverPlan@1 and Rendered@1/);
     expect(onResume(G_GROUND, { ...resume, extra: 1 }).detail).toMatch(/not a valid ResumePlan@1/);
   });
 });
@@ -380,7 +388,7 @@ describe('fix round 1: review probes as regressions', () => {
       ['education text changed', mut((x) => { x.education[0]!.text += ' (Hons)'; })],
       ['education dropped', mut((x) => { x.education = []; })],
       ['an unplaced fact hidden', mut((x) => { x.unplaced = ['f-nw-01']; })],
-      ['cover splices two claims', cmut((x) => { x.paragraphs[1]!.text = 'Relevant work: Built the payments reconciliation service in Java and Postgres, processing 40M events a day.'; })],
+      ['cover splices two claims', cmut((x) => { x.paragraphs[1]!.text = 'At Contoso Retail, I built the payments reconciliation service in Java and Postgres, processing 40M events a day.'; })],
       ['cover extra sentence', cmut((x) => { x.paragraphs[3]!.text += ' I also know Rust.'; })],
     ];
     for (const [name, p] of tampered) expect(p.length, name).toBeGreaterThan(0);
@@ -431,13 +439,13 @@ describe('fix round 1: review probes as regressions', () => {
     const { r, c } = planFor({ title: 'Software Engineer' }, ended);
     expect(coverProblems(c, ended, ended)).toEqual([]);
     const present = clone(c);
-    present.paragraphs[0]!.text = present.paragraphs[0]!.text.replace('I most recently worked as a Senior Backend Engineer,', 'I am a Senior Backend Engineer');
+    present.paragraphs[0]!.text = present.paragraphs[0]!.text.replace('I most recently worked as a Senior Backend Engineer and have', "I'm a Senior Backend Engineer with");
     expect(coverProblems(present, ended, ended).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
     const past = clone(cover);
-    past.paragraphs[0]!.text = past.paragraphs[0]!.text.replace('I am a Senior Backend Engineer', 'I most recently worked as a Senior Backend Engineer,');
+    past.paragraphs[0]!.text = past.paragraphs[0]!.text.replace("I'm a Senior Backend Engineer with", 'I most recently worked as a Senior Backend Engineer and have');
     expect(coverProblems(past, pack, pack).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
     const article = clone(cover);
-    article.paragraphs[0]!.text = article.paragraphs[0]!.text.replace('I am a ', 'I am an ');
+    article.paragraphs[0]!.text = article.paragraphs[0]!.text.replace("I'm a ", "I'm an ");
     expect(coverProblems(article, pack, pack).join('; ')).toMatch(/paragraphs\[0\] is not the template rendering/);
     // a past role's title is not claimable by default, so it may not be the headline
     const old = clone(resume);
@@ -449,7 +457,7 @@ describe('fix round 1: review probes as regressions', () => {
   it('C2: a Principal Engineer posting never makes the candidate a Principal Engineer', () => {
     const { r, c } = planFor({ title: 'Principal Engineer' });
     expect(r.headline).toBe('Senior Backend Engineer');
-    expect(c.paragraphs[0]!.text).not.toContain('I am a Principal Engineer');
+    expect(c.paragraphs[0]!.text).not.toContain("I'm a Principal Engineer");
     expect(problems(r)).toEqual([]);
   });
 

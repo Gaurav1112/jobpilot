@@ -58,8 +58,8 @@ export function glyphProblems(text: string, where: string): string[] {
   return out;
 }
 
-/** The answers a document may show (cover letter p4); only these are drawn, so only these are glyph-checked. */
-export const DOCUMENT_ANSWERS: readonly string[] = ['available_from', 'notice_period'];
+/** The answers a document may show (cover letter p4; available_from never is); only these are drawn, so only these are glyph-checked. */
+export const DOCUMENT_ANSWERS: readonly string[] = ['notice_period'];
 
 /**
  * Every glyph and forbidden-term problem in the pack's user-edited text (m8): facts (claim, tech, employer, role),

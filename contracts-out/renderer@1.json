@@ -1,5 +1,5 @@
 {
-  "hash": "dc97aa9ce2e9be2338d838db5b65858488c3271d0f0c93d652d72b6fdfeb8bb9",
+  "hash": "eaa77ff54380a63d331b448b6c8ae777b64a6bf88a956c1d62d2f0c80bbc31cf",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -561,6 +561,7 @@
     "guardrails": {
       "in": [],
       "out": [
+        "G-GROUND",
         "G-FILL",
         "G-NAMING"
       ]
@@ -1197,6 +1198,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

@@ -6,6 +6,7 @@ import { scorePosting, type ScorerPack } from './agents/scorer-lexicon.js';
 import {
   backedKeys,
   buildEvidence,
+  coverSlots,
   displayOf,
   displayRoles,
   firstSeenOf,
@@ -14,9 +15,9 @@ import {
   headlineOf,
   isGapKey,
   keyOfDisplay,
-  planCover,
   planResume,
   postingSlots,
+  renderCover,
   roleContains,
   summaryKeys,
   summarySlots,
@@ -49,8 +50,12 @@ import { CoverPlan, Rendered, ResumePlan } from './types.js';
  *   fact backs; then the whole plan equals its re-derivation. For a CoverPlan: the sanitised posting title and company
  *   are safe (else `unsafe-posting-text: ...`, reported first); its `resume` is the input ResumePlan and passes the
  *   resume checks; every paragraph fact id is a known citeable fact placed in a role whose claim appears verbatim in
- *   the paragraph; then every paragraph equals the template rendering from recomputed slots, with the renderer
- *   placeholders `{availableFrom}` and `{notice}` intact.
+ *   the paragraph (its first letter may be lower-cased after "I"); then every slot is recomputed (`coverSlots`:
+ *   headline, years, covered list, display employer, verb form, "where I work now", same-employer phrasing) and every
+ *   paragraph must equal its template rendering (`renderCover`) byte for byte, with the renderer placeholders `{city}`
+ *   and `{notice}` intact. For a Rendered (out of the renderer, cover letter v2) it also re-renders the filled letter
+ *   from the input's resume plan, the public pack and the full pack (city, notice) and compares the plan paragraphs and
+ *   `text.cover` byte for byte (`renderedProblems`).
  * - **G-NAMING** (out of every writing agent) runs `forbiddenTermStrict` over every string and key of the payload, and
  *   `assertNoForbidden` over the JSON-stringified payload (word-bounded: joined fields must not glue), except the embedded source posting (`scored.posting`,
  *   `evidence.scored.posting`, `resume.evidence.scored.posting`): the JD's own text is not generated output, and the
@@ -223,11 +228,14 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
         if (!citeable(f)) problems.push(`paragraphs[${i}]: fact ${id} is not citeable (${f.status})`);
         if (!RANKABLE.has(f.kind)) problems.push(`paragraphs[${i}]: fact ${id} is a ${f.kind}, not experience or project`);
         else if (!roles.some((r) => r.employer === displayOf(f.employer, pack) && roleContains(r, f, pack))) problems.push(`paragraphs[${i}]: fact ${id} is dated inside no role`);
-        if (!p.text.includes(f.claim)) problems.push(`paragraphs[${i}]: fact ${id}'s claim is not in the text verbatim`);
+        // verbatim, but for its first letter, which is lower-cased after "I" when the claim starts with a past-tense verb
+        if (!p.text.includes(f.claim) && !p.text.includes(`${f.claim.charAt(0).toLowerCase()}${f.claim.slice(1)}`)) problems.push(`paragraphs[${i}]: fact ${id}'s claim is not in the text verbatim`);
       }
     }
   });
-  const expected = attempt(problems, 'paragraphs', () => planCover(cover.resume, pack).paragraphs);
+  // Every slot recomputed (headline, years, covered list, employer display, verb form, where I work now), then the
+  // templates re-rendered: any difference from the plan, to the byte, trips.
+  const expected = attempt(problems, 'paragraphs', () => renderCover(coverSlots(cover.resume, pack)));
   if (expected !== undefined) {
     for (let i = 0; i < Math.max(expected.length, cover.paragraphs.length); i++) {
       if (!same(expected[i] ?? null, cover.paragraphs[i] ?? null)) {
@@ -243,6 +251,42 @@ const report = (id: string, problems: readonly string[]): GuardrailVerdict =>
   problems.length === 0
     ? pass(id)
     : trip(id, problems.slice(0, MAX_PROBLEMS).join('; ') + (problems.length > MAX_PROBLEMS ? `; and ${problems.length - MAX_PROBLEMS} more` : ''));
+
+/**
+ * G-GROUND on the renderer's output (cover letter v2): the letter is re-rendered from scratch and compared byte for
+ * byte. The cover plan is re-derived from the input's resume plan and the public pack (every p1 to p3 slot recomputed),
+ * the p4 fill from the full pack (`contact.city`, `answers.yaml` `notice_period`), then the cover document text; the
+ * output's plan paragraphs and `text.cover` must equal them exactly. Details name the paragraph or line, never its text.
+ */
+function renderedProblems(ctx: GuardrailContext, pack: WritingPack): string[] {
+  if (ctx.fullPack === undefined || ctx.fullPack === null) return ['no full pack, so the letter cannot be re-rendered'];
+  const full = RenderPack.safeParse(ctx.fullPack);
+  if (!full.success) return ['the full pack lacks contact, answers or naming'];
+  const input = CoverPlan.schema.safeParse(ctx.input.payload);
+  if (ctx.input.type !== CoverPlan.id || !input.success) return [`the input is not a valid ${CoverPlan.id}`];
+  const out = Rendered.schema.safeParse(ctx.output?.payload);
+  if (!out.success) return [`not a valid ${Rendered.id}`];
+  const problems: string[] = [];
+  const paragraphs = attempt(problems, 'paragraphs', () => renderCover(coverSlots(input.data.resume, pack)));
+  if (paragraphs === undefined) return problems;
+  paragraphs.forEach((p, i) => {
+    if (!same(p, input.data.paragraphs[i] ?? null)) problems.push(`paragraphs[${i}] is not the template rendering of its computed slots and facts`);
+  });
+  if (input.data.paragraphs.length !== paragraphs.length) problems.push(`the input has ${input.data.paragraphs.length} paragraphs, the slots give ${paragraphs.length}`);
+  const models = attempt(problems, 'letter', () => renderModels({ ...input.data, paragraphs }, full.data));
+  if (models === undefined) return problems;
+  const want = modelText(models.cover);
+  if (!same(models.plan.paragraphs, out.data.plan.paragraphs)) {
+    const i = models.plan.paragraphs.findIndex((p, j) => !same(p, out.data.plan.paragraphs[j] ?? null));
+    problems.push(`plan.paragraphs[${i < 0 ? models.plan.paragraphs.length : i}] is not the letter re-rendered from recomputed slots`);
+  }
+  if (out.data.text.cover !== want) {
+    const got = out.data.text.cover.split('\n');
+    const line = want.split('\n').findIndex((l, j) => l !== got[j]);
+    problems.push(`text.cover line ${line < 0 ? want.split('\n').length + 1 : line + 1} is not the letter re-rendered from recomputed slots`);
+  }
+  return problems;
+}
 
 export const G_GROUND: Guardrail = {
   id: 'G-GROUND',
@@ -274,7 +318,8 @@ export const G_GROUND: Guardrail = {
       const rest = coverProblems(r.data, pack, ctx.pack).filter((p) => !unsafe.includes(p));
       return report('G-GROUND', [...unsafe, ...problems, ...rest]);
     }
-    return trip('G-GROUND', `G-GROUND checks only ResumePlan@1 and CoverPlan@1, not ${type}`);
+    if (type === Rendered.id) return report('G-GROUND', renderedProblems(ctx, pack));
+    return trip('G-GROUND', `G-GROUND checks only ResumePlan@1, CoverPlan@1 and Rendered@1, not ${type}`);
   },
 };
 

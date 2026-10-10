@@ -60,7 +60,7 @@ data; tests use `tests/fixtures/pack/` (a fictional candidate).
 | `naming.yaml` | P0 | `employerDisplay` map (source employer string → display name) and `forbiddenTerms[]`; G-NAMING fails any output that contains a forbidden term |
 | `offers.yaml` | P2 | `floor: {amount: 1200000, currency: INR, period: year, basis: base}`. Equity is never counted |
 | `fx.yaml` | P0 | pinned rates to INR with an `asOf` date; the dashboard warns when `asOf` is more than 30 days old |
-| `answers.yaml` | P1/P2 | screening answers (notice, work mode, relocation, CTC). Shown on job pages. Of all answers only `available_from` and `notice_period` may appear in a document, and only in cover-letter p4, filled by the renderer (Task 10); a Task 10 output guardrail re-checks the filled text against `answers.yaml` verbatim, and G-NAMING runs on the rendered text |
+| `answers.yaml` | P1/P2 | screening answers (notice, work mode, relocation, CTC). Shown on job pages. Of all answers only `notice_period` may appear in a document, and only in cover-letter p4, filled by the renderer (Task 10; `available_from` never does since cover letter v2); G-FILL and G-GROUND re-check the filled text against `answers.yaml`, and G-NAMING runs on the rendered text |
 | `watchlist.yaml` | P0 | `{company, ats: greenhouse, lever or ashby, slug, hiresInIndia: bool}` |
 | `feeds.yaml` | P0 | enabled aggregator feeds |
 | `policy.user.yaml` | — | tightening-only overrides (kernel `mergePolicy`) |
@@ -295,8 +295,12 @@ backs it; education facts back nothing.
 
 **resume-planner.**
 - **Headline:** the `targets.claimableTitles` entry with the best word overlap with the
-  posting title, verbatim; a tie goes to the most recent role title (amended in Task 9 fix
-  round 1: `targets.titles` are titles the user aims for, so they are never claimed).
+  posting title, verbatim (`targets.titles` are titles the user aims for, so they are never
+  claimed). A seniority word (senior, sr, staff, lead, principal, distinguished) in the entry
+  counts as matched when the posting title has any seniority word. A tie goes to the
+  claimableTitles order, never to the current role's title (amended in cover letter v2: a
+  "Staff Software Engineer" posting no longer opened with an employer-specific "Founding
+  Engineer").
 - **Summary:** a fixed template. `{years}+ years` is computed from `roles.yaml` dates: whole
   years of non-overlapping role months up to `experience.asOf` (never the posting's date).
   The top 4 terms are covered JD terms backed by a citeable *experience* fact dated inside a
@@ -313,25 +317,36 @@ backs it; education facts back nothing.
 - **Certifications:** facts of kind `cert`. **Education:** facts of kind `education`,
   verbatim.
 
-**cover-writer.** A fixed four-paragraph template:
-1. The role and the company (sanitised posting text: markup, entities and control characters
+**cover-writer.** A fixed four-paragraph template (cover letter v2; every template string is in
+`src/app/agents/writing/templates.ts`, and the letter says "I'm", never "I am"):
+1. "I'm applying for the {title} role at {company}." (sanitised posting text: markup, entities and control characters
    removed, NFKC, whitespace collapsed, never truncated; a slot longer than 120 characters, or
    with a first-person pronoun, more than 14 words, a word over 40 characters, a sentence end followed by more text, a URL or email, or a
    character outside letters, digits, whitespace and `&,./()-+#':;|–—` blocks the job's
-   documents as `unsafe-posting-text`), the user's claimable title and years, and "I am based
-   in India and am looking for a fully remote role." The source is not named (amended in
-   Task 9 fix round 1: it is not useful to a recruiter).
-2. The two highest-ranked placed facts, verbatim, introduced by a fixed sentence.
-3. The third fact plus the covered-term sentence, which lists only covered terms whose key or
-   display appears literally in a cited claim ("…; each appears in the work above.", or "…;
-   it appears in the work above." for one term).
-4. "I am available from {availableFrom}, with a notice period of {notice}. Thank you for your
-   time." The cover-writer reads only the public pack, so it leaves both placeholders; the
-   renderer fills them from `answers.yaml` `available_from` and `notice_period` and omits the
-   first sentence when either is missing (see §3).
+   documents as `unsafe-posting-text`). Then "I'm {a|an} {headline} with {years}+ years of experience." (with no
+   ongoing role: "I most recently worked as {a|an} {title} and have {years}+ years of experience."). Then, when any
+   qualify, "The role asks for {up to three terms}, and I've used {it|both|all three} in my work.", listing covered
+   terms that a citeable experience fact placed in a role backs (the summary's terms). Then "{One example follows.|Two
+   examples follow.|Three examples follow.}".
+2. and 3. The three highest-ranked facts placed in a role (two in p2, one in p3), each anchored to its role's display
+   employer: "At {employer}, I {claim}" when the claim starts with a past-tense verb (sentence case, ending in -ed, or a
+   fixed irregular list; a fixed list of -ed adjectives such as "Distributed" or "Embedded" is refused), its first
+   letter lower-cased; "At {employer}: {claim}" verbatim otherwise. The first mention of an ongoing role's employer
+   reads "At {employer}, where I work now, I ...". The same employer as the sentence just before (same paragraph):
+   "There I also {claim}"; one named earlier: "Also at {employer}, I ..." (or "Also at {employer}: ..."). A fact no
+   role holds is never cited. No sentence names a missing or gap term.
+4. "I'm based in {city}, looking for a fully remote role, and available after {notice}. Thank you for considering my
+   application." The cover-writer reads only the public pack, so it leaves `{city}` and `{notice}`; the renderer fills
+   them from `contact.yaml` `city` and `answers.yaml` `notice_period`: "N day|week|month[s]" reads "a N-day notice
+   period", any other shape "a notice period of {notice}". A missing notice drops the notice clause ("I'm based in
+   {city} and looking for a fully remote role."), an empty city the city clause. `available_from` never reaches a
+   document (a calendar date goes stale); it stays a screening answer. The dashboard's short cover note is the letter's
+   opening sentence and its first evidence sentence.
 
-Every sentence is either a template literal or a verbatim fact claim. Each paragraph records
-its fact ids.
+Every sentence is either a template literal or a verbatim fact claim (its first letter lower-cased only after "I").
+Each paragraph records its fact ids. G-GROUND recomputes every slot (headline, years, covered list, display employer,
+verb form, notice phrase, city) and re-renders the letter byte for byte, on the cover-writer's plan and again on the
+renderer's filled letter; any difference trips.
 
 **renderer.** Contact details (P1) are merged in only here.
 - **PDF** via `pdfkit`: built-in Helvetica, a single column, literal `•` bullets, no

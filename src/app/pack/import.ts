@@ -796,7 +796,7 @@ function build(o: ImportOptions): Built {
       floor: { amount: o.floorInr, currency: 'INR', period: 'year', basis: 'base' },
     }),
     'fx.yaml': yamlOf('Rates to INR; the dashboard warns when asOf is more than 30 days old.', fx),
-    'answers.yaml': yamlOf('Screening answers (P1), from the Desk settings. Only available_from and notice_period may appear in a document.', { ...answers }),
+    'answers.yaml': yamlOf('Screening answers (P1), from the Desk settings. Only notice_period may appear in a document.', { ...answers }),
     'watchlist.yaml': yamlOf('Boards to watch: the Desk job boards (all found as remote-India), plus the extra verified entries.', { watchlist }),
     'feeds.yaml': yamlOf('', DEFAULT_FEEDS),
     'policy.user.yaml': yamlOf('Tightening-only policy overrides (kernel mergePolicy).', {}),

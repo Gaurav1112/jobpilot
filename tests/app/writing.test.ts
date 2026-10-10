@@ -4,7 +4,29 @@ import { coverWriter } from '../../src/app/agents/writing/cover-writer.js';
 import { evidenceMatcher } from '../../src/app/agents/writing/evidence-matcher.js';
 import { buildEvidence, firstSeenOf, planCover, planResume, yearsOf, type WritingPack } from '../../src/app/agents/writing/grounded.js';
 import { resumePlanner } from '../../src/app/agents/writing/resume-planner.js';
-import { articleFor, COVER_P1, COVER_P1_PAST, COVER_P3_TAIL, COVER_P3_TAIL_ONE, COVER_P4, joinList, RENDER_PLACEHOLDERS, renderSummary, sanitisePostingText, SUMMARY_TEMPLATE, unsafePostingText } from '../../src/app/agents/writing/templates.js';
+import {
+  articleFor,
+  COVER_EXAMPLES,
+  COVER_OPENING,
+  COVER_P4,
+  COVER_TERMS,
+  COVER_TITLE_NOW,
+  COVER_TITLE_PAST,
+  EVIDENCE_ALSO_AT,
+  EVIDENCE_ALSO_AT_COLON,
+  EVIDENCE_AT,
+  EVIDENCE_AT_COLON,
+  EVIDENCE_AT_NOW,
+  EVIDENCE_THERE,
+  evidenceSentence,
+  joinList,
+  RENDER_PLACEHOLDERS,
+  renderSummary,
+  sanitisePostingText,
+  startsWithPastVerb,
+  SUMMARY_TEMPLATE,
+  unsafePostingText,
+} from '../../src/app/agents/writing/templates.js';
 import { scorePosting } from '../../src/app/agents/scorer-lexicon.js';
 import { tagIs } from '../../src/app/lexicon.js';
 import { loadPack } from '../../src/app/pack/load.js';
@@ -202,19 +224,16 @@ const EXPECTED_RESUME_BODY = {
 
 const EXPECTED_PARAGRAPHS = [
   {
-    text: 'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Senior Backend Engineer with 10+ years of experience. I am based in India and am looking for a fully remote role.',
+    // The covered terms backed by an experience fact placed in a role, top three (aws is backed only by a cert).
+    text: "I'm applying for the Senior Backend Engineer (Java) role at Acme Payments. I'm a Senior Backend Engineer with 10+ years of experience. The role asks for Java, Spring and Kafka, and I've used all three in my work. Three examples follow.",
     factIds: [],
   },
   {
-    text: 'Relevant work: Built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly. Led the design of an event-driven order pipeline on Kafka handling 40M events a day.',
+    text: 'At Contoso Retail, I built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly. At Northwind Labs, where I work now, I led the design of an event-driven order pipeline on Kafka handling 40M events a day.',
     factIds: ['f-ct-01', 'f-nw-01'],
   },
-  {
-    // fintech is covered, but the cited text says "payments" (a synonym), so it is not listed.
-    text: 'Built REST services in Java with Spring and MySQL for the store-locator product. The role asks for Java, Spring, Kafka, PostgreSQL and event-driven; each appears in the work above.',
-    factIds: ['f-fb-01'],
-  },
-  { text: 'I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.', factIds: [] },
+  { text: 'At Fabrikam, I built REST services in Java with Spring and MySQL for the store-locator product.', factIds: ['f-fb-01'] },
+  { text: "I'm based in {city}, looking for a fully remote role, and available after {notice}. Thank you for considering my application.", factIds: [] },
 ];
 
 describe('resume-planner', () => {
@@ -283,19 +302,61 @@ describe('resume-planner', () => {
     expect(plan.roles[3]?.bullets).toEqual([]);
   });
 
-  it('picks the headline from the claimable titles only, verbatim; a tie goes to the most recent role title (fix C2)', () => {
+  it('picks the headline from the claimable titles only, verbatim; a tie goes to the claimableTitles order', () => {
     const head = (title: string, p: WritingPack = pack) => planResume(buildEvidence(scoredOf(posting({ title }), p), p), p).headline;
     // The default claimable titles are the ongoing roles' titles: here only Senior Backend Engineer (round 2 I-R1).
     for (const t of ['Principal Engineer', 'Software Engineer', 'Lead Software Engineer', 'Software Engineer II, Payments', 'Data Wrangler']) {
       expect(head(t), t).toBe('Senior Backend Engineer');
       const p1 = planCover(planResume(buildEvidence(scoredOf(posting({ title: t })), pack), pack), pack).paragraphs[0]!.text;
-      expect(p1, t).toContain('I am a Senior Backend Engineer with 10+ years');
-      expect(p1, t).not.toMatch(/I am an? Software Engineer/); // a past title is never stated as the current one
+      expect(p1, t).toContain("I'm a Senior Backend Engineer with 10+ years");
+      expect(p1, t).not.toMatch(/I'm an? Software Engineer/); // a past title is never stated as the current one
     }
     const custom = freezePack({ ...pack, targets: { ...pack.targets, claimableTitles: ['Backend Engineer', 'Software Engineer', 'SDE 3', 'Senior Backend Engineer'] } }) as WritingPack;
     expect(head('SDE 3, Payments', custom)).toBe('SDE 3'); // verbatim, no re-casing
-    expect(head('Backend Engineer', custom)).toBe('Senior Backend Engineer'); // Backend Engineer and it tie at 2: the role title wins
+    expect(head('Backend Engineer', custom)).toBe('Backend Engineer'); // it and Senior Backend Engineer tie at 2: list order wins
     expect(head('Lead Software Engineer', custom)).toBe('Software Engineer');
+  });
+
+  describe('(f) title selection: the claimable title closest to the posting title, never the current role title by default', () => {
+    // The current role is "Founding Engineer"; the user may claim it, but it is employer-specific.
+    const founding = (claimableTitles: string[]) =>
+      freezePack({
+        ...pack,
+        roles: pack.roles.map((r) => (r.end === 'present' ? { ...r, title: 'Founding Engineer' } : r)),
+        facts: pack.facts.map((f) => (f.role === 'Senior Backend Engineer' ? { ...f, role: 'Founding Engineer' } : f)),
+        targets: { ...pack.targets, claimableTitles },
+      }) as WritingPack;
+    const head = (title: string, p: WritingPack) => {
+      const r = planResume(buildEvidence(scoredOf(posting({ title }), p), p), p);
+      return { headline: r.headline, summary: r.summary.text, p1: planCover(r, p).paragraphs[0]!.text };
+    };
+
+    it('a Staff Software Engineer posting picks the closest claimable title, in the resume headline, summary and letter', () => {
+      const p = founding(['Founding Engineer', 'Senior Backend Engineer', 'Senior Software Engineer']);
+      const x = head('Staff Software Engineer', p);
+      expect(x.headline).toBe('Senior Software Engineer'); // software + engineer, and a seniority word against Staff
+      expect(x.summary.startsWith('Senior Software Engineer with 10+ years of experience.')).toBe(true);
+      expect(x.p1).toContain("I'm a Senior Software Engineer with 10+ years of experience.");
+      expect(`${x.headline} ${x.summary} ${x.p1}`).not.toContain('Founding Engineer');
+    });
+
+    it('counts any seniority word as matching any other, so Founding Engineer loses a Staff posting even when listed first', () => {
+      // The live shape: overlap alone ties (Engineer) and the list order would pick Founding Engineer.
+      const p = founding(['Founding Engineer', 'Senior Backend Engineer']);
+      expect(head('Staff Software Engineer', p).headline).toBe('Senior Backend Engineer');
+      expect(head('Senior Software Engineer, Backend', p).headline).toBe('Senior Backend Engineer');
+      expect(head('Lead Engineer', p).headline).toBe('Senior Backend Engineer');
+      // a posting with no seniority word: a plain tie, so the list order decides
+      expect(head('Software Engineer', p).headline).toBe('Founding Engineer');
+      // the current role title wins only when it is claimable and the best match
+      expect(head('Founding Engineer (Platform)', p).headline).toBe('Founding Engineer');
+      expect(head('Founding Engineer (Platform)', founding(['Senior Backend Engineer'])).headline).toBe('Senior Backend Engineer');
+    });
+
+    it('breaks a tie by claimableTitles order, never by which title the current role has', () => {
+      expect(head('Software Engineer', founding(['Senior Backend Engineer', 'Founding Engineer'])).headline).toBe('Senior Backend Engineer');
+      expect(head('Platform Engineer', founding(['Backend Engineer', 'Founding Engineer'])).headline).toBe('Backend Engineer');
+    });
   });
 
   it('with no ongoing role, uses the most recent role title in the past-tense p1 (round 2 I-R1)', () => {
@@ -303,7 +364,7 @@ describe('resume-planner', () => {
     const r = planResume(buildEvidence(scoredOf(posting({ title: 'Software Engineer' }), ended), ended), ended);
     expect(r.headline).toBe('Senior Backend Engineer');
     expect(planCover(r, ended).paragraphs[0]!.text).toBe(
-      'I am applying for the Software Engineer role at Acme Payments. I most recently worked as a Senior Backend Engineer, with 10+ years of experience. I am based in India and am looking for a fully remote role.',
+      "I'm applying for the Software Engineer role at Acme Payments. I most recently worked as a Senior Backend Engineer and have 10+ years of experience. The role asks for Java, Spring and PostgreSQL, and I've used all three in my work. Three examples follow.",
     );
   });
 
@@ -317,7 +378,7 @@ describe('resume-planner', () => {
     ];
     for (const [t, a] of cases) expect(articleFor(t), t).toBe(a);
     const custom = freezePack({ ...pack, targets: { ...pack.targets, claimableTitles: ['Engineering Manager'] } }) as WritingPack;
-    expect(planCover(planResume(buildEvidence(scoredOf(posting(), custom), custom), custom), custom).paragraphs[0]!.text).toContain('I am an Engineering Manager with');
+    expect(planCover(planResume(buildEvidence(scoredOf(posting(), custom), custom), custom), custom).paragraphs[0]!.text).toContain("I'm an Engineering Manager with");
   });
 });
 
@@ -325,11 +386,21 @@ describe('summary template', () => {
   const base = { title: 'Backend Engineer', years: 10, employer: 'Northwind Labs' };
   it('keeps the exact template strings', () => {
     expect(SUMMARY_TEMPLATE).toBe('{title} with {years}+ years of experience. Core skills: {top1}, {top2}, {top3} and {top4}. Currently at {employer}.');
-    expect(COVER_P1).toBe('I am applying for the {title} role at {company}. I am {article} {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.');
-    expect(COVER_P1_PAST).toBe('I am applying for the {title} role at {company}. I most recently worked as {article} {targetTitle}, with {years}+ years of experience. I am based in India and am looking for a fully remote role.');
-    expect(COVER_P3_TAIL).toBe('The role asks for {coveredList}; each appears in the work above.');
-    expect(COVER_P3_TAIL_ONE).toBe('The role asks for {coveredList}; it appears in the work above.');
-    expect(COVER_P4).toBe('I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.');
+    expect(COVER_OPENING).toBe("I'm applying for the {title} role at {company}.");
+    expect(COVER_TITLE_NOW).toBe("I'm {article} {targetTitle} with {years}+ years of experience.");
+    expect(COVER_TITLE_PAST).toBe('I most recently worked as {article} {targetTitle} and have {years}+ years of experience.');
+    expect(COVER_TERMS).toBe("The role asks for {coveredList}, and I've used {quantifier} in my work.");
+    expect(COVER_EXAMPLES).toEqual({ 1: 'One example follows.', 2: 'Two examples follow.', 3: 'Three examples follow.' });
+    expect(EVIDENCE_AT).toBe('At {employer}, I {claim}');
+    expect(EVIDENCE_AT_NOW).toBe('At {employer}, where I work now, I {claim}');
+    expect(EVIDENCE_AT_COLON).toBe('At {employer}: {claim}');
+    expect(EVIDENCE_THERE).toBe('There I also {claim}');
+    expect(EVIDENCE_ALSO_AT).toBe('Also at {employer}, I {claim}');
+    expect(EVIDENCE_ALSO_AT_COLON).toBe('Also at {employer}: {claim}');
+    expect(COVER_P4).toBe("I'm based in {city}, looking for a fully remote role, and available after {notice}. Thank you for considering my application.");
+  });
+  it("uses I'm, never I am, in every cover template", () => {
+    for (const t of [COVER_OPENING, COVER_TITLE_NOW, COVER_TITLE_PAST, COVER_TERMS, COVER_P4]) expect(t, t).not.toMatch(/\bI am\b/);
   });
   it('drops missing term slots, joining the rest with ", " and " and "', () => {
     expect(renderSummary({ ...base, top1: 'java', top2: 'kafka', top3: 'aws', top4: 'redis' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java, kafka, aws and redis. Currently at Northwind Labs.');
@@ -379,63 +450,109 @@ describe('cover-writer', () => {
     expect(cover).toEqual({ jobKey: '0123456789abcdef', resume, paragraphs: EXPECTED_PARAGRAPHS });
   });
 
-  it('leaves exactly the two renderer placeholders, whose answers.yaml keys the fixture pack has', () => {
+  it('leaves exactly the two renderer placeholders; available_from is never one', () => {
     const resume = planResume(buildEvidence(scoredOf(posting()), pack), pack);
     const text = planCover(resume, pack).paragraphs.map((p) => p.text).join('\n');
     expect(text.match(/\{[A-Za-z]+\}/g)).toEqual([...RENDER_PLACEHOLDERS]);
+    expect(RENDER_PLACEHOLDERS).toEqual(['{city}', '{notice}']);
+    expect(text).not.toMatch(/available from|availableFrom/i);
     const { pack: full } = loadPack(packDir);
-    expect(full.answers).toMatchObject({ available_from: '1 November 2026', notice_period: '30 days' });
+    expect(full.answers).toMatchObject({ notice_period: '30 days' });
+    expect(full.contact.city).toBe('Pune');
     expect(Object.keys(pack)).not.toContain('answers'); // the cover-writer never sees them
+    expect(Object.keys(pack)).not.toContain('contact');
   });
 
-  it('lists in p3 only the covered terms whose key or display the cited claims literally hold (fix I5)', () => {
+  it('never mentions a missing or gap skill', () => {
+    const resume = planResume(buildEvidence(scoredOf(posting()), pack), pack);
+    const text = planCover(resume, pack).paragraphs.map((p) => p.text).join(' ');
+    expect(resume.missing).toEqual(['elasticsearch', 'grpc', 'scala']);
+    for (const t of ['Elasticsearch', 'gRPC', 'Scala', 'appears in the work above', 'Relevant work']) expect(text).not.toContain(t);
+  });
+
+  it('(b) anchors each fact to its display employer: a past-tense verb lower-cased after "I", anything else after a colon', () => {
+    const at = (claim: string, extra: Partial<Parameters<typeof evidenceSentence>[0]> = {}) => evidenceSentence({ employer: 'Fabrikam', claim, ongoing: false, after: 'first', ...extra });
+    expect(at('Built REST services.')).toBe('At Fabrikam, I built REST services.');
+    expect(at('Led the platform team')).toBe('At Fabrikam, I led the platform team.');
+    expect(at('Re-architected the billing flow.')).toBe('At Fabrikam, I re-architected the billing flow.');
+    expect(at('Shipped the v2 API.', { ongoing: true })).toBe('At Fabrikam, where I work now, I shipped the v2 API.');
+    // not a past-tense verb: the claim stays verbatim after a colon
+    expect(at('Mentorship of four engineers.')).toBe('At Fabrikam: Mentorship of four engineers.');
+    expect(at('Kafka pipeline handling 40M events a day.', { ongoing: true })).toBe('At Fabrikam: Kafka pipeline handling 40M events a day.');
+    expect(at('Distributed tracing rollout across 40 services.')).toBe('At Fabrikam: Distributed tracing rollout across 40 services.');
+    expect(at('Embedded systems work on payment terminals.')).toBe('At Fabrikam: Embedded systems work on payment terminals.');
+    expect(at('Speed-up of the nightly batch by 4x.')).toBe('At Fabrikam: Speed-up of the nightly batch by 4x.');
+    expect(at('AWS migration lead for three products.')).toBe('At Fabrikam: AWS migration lead for three products.');
+    expect(at('SEEDED the cache.')).toBe('At Fabrikam: SEEDED the cache.'); // not sentence case: never re-cased
+    // the same employer again
+    expect(at('Wrote the runbooks.', { after: 'adjacent' })).toBe('There I also wrote the runbooks.');
+    expect(at('On-call owner.', { after: 'adjacent' })).toBe('Also at Fabrikam: On-call owner.');
+    expect(at('Wrote the runbooks.', { after: 'again' })).toBe('Also at Fabrikam, I wrote the runbooks.');
+    expect(at('On-call owner.', { after: 'again' })).toBe('Also at Fabrikam: On-call owner.');
+    for (const w of ['Built', 'Led', 'Ran', 'Wrote', 'Drove', 'Made', 'Set', 'Cut', 'Grew', 'Took', 'Began', 'Won', 'Shipped', 'Owned', 'Co-led']) expect(startsWithPastVerb(`${w} x`), w).toBe(true);
+    for (const w of ['Need', 'Seed', 'Red', 'Speed', 'Feed', 'Mentorship', 'Distributed', 'Embedded', 'Advanced', 'Ed', 'I', 'Go', 'Java']) expect(startsWithPastVerb(`${w} x`), w).toBe(false);
+  });
+
+  it('(b) in the planned letter, a claim that starts with a non-verb uses the colon form, verbatim', () => {
+    const nv = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-ct-01' ? { ...f, claim: 'Payments reconciliation service in Java and Postgres, processing 2M transactions nightly.' } : f)) }) as WritingPack;
+    const c = planCover(planResume(buildEvidence(scoredOf(posting(), nv), nv), nv), nv);
+    expect(c.paragraphs[1]!.text.startsWith('At Contoso Retail: Payments reconciliation service in Java and Postgres, processing 2M transactions nightly. ')).toBe(true);
+    expect(c.paragraphs[1]!.factIds[0]).toBe('f-ct-01');
+  });
+
+  it('(c) shows the display employer, never the raw one, when a fact of the forbidden raw employer is cited', () => {
+    // f-nw-04's raw employer names the forbidden term; make it the top fact.
+    const top = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-nw-04' ? { ...f, tech: ['java', 'kafka', 'postgres', 'spring'] } : f)) }) as WritingPack;
+    const c = planCover(planResume(buildEvidence(scoredOf(posting(), top), top), top), top);
+    expect(c.paragraphs[1]!.factIds[0]).toBe('f-nw-04');
+    expect(c.paragraphs[1]!.text.startsWith('At Northwind Labs, where I work now, I mentored four engineers and ran the weekly design review for the platform group.')).toBe(true);
+    const text = c.paragraphs.map((p) => p.text).join(' ');
+    expect(text).not.toMatch(/initech|GCC/i);
+    expect(() => assertNoForbidden(text, pack.naming)).not.toThrow();
+  });
+
+  it('a second fact from the same employer says "There I also"; a later one in another paragraph "Also at"', () => {
     const jd = 'Stack: Java, Spring Boot, Kafka, microservices, PostgreSQL, event-driven design, AWS, Kubernetes, Redis.';
     const resume = planResume(buildEvidence(scoredOf(posting({ title: 'Lead Software Engineer', descriptionText: jd })), pack), pack);
-    const p3 = planCover(resume, pack).paragraphs[2]!;
-    // The cited facts are f-nw-01, f-nw-02 and f-nw-03: java and spring are in their tech tags, but no claim names them.
     expect(resume.evidence.ranked.slice(0, 3).map((r) => r.factId)).toEqual(['f-nw-01', 'f-nw-02', 'f-nw-03']);
-    expect(p3.text).toBe(
-      'Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes. The role asks for Kafka, microservices, event-driven, Kubernetes and Redis; each appears in the work above.',
-    );
+    expect(planCover(resume, pack).paragraphs.slice(1, 3)).toEqual([
+      {
+        text: 'At Northwind Labs, where I work now, I led the design of an event-driven order pipeline on Kafka handling 40M events a day. There I also cut p99 latency of the pricing service from 800 ms to 180 ms by introducing a Redis read-through cache.',
+        factIds: ['f-nw-01', 'f-nw-02'],
+      },
+      { text: 'Also at Northwind Labs, I migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.', factIds: ['f-nw-03'] },
+    ]);
   });
 
-  it('p3 applies the ambiguous-word context rules of hasTerm (round 2 I-R2)', () => {
-    // f-nw-01 is always cited first; a low-ranked Fabrikam project backs the tech so it is covered.
-    // f-fb-01 ("... in Java with Spring and MySQL ...") is reworded so that no other cited claim names Spring.
-    const claims = (claim: string): Record<string, string> => ({ 'f-nw-01': claim, 'f-fb-01': 'Built REST services in Java and MySQL for the store-locator product.' });
-    const listedFor = (claim: string, tag: string, jd: string) => {
-      const pk = freezePack({
-        ...pack,
-        facts: [
-          ...pack.facts.map((f) => ({ ...f, claim: claims(claim)[f.id] ?? f.claim })),
-          { id: 'f-fb-77', claim: 'Toy script.', tech: [tag], employer: 'Fabrikam', period: '2016-08..2016-09', kind: 'project', status: 'verified' },
-        ],
-      }) as WritingPack;
-      const c = planCover(planResume(buildEvidence(scoredOf(posting({ descriptionText: `${jd} and Kafka. Java, Spring Boot, PostgreSQL, payments.` }), pk), pk), pk), pk);
-      expect(c.paragraphs.flatMap((p) => p.factIds)).toContain('f-nw-01');
-      return c.paragraphs[2]!.text.replace(/^.*The role asks for /, '').replace(/; (each|it) appears.*$/, '').split(/, | and /);
-    };
-    expect(listedFor('Helped the team go live with a Kafka order pipeline handling 40M events a day.', 'go', 'Golang')).not.toContain('Go');
-    expect(listedFor('Helped teams react quickly to Kafka order pipeline incidents at 40M events a day.', 'react', 'React')).not.toContain('React');
-    expect(listedFor('Ran spring hiring for the Kafka order pipeline team handling 40M events a day.', 'spring', 'Spring Boot')).not.toContain('Spring');
-    expect(listedFor('Built Go services for a Kafka order pipeline handling 40M events a day.', 'go', 'Golang')).toContain('Go');
-    expect(listedFor('Built React frontends for a Kafka order pipeline handling 40M events a day.', 'react', 'React')).toContain('React');
+  it('p1 lists at most three covered terms an experience fact backs, with "it" or "both" for fewer', () => {
+    const p1 = (descriptionText: string) => planCover(planResume(buildEvidence(scoredOf(posting({ descriptionText })), pack), pack), pack).paragraphs[0]!.text;
+    expect(p1('Java only.')).toContain("The role asks for Java, and I've used it in my work.");
+    expect(p1('Java and Kafka.')).toContain("The role asks for Java and Kafka, and I've used both in my work.");
+    // AWS is backed only by a cert: never claimed as used in work
+    expect(p1('AWS and Kafka.')).toContain("The role asks for Kafka, and I've used it in my work.");
+    // nothing covered: no terms sentence, the examples still follow
+    expect(p1('Build things.')).toBe("I'm applying for the Senior Backend Engineer (Java) role at Acme Payments. I'm a Senior Backend Engineer with 10+ years of experience. Three examples follow.");
   });
 
-  it('uses the singular sentence for one listed term', () => {
-    const resume = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Java only.' })), pack), pack);
-    const p3 = planCover(resume, pack).paragraphs[2]!;
-    expect(p3.text).toMatch(/The role asks for Java; it appears in the work above\.$/);
-  });
-
-  it('degrades without inventing: one ranked fact, no covered-term sentence', () => {
+  it('degrades without inventing: one ranked fact, "One example follows."', () => {
     const solo = freezePack({ ...pack, facts: pack.facts.filter((f) => f.id === 'f-nw-04' || f.kind === 'cert') }) as WritingPack;
     const resume = planResume(buildEvidence(scoredOf(posting(), solo), solo), solo);
     expect(planCover(resume, solo).paragraphs.map((p) => p.text)).toEqual([
-      'I am applying for the Senior Backend Engineer (Java) role at Acme Payments. I am a Senior Backend Engineer with 10+ years of experience. I am based in India and am looking for a fully remote role.',
-      'Relevant work: Mentored four engineers and ran the weekly design review for the platform group.',
-      'I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.',
+      "I'm applying for the Senior Backend Engineer (Java) role at Acme Payments. I'm a Senior Backend Engineer with 10+ years of experience. One example follows.",
+      'At Northwind Labs, where I work now, I mentored four engineers and ran the weekly design review for the platform group.',
+      COVER_P4,
     ]);
+  });
+
+  it('never cites a fact no role holds (a project or fact with no matching employer role)', () => {
+    const loose = freezePack({
+      ...pack,
+      facts: [...pack.facts, { id: 'f-px-01', claim: 'Built an open-source Kafka and Java toolkit with PostgreSQL and Spring.', tech: ['java', 'kafka', 'postgres', 'spring', 'event-driven'], employer: 'Personal', period: '2025-01..2025-06', kind: 'project', status: 'verified' }],
+      naming: { ...pack.naming, employerDisplay: { ...pack.naming.employerDisplay, Personal: 'Personal' } },
+    }) as WritingPack;
+    const c = planCover(planResume(buildEvidence(scoredOf(posting(), loose), loose), loose), loose);
+    expect(c.paragraphs.flatMap((p) => p.factIds)).not.toContain('f-px-01');
+    expect(c.paragraphs.map((p) => p.text).join(' ')).not.toContain('Personal');
   });
 });
 

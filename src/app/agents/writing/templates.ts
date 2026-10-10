@@ -10,18 +10,125 @@
  * the whole career (a 1-year Go fact under 10+ years).
  */
 export const SUMMARY_TEMPLATE = '{title} with {years}+ years of experience. Core skills: {top1}, {top2}, {top3} and {top4}. Currently at {employer}.';
+
+// ---- cover letter v2 ----
+// Every cover sentence is one of these templates filled with computed slots, or a citeable claim verbatim (its first
+// letter lower-cased only after "I", when its first word is a past-tense verb). The letter says "I'm", never "I am".
+
+/** p1, sentence 1. `{title}` and `{company}` are sanitised posting text (`sanitisePostingText`); unsafe text blocks the job. */
+export const COVER_OPENING = "I'm applying for the {title} role at {company}.";
+/** p1, sentence 2, when some role is ongoing: `{targetTitle}` is the headline, a `targets.claimableTitles` entry. */
+export const COVER_TITLE_NOW = "I'm {article} {targetTitle} with {years}+ years of experience.";
+/** p1, sentence 2, when no role is ongoing (fix round 2, I-R1): the most recent role's title, in the past tense. */
+export const COVER_TITLE_PAST = 'I most recently worked as {article} {targetTitle} and have {years}+ years of experience.';
 /**
- * Cover paragraph 1 (fix round 1). The brief's "and I work fully remote from India" could be untrue, so the last
- * sentence says only what the pack's eligibility rules guarantee; "of backend experience" became "of experience",
- * since the years count every role, backend or not. `{title}` and `{company}` are sanitised posting text
- * (`sanitisePostingText`), and a slot that fails `unsafePostingText` blocks the job's documents.
+ * p1, sentence 3: up to three covered JD terms that a citeable *experience* fact placed in a role backs (the summary's
+ * terms), so "I've used" is true. `{quantifier}` is `TERMS_QUANTIFIER` by count. Dropped when no term qualifies.
  */
-export const COVER_P1 = 'I am applying for the {title} role at {company}. I am {article} {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
+export const COVER_TERMS = "The role asks for {coveredList}, and I've used {quantifier} in my work.";
+/** "it", "both", "all three", by the number of listed terms. */
+export const TERMS_QUANTIFIER: Readonly<Record<number, string>> = { 1: 'it', 2: 'both', 3: 'all three' };
+/** p1, last sentence, by the number of evidence sentences that follow; dropped when there are none. */
+export const COVER_EXAMPLES: Readonly<Record<number, string>> = { 1: 'One example follows.', 2: 'Two examples follow.', 3: 'Three examples follow.' };
+
+/** p2 and p3: one sentence per cited fact, anchored to its role's display employer. `{claim}` ends with its full stop. */
+export const EVIDENCE_AT = 'At {employer}, I {claim}';
+/** The first mention of an employer whose role (the one the fact is placed in) is ongoing. */
+export const EVIDENCE_AT_NOW = 'At {employer}, where I work now, I {claim}';
+/** A claim whose first word is not a past-tense verb: verbatim after a colon. */
+export const EVIDENCE_AT_COLON = 'At {employer}: {claim}';
+/** The same employer as the sentence just before it, in the same paragraph (verb claims). */
+export const EVIDENCE_THERE = 'There I also {claim}';
+/** An employer already named earlier in the letter, but not in the sentence just before (or a colon claim right after it). */
+export const EVIDENCE_ALSO_AT = 'Also at {employer}, I {claim}';
+export const EVIDENCE_ALSO_AT_COLON = 'Also at {employer}: {claim}';
+
+/** Irregular past-tense verbs a claim may start with (and so read "I built ..."); any other verb must end in -ed. */
+export const IRREGULAR_PAST: ReadonlySet<string> = new Set([
+  'built', 'led', 'ran', 'wrote', 'drove', 'made', 'set', 'cut', 'grew', 'took', 'began', 'won', 'shipped', 'brought', 'taught', 'sold',
+  'bought', 'held', 'kept', 'met', 'found', 'gave', 'spent', 'oversaw', 'undertook', 'broke', 'chose', 'got', 'paid', 'put', 'rebuilt',
+  'rewrote', 'rode', 'rose', 'shut', 'split', 'spun', 'stood', 'struck', 'swept', 'thought', 'threw', 'understood', 'upheld', 'wound',
+  'sent', 'lent', 'lost', 'laid', 'flew', 'drew', 'fed', 'hid', 'saw', 'told', 'sped', 'shot', 'bore', 'forged', 'became',
+]);
+/** Words ending in -ed that are not past-tense verbs at the start of a claim (adjectives, nouns). */
+export const NOT_PAST_VERBS: ReadonlySet<string> = new Set([
+  'need', 'seed', 'speed', 'feed', 'breed', 'deed', 'weed', 'steed', 'greed', 'creed', 'shed', 'sled', 'embedded', 'distributed',
+  'advanced', 'dedicated', 'experienced', 'skilled', 'certified', 'unified', 'federated', 'detailed', 'based', 'related', 'limited',
+  'united', 'varied', 'mixed', 'hundred', 'kindred', 'sacred', 'naked', 'wicked', 'rugged', 'ragged', 'crooked', 'beloved', 'interested',
+  'talented', 'sophisticated', 'complicated', 'accredited',
+]);
+
 /**
- * Cover paragraph 1 when no role is ongoing (fix round 2, I-R1): the most recent role's title, in the past tense, so a
- * past title is never stated as the current one.
+ * Whether a claim starts with a past-tense verb, so it may follow "I": its first word is in sentence case (one capital,
+ * then lower case; hyphenated parts lower case: "Re-architected", "Co-led") and, with any prefix before its last hyphen
+ * ignored, is in `IRREGULAR_PAST`, or ends in "-ed" with at least four letters and is not in `NOT_PAST_VERBS`
+ * ("Distributed tracing ...", "Embedded systems ...", "Need", "Speed" read as adjectives or nouns, so they are refused:
+ * a wrong guess would change the claim's meaning, the colon form never does). An all-capital or mixed-case word is
+ * never one, so an acronym is never re-cased.
  */
-export const COVER_P1_PAST = 'I am applying for the {title} role at {company}. I most recently worked as {article} {targetTitle}, with {years}+ years of experience. I am based in India and am looking for a fully remote role.';
+export function startsWithPastVerb(claim: string): boolean {
+  const m = /^([A-Z][a-z]*(?:-[a-z]+)*)(?=[\s,;:.]|$)/.exec(claim);
+  if (m === null) return false;
+  const word = (m[1] as string).toLowerCase();
+  const last = word.split('-').pop() as string;
+  if (NOT_PAST_VERBS.has(word) || NOT_PAST_VERBS.has(last)) return false;
+  if (IRREGULAR_PAST.has(word) || IRREGULAR_PAST.has(last)) return true;
+  return last.length >= 4 && last.endsWith('ed');
+}
+
+/** Where an evidence sentence's employer was named before: never, in the sentence just before (same paragraph), or earlier. */
+export type EvidenceAfter = 'first' | 'adjacent' | 'again';
+export interface EvidenceSlots {
+  /** The display employer of the role the fact is placed in (`naming.employerDisplay`). */
+  readonly employer: string;
+  /** The fact's claim, verbatim. */
+  readonly claim: string;
+  /** Whether that role is ongoing (end 'present'). */
+  readonly ongoing: boolean;
+  readonly after: EvidenceAfter;
+}
+
+/**
+ * One evidence sentence. A claim starting with a past-tense verb (`startsWithPastVerb`) has its first letter
+ * lower-cased and follows "I" (`EVIDENCE_AT`, `EVIDENCE_AT_NOW` on the first mention of an ongoing role's employer,
+ * `EVIDENCE_THERE` right after a sentence about the same employer, `EVIDENCE_ALSO_AT` later); any other claim is
+ * verbatim after a colon (`EVIDENCE_AT_COLON`, or `EVIDENCE_ALSO_AT_COLON` once the employer was named). The claim
+ * gets a full stop only when it has no closing punctuation (`asSentence`).
+ */
+export function evidenceSentence(s: Readonly<EvidenceSlots>): string {
+  const verb = startsWithPastVerb(s.claim);
+  const claim = asSentence(verb ? `${s.claim.charAt(0).toLowerCase()}${s.claim.slice(1)}` : s.claim);
+  if (!verb) return fill(s.after === 'first' ? EVIDENCE_AT_COLON : EVIDENCE_ALSO_AT_COLON, { employer: s.employer, claim });
+  if (s.after === 'adjacent') return fill(EVIDENCE_THERE, { claim });
+  if (s.after === 'again') return fill(EVIDENCE_ALSO_AT, { employer: s.employer, claim });
+  return fill(s.ongoing ? EVIDENCE_AT_NOW : EVIDENCE_AT, { employer: s.employer, claim });
+}
+
+/** The slots of p1. `terms` are display names (at most three are used); `examples` is the number of evidence sentences. */
+export interface OpeningSlots {
+  readonly title: string;
+  readonly company: string;
+  readonly targetTitle: string;
+  readonly years: number;
+  readonly past: boolean;
+  readonly terms: readonly string[];
+  readonly examples: number;
+}
+
+/** The opening sentence of the letter alone (the dashboard's short cover note starts with it). */
+export const openingSentence = (s: Pick<OpeningSlots, 'title' | 'company'>): string => fill(COVER_OPENING, { title: s.title, company: s.company });
+
+/** p1: `COVER_OPENING`, the title sentence, `COVER_TERMS` (when a term qualifies) and `COVER_EXAMPLES` (when a fact follows). */
+export function renderOpening(s: Readonly<OpeningSlots>): string {
+  const terms = s.terms.slice(0, 3);
+  const examples = Math.min(3, s.examples);
+  return [
+    openingSentence(s),
+    fill(s.past ? COVER_TITLE_PAST : COVER_TITLE_NOW, { article: articleFor(s.targetTitle), targetTitle: s.targetTitle, years: s.years }),
+    ...(terms.length > 0 ? [fill(COVER_TERMS, { coveredList: joinList(terms), quantifier: TERMS_QUANTIFIER[terms.length] as string })] : []),
+    ...(examples > 0 ? [COVER_EXAMPLES[examples] as string] : []),
+  ].join(' ');
+}
 
 /** Words that start with a vowel letter but a consonant sound ("a unit", "a European", "a one-off"). */
 const A_BEFORE = ['uni', 'use', 'usu', 'uti', 'ure', 'ubi', 'uk', 'eu', 'one', 'once'];
@@ -53,25 +160,43 @@ export function articleFor(title: string): 'a' | 'an' {
   if (A_BEFORE.some((p) => w.startsWith(p))) return 'a';
   return /^[aeiou]/.test(w) ? 'an' : 'a';
 }
-/** Cover paragraph 2: this lead-in, then the two top-ranked facts verbatim, each its own sentence. */
-export const COVER_P2_LEAD = 'Relevant work:';
-/** Cover paragraph 3: the third fact verbatim, then this sentence (two or more listed terms). */
-export const COVER_P3_TAIL = 'The role asks for {coveredList}; each appears in the work above.';
-/** The same sentence for exactly one listed term. */
-export const COVER_P3_TAIL_ONE = 'The role asks for {coveredList}; it appears in the work above.';
 /**
- * Cover paragraph 4. The cover-writer reads only the public pack, and `answers.yaml` (P1/P2) is not in it, so it
- * leaves `{availableFrom}` and `{notice}` as literal placeholders. The renderer (Task 10, full pack) fills them from
- * `answers.yaml` keys `available_from` and `notice_period`; when either key is missing it omits the first sentence
- * ("I am available ... {notice}.") and keeps "Thank you for your time." G-GROUND checks the placeholders are intact.
+ * p4 as the cover-writer leaves it. The cover-writer reads only the public pack, and `contact.yaml` and `answers.yaml`
+ * (P1) are not in it, so it leaves `{city}` and `{notice}` as literal placeholders; the renderer (full pack) replaces
+ * the whole paragraph with `renderP4` from `contact.city` and `answers.yaml` `notice_period`. `available_from` never
+ * reaches a document: a calendar date goes stale and becomes untrue. G-GROUND checks the placeholders are intact.
  */
-export const COVER_P4_AVAILABILITY = 'I am available from {availableFrom}, with a notice period of {notice}.';
-/** The sentence of `COVER_P4` that stays when an answer is missing. */
-export const COVER_P4_THANKS = 'Thank you for your time.';
-export const COVER_P4 = `${COVER_P4_AVAILABILITY} ${COVER_P4_THANKS}`;
+export const COVER_P4_THANKS = 'Thank you for considering my application.';
+export const COVER_P4_CITY_NOTICE = "I'm based in {city}, looking for a fully remote role, and available after {notice}.";
+export const COVER_P4_CITY = "I'm based in {city} and looking for a fully remote role.";
+export const COVER_P4_NOTICE = "I'm looking for a fully remote role and available after {notice}.";
+export const COVER_P4_NONE = "I'm looking for a fully remote role.";
+export const COVER_P4 = `${COVER_P4_CITY_NOTICE} ${COVER_P4_THANKS}`;
 
 /** The words of `COVER_P4` the renderer fills, as they appear in the plan. */
-export const RENDER_PLACEHOLDERS = ['{availableFrom}', '{notice}'] as const;
+export const RENDER_PLACEHOLDERS = ['{city}', '{notice}'] as const;
+
+/** "N day|week|month[s]" (also "Nday", "N-day"), any case: the shape `noticePhrase` shortens. */
+const NOTICE_SHAPE = /^(\d{1,3})[\s-]*(day|week|month)s?$/i;
+/** The notice as a noun phrase: "30 days" -> "a 30-day notice period"; any other shape -> "a notice period of {notice}". */
+export function noticePhrase(notice: string): string {
+  const m = NOTICE_SHAPE.exec(notice);
+  return m ? `a ${m[1] as string}-${(m[2] as string).toLowerCase()} notice period` : `a notice period of ${notice}`;
+}
+
+/** The filled p4: the city clause only with a city, the notice clause only with a notice, then `COVER_P4_THANKS`. */
+export function renderP4(city: string | undefined, notice: string | undefined): string {
+  const n = notice === undefined ? undefined : noticePhrase(notice);
+  const first =
+    city !== undefined && n !== undefined
+      ? fill(COVER_P4_CITY_NOTICE, { city, notice: n })
+      : city !== undefined
+        ? fill(COVER_P4_CITY, { city })
+        : n !== undefined
+          ? fill(COVER_P4_NOTICE, { notice: n })
+          : COVER_P4_NONE;
+  return `${first} ${COVER_P4_THANKS}`;
+}
 
 /** "a", "a and b", "a, b and c": items joined with ", " and a final " and ". */
 export function joinList(items: readonly string[]): string {

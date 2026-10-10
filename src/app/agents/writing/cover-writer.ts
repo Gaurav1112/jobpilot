@@ -4,14 +4,15 @@ import { CoverPlan, planHasBullets, ResumePlan } from '../../types.js';
 import { failLoud, planCover, writingPackOf } from './grounded.js';
 
 /**
- * cover-writer (spec §5.4): the fixed four-paragraph cover letter of one resume plan. Every sentence is a template
- * rendering with computed slots or a citeable claim verbatim (rules in `grounded.ts`). It reads the public pack
- * only, never `answers.yaml` (P1/P2): availability and notice stay as the placeholders `{availableFrom}` and
- * `{notice}` for the renderer, which has the full pack (see `COVER_P4`).
+ * cover-writer (spec §5.4, cover letter v2): the fixed four-paragraph cover letter of one resume plan. Every sentence
+ * is a template rendering with computed slots or a citeable claim verbatim, anchored to its display employer (rules in
+ * `grounded.ts`, templates in `templates.ts`). It reads the public pack only, never `contact.yaml` or `answers.yaml`
+ * (P1): the city and notice stay as the placeholders `{city}` and `{notice}` for the renderer, which has the full pack
+ * (see `COVER_P4`). 1.1.0: v2 templates (employer-anchored evidence, no gap sentence, no availability date).
  */
 export const coverWriterContract = defineContract({
   id: 'cover-writer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Writes one grounded cover letter plan from a resume plan',
   skills: ['cover-writing'],
   team: 'writing',

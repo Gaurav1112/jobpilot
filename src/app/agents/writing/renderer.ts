@@ -15,19 +15,20 @@ import { postingSlots } from './grounded.js';
  * renderer (spec §5.4, Task 10): turns one grounded cover plan (with its resume plan) into the files the user uploads:
  * `<jobKey>/resume.pdf|docx|html` and `<jobKey>/cover.pdf|docx|html` under the out root. It is the only agent that
  * reads the full pack (`capabilities.pack: 'full'`, enforced by the app allow-list): contact details (P1) are merged
- * in only here, and the cover's p4 placeholders are filled only here, from `answers.yaml` (`render/fill.ts`). Its
+ * in only here, and the cover's p4 placeholders are filled only here, from `contact.yaml` city and `answers.yaml`
+ * notice_period (`render/fill.ts`). Its
  * outputs are P1 (`emits`, and the kernel floors a 'full' pack agent's outputs at P1 whatever it returns).
  *
  * Every line is already grounded; the renderer adds only the contact block, section headings, role dates, the
  * salutation and the sign-off (`render/model.ts`); the cover has no date line (L5). Before writing it refuses any character the embedded font
  * has no glyph for (`unrenderable-glyph:U+XXXX`, a named reason the projector shows)
  * and any forbidden term in the documents' text, contact block included, and after rendering it checks that the DOCX
- * text layer equals the document text. G-FILL then re-derives the fill and the document text from the plan and the full
- * pack; G-NAMING checks the payload.
+ * text layer equals the document text. G-GROUND then re-renders the letter from recomputed slots byte for byte, G-FILL
+ * re-derives the fill and the document text from the plan and the full pack, and G-NAMING checks the payload.
  */
 export const rendererContract = defineContract({
   id: 'renderer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Renders one cover plan into ATS-ready documents',
   skills: ['document-rendering'],
   team: 'writing',
@@ -39,7 +40,7 @@ export const rendererContract = defineContract({
   emits: 'P1',
   budget: { usdPerCall: 0, usdPerRun: 0 },
   timeoutMs: 120_000,
-  guardrails: { in: [], out: ['G-FILL', 'G-NAMING'] },
+  guardrails: { in: [], out: ['G-GROUND', 'G-FILL', 'G-NAMING'] },
 });
 
 export { RenderPack, renderModels } from '../../render/fill.js';

@@ -1,21 +1,17 @@
 import { z } from 'zod';
 import { KernelError } from '../../../kernel/errors.js';
-import { hasTerm, LANGUAGE_WORDS, lexiconTerms, tagsBack, termsIn, type TermGroup } from '../../lexicon.js';
+import { hasTerm, tagsBack, termsIn, type TermGroup } from '../../lexicon.js';
 import { citeable, employerDisplay } from '../../pack/rules.js';
 import { isCalendarDate, type CoverPlan, type Evidence, type Posting, type ResumePlan, type Scored } from '../../types.js';
 import {
-  articleFor,
-  asSentence,
-  COVER_P1,
-  COVER_P1_PAST,
-  COVER_P2_LEAD,
-  COVER_P3_TAIL,
-  COVER_P3_TAIL_ONE,
   COVER_P4,
-  fill,
-  joinList,
+  evidenceSentence,
+  openingSentence,
+  renderOpening,
   renderSummary,
   sanitisePostingText,
+  type EvidenceSlots,
+  type OpeningSlots,
   type SummarySlots,
 } from './templates.js';
 
@@ -48,9 +44,11 @@ import {
  * - **firstSeen** (document metadata only, read by no rule) = the posting's `postedAt` date when it is a real calendar
  *   date, else the first day of the asOf month.
  * - **Headline** = the `targets.claimableTitles` entry (titles the candidate truthfully holds; default: the ongoing
- *   roles' titles) with the most of its words in the sanitised posting title (`hasTerm`), used verbatim. A tie goes to
- *   the entry that is the most recent role's title (roles newest first), then to list order (fix C2). With no ongoing
- *   role it is the most recent role's title, and p1 uses the past-tense `COVER_P1_PAST` (fix round 2, I-R1).
+ *   roles' titles) with the most of its words in the sanitised posting title (`hasTerm`), used verbatim; a seniority
+ *   word (`SENIORITY_WORDS`) counts as matched when the posting title has any seniority word, so "Senior Backend
+ *   Engineer" is closer to "Staff Software Engineer" than "Founding Engineer" is. A tie goes to the claimableTitles
+ *   order, never to the current role's title (cover letter v2). With no ongoing role it is the most recent role's
+ *   title, and p1 uses the past-tense `COVER_TITLE_PAST` (fix round 2, I-R1).
  * - **Placement** (fix I3). A ranked fact is placed in a role at its display employer whose dates contain the fact's
  *   whole period (role end 'present' and fact end 'present' are asOf). If several do, the one whose title equals
  *   `fact.role`, else the newest. A fact no role contains is never a bullet: it is listed in `unplaced`.
@@ -62,11 +60,14 @@ import {
  * - **Summary**: `renderSummary` with title = the headline, years, top1..top4 = the display of the first four covered
  *   keys that an experience fact placed in a role backs, and employer = the display employer of the newest ongoing
  *   role (none ongoing: no employer slot, no "Currently at").
- * - **Cover** (only placed facts are cited): p1 is `COVER_P1` with the sanitised posting title and company; p2 is
- *   `COVER_P2_LEAD` then the two top-ranked placed facts; p3 the third, then `COVER_P3_TAIL` (or `COVER_P3_TAIL_ONE`
- *   for one term) listing the display of each covered key whose key or display a cited claim names (`hasTerm`, with
- *   its ambiguous-word rules, no synonyms), so "appears in the work above" is true; p1 takes "a" or "an" from
- *   `articleFor`; p4 is `COVER_P4` with its placeholders left for the
+ * - **Cover** (v2; only facts placed in a role are cited, so each has an employer): `coverSlots` computes every slot
+ *   and `renderCover` renders the templates of `templates.ts` from them. p1 is `renderOpening`: the sanitised posting
+ *   title and company, the headline with "a"/"an" (`articleFor`) and years (`COVER_TITLE_PAST` when no role is
+ *   ongoing), the first three summary terms (covered keys an experience fact placed in a role backs, by display), and
+ *   the number of examples. p2 holds the two top-ranked placed facts and p3 the third, each an `evidenceSentence`
+ *   anchored to its placed role's display employer: "where I work now" only on the first mention of an ongoing role's
+ *   employer, "There I also" for the same employer as the sentence just before in the same paragraph, "Also at" for
+ *   one named earlier. No sentence names a missing or gap term. p4 is `COVER_P4`, its placeholders left for the
  *   renderer. A paragraph with nothing to say is omitted.
  */
 
@@ -239,11 +240,19 @@ export function buildEvidence(scored: Scored, pack: WritingPack): Evidence {
 
 // ---- resume-planner ----
 
-/** The role titles, newest role first (the tie-break order of the headline). */
-const recentTitles = (pack: WritingPack): string[] => [...new Set(displayRoles(pack).map((r) => r.title))];
-
 /** Whether some role is ongoing (end 'present'): picks the present or the past-tense p1. */
 export const hasOngoingRole = (pack: WritingPack): boolean => pack.roles.some((r) => r.end === 'present');
+
+/** Seniority words: one in a claimable title counts as matched when the posting title has any of them. */
+export const SENIORITY_WORDS: readonly string[] = ['senior', 'sr', 'staff', 'lead', 'principal', 'distinguished'];
+
+/** The headline match score of a claimable title against a sanitised posting title: see the module rules. */
+export function titleMatch(claimable: string, postingTitle: string): number {
+  const senior = SENIORITY_WORDS.some((w) => hasTerm(postingTitle, w));
+  return claimable
+    .split(/\s+/)
+    .filter((w) => w !== '' && (hasTerm(postingTitle, w) || (senior && SENIORITY_WORDS.includes(w.toLowerCase().replace(/\.$/, ''))))).length;
+}
 
 /** The headline: see the module rules. With no ongoing role it is the most recent role's title. */
 export function headlineOf(postingTitle: string, pack: WritingPack): string {
@@ -253,17 +262,8 @@ export function headlineOf(postingTitle: string, pack: WritingPack): string {
     return latest.title;
   }
   const title = sanitisePostingText(postingTitle);
-  const recent = recentTitles(pack);
-  const recency = (t: string): number => {
-    const i = recent.indexOf(t);
-    return i < 0 ? Number.MAX_SAFE_INTEGER : i;
-  };
-  const scored = pack.targets.claimableTitles.map((t, i) => ({
-    t,
-    i,
-    score: t.split(/\s+/).filter((w) => w !== '' && hasTerm(title, w)).length,
-  }));
-  scored.sort((a, b) => b.score - a.score || recency(a.t) - recency(b.t) || a.i - b.i);
+  const scored = pack.targets.claimableTitles.map((t, i) => ({ t, i, score: titleMatch(t, title) }));
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
   const best = scored[0];
   if (best === undefined) throw new Error('targets.claimableTitles is empty, so no headline can be chosen');
   return best.t;
@@ -374,36 +374,79 @@ export function planResume(evidence: Evidence, pack: WritingPack): ResumePlan {
 /** The sanitised posting title and company a cover letter's p1 uses. */
 export const postingSlots = (posting: Pick<Posting, 'title' | 'company'>) => ({ title: sanitisePostingText(posting.title), company: sanitisePostingText(posting.company) });
 
-/** The CoverPlan of one ResumePlan: see the module rules. Years and headline are recomputed, never read from the plan. */
-export function planCover(resume: ResumePlan, pack: WritingPack): CoverPlan {
+/** Every slot of one cover letter: see the module rules. Years and headline are recomputed, never read from the plan. */
+export interface CoverSlots {
+  readonly opening: OpeningSlots;
+  /** The evidence sentences' slots and fact ids, per paragraph (p2, then p3). */
+  readonly evidence: readonly (readonly (EvidenceSlots & { readonly factId: string })[])[];
+}
+
+/** The cover slots of one ResumePlan, recomputed from the posting and the pack. */
+export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
   checkEmployers(pack);
   const evidence = resume.evidence;
   const posting = evidence.scored.posting;
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
   const roles = displayRoles(pack);
-  const years = yearsOf(pack.roles, pack.experience.asOf);
-  const headline = headlineOf(posting.title, pack);
   const top = evidence.ranked
     .flatMap((r) => {
       const f = byId.get(r.factId);
-      return f !== undefined && isRankable(f) && roleIndexOf(f, roles, pack) !== undefined ? [f] : [];
+      const i = f !== undefined && isRankable(f) ? roleIndexOf(f, roles, pack) : undefined;
+      const role = i === undefined ? undefined : roles[i];
+      return f !== undefined && role !== undefined ? [{ f, role }] : [];
     })
     .slice(0, 3);
-  const slots = postingSlots(posting);
-  const p1 = hasOngoingRole(pack) ? COVER_P1 : COVER_P1_PAST;
-  const paragraphs: CoverPlan['paragraphs'] = [{ text: fill(p1, { ...slots, article: articleFor(headline), targetTitle: headline, years }), factIds: [] }];
-  const lead = top.slice(0, 2);
-  if (lead.length > 0) paragraphs.push({ text: [COVER_P2_LEAD, ...lead.map((f) => asSentence(f.claim))].join(' '), factIds: lead.map((f) => f.id) });
-  const third = top[2];
-  // Only covered keys whose key or display a cited claim's text names, so "appears in the work above" is true for a
-  // reader of the letter: no synonym (a claim saying "payments" does not list "fintech"), and the ambiguous-word rules
-  // of `hasTerm` ("go live", "teams react quickly" and "spring hiring" do not name Go, React or Spring).
-  const neighbours = [...LANGUAGE_WORDS, ...lexiconTerms(allGroups(pack))];
-  const names = (claim: string, k: string) => hasTerm(claim, k, neighbours) || hasTerm(claim, termDisplay(k, pack), neighbours);
-  const listed = evidence.covered.filter((k) => !isGapKey(k, pack) && top.some((f) => names(f.claim, k))).map((k) => termDisplay(k, pack));
-  const tail = listed.length === 0 ? [] : [fill(listed.length === 1 ? COVER_P3_TAIL_ONE : COVER_P3_TAIL, { coveredList: joinList(listed) })];
-  const p3 = [...(third !== undefined ? [asSentence(third.claim)] : []), ...tail];
-  if (p3.length > 0) paragraphs.push({ text: p3.join(' '), factIds: third !== undefined ? [third.id] : [] });
-  paragraphs.push({ text: COVER_P4, factIds: [] });
-  return { jobKey: resume.jobKey, resume, paragraphs };
+  const named = new Set<string>();
+  const paragraphs = [top.slice(0, 2), top.slice(2, 3)].filter((p) => p.length > 0);
+  const slots = paragraphs.map((p) =>
+    p.map(({ f, role }, j) => {
+      const after = j > 0 && p[j - 1]?.role.employer === role.employer ? 'adjacent' : named.has(role.employer) ? 'again' : 'first';
+      named.add(role.employer);
+      return { factId: f.id, employer: role.employer, claim: f.claim, ongoing: role.end === 'present', after } as const;
+    }),
+  );
+  return {
+    opening: {
+      ...postingSlots(posting),
+      targetTitle: headlineOf(posting.title, pack),
+      years: yearsOf(pack.roles, pack.experience.asOf),
+      past: !hasOngoingRole(pack),
+      terms: summaryTerms(evidence.covered.filter((k) => !isGapKey(k, pack)), pack).slice(0, 3),
+      examples: top.length,
+    },
+    evidence: slots,
+  };
+}
+
+/** The paragraphs of a cover letter rendered from its slots: p1, the evidence paragraphs, then `COVER_P4`. */
+export function renderCover(s: CoverSlots): CoverPlan['paragraphs'] {
+  return [
+    { text: renderOpening(s.opening), factIds: [] },
+    ...s.evidence.map((p) => ({ text: p.map((e) => evidenceSentence(e)).join(' '), factIds: p.map((e) => e.factId) })),
+    { text: COVER_P4, factIds: [] },
+  ];
+}
+
+/** The CoverPlan of one ResumePlan: see the module rules. */
+export function planCover(resume: ResumePlan, pack: WritingPack): CoverPlan {
+  return { jobKey: resume.jobKey, resume, paragraphs: renderCover(coverSlots(resume, pack)) };
+}
+
+/**
+ * The dashboard's short cover note for a (filled) cover plan: the letter's opening sentence and its first evidence
+ * sentence, exactly as the letter has them, or undefined when the plan has no evidence or its text is not the letter
+ * these slots give. Computed from the plan alone: the top fact is the first bullet of its role (bullets keep rank
+ * order), whose text is the claim verbatim and whose role gives the display employer.
+ */
+export function coverNoteShort(cover: CoverPlan): string | undefined {
+  const opening = openingSentence(postingSlots(cover.resume.evidence.scored.posting));
+  const p1 = cover.paragraphs[0]?.text;
+  const p2 = cover.paragraphs[1];
+  const id = p2?.factIds[0];
+  if (p1 === undefined || p2 === undefined || id === undefined || !p1.startsWith(`${opening} `)) return undefined;
+  const role = cover.resume.roles.find((r) => r.bullets.some((b) => b.factId === id));
+  const claim = role?.bullets.find((b) => b.factId === id)?.text;
+  if (role === undefined || claim === undefined) return undefined;
+  const sentence = evidenceSentence({ employer: role.employer, claim, ongoing: role.end === 'present', after: 'first' });
+  return p2.text === sentence || p2.text.startsWith(`${sentence} `) ? `${opening} ${sentence}` : undefined;
 }

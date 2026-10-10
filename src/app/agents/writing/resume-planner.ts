@@ -7,10 +7,12 @@ import { failLoud, planResume, writingPackOf } from './grounded.js';
  * resume-planner (spec §5.4): one grounded resume plan per Evidence. Every bullet and cert is a citeable fact's claim
  * verbatim, every skill is backed by a citeable fact's tech, and every summary slot is computed (rules in
  * `grounded.ts`). G-GROUND re-derives the plan; G-NO-GAP-CLAIM keeps gap skills out. Reads the public pack only.
+ * 1.1.0: the headline is the claimable title closest to the posting title (seniority words match each other), ties by
+ * claimableTitles order, never by the current role's title.
  */
 export const resumePlannerContract = defineContract({
   id: 'resume-planner',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Plans one grounded resume from ranked evidence',
   skills: ['resume-planning'],
   team: 'writing',

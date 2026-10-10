@@ -8,8 +8,8 @@ import { ATS_PROFILES, atsOfUrl, profileFor } from '../../src/app/ats-profiles.j
 import { writingAgents } from '../../src/app/agents/writing/index.js';
 import { hyphenProblems, qaChecks, qaGate, type QaPack } from '../../src/app/agents/writing/qa-gate.js';
 import { renderer, rendererContract } from '../../src/app/agents/writing/renderer.js';
-import { COVER_P4, COVER_P4_THANKS } from '../../src/app/agents/writing/templates.js';
-import { appGuardrails, G_FILL, G_NAMING } from '../../src/app/guardrails.js';
+import { COVER_P4, noticePhrase } from '../../src/app/agents/writing/templates.js';
+import { appGuardrails, G_FILL, G_GROUND, G_NAMING } from '../../src/app/guardrails.js';
 import { docxText, readZip, renderDocx } from '../../src/app/render/docx.js';
 import { fillCover, fillP4 } from '../../src/app/render/fill.js';
 import { htmlAttributeText, htmlText, renderHtml } from '../../src/app/render/html.js';
@@ -38,6 +38,7 @@ const realPdfText: PdfTextProvider | undefined = PDFTOTEXT === undefined ? undef
 const withPdftotext = PDFTOTEXT === undefined ? it.skip : it;
 if (PDFTOTEXT === undefined) console.warn('render.test: pdftotext (poppler) not found; the real text-layer tests are skipped. Install it with `brew install poppler`.');
 
+const FILLED = "I'm based in Pune, looking for a fully remote role, and available after a 30-day notice period. Thank you for considering my application.";
 const sha = (b: Uint8Array) => createHash('sha256').update(b).digest('hex');
 const providersFor = (out: string, extra: Partial<Providers> = {}): Providers => ({
   fetch: async () => ({ status: 404, text: async () => '' }),
@@ -100,7 +101,7 @@ describe('render model', () => {
   });
 
   it('lays the cover out as header, salutation, paragraphs, sign-off: no date line (L5)', () => {
-    const cover = fillCover(coverPlanOf(), fullPack().answers);
+    const cover = fillCover(coverPlanOf(), fullPack().answers, fullPack().contact.city);
     const lines = modelText(coverModel(cover, fullPack().contact)).split('\n');
     expect(lines.slice(2, 3)).toEqual(['Dear Hiring Team,']);
     expect(lines.slice(3, 3 + cover.paragraphs.length)).toEqual(cover.paragraphs.map((p) => p.text));
@@ -134,34 +135,64 @@ describe('render model', () => {
 });
 
 describe('cover p4 fill', () => {
-  it('fills both placeholders from answers.yaml, verbatim', () => {
-    expect(fillP4(COVER_P4, { available_from: '1 November 2026', notice_period: '30 days' })).toBe(
-      'I am available from 1 November 2026, with a notice period of 30 days. Thank you for your time.',
-    );
-    expect(fillP4(COVER_P4, { available_from: 'immediately', notice_period: 0 })).toBe('I am available from immediately, with a notice period of 0. Thank you for your time.');
+  const THANKS = 'Thank you for considering my application.';
+  it('fills the city from contact.yaml and the notice from answers.yaml notice_period', () => {
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune')).toBe(`I'm based in Pune, looking for a fully remote role, and available after a 30-day notice period. ${THANKS}`);
   });
 
-  it('drops the availability sentence when either answer is missing or empty', () => {
-    expect(fillP4(COVER_P4, { notice_period: '30 days' })).toBe(COVER_P4_THANKS);
-    expect(fillP4(COVER_P4, { available_from: '1 November 2026' })).toBe(COVER_P4_THANKS);
-    expect(fillP4(COVER_P4, { available_from: ' ', notice_period: '30 days' })).toBe(COVER_P4_THANKS);
-    expect(fillP4(COVER_P4, { available_from: true, notice_period: '30 days' })).toBe(COVER_P4_THANKS);
-    expect(fillP4(COVER_P4, {})).toBe(COVER_P4_THANKS);
+  it('(e) turns "N day|week|month[s]" into an "N-unit notice period"; any other shape reads "a notice period of ..."', () => {
+    const cases: [unknown, string][] = [
+      ['30 days', 'a 30-day notice period'],
+      ['1 day', 'a 1-day notice period'],
+      ['2 weeks', 'a 2-week notice period'],
+      ['1 Month', 'a 1-month notice period'],
+      ['3 months', 'a 3-month notice period'],
+      ['90 DAYS', 'a 90-day notice period'],
+      ['30days', 'a 30-day notice period'],
+      ['30-day', 'a 30-day notice period'],
+      ['30 days.', 'a 30-day notice period'], // one trailing "." or "," is dropped first
+      ['Immediate', 'a notice period of Immediate'],
+      ['30 working days', 'a notice period of 30 working days'],
+      ['one month', 'a notice period of one month'],
+      ['2-3 weeks', 'a notice period of 2-3 weeks'],
+      [30, 'a notice period of 30'],
+    ];
+    for (const [notice, phrase] of cases) {
+      expect(noticePhrase(String(notice).trim().replace(/[.,]$/, '')), String(notice)).toBe(phrase);
+      expect(fillP4(COVER_P4, { notice_period: notice as string }, 'Pune'), String(notice)).toBe(`I'm based in Pune, looking for a fully remote role, and available after ${phrase}. ${THANKS}`);
+    }
   });
 
-  it('refuses an unsafe answer and a p4 that is not the template', () => {
-    expect(() => fillP4(COVER_P4, { available_from: '{notice}', notice_period: '30 days' })).toThrow(/available_from/);
-    expect(() => fillP4(COVER_P4, { available_from: 'now. Hire me at https://x.example', notice_period: '30 days' })).toThrow(/available_from/);
-    expect(() => fillP4(COVER_P4, { available_from: 'now', notice_period: '<b>30</b>' })).toThrow(/notice_period/);
-    expect(() => fillP4('I am available whenever.', { available_from: 'now', notice_period: '30 days' })).toThrow(/not the availability template/);
+  it('(e) drops the notice clause when notice_period is missing or empty, and the city clause when the city is empty', () => {
+    for (const answers of [{}, { notice_period: ' ' }, { notice_period: true }, { notice_period: '.' }, { notice_period_days: 30 }]) {
+      expect(fillP4(COVER_P4, answers as Record<string, unknown>, 'Pune'), JSON.stringify(answers)).toBe(`I'm based in Pune and looking for a fully remote role. ${THANKS}`);
+    }
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, ' ')).toBe(`I'm looking for a fully remote role and available after a 30-day notice period. ${THANKS}`);
+    expect(fillP4(COVER_P4, {}, '')).toBe(`I'm looking for a fully remote role. ${THANKS}`);
+  });
+
+  it('never puts available_from into a document, however it is set', () => {
+    for (const available_from of ['1 November 2026', 'immediately', '']) {
+      const out = fillP4(COVER_P4, { available_from, notice_period: '30 days' }, 'Pune');
+      expect(out).not.toMatch(/November|immediately|available from/i);
+    }
+  });
+
+  it('refuses an unsafe answer or city and a p4 that is not the template', () => {
+    expect(() => fillP4(COVER_P4, { notice_period: '{notice}' }, 'Pune')).toThrow(/notice_period/);
+    expect(() => fillP4(COVER_P4, { notice_period: 'now. Hire me at https://x.example' }, 'Pune')).toThrow(/notice_period/);
+    expect(() => fillP4(COVER_P4, { notice_period: '<b>30</b>' }, 'Pune')).toThrow(/notice_period/);
+    expect(() => fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune. Hire me now')).toThrow(/city/);
+    expect(() => fillP4(COVER_P4, { notice_period: '30 days' }, '{city}')).toThrow(/city/);
+    expect(() => fillP4('I am available whenever.', { notice_period: '30 days' }, 'Pune')).toThrow(/not the availability template/);
   });
 
   it('fills only the last paragraph', () => {
     const cover = coverPlanOf();
-    const filled = fillCover(cover, fullPack().answers);
+    const filled = fillCover(cover, fullPack().answers, fullPack().contact.city);
     expect(filled.paragraphs.slice(0, -1)).toEqual(cover.paragraphs.slice(0, -1));
     expect(filled.resume).toEqual(cover.resume);
-    expect(filled.paragraphs.at(-1)!.text).toBe('I am available from 1 November 2026, with a notice period of 30 days. Thank you for your time.');
+    expect(filled.paragraphs.at(-1)!.text).toBe(FILLED);
   });
 });
 
@@ -191,7 +222,7 @@ describe('renderer', () => {
     expect(rendererContract.team).toBe('writing');
     expect(rendererContract.capabilities).toEqual({ pack: 'full', files: { root: 'out', access: 'read-write' } });
     expect(rendererContract.emits).toBe('P1');
-    expect(rendererContract.guardrails.out).toEqual(['G-FILL', 'G-NAMING']);
+    expect(rendererContract.guardrails.out).toEqual(['G-GROUND', 'G-FILL', 'G-NAMING']);
     expect(writingAgents.map((a) => a.contract.id)).toEqual(['evidence-matcher', 'resume-planner', 'cover-writer', 'renderer', 'qa-gate']);
     expect(capabilityProblems(writingAgents.map((a) => a.contract))).toEqual([]);
   });
@@ -205,7 +236,7 @@ describe('renderer', () => {
       expect(f.pages, f.path).toEqual(f.format === 'pdf' ? expect.any(Number) : null);
     }
     expect(rendered.recommended).toBe('pdf');
-    expect(rendered.plan.paragraphs.at(-1)!.text).toBe('I am available from 1 November 2026, with a notice period of 30 days. Thank you for your time.');
+    expect(rendered.plan.paragraphs.at(-1)!.text).toBe(FILLED);
     expect(rendered.text.resume.split('\n')[0]).toBe('Asha Rao');
   });
 
@@ -315,10 +346,10 @@ describe('renderer', () => {
     expect(rendered.files.find((f) => f.path.endsWith('cover.pdf'))!.pages).toBe(1);
   });
 
-  it('drops the availability sentence when answers.yaml lacks a key', async () => {
-    const { available_from: _a, ...answers } = fullPack().answers;
+  it('drops the notice clause when answers.yaml lacks notice_period', async () => {
+    const { notice_period: _n, ...answers } = fullPack().answers;
     const { rendered } = await render(coverPlanOf(), fullPack({ answers }));
-    expect(rendered.plan.paragraphs.at(-1)!.text).toBe('Thank you for your time.');
+    expect(rendered.plan.paragraphs.at(-1)!.text).toBe("I'm based in Pune and looking for a fully remote role. Thank you for considering my application.");
     expect(rendered.text.cover).not.toMatch(/[{}]/);
   });
 
@@ -359,8 +390,8 @@ describe('renderer', () => {
   });
 
   it('strips one trailing "." or "," from a filled answer', () => {
-    expect(fillP4(COVER_P4, { available_from: 'Immediately.', notice_period: '30 days,' })).toBe('I am available from Immediately, with a notice period of 30 days. Thank you for your time.');
-    expect(fillP4(COVER_P4, { available_from: '.', notice_period: '30 days' })).toBe(COVER_P4_THANKS);
+    expect(fillP4(COVER_P4, { notice_period: 'Immediate.' }, 'Pune')).toBe("I'm based in Pune, looking for a fully remote role, and available after a notice period of Immediate. Thank you for considering my application.");
+    expect(fillP4(COVER_P4, { notice_period: '30 days,' }, 'Pune')).toBe(FILLED);
   });
 
   it('refuses a forbidden term anywhere in the documents, contact block included, without naming it', async () => {
@@ -412,7 +443,7 @@ describe('G-FILL', () => {
     const withPara = (i: number, text: string): Rendered => ({ ...rendered, plan: { ...rendered.plan, paragraphs: rendered.plan.paragraphs.map((p, j) => (j === i ? { ...p, text } : p)) } });
     const cases: [string, unknown, RegExp, unknown?][] = [
       ['another paragraph changed', withPara(0, `${rendered.plan.paragraphs[0]!.text} Extra.`), /paragraphs\[0\] changed/],
-      ['a wrong fill', withPara(last, 'I am available from tomorrow, with a notice period of 1 day. Thank you for your time.'), /not the p4 fill/],
+      ['a wrong fill', withPara(last, "I'm based in Pune, looking for a fully remote role, and available after a 1-day notice period. Thank you for considering my application."), /not the p4 fill/],
       ['a placeholder left', withPara(last, COVER_P4), /placeholder brace/],
       ['a changed resume', { ...rendered, plan: { ...rendered.plan, resume: { ...rendered.plan.resume, headline: 'CTO' } } }, /plan\.resume differs/],
       ['tampered text', { ...rendered, text: { ...rendered.text, resume: rendered.text.resume.replace('Asha Rao', 'Asha R.') } }, /text\.resume is not the document/],
@@ -426,7 +457,7 @@ describe('G-FILL', () => {
       const v = G_FILL.check(gctx(cover, payload, pack === null ? null : fullPack()));
       expect(v.verdict, what).toBe('trip');
       expect(v.detail, what).toMatch(why);
-      expect(v.detail, what).not.toContain('1 November 2026');
+      expect(v.detail, what).not.toContain('30-day');
     }
   });
 
@@ -445,6 +476,103 @@ describe('G-FILL', () => {
     expect(ok.verdict).toBe('pass');
     const bad = G_NAMING.check(gctx(cover, { ...rendered, text: { ...rendered.text, resume: `${rendered.text.resume}\nInitech` } }));
     expect(bad).toMatchObject({ verdict: 'trip', detail: 'forbidden term #1 appears in text.resume' });
+  });
+});
+
+describe('G-GROUND on the rendered letter', () => {
+  const gctx = (input: CoverPlan, payload: unknown, full: unknown = fullPack(), pub: unknown = publicPackOf(fullPack())): GuardrailContext => ({
+    side: 'out',
+    contract: rendererContract,
+    policy: PRODUCT_POLICY_V1,
+    policyHash: 'p',
+    contractHashOf: () => undefined,
+    input: { envelopeId: 'e', stepKey: 's', index: 0, type: 'CoverPlan@1', producer: { agentId: 'cover-writer', version: '1.1.0', contractHash: 'h' }, parents: [], payload: input, handoff: { guarantees: [], dataClass: 'P0', obligations: [], pins: { policyHash: 'p' } }, guardrails: [], cost: ZERO_COST },
+    output: { payload, dataClass: 'P1' },
+    ...(pub === null ? {} : { pack: freezePack(pub) as Readonly<unknown> }),
+    ...(full === null ? {} : { fullPack: freezePack(full) as Readonly<unknown> }),
+  });
+
+  it('passes the real output, and its letter is the expected text', async () => {
+    const cover = coverPlanOf();
+    const { rendered } = await render(cover);
+    expect(G_GROUND.check(gctx(cover, rendered))).toEqual({ id: 'G-GROUND', verdict: 'pass' });
+    expect(rendered.text.cover.split('\n').slice(2)).toEqual([
+      'Dear Hiring Team,',
+      "I'm applying for the Senior Backend Engineer (Java) role at Acme Payments. I'm a Senior Backend Engineer with 10+ years of experience. The role asks for Java, Spring and Kafka, and I've used all three in my work. Three examples follow.",
+      'At Contoso Retail, I built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly. At Northwind Labs, where I work now, I led the design of an event-driven order pipeline on Kafka handling 40M events a day.',
+      'At Fabrikam, I built REST services in Java with Spring and MySQL for the store-locator product.',
+      FILLED,
+      'Sincerely,',
+      'Asha Rao',
+    ]);
+  });
+
+  it('(a) trips when any one word of the rendered letter changes: text, paragraphs, verb, employer, notice or city', async () => {
+    const cover = coverPlanOf();
+    const { rendered } = await render(cover);
+    const textSwap = (from: string, to: string): Rendered => {
+      expect(rendered.text.cover, from).toContain(from);
+      return { ...rendered, text: { ...rendered.text, cover: rendered.text.cover.replace(from, to) } };
+    };
+    const paraSwap = (i: number, from: string, to: string): Rendered => {
+      expect(rendered.plan.paragraphs[i]!.text, from).toContain(from);
+      return { ...rendered, plan: { ...rendered.plan, paragraphs: rendered.plan.paragraphs.map((p, j) => (j === i ? { ...p, text: p.text.replace(from, to) } : p)) } };
+    };
+    const both = (i: number, from: string, to: string): Rendered => {
+      const x = paraSwap(i, from, to);
+      return { ...x, text: { ...x.text, cover: x.text.cover.replace(from, to) } };
+    };
+    const cases: [string, Rendered][] = [
+      ['a verb in the text', textSwap('I built the payments', 'I designed the payments')],
+      ['the verb form', both(1, 'At Contoso Retail, I built the', 'At Contoso Retail: Built the')],
+      ['the employer', both(1, 'At Contoso Retail,', 'At Northwind Labs,')],
+      ['where I work now', both(1, ', where I work now,', ',')],
+      ['the covered list', both(0, 'Java, Spring and Kafka', 'Java, Spring and Rust')],
+      ['the notice', both(3, '30-day', '60-day')],
+      ['the city', both(3, 'based in Pune', 'based in Mumbai')],
+      ['the years', both(0, '10+ years', '12+ years')],
+      ['the sign-off', textSwap('Sincerely,', 'Regards,')],
+      ['one trailing space', textSwap('nightly.', 'nightly. ')],
+    ];
+    for (const [what, payload] of cases) {
+      const v = G_GROUND.check(gctx(cover, payload));
+      expect(v.verdict, what).toBe('trip');
+      expect(v.detail, what).toMatch(/is not the letter re-rendered from recomputed slots/);
+      expect(v.detail, what).not.toMatch(/Pune|30-day|Contoso/);
+    }
+  });
+
+  it('re-derives the cover plan from the resume plan: a changed input paragraph trips even when the output matches it', async () => {
+    const cover = coverPlanOf();
+    const forged: CoverPlan = { ...cover, paragraphs: cover.paragraphs.map((p, i) => (i === 2 ? { ...p, text: p.text.replace('I built', 'I single-handedly built') } : p)) };
+    const { rendered } = await render(forged);
+    const v = G_GROUND.check(gctx(forged, rendered));
+    expect(v.verdict).toBe('trip');
+    expect(v.detail).toMatch(/paragraphs\[2\] is not the template rendering/);
+  });
+
+  it('fails closed without the public pack or the full pack', async () => {
+    const cover = coverPlanOf();
+    const { rendered } = await render(cover);
+    expect(G_GROUND.check(gctx(cover, rendered, null)).detail).toMatch(/no full pack/);
+    expect(G_GROUND.check(gctx(cover, rendered, fullPack(), null)).detail).toMatch(/no pack/);
+  });
+});
+
+describe('(d) determinism from a fresh pack load', () => {
+  it('plans and renders twice from scratch: byte-identical PDF, DOCX and HTML, and the same letter text', async () => {
+    const run = async () => render(coverPlanOf(posting(), fullPack()), fullPack());
+    const a = await run();
+    const b = await run();
+    expect(b.rendered.text).toEqual(a.rendered.text);
+    expect(JSON.stringify(b.rendered.plan)).toBe(JSON.stringify(a.rendered.plan));
+    for (const f of a.rendered.files) expect(Buffer.compare(readFileSync(join(a.out, f.path)), readFileSync(join(b.out, f.path))), f.path).toBe(0);
+    // a different notice changes the cover bytes and nothing else
+    const c = await render(coverPlanOf(), fullPack({ answers: { ...fullPack().answers, notice_period: '2 weeks' } }));
+    const shaOf = (r: Rendered, name: string) => r.files.find((f) => f.path.endsWith(name))!.sha256;
+    for (const n of ['resume.pdf', 'resume.docx', 'resume.html']) expect(shaOf(c.rendered, n), n).toBe(shaOf(a.rendered, n));
+    for (const n of ['cover.pdf', 'cover.docx', 'cover.html']) expect(shaOf(c.rendered, n), n).not.toBe(shaOf(a.rendered, n));
+    expect(c.rendered.text.cover).toContain('available after a 2-week notice period.');
   });
 });
 
@@ -472,7 +600,7 @@ describe('M7: the kernel labels the renderer outputs P1', () => {
     if (res.kind !== 'done') return;
     expect(res.outputs).toHaveLength(1);
     expect(res.outputs[0]!.handoff.dataClass).toBe('P1');
-    expect(res.outputs[0]!.guardrails.map((g) => `${g.id}:${g.verdict}`)).toEqual(expect.arrayContaining(['G-FILL:pass', 'G-NAMING:pass', 'G-DATACLASS:pass']));
+    expect(res.outputs[0]!.guardrails.map((g) => `${g.id}:${g.verdict}`)).toEqual(expect.arrayContaining(['G-GROUND:pass', 'G-FILL:pass', 'G-NAMING:pass', 'G-DATACLASS:pass']));
     // committed after the guardrails: every listed file is at its final path with its recorded sha256
     const rendered = res.outputs[0]!.payload as Rendered;
     for (const f of rendered.files) expect(sha(readFileSync(join(out, f.path))), f.path).toBe(f.sha256);
