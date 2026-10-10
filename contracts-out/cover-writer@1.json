@@ -1,5 +1,5 @@
 {
-  "hash": "30ae62ab7de6604fe5135639cefe2e200fd4d8dc70fa6fb45dc6e902dcc47807",
+  "hash": "f05d27537f604c3f991b3b948e05d374ef579cd3c82e61b628d52f502ced5e38",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -1072,6 +1072,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.1.0"
+    "version": "1.1.1"
   }
 }

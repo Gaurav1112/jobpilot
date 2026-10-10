@@ -32,6 +32,7 @@ import { tagIs } from '../../src/app/lexicon.js';
 import { loadPack } from '../../src/app/pack/load.js';
 import { assertNoForbidden } from '../../src/app/pack/rules.js';
 import type { Fact } from '../../src/app/pack/schema.js';
+import { coverProblems } from '../../src/app/guardrails.js';
 import { CoverPlan, Evidence, ResumePlan, type Posting, type Scored } from '../../src/app/types.js';
 import type { AnyAgent } from '../../src/kernel/agent.js';
 import { freezePack, issueContext } from '../../src/kernel/broker.js';
@@ -493,11 +494,61 @@ describe('cover-writer', () => {
     for (const w of ['Need', 'Seed', 'Red', 'Speed', 'Feed', 'Mentorship', 'Distributed', 'Embedded', 'Advanced', 'Ed', 'I', 'Go', 'Java']) expect(startsWithPastVerb(`${w} x`), w).toBe(false);
   });
 
-  it('(b) in the planned letter, a claim that starts with a non-verb uses the colon form, verbatim', () => {
-    const nv = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-ct-01' ? { ...f, claim: 'Payments reconciliation service in Java and Postgres, processing 2M transactions nightly.' } : f)) }) as WritingPack;
-    const c = planCover(planResume(buildEvidence(scoredOf(posting(), nv), nv), nv), nv);
-    expect(c.paragraphs[1]!.text.startsWith('At Contoso Retail: Payments reconciliation service in Java and Postgres, processing 2M transactions nightly. ')).toBe(true);
-    expect(c.paragraphs[1]!.factIds[0]).toBe('f-ct-01');
+  describe('evidence selection prefers verb-led facts (a colon-form fact is swapped for a verb-led one backing its letter terms)', () => {
+    const nounLed = (claims: Record<string, string>) =>
+      freezePack({ ...pack, facts: pack.facts.map((f) => (claims[f.id] !== undefined ? { ...f, claim: claims[f.id] as string } : f)) }) as WritingPack;
+    const letterOf = (pk: WritingPack) => {
+      const resume = planResume(buildEvidence(scoredOf(posting(), pk), pk), pk);
+      return { resume, cover: planCover(resume, pk) };
+    };
+    const P1 = EXPECTED_PARAGRAPHS[0]!;
+
+    it('a noun-led top fact gives way to the highest-ranked verb-led bullet outside the top 3 that backs its letter terms', () => {
+      // f-ct-01 (rank 1) backs java among the letter's terms (Java, Spring, Kafka); f-nw-02 ("Cut ...", rank 4) backs java too.
+      const pk = nounLed({ 'f-ct-01': 'Payments reconciliation service in Java and Postgres, processing 2M transactions nightly.' });
+      const { resume, cover } = letterOf(pk);
+      expect(resume.evidence.ranked.slice(0, 4).map((r) => r.factId)).toEqual(['f-ct-01', 'f-nw-01', 'f-fb-01', 'f-nw-02']);
+      expect(cover.paragraphs).toEqual([
+        P1, // the covered list and "I've used all three" are unchanged
+        {
+          text: 'At Northwind Labs, where I work now, I cut p99 latency of the pricing service from 800 ms to 180 ms by introducing a Redis read-through cache. There I also led the design of an event-driven order pipeline on Kafka handling 40M events a day.',
+          factIds: ['f-nw-02', 'f-nw-01'],
+        },
+        { text: 'At Fabrikam, I built REST services in Java with Spring and MySQL for the store-locator product.', factIds: ['f-fb-01'] },
+        { text: COVER_P4, factIds: [] },
+      ]);
+      expect(coverProblems(cover, pk)).toEqual([]); // G-GROUND recomputes the same selection, byte for byte
+      // the resume is untouched: every placed fact in role order, the noun-led claim included
+      expect(resume.roles[1]!.bullets[0]).toEqual({ factId: 'f-ct-01', text: 'Payments reconciliation service in Java and Postgres, processing 2M transactions nightly.' });
+    });
+
+    it('keeps the colon form when no verb-led fact outside the top 3 backs every letter term it contributes', () => {
+      // f-nw-01 backs java and kafka; no other fact backs kafka.
+      const pk = nounLed({ 'f-nw-01': 'Event-driven order pipeline design on Kafka handling 40M events a day.' });
+      const { cover } = letterOf(pk);
+      expect(cover.paragraphs[1]).toEqual({
+        text: 'At Contoso Retail, I built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly. At Northwind Labs: Event-driven order pipeline design on Kafka handling 40M events a day.',
+        factIds: ['f-ct-01', 'f-nw-01'],
+      });
+      expect(coverProblems(cover, pk)).toEqual([]);
+    });
+
+    it('swaps in rank order: an earlier colon fact takes the substitute a later one would also need', () => {
+      // f-ct-01 (java) takes f-nw-02; f-fb-01 (java, spring) then has no verb-led fact left backing both, so stays a colon.
+      const pk = nounLed({
+        'f-ct-01': 'Payments reconciliation service in Java and Postgres, processing 2M transactions nightly.',
+        'f-fb-01': 'REST services in Java with Spring and MySQL for the store-locator product.',
+      });
+      const { cover } = letterOf(pk);
+      expect(cover.paragraphs.slice(1, 3)).toEqual([
+        {
+          text: 'At Northwind Labs, where I work now, I cut p99 latency of the pricing service from 800 ms to 180 ms by introducing a Redis read-through cache. There I also led the design of an event-driven order pipeline on Kafka handling 40M events a day.',
+          factIds: ['f-nw-02', 'f-nw-01'],
+        },
+        { text: 'At Fabrikam: REST services in Java with Spring and MySQL for the store-locator product.', factIds: ['f-fb-01'] },
+      ]);
+      expect(coverProblems(cover, pk)).toEqual([]);
+    });
   });
 
   it('(c) shows the display employer, never the raw one, when a fact of the forbidden raw employer is cited', () => {

@@ -10,6 +10,7 @@ import {
   renderOpening,
   renderSummary,
   sanitisePostingText,
+  startsWithPastVerb,
   type EvidenceSlots,
   type OpeningSlots,
   type SummarySlots,
@@ -64,7 +65,10 @@ import {
  *   and `renderCover` renders the templates of `templates.ts` from them. p1 is `renderOpening`: the sanitised posting
  *   title and company, the headline with "a"/"an" (`articleFor`) and years (`COVER_TITLE_PAST` when no role is
  *   ongoing), the first three summary terms (covered keys an experience fact placed in a role backs, by display), and
- *   the number of examples. p2 holds the two top-ranked placed facts and p3 the third, each an `evidenceSentence`
+ *   the number of examples. The evidence facts are the three top-ranked placed facts, except that each one in the colon
+ *   form (its claim does not start with a past-tense verb), in rank order, is swapped for the highest-ranked unused
+ *   verb-led resume bullet outside the top three that backs (as an experience fact) every p1 term it backs; with no
+ *   such fact it stays (`preferVerbLed`). p2 holds the first two and p3 the third, each an `evidenceSentence`
  *   anchored to its placed role's display employer: "where I work now" only on the first mention of an ongoing role's
  *   employer, "There I also" for the same employer as the sentence just before in the same paragraph, "Also at" for
  *   one named earlier. No sentence names a missing or gap term. p4 is `COVER_P4`, its placeholders left for the
@@ -317,8 +321,13 @@ export function summarySlots(headline: string, years: number, terms: readonly st
 
 /** The summary's terms: covered keys an experience fact placed in a role backs, shown by display. */
 export function summaryTerms(covered: readonly string[], pack: WritingPack): string[] {
+  return summaryKeysOf(covered, pack).map((k) => termDisplay(k, pack));
+}
+
+/** The summary's terms as keys, before display: covered non-gap keys an experience fact placed in a role backs. */
+function summaryKeysOf(covered: readonly string[], pack: WritingPack): string[] {
   const ok = new Set(summaryKeys(pack));
-  return covered.filter((k) => ok.has(k) && !isGapKey(k, pack)).map((k) => termDisplay(k, pack));
+  return covered.filter((k) => ok.has(k) && !isGapKey(k, pack));
 }
 
 const newestFirst = (pack: WritingPack) => (a: Fact, b: Fact) => factSpan(b, pack).start - factSpan(a, pack).start || cmp(a.id, b.id);
@@ -381,6 +390,31 @@ export interface CoverSlots {
   readonly evidence: readonly (readonly (EvidenceSlots & { readonly factId: string })[])[];
 }
 
+/** Whether a fact backs `key` for p1's "I've used" sentence: a citeable experience fact whose tech backs it. */
+const backsLetterKey = (f: Fact, key: string, pack: WritingPack): boolean => {
+  const g = groupOf(key, pack);
+  return g !== undefined && citeable(f) && f.kind === 'experience' && tagsBack(f.tech, g);
+};
+
+/**
+ * The cover's evidence facts: the top three of `placed` (ranked placed facts), with each colon-form fact (its claim
+ * does not start with a past-tense verb) swapped, in rank order, for the highest-ranked unused verb-led fact outside
+ * the top three that is a resume bullet and backs every letter key the colon-form fact backs. The swapped-in fact
+ * takes the colon-form fact's place, so swapped-in facts keep their rank order; a colon-form fact with no such
+ * substitute stays. The p1 covered list is therefore backed exactly as before, and no claim text changes.
+ */
+function preferVerbLed<T extends { readonly f: Fact }>(placed: readonly T[], letterKeys: readonly string[], bullets: ReadonlySet<string>, pack: WritingPack): T[] {
+  const top = placed.slice(0, 3);
+  const pool = placed.slice(3).filter((c) => bullets.has(c.f.id) && startsWithPastVerb(c.f.claim));
+  return top.map((t) => {
+    if (startsWithPastVerb(t.f.claim)) return t;
+    const needs = letterKeys.filter((k) => backsLetterKey(t.f, k, pack));
+    const at = pool.findIndex((c) => needs.every((k) => backsLetterKey(c.f, k, pack)));
+    if (at < 0) return t;
+    return pool.splice(at, 1)[0] as T;
+  });
+}
+
 /** The cover slots of one ResumePlan, recomputed from the posting and the pack. */
 export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
   checkEmployers(pack);
@@ -388,14 +422,15 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
   const posting = evidence.scored.posting;
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
   const roles = displayRoles(pack);
-  const top = evidence.ranked
-    .flatMap((r) => {
-      const f = byId.get(r.factId);
-      const i = f !== undefined && isRankable(f) ? roleIndexOf(f, roles, pack) : undefined;
-      const role = i === undefined ? undefined : roles[i];
-      return f !== undefined && role !== undefined ? [{ f, role }] : [];
-    })
-    .slice(0, 3);
+  const placed = evidence.ranked.flatMap((r) => {
+    const f = byId.get(r.factId);
+    const i = f !== undefined && isRankable(f) ? roleIndexOf(f, roles, pack) : undefined;
+    const role = i === undefined ? undefined : roles[i];
+    return f !== undefined && role !== undefined ? [{ f, role }] : [];
+  });
+  const letterKeys = summaryKeysOf(evidence.covered, pack).slice(0, 3);
+  const bullets = new Set(resume.roles.flatMap((r) => r.bullets.map((b) => b.factId)));
+  const top = preferVerbLed(placed, letterKeys, bullets, pack);
   const named = new Set<string>();
   const paragraphs = [top.slice(0, 2), top.slice(2, 3)].filter((p) => p.length > 0);
   const slots = paragraphs.map((p) =>
@@ -411,7 +446,7 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
       targetTitle: headlineOf(posting.title, pack),
       years: yearsOf(pack.roles, pack.experience.asOf),
       past: !hasOngoingRole(pack),
-      terms: summaryTerms(evidence.covered.filter((k) => !isGapKey(k, pack)), pack).slice(0, 3),
+      terms: letterKeys.map((k) => termDisplay(k, pack)),
       examples: top.length,
     },
     evidence: slots,

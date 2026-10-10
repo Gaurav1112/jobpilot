@@ -328,7 +328,10 @@ backs it; education facts back nothing.
    qualify, "The role asks for {up to three terms}, and I've used {it|both|all three} in my work.", listing covered
    terms that a citeable experience fact placed in a role backs (the summary's terms). Then "{One example follows.|Two
    examples follow.|Three examples follow.}".
-2. and 3. The three highest-ranked facts placed in a role (two in p2, one in p3), each anchored to its role's display
+2. and 3. The three highest-ranked facts placed in a role (two in p2, one in p3), except that each colon-form fact
+   among them (see below), in rank order, is swapped for the highest-ranked unused verb-led resume bullet outside the
+   top three that backs, as an experience fact, every p1 term the colon-form fact backs (so the covered list and its
+   "I've used" stay exactly backed); with no such fact the colon form stays. Each is anchored to its role's display
    employer: "At {employer}, I {claim}" when the claim starts with a past-tense verb (sentence case, ending in -ed, or a
    fixed irregular list; a fixed list of -ed adjectives such as "Distributed" or "Embedded" is refused), its first
    letter lower-cased; "At {employer}: {claim}" verbatim otherwise. The first mention of an ongoing role's employer
