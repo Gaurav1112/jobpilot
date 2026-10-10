@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -137,5 +137,49 @@ describe('the failure notification path (exit 2)', () => {
     expect(code).toBe(0);
     expect(ok.posted).toEqual(['3 new matches · top: 94 Example Lever Co — Staff Platform Engineer']);
     expect(out.join('\n')).toMatch(/^run daily-2026-10-09 for 2026-10-09/);
+  });
+
+  it('I9: a YAML typo next to an employer line, or a role dated after asOf, never shows a forbidden term on stderr or in the notification', async () => {
+    if (pdftotext === undefined) return;
+    for (const edit of [
+      (h: string) => {
+        const p = join(h, 'pack/facts.yaml');
+        writeFileSync(p, readFileSync(p, 'utf8').replace('employer: Initech India (GCC for Northwind)', 'employer: Initech India (GCC for Northwind): oops'));
+      },
+      (h: string) => {
+        const p = join(h, 'pack/roles.yaml');
+        writeFileSync(p, `${readFileSync(p, 'utf8')}  - employer: Initech India (GCC for Northwind)\n    title: Staff Engineer\n    location: Pune, India\n    start: "2026-12"\n    end: present\n`);
+      },
+    ]) {
+      const home = newHome();
+      edit(home);
+      const ok = sink();
+      const err: string[] = [];
+      const code = await runCommand(
+        { offlineFixtures: FIXTURES, notify: true },
+        { home, clock: { now: () => '2026-10-09T01:30:00.000Z' }, notifier: ok.notifier, out: () => {}, err: (l) => err.push(l), ...(pdftotext ? { pdftotext } : {}) },
+      );
+      expect(code).toBe(2);
+      expect(err.join('\n')).toMatch(/^error: (facts\.yaml:29:15: |roles\.yaml: role 3 starts)/);
+      expect(err.join('\n')).not.toMatch(/initech/i);
+      expect(ok.posted.join('\n')).not.toMatch(/initech/i);
+    }
+  });
+
+  it('I9: an error message that names a term is redacted on stderr and in the notification', async () => {
+    if (pdftotext === undefined) return;
+    const home = newHome();
+    const p = join(home, 'pack/facts.yaml');
+    // a duplicate id that glues the term: the loader's message names the id
+    writeFileSync(p, readFileSync(p, 'utf8').replace('- id: f-nw-02', '- id: InitechPay-01').replace('- id: f-nw-03', '- id: InitechPay-01'));
+    const ok = sink();
+    const err: string[] = [];
+    const code = await runCommand(
+      { offlineFixtures: FIXTURES, notify: true },
+      { home, clock: { now: () => '2026-10-09T01:30:00.000Z' }, notifier: ok.notifier, out: () => {}, err: (l) => err.push(l), ...(pdftotext ? { pdftotext } : {}) },
+    );
+    expect(code).toBe(2);
+    expect(err.join('\n')).toBe('error: facts.yaml: duplicate fact id [hidden]');
+    expect(ok.posted).toEqual(['jobpilot run failed; see the log']);
   });
 });

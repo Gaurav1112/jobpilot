@@ -204,6 +204,28 @@ export function assertNoForbiddenStrict(text: string, naming: Pick<NamingRules, 
   if (term !== undefined) throw new ForbiddenTermError(term);
 }
 
+/** What `redactText` puts in place of a token, and of a line, that names a forbidden term. */
+export const HIDDEN_TOKEN = '[hidden]';
+export const HIDDEN_LINE = '[a line naming a forbidden term is hidden]';
+
+/**
+ * The one redactor for error text (final I9): pack-load errors on /facts, the dashboard's error page, the run's stderr
+ * (which launchd writes to daily.log) and the failure notification. Line by line, with the strict check
+ * (`forbiddenTermStrict`): a clean line is kept; in a line that names a term, each whitespace-separated token that
+ * names one is replaced by `[hidden]`, and if the line still names one (a term split across tokens) the whole line is.
+ */
+export function redactText(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): string {
+  if (naming.forbiddenTerms.length === 0) return text;
+  return text
+    .split('\n')
+    .map((line) => {
+      if (forbiddenTermStrict(line, naming) === undefined) return line;
+      const tokens = line.replace(/\S+/gu, (t) => (forbiddenTermStrict(t, naming) === undefined ? t : HIDDEN_TOKEN));
+      return forbiddenTermStrict(tokens, naming) === undefined ? tokens : HIDDEN_LINE;
+    })
+    .join('\n');
+}
+
 export class EmployerNameError extends Error {
   override readonly name = 'EmployerNameError';
 }

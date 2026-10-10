@@ -7,7 +7,7 @@ import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js
 import type { Notifier } from './notify.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
-import { NamingSchema } from './pack/schema.js';
+import { redactText } from './pack/rules.js';
 import { failureNotification, formatSummary, runDaily } from './run.js';
 
 export interface RunCommandOptions {
@@ -28,13 +28,27 @@ export interface RunCommandDeps {
   readonly sleep?: (ms: number) => Promise<void>;
 }
 
-/** The pack's forbidden terms, if naming.yaml can be read at all (for a failure notification); else undefined. */
-function forbiddenTermsAt(packDir: string): readonly string[] | undefined {
+/**
+ * The pack's forbidden terms, if naming.yaml can be read at all (for the failure notification and the stderr
+ * redactor); else undefined. Read leniently (final I9): a naming.yaml whose employerDisplay is invalid still yields
+ * its forbiddenTerms, so the error about it is redacted too.
+ */
+export function forbiddenTermsAt(packDir: string): readonly string[] | undefined {
   try {
-    return NamingSchema.parse(parseYaml(readFileSync(join(packDir, 'naming.yaml'), 'utf8'))).forbiddenTerms;
+    const terms = (parseYaml(readFileSync(join(packDir, 'naming.yaml'), 'utf8')) as { forbiddenTerms?: unknown } | null)?.forbiddenTerms;
+    return Array.isArray(terms) && terms.every((t) => typeof t === 'string') ? terms : undefined;
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Error text for stderr (which launchd writes to daily.log), redacted by `redactText` (final I9). When the forbidden
+ * terms cannot be read the message is kept: pack errors name files, fields, ids and positions only, never source text.
+ */
+export function redactedError(e: unknown, terms: readonly string[] | undefined): string {
+  const message = e instanceof Error ? e.message : String(e);
+  return terms === undefined ? message : redactText(message, { forbiddenTerms: terms });
 }
 
 /**
@@ -61,11 +75,10 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
     d.out(formatSummary(summary));
     return summary.exitCode;
   } catch (e) {
-    d.err(`error: ${e instanceof Error ? e.message : String(e)}`);
+    const terms = forbiddenTermsAt(homePaths(d.home).pack);
+    d.err(`error: ${redactedError(e, terms)}`);
     if (o.notify) {
-      await d.notifier(failureNotification(e, forbiddenTermsAt(homePaths(d.home).pack))).catch((n: unknown) =>
-        d.err(`error: the failure notification could not be posted: ${n instanceof Error ? n.message : String(n)}`),
-      );
+      await d.notifier(failureNotification(e, terms)).catch((n: unknown) => d.err(`error: the failure notification could not be posted: ${redactedError(n, terms)}`));
     }
     return 2;
   } finally {

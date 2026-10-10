@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
 import { assertNoForbidden, citeable, ForbiddenTermError, loadPack, PackError } from '../../src/app/pack/load.js';
-import { assertNoForbiddenStrict, forbiddenTermStrict } from '../../src/app/pack/rules.js';
+import { assertNoForbiddenStrict, forbiddenTermStrict, redactText } from '../../src/app/pack/rules.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
 import { compileRoleDeny, compileSafePattern } from '../../src/app/pack/regex.js';
 import { WatchEntrySchema } from '../../src/app/pack/schema.js';
@@ -134,11 +134,11 @@ describe('loadPack', () => {
   });
 
   it('rejects a role or fact start, or a role end, later than asOf', () => {
-    expect(() => loadPack(FIXTURE, {}, { asOf: '2022-02' })).toThrow(/roles\.yaml: role 0 \(Northwind Labs\) starts 2022-03, after experience\.asOf 2022-02/);
+    expect(() => loadPack(FIXTURE, {}, { asOf: '2022-02' })).toThrow(/^roles\.yaml: role 0 starts 2022-03, after experience\.asOf 2022-02$/);
     const d = copyFixture();
     const roles = join(d, 'roles.yaml');
     writeFileSync(roles, readFileSync(roles, 'utf8').replace('end: "2022-02"', 'end: "2027-02"'));
-    expect(() => loadPack(d)).toThrow(/roles\.yaml: role 1 \(Contoso Retail\) ends 2027-02, after experience\.asOf 2026-10/);
+    expect(() => loadPack(d)).toThrow(/^roles\.yaml: role 1 ends 2027-02, after experience\.asOf 2026-10$/);
     const e = copyFixture();
     const facts = join(e, 'facts.yaml');
     writeFileSync(facts, readFileSync(facts, 'utf8').replace('period: "2023-01..present"', 'period: "2027-01..present"'));
@@ -347,6 +347,35 @@ describe('I8: one strict forbidden-term check for the run path and the importer'
     expect(() => assertNoForbiddenStrict('Northwind Labs', naming)).not.toThrow();
     expect(() => assertNoForbidden('the Initeches', naming)).toThrow(ForbiddenTermError);
     expect(() => assertNoForbidden('worked at I\u0578itec\u0570 once', naming)).toThrow(ForbiddenTermError);
+  });
+});
+
+describe('I9: pack-load errors never echo the raw employer or the source line', () => {
+  const naming: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech'] };
+  const messageOf = (f: () => unknown): string => {
+    try {
+      f();
+    } catch (e) {
+      expect(e).toBeInstanceOf(PackError);
+      return (e as Error).message;
+    }
+    throw new Error('no error');
+  };
+  it('a YAML typo next to an employer line is cut to file:line:col: message', () => {
+    const d = copyFixture();
+    const p = join(d, 'facts.yaml');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('employer: Initech India (GCC for Northwind)', 'employer: Initech India (GCC for Northwind): oops'));
+    expect(messageOf(() => loadPack(d))).toBe('facts.yaml:29:15: Nested mappings are not allowed in compact mappings');
+  });
+  it('a role dated after asOf is named by its index, never by its employer', () => {
+    const d = copyFixture();
+    append(d, 'roles.yaml', '  - employer: Initech India (GCC for Northwind)\n    title: Staff Engineer\n    location: Pune, India\n    start: "2026-12"\n    end: present\n');
+    expect(messageOf(() => loadPack(d))).toBe('roles.yaml: role 3 starts 2026-12, after experience.asOf 2026-10');
+  });
+  it('redactText hides a token naming a term, or the whole line when the term spans tokens (the strict check)', () => {
+    expect(redactText('first\nfacts.yaml: duplicate fact id InitechPay-01\nlast', naming)).toBe('first\nfacts.yaml: duplicate fact id [hidden]\nlast');
+    expect(redactText('a role at Ini tech', naming)).toBe('[a line naming a forbidden term is hidden]');
+    expect(redactText('Northwind Labs, unit tech', naming)).toBe('Northwind Labs, unit tech');
   });
 });
 

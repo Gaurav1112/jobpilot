@@ -33,6 +33,17 @@ export class PackError extends Error {
   override readonly name = 'PackError';
 }
 
+/**
+ * A YAML error as "file:line:col: message" (final I9): the parser's message quotes the source line, which may hold a
+ * raw employer or a forbidden term, so only its first sentence (cut before " at line") and its position are kept.
+ */
+function yamlProblem(file: string, e: unknown): string {
+  const pos = (e as { linePos?: readonly { line: number; col: number }[] } | null)?.linePos?.[0];
+  const first = (e instanceof Error ? e.message : String(e)).split('\n')[0] ?? '';
+  const message = first.replace(/ at line \d+, column \d+:?\s*$/u, '').trim() || 'invalid YAML';
+  return pos === undefined ? `${file}: invalid YAML: ${message}` : `${file}:${pos.line}:${pos.col}: ${message}`;
+}
+
 function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: unknown): T {
   const path = join(dir, file);
   let raw: unknown;
@@ -43,7 +54,7 @@ function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: u
     try {
       raw = parse(readFileSync(path, 'utf8'));
     } catch (e) {
-      throw new PackError(`${file}: invalid YAML: ${e instanceof Error ? e.message : String(e)}`);
+      throw new PackError(yamlProblem(file, e));
     }
   }
   const r = schema.safeParse(raw ?? {});
@@ -67,12 +78,15 @@ export interface LoadOptions {
   readonly asOf?: string;
 }
 
-/** No role or fact may start after asOf, and no role may end after it (a cert's validity end may). */
+/**
+ * No role or fact may start after asOf, and no role may end after it (a cert's validity end may). Roles are named by
+ * index and facts by id, never by employer (final I9: the raw employer may be the client's name).
+ */
 function checkDates(pack: Pick<Pack, 'roles' | 'facts' | 'experience'>): void {
   const asOf = pack.experience.asOf;
   pack.roles.forEach((r, i) => {
-    if (r.start > asOf) throw new PackError(`roles.yaml: role ${i} (${r.employer}) starts ${r.start}, after experience.asOf ${asOf}`);
-    if (r.end !== 'present' && r.end > asOf) throw new PackError(`roles.yaml: role ${i} (${r.employer}) ends ${r.end}, after experience.asOf ${asOf}`);
+    if (r.start > asOf) throw new PackError(`roles.yaml: role ${i} starts ${r.start}, after experience.asOf ${asOf}`);
+    if (r.end !== 'present' && r.end > asOf) throw new PackError(`roles.yaml: role ${i} ends ${r.end}, after experience.asOf ${asOf}`);
   });
   for (const f of pack.facts) {
     const start = f.period.slice(0, 7);

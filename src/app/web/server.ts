@@ -13,7 +13,7 @@ import { profileFor } from '../ats-profiles.js';
 import { DEFAULT_FX } from '../pack/defaults.js';
 import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
-import { assertNoForbidden, employerDisplay, ForbiddenTermError, type NamingRules } from '../pack/rules.js';
+import { employerDisplay, forbiddenTermStrict, redactText, type NamingRules } from '../pack/rules.js';
 import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } from '../store/app-store.js';
@@ -59,6 +59,8 @@ export interface DashboardDeps {
 /** Tests only (reached through `server-testing.ts`): runs just before an applied snapshot is recorded. */
 export interface DashboardTestHooks {
   readonly beforeSnapshot?: () => void;
+  /** Runs before every route; throwing reaches the error page. */
+  readonly beforeRoute?: () => void;
 }
 
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
@@ -123,22 +125,17 @@ function packState(home: string, now: string): PackState {
   } catch (e) {
     const naming = namingOnly(dir);
     if (naming === undefined) throw new NamingUnreadable('naming.yaml could not be read, so nothing can be shown safely; fix it and reload');
-    return { pack: undefined, error: e instanceof Error ? e.message : String(e), naming };
+    // final I9: the load error goes through the one redactor before it is shown on any page
+    return { pack: undefined, error: redactText(e instanceof Error ? e.message : String(e), naming), naming };
   }
 }
 
-/** Replaces any string naming a forbidden term with HIDDEN, deeply (objects and arrays are copied). */
+/**
+ * Replaces any string naming a forbidden term with HIDDEN, deeply (objects and arrays are copied). The strict check
+ * (`forbiddenTermStrict`, final I8 and M-N4): glued, split, plural and look-alike spellings are hidden too.
+ */
 export function redactor(naming: Pick<NamingRules, 'forbiddenTerms'>): { text: (s: string) => string; deep: <T>(v: T) => T } {
-  const text = (s: string): string => {
-    if (naming.forbiddenTerms.length === 0) return s;
-    try {
-      assertNoForbidden(s, naming);
-      return s;
-    } catch (e) {
-      if (e instanceof ForbiddenTermError) return HIDDEN;
-      throw e;
-    }
-  };
+  const text = (s: string): string => (naming.forbiddenTerms.length === 0 || forbiddenTermStrict(s, naming) === undefined ? s : HIDDEN);
   const deep = <T>(v: T): T => {
     if (typeof v === 'string') return text(v) as T;
     if (Array.isArray(v)) return v.map(deep) as T;
@@ -188,6 +185,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const sessions = deps.sessions ?? new Sessions(keptSecret(paths.db, timeoutMs));
   const files = staticFiles();
   const app = new Hono<Env>();
+  if (hooks.beforeRoute !== undefined) {
+    const before = hooks.beforeRoute;
+    app.use(async (_c, next) => {
+      before();
+      await next();
+    });
+  }
   const portOf = (): number | undefined => (typeof deps.port === 'function' ? deps.port() : deps.port);
 
   const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 403 | 404 | 500 | 503 = 200) =>
@@ -619,8 +623,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return page(c, 'jobs', 'Busy', [], html`<h1>One moment</h1><p>${BUSY_MESSAGE}</p>`, 503);
     }
     if (err instanceof NamingUnreadable) return page(c, 'jobs', 'Cannot show', [], html`<h1>Cannot show your data</h1><p>${err.message}</p>`, 500);
-    console.error('jobpilot dashboard error:', err);
-    return page(c, 'jobs', 'Error', [], html`<h1>Something went wrong</h1><p>${err instanceof Error ? err.message : String(err)}</p>`, 500);
+    // final I9: the message, on the page and in the log, goes through the one redactor; with no readable naming rules
+    // it is not shown at all
+    const naming = namingOnly(paths.pack);
+    const message = naming === undefined ? 'the details are hidden: naming.yaml could not be read' : redactText(err instanceof Error ? err.message : String(err), naming);
+    console.error(`jobpilot dashboard error: ${message}`);
+    return page(c, 'jobs', 'Error', [], html`<h1>Something went wrong</h1><p>${message}</p>`, 500);
   });
   return app;
 }

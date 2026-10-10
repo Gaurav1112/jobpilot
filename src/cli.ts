@@ -22,7 +22,7 @@ import { formatImportReport, importPack, planImport } from './app/pack/import.js
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
-import { runCommand } from './app/run-command.js';
+import { forbiddenTermsAt, redactedError, runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
@@ -202,7 +202,8 @@ async function guarded(fn: () => Promise<void> | void): Promise<void> {
   try {
     await fn();
   } catch (e) {
-    console.error(`error: ${e instanceof Error ? e.message : String(e)}`);
+    // final I9: every CLI error goes through the one redactor (`redactText`), with the home pack's forbidden terms
+    console.error(`error: ${redactedError(e, forbiddenTermsAt(homePaths(jobpilotHome()).pack))}`);
     process.exitCode = 1;
   }
 }

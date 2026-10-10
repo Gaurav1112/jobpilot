@@ -937,3 +937,49 @@ describe('dashboard: number formatting', () => {
     expect(compText(null, null, null).main).toBe('Pay not disclosed');
   });
 });
+
+describe('I9: pack-load errors on the dashboard never show a forbidden term', () => {
+  const typo = () => {
+    const p = join(home, 'pack/facts.yaml');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('employer: Initech India (GCC for Northwind)', 'employer: Initech India (GCC for Northwind): oops'));
+  };
+  const lateRole = () => {
+    const p = join(home, 'pack/roles.yaml');
+    writeFileSync(p, `${readFileSync(p, 'utf8')}  - employer: Initech India (GCC for Northwind)\n    title: Staff Engineer\n    location: Pune, India\n    start: "2026-12"\n    end: present\n`);
+  };
+
+  it('a YAML typo next to an employer line: /facts shows file:line:col: message only', async () => {
+    typo();
+    const { body } = await get('/facts');
+    expect(body).toContain('Your pack could not be read: facts.yaml:29:15: Nested mappings are not allowed in compact mappings');
+    expect(body).not.toMatch(/initech/i);
+  });
+
+  it('a role dated after asOf: /facts names the role by index', async () => {
+    lateRole();
+    const { body } = await get('/facts');
+    expect(body).toContain('Your pack could not be read: roles.yaml: role 3 starts 2026-12, after experience.asOf 2026-10');
+    expect(body).not.toMatch(/initech/i);
+  });
+
+  it('a pack error that names a term (a glued duplicate id) is redacted on /facts', async () => {
+    const p = join(home, 'pack/facts.yaml');
+    writeFileSync(p, readFileSync(p, 'utf8').replace('- id: f-nw-02', '- id: InitechPay-01').replace('- id: f-nw-03', '- id: InitechPay-01'));
+    const { body } = await get('/facts');
+    expect(body).toContain('Your pack could not be read: facts.yaml: duplicate fact id [hidden]');
+    expect(body).not.toMatch(/initech/i);
+  });
+
+  it('the error page redacts the message through the same helper', async () => {
+    const hooked = wrap(createTestDashboard({ home, clock: { now: () => now }, sessions: new Sessions(Buffer.alloc(32, 7)) }, {
+      beforeRoute: () => {
+        throw new Error('roles.yaml: role 0 (Initech India) is odd\nsecond line at InitechPay');
+      },
+    }));
+    const r = await hooked.request('/facts', { headers: { cookie } });
+    expect(r.status).toBe(500);
+    const body = await r.text();
+    expect(body).toContain('roles.yaml: role 0 [hidden] India) is odd');
+    expect(body).not.toMatch(/initech/i);
+  });
+});

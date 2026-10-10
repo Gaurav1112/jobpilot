@@ -12,7 +12,7 @@ import { homePaths } from './pack/paths.js';
 import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
 import { runProblems, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
-import { citeable } from './pack/rules.js';
+import { citeable, forbiddenTermStrict } from './pack/rules.js';
 import type { Pack } from './pack/schema.js';
 import { AppStore, type DocsState } from './store/app-store.js';
 import { ensureHome } from './home.js';
@@ -231,15 +231,15 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
 
 /**
  * The text of the notification a run that could not finish posts (`jobpilot run failed: <reason>`): the first line
- * of the error, unless it holds a forbidden term (checked when the pack's naming rules can be read) or they cannot be
- * read at all, in which case the reason is left out.
+ * of the error, unless it holds a forbidden term (`forbiddenTermStrict`, when the pack's naming rules can be read) or
+ * they cannot be read at all, in which case the reason is left out (the log has it, redacted by `redactText`).
  */
 export function failureNotification(err: unknown, forbiddenTerms: readonly string[] | undefined): string {
   const first = (err instanceof Error ? err.message : String(err)).split('\n')[0]?.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim() ?? '';
   const reason = first.length > 180 ? `${first.slice(0, 179)}…` : first;
   if (forbiddenTerms === undefined || reason === '') return 'jobpilot run failed; see the log';
-  const folded = reason.toLowerCase();
-  return forbiddenTerms.some((t) => folded.includes(t.toLowerCase())) ? 'jobpilot run failed; see the log' : `jobpilot run failed: ${reason}`;
+  // final M-N1/I9: the strict check, the one the log's redactor uses (a substring `includes` missed look-alikes)
+  return forbiddenTermStrict(reason, { forbiddenTerms }) !== undefined ? 'jobpilot run failed; see the log' : `jobpilot run failed: ${reason}`;
 }
 
 export interface RebuildOptions {
