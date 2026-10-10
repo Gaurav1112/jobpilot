@@ -110,8 +110,12 @@ export function packTextProblems(pack: ScannedPack): string[] {
   });
   Object.values(pack.naming.employerDisplay).forEach((display, i) => term(display, `naming.yaml: employerDisplay value ${i + 1}`));
   const { claimableTitles: _claimable, ...targets } = pack.targets;
+  // Rereview R12: `filters.companyDeny` exists to exclude postings, the client's own included, so it may name a
+  // forbidden term. Its values only ever reach the eligibility agent's company match and a rejection reason, which
+  // every display surface redacts strictly; no document, template or log line is built from it.
+  const { companyDeny: _deny, ...filters } = pack.filters;
   const files: readonly (readonly [string, unknown])[] = [
-    ['lexicon.yaml', pack.lexicon], ['watchlist.yaml', { watchlist: pack.watchlist }], ['targets.yaml', targets], ['filters.yaml', pack.filters],
+    ['lexicon.yaml', pack.lexicon], ['watchlist.yaml', { watchlist: pack.watchlist }], ['targets.yaml', targets], ['filters.yaml', filters],
     ['eligibility.yaml', pack.eligibility], ['offers.yaml', pack.offers], ['fx.yaml', pack.fx], ['feeds.yaml', pack.feeds], ['policy.user.yaml', pack.policyUser],
   ];
   for (const [file, value] of files) for (const s of stringsIn(value, '')) term(s.text, `${file}: ${s.path}`);

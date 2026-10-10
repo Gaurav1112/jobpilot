@@ -692,13 +692,16 @@ describe('jobpilot pack import (CLI)', () => {
     edit('lexicon.yaml', 'display: Redis', 'display: InitechRedis');
     edit('watchlist.yaml', 'company: Example Lever Co', 'company: Example I\u0578itech Co');
     edit('targets.yaml', 'titles:\n', 'titles:\n  - Initeches Engineer\n');
-    edit('filters.yaml', 'companyDeny:\n', 'companyDeny:\n  - MyInitech\n');
+    edit('filters.yaml', 'employmentDeny:\n', 'employmentDeny:\n  - MyInitech\n');
+    // rereview R12: the deny list may name the client, to filter its postings; it is not a text problem
+    edit('filters.yaml', 'companyDeny:\n', 'companyDeny:\n  - Initech\n');
     const r = cli(tmp, 'pack', 'check');
     expect(r.status).toBe(1);
     expect(r.stderr).toMatch(/lexicon\.yaml: strong\[\d+\]\.display holds forbidden term #1/);
     expect(r.stderr).toMatch(/watchlist\.yaml: watchlist\[1\]\.company holds forbidden term #1/);
     expect(r.stderr).toMatch(/targets\.yaml: titles\[0\] holds forbidden term #1/);
-    expect(r.stderr).toMatch(/filters\.yaml: companyDeny\[0\] holds forbidden term #1/);
+    expect(r.stderr).toMatch(/filters\.yaml: employmentDeny\[0\] holds forbidden term #1/);
+    expect(r.stderr).not.toMatch(/companyDeny/);
     expect(r.stderr).not.toMatch(/initech|redis|\u0578/i);
   }, 60_000);
 

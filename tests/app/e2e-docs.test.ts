@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { resolvePdftotext } from '../../src/app/kernel.js';
 import { offlineProviders } from '../../src/app/offline.js';
-import { runDaily, type DailySummary } from '../../src/app/run.js';
+import { formatSummary, runDaily, type DailySummary } from '../../src/app/run.js';
 import { AppStore, type JobView } from '../../src/app/store/app-store.js';
 import type { Fact } from '../../src/app/pack/schema.js';
 import { forbiddenTermStrict } from '../../src/app/pack/rules.js';
@@ -330,3 +330,60 @@ describe.skipIf(pdftotext === undefined)('I8: glued and look-alike terms edited 
     }
   }, 240_000);
 });
+
+describe.skipIf(pdftotext === undefined)("rereview R12: filters.companyDeny may name a forbidden term, to deny the client's own postings", () => {
+  it('a deny entry equal to the forbidden term filters the posting, the run completes, and the term is never shown or rendered', async () => {
+    const h = docsHome();
+    const fx = mkdtempSync(join(tmpdir(), 'jp-r12-fx-'));
+    try {
+      cpSync(join(repo, 'tests/fixtures/e2e'), fx, { recursive: true });
+      const feed = JSON.parse(readFileSync(join(fx, 'himalayas-1.json'), 'utf8')) as { jobs: Record<string, unknown>[]; totalCount: number };
+      feed.jobs.push({
+        title: 'Senior Backend Engineer', excerpt: 'Java and Kafka', companyName: 'Initech', companySlug: 'client-co', employmentType: 'Full Time',
+        minSalary: null, maxSalary: null, salaryPeriod: 'annual', currency: null, locationRestrictions: ['India'], categories: ['Backend-Engineer'],
+        description: '<p>Design microservices in Java with Spring Boot, Kafka and PostgreSQL on AWS. Fully remote from India.</p>',
+        pubDate: 1790985600, guid: 'https://himalayas.example.test/companies/client-co/jobs/senior-backend', applicationLink: 'https://himalayas.example.test/companies/client-co/jobs/senior-backend',
+      });
+      feed.totalCount += 1;
+      writeFileSync(join(fx, 'himalayas-1.json'), JSON.stringify(feed));
+      const filters = join(h.home, 'pack/filters.yaml');
+      writeFileSync(filters, readFileSync(filters, 'utf8').replace('companyDeny:\n', 'companyDeny:\n  - Initech\n'));
+      const offline = offlineProviders(fx);
+      const s = await h.run({ fetch: offline.fetch, browser: offline.browser });
+      expect(s.exitCode).toBe(0);
+      const client = h.jobs().filter((j) => j.company === 'Initech');
+      expect(client).toHaveLength(1);
+      expect(client[0]?.verdict).toBe('rejected');
+      expect(client[0]?.reasons).toEqual(['company:Initech']);
+      expect(client[0]?.docsState).not.toBe('ready');
+      expect(h.withApp((a) => a.getJob(client[0]?.jobKey as string)?.docs ?? [])).toEqual([]);
+      // nothing the run prints or keeps for the user names it: summary, problems, warnings, the notification
+      expect(JSON.stringify({ problems: s.problems, warnings: s.warnings, notes: h.notes })).not.toMatch(/initech/i);
+      expect(formatSummary(s)).not.toMatch(/initech/i);
+      // no document anywhere holds it
+      for (const j of h.jobs()) for (const d of h.withApp((a) => a.getJob(j.jobKey)?.docs ?? [])) {
+        if (d.format === 'html') expect(forbiddenTermStrict(readFileSync(join(h.home, 'out', d.path), 'utf8'), { forbiddenTerms: ['Initech'] })).toBeUndefined();
+      }
+      // the dashboard hides it: the job page (its reason names the deny entry) and the all-bands list
+      const raw = createDashboard({ home: h.home, clock: h.clock });
+      const get = async (p: string) => (await raw.request(p, { headers: { host: 'localhost' } })).text();
+      expect(await get(`/jobs/${client[0]?.jobKey}`)).not.toMatch(/initech/i);
+      expect(await get('/?band=disclosed&band=undisclosed&band=review&band=below-floor&band=rejected')).not.toMatch(/initech/i);
+    } finally {
+      h.done();
+      rmSync(fx, { recursive: true, force: true });
+    }
+  }, 240_000);
+
+  it('only the deny list is exempt: the same term glued into another filters list still stops the run', async () => {
+    const h = docsHome();
+    try {
+      const filters = join(h.home, 'pack/filters.yaml');
+      writeFileSync(filters, readFileSync(filters, 'utf8').replace('employmentDeny:\n', 'employmentDeny:\n  - InitechPay\n'));
+      await expect(h.run()).rejects.toThrow(/filters\.yaml: employmentDeny\[0\] holds forbidden term #1/);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+});
+
