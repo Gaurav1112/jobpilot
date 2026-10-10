@@ -108,6 +108,14 @@ export interface AgentContext {
   maxCall(): number;
   /** Every policy denial the broker raised in this context, in order, whether or not the agent caught it. */
   denials(): readonly string[];
+  /**
+   * Records input items the agent skipped (one short note each, say a malformed job in a response), so a partial skip
+   * is never silent: the executor puts the count and the first notes in the step_done event (and repeats them on
+   * replay). Notes name ids and positions only, never free text.
+   */
+  skipped(notes: readonly string[]): void;
+  /** The notes recorded by `skipped`, in order. */
+  skips(): readonly string[];
 }
 
 export interface IssueArgs {
@@ -192,6 +200,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   let maxCallUsd = 0;
   const prior = a.priorSpend ?? { agentUsd: 0, runUsd: 0 };
   const denied: string[] = [];
+  const skipNotes: string[] = [];
   const egress = resolveEgress(a.contract.egress, a.egressSets);
   /** A policy denial is recorded before it is thrown, so an agent cannot hide it by catching. */
   const deny = (message: string): KernelError => {
@@ -214,6 +223,10 @@ export function issueContext(a: IssueArgs): AgentContext {
     spent: () => ({ usd, inputTokens, outputTokens }),
     maxCall: () => maxCallUsd,
     denials: () => [...denied],
+    skipped: (notes) => {
+      for (const n of notes) skipNotes.push(String(n));
+    },
+    skips: () => [...skipNotes],
   };
 
   if (a.contract.capabilities.pack && a.pack !== undefined && a.pack !== null) ctx.pack = a.pack;

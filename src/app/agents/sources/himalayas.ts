@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, reportSkips, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
 
 /**
  * Himalayas search API, `q=backend&country=IN&sort=recent`. There is deliberately no
@@ -101,7 +101,7 @@ export const srcHimalayas = defineAgent(srcHimalayasContract, async (req, ctx) =
   let maxTotal = 0;
   for (let page = 1; ; page++) {
     const json = await getBoard(ctx, himalayasUrl(page), HIMALAYAS_FEED);
-    const parsed = himalayasParse(json);
+    const parsed = reportSkips(ctx, himalayasParse(json), `page ${page}: `);
     const body = json as { jobs: unknown[]; offset?: unknown; limit?: unknown; totalCount?: unknown };
     const offset = num(body.offset);
     const limit = num(body.limit);

@@ -247,3 +247,43 @@ export function staleProblems(
       reason: safe(`the documents ${j.docsDetail ?? 'cite a fact that is no longer citeable'}; they are rebuilt the next time the posting is seen`),
     }));
 }
+
+/**
+ * Final minor (no silent loss): one warning per source agent that skipped malformed jobs in this run without failing,
+ * `N postings skipped by <agent> as malformed (B boards; first: <note>)`, in agent order. It reads the `skipped` count
+ * the executor puts in each step_done (and done step_replayed) event; each step counts once. A note holding a
+ * forbidden term is replaced by a fixed notice.
+ */
+export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): string[] {
+  const steps = new Set<string>();
+  const byAgent = new Map<string, { postings: number; boards: number; first: string | undefined }>();
+  for (const ev of kernel.events(runId)) {
+    if (ev.kind !== 'step_done' && ev.kind !== 'step_replayed') continue;
+    const d = JSON.parse(ev.data) as Record<string, unknown>;
+    if (ev.kind === 'step_replayed' && d['status'] !== 'done') continue;
+    const n = d['skipped'];
+    const agent = d['agent'];
+    const stepKey = d['stepKey'];
+    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1 || typeof agent !== 'string' || typeof stepKey !== 'string' || steps.has(stepKey)) continue;
+    steps.add(stepKey);
+    const notes: unknown[] = Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : [];
+    const a = byAgent.get(agent) ?? { postings: 0, boards: 0, first: undefined };
+    byAgent.set(agent, { postings: a.postings + n, boards: a.boards + 1, first: a.first ?? (typeof notes[0] === 'string' ? notes[0] : undefined) });
+  }
+  const safe = (t: string): string => {
+    const line = oneLine(t);
+    try {
+      assertNoForbidden(line, naming);
+      return line;
+    } catch (err) {
+      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
+      throw err;
+    }
+  };
+  return [...byAgent.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([agent, a]) => {
+      const first = a.first === undefined ? '' : `; first: ${safe(a.first)}`;
+      return `${a.postings} ${a.postings === 1 ? 'posting' : 'postings'} skipped by ${agent} as malformed (${a.boards} ${a.boards === 1 ? 'board' : 'boards'}${first})`;
+    });
+}

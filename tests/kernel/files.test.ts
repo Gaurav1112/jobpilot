@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -233,6 +233,23 @@ describe('kernel capability files (broker)', () => {
     expect(await commit(out)).toEqual([]);
   });
 
+  it('final minor: recovery reports a failed commit\'s fs error by code and a root-relative path, never an absolute one', async () => {
+    const out = root();
+    await ctxOf(writer, providers(out)).files!.write!('k/a.txt', bytes('A'));
+    await markFinal(out, KEY);
+    mkdirSync(join(out, 'k'));
+    chmodSync(join(out, 'k'), 0o500); // the rename into k/ is refused (EACCES)
+    let r;
+    try {
+      r = await recoverPending(out, () => true, PRODUCT_POLICY_V1.maxResponseBytes, 'out');
+    } finally {
+      chmodSync(join(out, 'k'), 0o700);
+    }
+    expect(r.failed).toHaveLength(1);
+    expect(r.failed[0]!.message).toMatch(/^rename failed \(EACCES\) on out\/\S+$/);
+    for (const abs of [out, realpathSync(out)]) expect(r.failed[0]!.message).not.toContain(abs);
+  });
+
   it('refuses to commit a staged file whose bytes changed after staging', async () => {
     const out = root();
     await ctxOf(writer, providers(out)).files!.write!('k/a.txt', bytes('A'));
@@ -405,6 +422,24 @@ describe('executor: transactional writes (staged, committed only after the out g
     expect(readdirSync(join(out, '.pending'))).toEqual([]);
     const ev = store.events('r').find((e) => e.kind === 'files_committed');
     expect(JSON.parse(ev!.data)).toMatchObject({ files: ['k/a.txt'] });
+  });
+
+  it('final minor: a staging fs error fails the step as invalid_output, named by code and a path relative to the root\'s parent', async () => {
+    const out = root();
+    const store = Store.open(':memory:');
+    chmodSync(out, 0o500); // nothing can be staged under out/.pending (EACCES)
+    let res;
+    try {
+      res = await exec(store, out, make({}, writesA));
+    } finally {
+      chmodSync(out, 0o700);
+    }
+    expect(res).toMatchObject({ kind: 'failed', error: 'invalid_output' });
+    expect(res.kind === 'failed' && res.detail).toMatch(/^mkdir failed \(EACCES\) on out\/\.pending(\/\S*)?$/);
+    const ev = store.events('r').find((e) => e.kind === 'step_failed');
+    expect(JSON.parse(ev!.data)).toMatchObject({ error: 'invalid_output' });
+    for (const abs of [out, realpathSync(out)]) expect(ev!.data).not.toContain(abs);
+    expect(store.getStep(res.stepKey)).toMatchObject({ status: 'failed', error_code: 'invalid_output' });
   });
 
   it('commits nothing when an out guardrail trips', async () => {
@@ -760,6 +795,13 @@ describe('I1: a replayed files step checks the files its stored output reference
     expect(store.getStep(first.stepKey)?.status).toBe('done');
     const ev = store.events('r').find((e) => e.kind === 'files_commit_failed');
     expect(JSON.parse(ev!.data)).toMatchObject({ agent: 'ref-writer', stepKey: first.stepKey, envelopeId: 'seed' });
+    // final minor: the fs error is named by its code and a path relative to the root's parent, never an absolute path
+    expect(JSON.parse(ev!.data).message).toMatch(/^rename failed \(EACCES\) on out\/(\.pending\/\S+|k\/a\.txt)$/);
+    expect(first.kind === 'failed' && first.detail).toMatch(/^files_commit_failed: rename failed \(EACCES\) on out\//);
+    for (const abs of [out, realpathSync(out)]) {
+      expect(ev!.data).not.toContain(abs);
+      expect(first.kind === 'failed' && first.detail).not.toContain(abs);
+    }
     expect(existsSync(join(out, 'k', 'a.txt'))).toBe(false);
     // the obstacle is gone: the replay finds k/a.txt absent and runs the step again
     const second = await exec(store, out, agent);

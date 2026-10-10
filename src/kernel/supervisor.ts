@@ -184,7 +184,7 @@ export class Supervisor {
   private async recoverFiles(runId: string): Promise<void> {
     for (const [name, root] of Object.entries(this.d.providers.fileRoots ?? {})) {
       if (root === undefined) continue;
-      const r = await recoverPending(root, (k) => this.d.store.getStep(k)?.status === 'done', this.d.policy.maxResponseBytes);
+      const r = await recoverPending(root, (k) => this.d.store.getStep(k)?.status === 'done', this.d.policy.maxResponseBytes, name);
       if (r.committed.length + r.discarded.length + r.failed.length > 0) this.event(runId, 'files_recovered', { root: name, ...r });
     }
   }

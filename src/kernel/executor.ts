@@ -15,7 +15,7 @@ import { contractHash } from './contract.js';
 import { maxClass } from './data-class.js';
 import { type Cost, type Envelope, type GuardrailVerdict, makeEnvelopeId, nextObligations, ZERO_COST } from './envelope.js';
 import { classify, type ErrorCode, KernelError } from './errors.js';
-import { commitPending, createFiles, discardPending, hasPending, openPending } from './files.js';
+import { commitPending, createFiles, discardPending, fsFailure, hasPending, openPending } from './files.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import { backoffDelay, computeStepKey } from './memo.js';
 import type { Policy } from './policy.js';
@@ -172,7 +172,7 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
         // Review I3: the files its outputs reference are not on disk, so nothing may be routed on (a QA step would
         // check the old files and its verdict would be memoised). The step row stays done: on the next run its replay
         // finds the referenced files absent or changed and runs it again (I1, `replay-healed`).
-        const message = e instanceof Error ? e.message : String(e);
+        const message = messageOf(fsFailure(e, staging.root, files?.root ?? 'files'));
         event('files_commit_failed', { message });
         await discardPending(staging.root, outcome.stepKey).catch(() => undefined);
         return { kind: 'failed', stepKey: outcome.stepKey, error: 'invalid_output', detail: `files_commit_failed: ${message}` };
@@ -184,10 +184,36 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
   return outcome;
 }
 
+/** At most this many skip notes are kept per step, each cut to SKIP_NOTE_MAX characters; the count is always exact. */
+export const SKIP_NOTES_KEPT = 20;
+const SKIP_NOTE_MAX = 200;
+
+/** The event fields for a step's skipped input items: none when nothing was skipped. */
+function skipData(notes: readonly string[]): { skipped?: number; skippedNotes?: string[] } {
+  if (notes.length === 0) return {};
+  return { skipped: notes.length, skippedNotes: notes.slice(0, SKIP_NOTES_KEPT).map((n) => (n.length > SKIP_NOTE_MAX ? `${n.slice(0, SKIP_NOTE_MAX - 1)}…` : n)) };
+}
+
+/** The skip fields a done step stored in its row detail (none for a step without skips or an older row). */
+function skipsOf(detail: string | null | undefined): { skipped?: number; skippedNotes?: string[] } {
+  if (!detail) return {};
+  try {
+    const d = JSON.parse(detail) as { skipped?: unknown; skippedNotes?: unknown };
+    if (typeof d.skipped !== 'number' || !Number.isSafeInteger(d.skipped) || d.skipped < 1) return {};
+    const notes = Array.isArray(d.skippedNotes) ? d.skippedNotes.filter((n): n is string => typeof n === 'string') : [];
+    return { skipped: d.skipped, skippedNotes: notes };
+  } catch {
+    return {};
+  }
+}
+
 async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope, staging: Staging | undefined): Promise<StepOutcome> {
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
   const full = c.capabilities.pack === 'full';
   const agentPack = full ? deps.fullPack : deps.pack;
+  /** Final minor: a raw fs error under the files root is reported as invalid_output with a root-relative path. */
+  const filesRoot = c.capabilities.files ? deps.providers.fileRoots?.[c.capabilities.files.root] : undefined;
+  const mapFs = (e: unknown): unknown => (filesRoot === undefined || !c.capabilities.files ? e : fsFailure(e, filesRoot, c.capabilities.files.root));
   const stepKey = computeStepKey(c, input, deps.policyHash, (full ? deps.fullPackHash : deps.packHash) ?? 'none', deps.codeHash ?? 'none'); // 5
   /** Every cent paid in this step, summed over all attempts. */
   let stepSpent: Cost = ZERO_COST;
@@ -243,7 +269,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       const outputs = deps.store.envelopesOfStep(stepKey);
       const broken = staging === undefined || (await hasPending(staging.root, stepKey)) ? [] : await brokenFileRefs(staging, outputs);
       if (broken.length === 0) {
-        event('step_replayed', { status: 'done' });
+        event('step_replayed', { status: 'done', ...skipsOf(prior.detail) });
         return { kind: 'done', stepKey, outputs, replayed: true };
       }
       const e = eventOf('replay-healed', { files: broken });
@@ -309,7 +335,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         if (!Array.isArray(items)) throw new KernelError('invalid_output', 'agent.run must return an array');
         result = { ok: true, items };
       } catch (err) {
-        result = { ok: false, err };
+        result = { ok: false, err: mapFs(err) };
       }
       pendingFiles?.seal();
       // Read after the abort too: a model call in flight at the timeout has already been charged its reservation.
@@ -374,16 +400,20 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       // done record still knows which stage to commit, and a crash before it leaves nothing that will be).
       await pendingFiles?.markFinal();
       // 12-13 one transaction: envelopes, step status, cost and the hash-chained event
-      finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd }));
+      // A partial skip is never silent: its count and first notes go in the event, and in the step row for replays.
+      const skips = skipData(ctx.skips());
+      finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd, ...skips }), skips.skipped === undefined ? {} : { detail: JSON.stringify(skips) });
       return { kind: 'done', stepKey, outputs, replayed: false };
     }
   } catch (err) {
-    // Unexpected: a store error, a rejecting sleep, a refused finish. Record what we can, then report.
-    const detail = messageOf(err);
+    // Unexpected: a store error, a rejecting sleep, a refused finish, a staging fs error. Record what we can, then report.
+    const mapped = mapFs(err);
+    const code: ErrorCode = mapped !== err && mapped instanceof KernelError ? mapped.code : 'unknown';
+    const detail = messageOf(mapped);
     let recorded = false;
     try {
       if (deps.store.getStep(stepKey)?.status === 'running') {
-        fail('unknown', detail);
+        fail(code, detail);
         recorded = true;
       }
     } catch {
@@ -391,11 +421,11 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
     }
     if (!recorded) {
       try {
-        event('step_failed', { error: 'unknown', detail });
+        event('step_failed', { error: code, detail });
       } catch {
         // best effort
       }
     }
-    return { kind: 'failed', stepKey, error: 'unknown', detail };
+    return { kind: 'failed', stepKey, error: code, detail };
   }
 }

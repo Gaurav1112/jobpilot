@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { checkParsed, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
+import { checkParsed, reportSkips, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
 
 /**
  * Ashby posting API: the whole board in one response, compensation included.
@@ -32,5 +32,5 @@ export const srcAshbyContract = sourceContract('src-ashby', ASHBY_HOST, 'Fetches
 
 export const srcAshby = defineAgent(srcAshbyContract, async (req, ctx) => {
   if (req.ats !== 'ashby') return [];
-  return finish(ashbyParse(await getBoard(ctx, ashbyUrl(req.slug), req.slug), req).postings);
+  return finish(reportSkips(ctx, ashbyParse(await getBoard(ctx, ashbyUrl(req.slug), req.slug), req)).postings);
 });

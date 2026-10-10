@@ -61,12 +61,21 @@ export function omit(job: Record<string, unknown>, keys: readonly string[]): Rec
 /**
  * A response with jobs in it where every job failed to parse is schema drift, not an empty board:
  * fail the step (`invalid_output`, not retryable) rather than report "no jobs today".
- * A partial skip stays silent for now: the agent can only return postings.
+ * A partial skip is reported with `reportSkips`, never dropped silently.
  */
 export function checkParsed(source: string, total: number, parsed: Parsed): Parsed {
   if (total > 0 && parsed.skipped.length === total) {
     throw new KernelError('invalid_output', `${source}: all ${total} jobs failed to parse`);
   }
+  return parsed;
+}
+
+/**
+ * Final minor (no silent loss): hands each skipped job's note to `ctx.skipped`, so the step_done event carries the
+ * count and the run summary warns "N postings skipped by <source>". `prefix` places the note on a page of a paged source.
+ */
+export function reportSkips(ctx: AgentContext, parsed: Parsed, prefix = ''): Parsed {
+  if (parsed.skipped.length > 0) ctx.skipped(parsed.skipped.map((n) => `${prefix}${n}`));
   return parsed;
 }
 

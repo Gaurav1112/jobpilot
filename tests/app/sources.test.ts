@@ -108,6 +108,28 @@ describe('fix round 1', () => {
     await expect(run(srcAshby, req('ashby', 'confluent'), serve({ [AB]: { body: '[]' } }))).rejects.toMatchObject({ code: 'invalid_output' });
   });
 
+  it('final minor: a partial skip is never silent, every adapter reports each skipped job to ctx.skipped', async () => {
+    const gh = JSON.stringify({ jobs: [{ id: 1, title: 'Backend' }, { nope: 1 }] });
+    const ab = JSON.stringify({ jobs: [{ id: 'a1', title: 'Backend' }, { nope: 1 }] });
+    const hm = fixtureJson('himalayas') as { jobs: unknown[] };
+    const jb = (geo: string) => JSON.stringify({ hasMore: false, jobs: [{ id: geo === 'apac' ? 7 : 8, jobTitle: 'Backend', companyName: 'Acme' }, { nope: 1 }] });
+    const cases: [Agent<DiscoveryRequest, RawPosting>, DiscoveryRequest, Record<string, { body: string }>, string[]][] = [
+      [srcGreenhouse, req('greenhouse', 'gitlab'), { [GH]: { body: gh } }, ['greenhouse gitlab job 1: missing id or title']],
+      [srcAshby, req('ashby', 'confluent'), { [AB]: { body: ab } }, ['ashby confluent job 1: missing id or title']],
+      [srcLever, req('lever', 'veeva'), { [LV(0)]: { body: '[{"id":"l1","text":"Backend"},{"nope":1}]' }, [LV(100)]: { body: '[]' } }, ['page 1: lever veeva posting 1: missing id or text']],
+      [srcHimalayas, req('feed', 'himalayas'), { [HM(1)]: { body: JSON.stringify({ ...hm, jobs: [...hm.jobs, { nope: 1 }] }) }, [HM(2)]: { body: EMPTY_HM } }, ['page 1: himalayas job 5: missing guid, title, companyName or locationRestrictions']],
+      [srcJobicy, req('feed', 'jobicy'), { [JB('apac')]: { body: jb('apac') }, [JB('anywhere')]: { body: jb('anywhere') } }, ['apac page 1: jobicy job 1: missing id, jobTitle or companyName', 'anywhere page 1: jobicy job 1: missing id, jobTitle or companyName']],
+    ];
+    for (const [agent, r, routes, notes] of cases) {
+      const ctx = issueContext({
+        contract: agent.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: serve(routes).fetch },
+        clock: fixedClock('2026-10-09T00:00:00Z'), signal: new AbortController().signal,
+      });
+      expect((await agent.run(r, ctx)).length, agent.contract.id).toBeGreaterThan(0);
+      expect(ctx.skips(), agent.contract.id).toEqual(notes);
+    }
+  });
+
   it('ids are trimmed; a blank id is malformed', () => {
     const parsed = greenhouseParse({ jobs: [{ id: ' 3 ', title: 't' }, { id: '   ', title: 'u' }, { id: 4, title: 'v' }] }, req('greenhouse', 'g'));
     expect(parsed.postings.map((p) => p.sourceId)).toEqual(['3', '4']);

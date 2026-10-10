@@ -604,3 +604,31 @@ describe('v1 kernel extensions: executor', () => {
     expect(store.runCost('r')).toBeCloseTo(0.004, 10);
   });
 });
+
+describe('skipped input items (final minor: no silent partial skips)', () => {
+  const skipper = defineAgent(
+    defineContract({ ...demoSourceContract, id: 'skipper', description: 'Skips two malformed items', obligations: { adds: [], discharges: [] } }),
+    async (_input, ctx) => {
+      ctx.skipped(['item 1: missing id', 'item 4: missing title']);
+      return [];
+    },
+  );
+  const skipDeps = (store: Store): ExecutorDeps => ({ ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(skipper.contract)) });
+  const data = (store: Store, kind: string) => store.events().filter((e) => e.kind === kind).map((e) => JSON.parse(e.data) as Record<string, unknown>);
+
+  it('puts the count and the notes in the step_done event, and again in the step_replayed event', async () => {
+    const store = Store.open(':memory:');
+    expect((await executeStep(skipDeps(store), 'r1', skipper, seedEnv())).kind).toBe('done');
+    expect(data(store, 'step_done')[0]).toMatchObject({ agent: 'skipper', skipped: 2, skippedNotes: ['item 1: missing id', 'item 4: missing title'] });
+    expect(await executeStep(skipDeps(store), 'r2', skipper, seedEnv())).toMatchObject({ kind: 'done', replayed: true });
+    expect(data(store, 'step_replayed')[0]).toMatchObject({ status: 'done', skipped: 2, skippedNotes: ['item 1: missing id', 'item 4: missing title'] });
+  });
+
+  it('keeps only the final attempt\'s skips, and records nothing extra when nothing was skipped', async () => {
+    const store = Store.open(':memory:');
+    const a = defineAgent(skipper.contract, async () => []);
+    await executeStep(skipDeps(store), 'r', a, seedEnv());
+    expect(data(store, 'step_done')[0]).not.toHaveProperty('skipped');
+    expect(data(store, 'step_done')[0]).not.toHaveProperty('skippedNotes');
+  });
+});
