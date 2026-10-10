@@ -39,7 +39,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
  *    b1. final fix L2: working hours limited to time zones that exclude UTC+5:30 → `timezone-excludes-india`
- *       (`timezoneExcludesIndia`); overlap, flexibility and APAC time zones never count.
+ *       (`timezoneExcludesIndia`); overlap, flexibility, preferences, descriptions of the team and APAC time zones
+ *       never count, and a range counts only with restrictive wording. Re-review R2: when the posting names India (or
+ *       IST) it is `review` with the note `time zone may exclude India - verify`, never rejected.
  *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
  *       worldwide → `location-outside-india`, whatever remote words it has. Guard (re-review R1): when something says
  *       remote and the description names India, apac, asia or south asia (or a sentence saying remote also says
@@ -61,6 +63,7 @@ const HEAD = 1500;
 export const NOTE_PAY_UNDISCLOSED = 'pay not disclosed';
 export const NOTE_PAY_BASIS = 'pay basis unclear';
 export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
+export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
@@ -271,16 +274,25 @@ function exclusionRule(s: string): string | undefined {
  * - "must work in|within (the) (US|EU|…) (business|working) hours";
  * - an explicit "UTC±a to UTC±b" (or "between GMT±a and GMT±b") range, or a "UTC±a ± n hours" span, that does not
  *   contain +5:30.
- * A clause that speaks of overlap or flexibility never counts ("some overlap with US hours", "flexible hours"), nor
- * does a negated one; APAC or Asia time zones are not in the list. Unicode minus and dashes count as a minus sign.
+ * A clause that speaks of overlap, flexibility or a preference never counts ("some overlap with US hours", "flexible
+ * hours", "the preferred timezone is GMT-4 to GMT+2"), nor does a negated one; APAC or Asia time zones are not in the
+ * list. Unicode minus and dashes count as a minus sign.
+ *
+ * Re-review R2: a range or span counts only in a sentence with restrictive wording (only, must, required, need to
+ * be/work, "candidates in|from …"); a description of where the team sits ("our team spans GMT to GMT+3", "we sit in
+ * UTC-5 and UTC+1") never does, and "X and Y" is a range only after "between". "Candidates in|from <zone> time zones"
+ * is a restriction of its own. A posting that names India never reaches a reject here (`postingNamesIndia`).
  */
-const TZ_ZONE = '(?:european|eu|us|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
+const TZ_ZONE = '(?:european|eu|us|usa|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
 const TZ_ONLY = new RegExp(`\\b${TZ_ZONE}\\s+time\\s?zones?\\s+only\\b`, 'i');
 const TZ_MUST_WORK = new RegExp(`\\bmust work (?:in|within) (?:the )?${TZ_ZONE}(?:\\s+(?:business|working|office))? hours\\b`, 'i');
+const TZ_CANDIDATES = new RegExp(`\\b(?:candidates?|applicants?)\\s+(?:located\\s+|based\\s+)?(?:in|from|within)\\s+(?:the\\s+)?(?:${TZ_ZONE}\\s+)*${TZ_ZONE}\\s+time\\s?zones?\\b`, 'i');
 const OFFSET = '(?:\\s*([+-])\\s*(\\d{1,2})(?::?(\\d{2}))?)?';
-const TZ_RANGE = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:to|-|and)\\s*(?:utc|gmt)${OFFSET}(?![\\d:])`, 'gi');
+const TZ_RANGE = new RegExp(`\\b(between\\s+)?(?:utc|gmt)${OFFSET}\\s*(to|-|and)\\s*(?:utc|gmt)${OFFSET}(?![\\d:])`, 'gi');
 const TZ_SPAN = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:±|\\+\\s*\\/\\s*-|\\+-|plus or minus)\\s*(\\d{1,2})\\s*h(?:ou)?rs?\\b`, 'gi');
-const TZ_SOFT = /\b(?:overlap\w*|flexib\w*)\b/i;
+const TZ_SOFT = /\b(?:overlap\w*|flexib\w*|prefer\w*)\b/i;
+const TZ_STRICT =
+  /\b(?:only|must|required|requirement|mandatory|needs?\s+to\s+(?:be|work|live|reside)|(?:candidates?|applicants?)\s+(?:located\s+|based\s+)?(?:in|from|within))\b/i;
 const IST = 5.5;
 const offsetOf = (sign: string | undefined, h: string | undefined, m: string | undefined): number =>
   sign === undefined ? 0 : (sign === '-' ? -1 : 1) * (Number(h) + Number(m ?? '0') / 60);
@@ -289,20 +301,33 @@ function timezoneExcludesIndia(head: string): boolean {
   // Unicode minus, hyphen and dashes as an ASCII minus, so "UTC−1" reads as UTC-1.
   const s = withoutAlternatives(head.replace(/[−‐‑–—]/g, '-'));
   const counts = (at: number, len: number): boolean => !TZ_SOFT.test(sentenceAt(s, at, len));
-  for (const re of [TZ_ONLY, TZ_MUST_WORK]) {
+  const strict = (at: number, len: number): boolean => TZ_STRICT.test(sentenceAt(s, at, len)) && counts(at, len);
+  for (const re of [TZ_ONLY, TZ_MUST_WORK, TZ_CANDIDATES]) {
     for (const m of s.matchAll(new RegExp(re.source, 'gi'))) if (counts(m.index ?? 0, m[0].length)) return true;
   }
   for (const m of s.matchAll(TZ_RANGE)) {
-    const a = offsetOf(m[1], m[2], m[3]);
-    const b = offsetOf(m[4], m[5], m[6]);
-    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && counts(m.index ?? 0, m[0].length)) return true;
+    if (m[5]?.toLowerCase() === 'and' && m[1] === undefined) continue;
+    const a = offsetOf(m[2], m[3], m[4]);
+    const b = offsetOf(m[6], m[7], m[8]);
+    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && strict(m.index ?? 0, m[0].length)) return true;
   }
   for (const m of s.matchAll(TZ_SPAN)) {
     const a = offsetOf(m[1], m[2], m[3]);
     const n = Number(m[4]);
-    if ((IST < a - n || IST > a + n) && counts(m.index ?? 0, m[0].length)) return true;
+    if ((IST < a - n || IST > a + n) && strict(m.index ?? 0, m[0].length)) return true;
   }
   return false;
+}
+
+/**
+ * Re-review R2: the posting names India as a place or time zone: India or a named region with it (apac, asia, south
+ * asia; not `worldwide`) among the countries or in the title, location or head, "India" in the title or location, or
+ * IST / UTC+5:30 in the head. Such a posting is never rejected on time zones; a restriction sends it to review.
+ */
+function postingNamesIndia(p: Posting, head: string): boolean {
+  if (namesIndiaRegion(p.remote.countries) || /\bindia\b/i.test(`${p.title}\n${p.locationText}`)) return true;
+  if (namesIndiaRegion(countriesIn(head))) return true;
+  return /\bIST\b/.test(head) || /\b(?:utc|gmt)\s*\+\s*0?5:?30\b/i.test(head);
 }
 
 /** Regions that include India (decision 1: asia and south asia, like apac). */
@@ -332,7 +357,7 @@ function descriptionNamesIndiaScope(description: string): boolean {
 }
 
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
-function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | null {
+function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 'review-timezone' | null {
   const { structured, countries, signals } = p.remote;
   if (structured === 'onsite') return 'onsite';
   if (structured === 'hybrid') return 'hybrid';
@@ -357,7 +382,7 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
       (countries.includes('india') && REMOTE_WORD.test(p.descriptionText));
     return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
   }
-  if (timezoneExcludesIndia(head)) return 'timezone-excludes-india';
+  if (timezoneExcludesIndia(head)) return postingNamesIndia(p, head) ? 'review-timezone' : 'timezone-excludes-india';
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
@@ -418,9 +443,11 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const remote = remoteDecision(p, pack);
   const reasons: string[] = [];
   const notes: string[] = [];
-  if (remote === 'review') {
+  const review = remote === 'review' || remote === 'review-timezone';
+  if (review) {
     reasons.push('remote-unclear');
     notes.push(NOTE_REMOTE_UNCLEAR);
+    if (remote === 'review-timezone') notes.push(NOTE_TIMEZONE);
   } else if (remote !== null) {
     return reject(remote);
   }
@@ -428,7 +455,7 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const pay = compDecision(p, pack);
   if ('reject' in pay) return reject(pay.reject);
   if (pay.note !== null) notes.push(pay.note);
-  return { verdict: remote === 'review' ? 'review' : 'eligible', reasons, notes };
+  return { verdict: review ? 'review' : 'eligible', reasons, notes };
 }
 
 /** The pack view, or a loud failure: without the pack there are no rules, so nothing may pass. */

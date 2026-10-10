@@ -347,11 +347,15 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   });
 
   it('final fix L2: working hours limited to time zones that exclude UTC+5:30 reject', () => {
-    const india = { remote: remote('remote', ['india']), locationText: 'Remote - India' };
+    // re-review R2: a posting that names India is never rejected on time zones (see the next test), so these use a
+    // remote posting with no country, like the LIVE RUN 1 Jobtome posting (location empty, worldwide)
+    const india = { remote: remote('remote', ['worldwide']), locationText: '' };
     const tz = rejected('timezone-excludes-india');
     // LIVE RUN 1, in the title, with the Unicode minus
     expect(decide({ ...india, title: 'Senior Backend Developer (Go) — Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
     expect(decide({ ...india, locationText: 'Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
+    // LIVE RUN 1 Grafana: "candidates in the USA EST time zones only"
+    expect(decide({ remote: remote('remote', ['united states', 'canada']), locationText: 'USA | Remote', descriptionText: 'This is a remote position. We are looking for candidates in the USA EST time zones only.' })).toEqual(tz);
     for (const d of [
       'Full Remote, European Timezones Only.',
       'EU timezone only.',
@@ -366,14 +370,30 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'Eastern timezone only.',
       'You must work in US hours.',
       'Candidates must work within EU hours.',
+      // re-review R2: a range or span counts only with restrictive wording
+      'Working hours: UTC-1 to UTC+3 only.',
+      'You must work UTC−8 to UTC−5.',
+      'Candidates must be between GMT and GMT+2.',
+      'Core hours UTC+1 ± 2 hours are required.',
+      'You need to be based in UTC-5 +/- 3 hours.',
+      'You need to be located between UTC-3 and UTC+3.',
+      'Candidates in UTC-1 to UTC+3 only.',
+      'We hire candidates in European time zones.',
+      'Applicants from US time zones, please.',
+    ]) expect(decide({ ...india, descriptionText: d }), d).toEqual(tz);
+    // never: overlap, flexibility, APAC, or a range or span that includes +5:30
+    for (const d of [
+      // re-review R2: preferences and descriptions of where the team sits never count
+      'The preferred timezone for this candidate will be GMT-4 to GMT+2.',
+      'We prefer US time zones.',
+      'Our team spans GMT to GMT+3 today.',
+      'Our engineers sit in UTC-5 and UTC+1.',
       'Working hours: UTC-1 to UTC+3.',
       'Team hours UTC−8 to UTC−5.',
       'We work between GMT and GMT+2.',
       'Core hours UTC+1 ± 2 hours.',
       'Hours UTC-5 +/- 3 hours.',
-    ]) expect(decide({ ...india, descriptionText: d }), d).toEqual(tz);
-    // never: overlap, flexibility, APAC, or a range or span that includes +5:30
-    for (const d of [
+      'Overlap with US hours is required.',
       'Some overlap with US hours is expected.',
       'At least 4 hours of overlap with US hours.',
       'Overlap with UTC-5 to UTC-1 for two hours a day.',
@@ -385,6 +405,32 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'Core hours UTC+4 ± 2 hours.',
       'Asia time zones only.',
     ]) expect(decide({ ...india, descriptionText: d }).reasons, d).not.toContain('timezone-excludes-india');
+  });
+
+  it('rereview R2: a posting that names India or IST is never rejected on time zones', () => {
+    const tzReview = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'time zone may exclude India - verify', 'pay not disclosed'] };
+    // LIVE RUN 1 Wikimedia: 19 countries with India, structured remote, a preferred zone: eligible as before L2
+    const wikimedia = {
+      locationText: 'Brazil, Canada, Colombia, Germany, Ghana, India, Indonesia, Italy, Kenya, Mexico, Morocco, Netherlands, Poland, Singapore, South Africa, Spain, Switzerland, United Kingdom, United States',
+      remote: remote('remote', ['brazil', 'canada', 'colombia', 'germany', 'ghana', 'india', 'indonesia', 'italy', 'kenya', 'mexico', 'morocco', 'netherlands', 'poland', 'singapore', 'south africa', 'spain', 'switzerland', 'united kingdom', 'united states'], ['feed:remote-only']),
+      employmentType: 'Full Time',
+      descriptionText: 'In this role, you will work in a mostly-remote environment. To ensure there are enough opportunities to communicate, the preferred timezone for this candidate will be GMT-4 to GMT+2.',
+    };
+    expect(decide(wikimedia)).toEqual(ELIGIBLE_UNDISCLOSED);
+    // the re-review's synthetic shapes: descriptions of the team are no restriction
+    expect(decide({ remote: remote(null, ['india'], ['location:remote']), locationText: 'Remote (India)', descriptionText: 'Our engineers sit in UTC-5 and UTC+1, and we are hiring our first engineer in India.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(decide({ remote: remote(null, ['india'], ['location:remote']), locationText: 'Bengaluru, India (Remote)', descriptionText: 'Our team spans GMT to GMT+3 today and you will help us grow in India.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // overlap stays eligible
+    expect(decide({ descriptionText: 'Some overlap with US hours is expected.' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // a restriction on a posting that names India (countries, location, title, or India/IST in the text): review, never rejected
+    for (const over of [
+      { locationText: 'Remote - India', remote: remote('remote', ['india']), descriptionText: 'This is a remote role based in India. You must work within US business hours.' },
+      { locationText: 'Remote - India', remote: remote('remote', ['india']), title: 'Senior Backend Developer (Go) — Full Remote, European Timezones Only (UTC−1 to UTC+3)' },
+      { locationText: 'Remote - India', remote: remote('remote', ['india']), descriptionText: 'Design Java services. US time zones only.' },
+      { locationText: 'Remote', remote: remote('remote', []), descriptionText: 'Candidates in India welcome. EU time zones only.' },
+      { locationText: 'Remote', remote: remote('remote', []), descriptionText: 'You must work UTC+1 to UTC+4 only; IST candidates can shift.' },
+      { locationText: 'Remote - APAC', remote: remote('remote', ['apac']), descriptionText: 'US time zones only.' },
+    ]) expect(decide(over), JSON.stringify(over)).toEqual(tzReview);
   });
 
   it('final fix I6: remote with no country, region or worldwide is review whatever hiresInIndia says, unless allRemote', () => {
@@ -532,7 +578,7 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
 
   it('every reason and note is one of the fixed codes', () => {
     const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
-    const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify']);
+    const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify', 'time zone may exclude India - verify']);
     const spec = appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.agent.contract.id === 'eligibility')!;
     for (const k of spec.cases) {
       const v = decideEligibility(k.input as Posting, pack);
@@ -578,7 +624,7 @@ describe('eligibility golden eval', () => {
     for (const code of ['closed', 'role', 'company', 'employment', 'onsite', 'hybrid', 'remote-unclear', 'below-floor']) expect(reasons.has(code), code).toBe(true);
     for (const phrase of ['location', 'us-only', 'eu-only', 'must-reside', 'us-work-authorization', 'country-list']) expect(reasons.has(`remote-excludes-india:${phrase}`), phrase).toBe(true);
     const notes = new Set(expected.flatMap((e) => e.notes));
-    for (const n of ['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify']) expect(notes.has(n), n).toBe(true);
+    for (const n of ['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify', 'time zone may exclude India - verify']) expect(notes.has(n), n).toBe(true);
     expect(expected.some((e) => e.verdict === 'review')).toBe(true);
     expect(spec.cases.filter((c) => c.id.startsWith('real-')).length).toBeGreaterThanOrEqual(15);
   });
