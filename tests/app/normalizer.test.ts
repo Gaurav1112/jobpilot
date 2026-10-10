@@ -202,11 +202,20 @@ describe('countriesIn', () => {
     expect(countriesIn('Asia')).toEqual(['asia']);
   });
 
-  it('needs whole words: tier codes and words containing a name are not countries', () => {
-    expect(countriesIn('*Job Posting Only: USA1')).toEqual([]);
+  it('needs whole words: words containing a name are not countries', () => {
     expect(countriesIn('Indiana')).toEqual([]);
     expect(countriesIn('Remote')).toEqual([]);
     expect(countriesIn('')).toEqual([]);
+  });
+
+  it('final fix I6: reads a capitalised country code glued to a tier number (USA1, US2, UK3)', () => {
+    expect(countriesIn('*Job Posting Only: USA1')).toEqual(['united states']);
+    expect(countriesIn('US2 - Remote')).toEqual(['united states']);
+    expect(countriesIn('Remote (UK3)')).toEqual(['united kingdom']);
+    // lower case, or letters around it, are not a tier code
+    expect(countriesIn('usa1')).toEqual([]);
+    expect(countriesIn('BUS1 route')).toEqual([]);
+    expect(countriesIn('USA12345')).toEqual([]);
   });
 });
 
@@ -1294,5 +1303,36 @@ describe('task 7 fix round 3: a total word beside a component sets no comp (I-R1
     expect(text('<p>TC: $250,000</p>')).toEqual({ min: 250000, max: 250000, currency: 'USD', period: 'year', basis: 'unknown' });
     expect(text('<p>CTC up to ₹45 LPA including variable</p>')).toEqual({ min: null, max: 4500000, currency: 'INR', period: 'year', basis: 'unknown' });
     expect(text('<p>Salary: ₹80 LPA. Total compensation includes ₹20 LPA in RSUs.</p>')).toEqual({ min: 8000000, max: 8000000, currency: 'INR', period: 'year', basis: 'base' });
+  });
+});
+
+describe('final fix I5: a perk or benefit figure is never pay', () => {
+  const text = (description: string): Posting['comp'] =>
+    one(raw('jobicy', { id: 9, jobTitle: 'Eng', companyName: 'X', url: 'https://jobicy.com/jobs/9', jobGeo: 'APAC', jobDescription: description }, 'X', 'jobicy')).comp;
+
+  it('skips the reviewer perk sentences and every listed perk word', () => {
+    for (const t of [
+      'Learning and development: $1,500 per year.',
+      'You get $2,000 a year to spend on your home office setup.',
+      'We give ₹2,00,000 annually for wellness and health.',
+      'Attend conferences: we pay up to $3,000 per year.',
+      'Education budget of $2,500 per year.',
+      'Training allowance: ₹1,50,000 per year.',
+      'Gym membership reimbursement up to $1,200 per year.',
+      'Equipment stipend: $3,000 per year.',
+      'Internet and phone: ₹1,20,000 annually.',
+      'Relocation support of $10,000 a year.',
+      'A sign-on payment of $20,000 per year.',
+      'Joining bonus of ₹1,00,000 per annum.',
+      'We pay $1,500 per year for books and courses.',
+      'An annual personal development budget of €2,000.',
+    ]) expect(text(`<p>${t}</p>`), t).toBeNull();
+  });
+
+  it('still reads real salary sentences, alone and beside a perk sentence', () => {
+    expect(text('<p>Salary: ₹12 LPA.</p>')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(text('<p>Base salary: $150,000 - $180,000 per year.</p>')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year', basis: 'base' });
+    expect(text('<p>Compensation: ₹45-75 lakhs per annum.</p>')?.max).toBe(7500000);
+    expect(text('<p>Salary: ₹70 LPA.</p><p>Learning and development: $1,500 per year.</p>')).toEqual({ min: 7000000, max: 7000000, currency: 'INR', period: 'year', basis: 'base' });
   });
 });

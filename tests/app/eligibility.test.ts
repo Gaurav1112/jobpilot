@@ -90,22 +90,42 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   it('4. employment: with no (or no known) structured type, only employment phrases in the title or first 1500 chars reject', () => {
     const text = (descriptionText: string, title = 'Senior Backend Engineer') => decide({ employmentType: null, title, descriptionText });
     expect(text('This is a contract role for 9 months.')).toEqual(rejected('employment:contract'));
-    expect(text('Hired on a contract basis.')).toEqual(rejected('employment:contract'));
-    expect(text('A contract position with our client.')).toEqual(rejected('employment:contract'));
+    expect(text('You will be hired on a contract basis.')).toEqual(rejected('employment:contract'));
     expect(text('You will join as a contract employee.')).toEqual(rejected('employment:contract'));
     expect(text('This is a 6-month contract.')).toEqual(rejected('employment:contract'));
     expect(text('A 12 month contract, extendable.')).toEqual(rejected('employment:contract'));
+    expect(text('The position is a contract engagement.')).toEqual(rejected('employment:contract'));
     expect(text('Contract-to-hire after 6 months.')).toEqual(rejected('employment:contract-to-hire'));
     expect(text('C2H opportunity.')).toEqual(rejected('employment:c2h'));
-    expect(text('Hourly rate: negotiable.')).toEqual(rejected('employment:hourly'));
+    expect(text('Hourly rate of $40.')).toEqual(rejected('employment:hourly'));
+    expect(text('Hourly rate: ₹2,500.')).toEqual(rejected('employment:hourly'));
     expect(text('We pay $60 per hour.')).toEqual(rejected('employment:hourly'));
-    expect(text('A temporary position covering parental leave.')).toEqual(rejected('employment:temporary'));
-    expect(text('A temporary role for the migration.')).toEqual(rejected('employment:temporary'));
-    expect(text('A paid internship for students.')).toEqual(rejected('employment:intern'));
+    expect(text('Pay: $40/hour.')).toEqual(rejected('employment:hourly'));
+    expect(text('This is a temporary assignment covering parental leave.')).toEqual(rejected('employment:temporary'));
+    expect(text('This is an hourly engagement.')).toEqual(rejected('employment:hourly'));
+    expect(text('This is an internship for students.')).toEqual(rejected('employment:intern'));
+    expect(text('This internship lasts six months.')).toEqual(rejected('employment:intern'));
     expect(text('Build services.', 'Backend Intern')).toEqual(rejected('role:\\bintern(ship)?\\b')); // the role rule comes first
-    expect(text('We hire freelance developers.')).toEqual(rejected('employment:freelance'));
-    expect(decide({ employmentType: 'Regular', descriptionText: 'A contract role.' })).toEqual(rejected('employment:contract'));
-    expect(text(`${'x'.repeat(1500)} contract role`)).toEqual(ELIGIBLE_UNDISCLOSED);
+    expect(text('This is a freelance role.')).toEqual(rejected('employment:freelance'));
+    expect(text('Work with us on a freelance basis.')).toEqual(rejected('employment:freelance'));
+    expect(text('A freelance contract for six months.')).toEqual(rejected('employment:freelance'));
+    expect(decide({ employmentType: 'Regular', descriptionText: 'This is a contract role.' })).toEqual(rejected('employment:contract'));
+    expect(text(`${'x'.repeat(1500)} this is a contract role`)).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('final fix I7: employment words that do not describe the role never reject', () => {
+    for (const d of [
+      "Acme is the world's largest freelance marketplace, connecting businesses with talent.",
+      'We run internships every summer and hire graduates.',
+      "Our payroll product computes each worker's hourly rate and overtime.",
+      'Our customers pay $15 per hour for on-demand GPU capacity.',
+      'Our CLM platform helps legal teams manage every contract position and clause.',
+      'We help companies fill temporary roles fast.',
+      'Hourly rate: negotiable.',
+      'A contract position with our client.',
+      'We hire freelance developers.',
+      'A six-month internship in our platform team.',
+    ]) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
   });
 
   it('4. employment: the reviewer\'s six false rejections are eligible (I1)', () => {
@@ -262,8 +282,8 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ ...us, descriptionText: 'Open across APAC.' })).toEqual(review);
     expect(decide({ ...us, ats: 'lever', slug: 'example-lv', descriptionText: 'Our team is spread across Asia.' })).toEqual(review);
     expect(decide({ ...us, descriptionText: 'Anywhere except India.' })).toEqual(rejected('remote-excludes-india:country-list'));
-    // a location that does not say remote is not this rule
-    expect(decide({ remote: remote(null, ['canada'], []), locationText: 'Toronto, Canada', descriptionText: 'Join us.' })).toEqual(rejected('onsite'));
+    // a location that does not say remote is not this rule (final fix L1: it is location-outside-india)
+    expect(decide({ remote: remote(null, ['canada'], []), locationText: 'Toronto, Canada', descriptionText: 'Join us.' })).toEqual(rejected('location-outside-india'));
     // an Indian city in the list keeps it in scope
     expect(decide({ remote: remote(null, ['india', 'united states'], ['location:remote']), locationText: 'Remote, US; Bengaluru' })).toEqual(ELIGIBLE_UNDISCLOSED);
   });
@@ -273,12 +293,96 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ remote: remote(null, ['india'], ['location:remote']), locationText: 'IN Remote India' })).toEqual(ELIGIBLE_UNDISCLOSED);
     // all-remote watchlist company (lever example-lv), even with a city and nothing saying remote
     expect(decide({ ats: 'lever', slug: 'example-lv', locationText: 'Bengaluru', remote: remote(null, ['india']) })).toEqual(ELIGIBLE_UNDISCLOSED);
-    // hiresInIndia (greenhouse example-gh) with APAC, Asia, South Asia, worldwide or no country restriction
-    for (const c of [['apac'], ['asia'], ['south asia'], ['worldwide'], []]) {
+    // hiresInIndia (greenhouse example-gh) with APAC, Asia, South Asia or worldwide (final fix I6: no longer with no
+    // country at all, which is review)
+    for (const c of [['apac'], ['asia'], ['south asia'], ['worldwide']]) {
       expect(decide({ slug: 'example-gh', remote: remote('remote', c), locationText: 'Remote' }), c.join()).toEqual(ELIGIBLE_UNDISCLOSED);
     }
     // feeds look the watchlist up by company
     expect(decide({ ats: 'feed', source: 'himalayas', slug: 'himalayas', company: 'example greenhouse co', remote: remote('remote', ['worldwide']) })).toEqual(ELIGIBLE_UNDISCLOSED);
+  });
+
+  it('final fix L1: a location naming only countries outside India rejects, whatever remote words the JD has', () => {
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    // LIVE RUN 1: Tide (UK, Lithuania, Bulgaria, Serbia) and Celonis (Redwood City, US / New York, US); the JD says remote
+    const tide = { locationText: 'UK; Lithuania; Bulgaria; Serbia', remote: remote(null, ['bulgaria', 'lithuania', 'serbia', 'united kingdom']), descriptionText: 'We are a remote-friendly team building banking for small businesses.' };
+    const celonis = { locationText: 'Redwood City, US; New York, US', remote: remote(null, ['united states']), descriptionText: 'Remote work is supported. Build process mining services.' };
+    expect(decide(tide)).toEqual(rejected('location-outside-india'));
+    expect(decide(celonis)).toEqual(rejected('location-outside-india'));
+    // allRemote and hiresInIndia boards do not rescue it
+    expect(decide({ ...celonis, ats: 'lever', slug: 'example-lv' })).toEqual(rejected('location-outside-india'));
+    expect(decide({ ...celonis, slug: 'example-gh' })).toEqual(rejected('location-outside-india'));
+    // guard: the JD names India or a region with India as a place it hires: review instead
+    expect(decide({ ...tide, descriptionText: 'Remote-friendly. We also hire in India.' })).toEqual(review);
+    expect(decide({ ...celonis, descriptionText: 'Remote across APAC is possible.' })).toEqual(review);
+    // but not when the JD excludes India
+    expect(decide({ ...celonis, descriptionText: 'Remote anywhere except India.' })).toEqual(rejected('location-outside-india'));
+    // India, APAC, Asia, South Asia or worldwide among the countries keeps the posting in scope
+    for (const c of [['india', 'united states'], ['apac', 'united kingdom'], ['asia'], ['south asia'], ['worldwide', 'united states']]) {
+      expect(decide({ locationText: 'x', remote: remote(null, c), descriptionText: 'We are remote-first.' }).reasons, c.join()).not.toContain('location-outside-india');
+    }
+    // the existing exclusion rules come first
+    expect(decide({ ...celonis, descriptionText: 'Remote, US only.' })).toEqual(rejected('remote-excludes-india:us-only'));
+    expect(decide({ ...tide, locationText: 'London, UK (hybrid)' })).toEqual(rejected('hybrid'));
+  });
+
+  it('final fix L2: working hours limited to time zones that exclude UTC+5:30 reject', () => {
+    const india = { remote: remote('remote', ['india']), locationText: 'Remote - India' };
+    const tz = rejected('timezone-excludes-india');
+    // LIVE RUN 1, in the title, with the Unicode minus
+    expect(decide({ ...india, title: 'Senior Backend Developer (Go) — Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
+    expect(decide({ ...india, locationText: 'Full Remote, European Timezones Only (UTC−1 to UTC+3)' })).toEqual(tz);
+    for (const d of [
+      'Full Remote, European Timezones Only.',
+      'EU timezone only.',
+      'US time zones only, please.',
+      'American time zones only.',
+      'Americas timezones only.',
+      'EMEA time zones only.',
+      'CET timezone only.',
+      'EST time zone only.',
+      'PST time zones only.',
+      'Pacific time zone only.',
+      'Eastern timezone only.',
+      'You must work in US hours.',
+      'Candidates must work within EU hours.',
+      'Working hours: UTC-1 to UTC+3.',
+      'Team hours UTC−8 to UTC−5.',
+      'We work between GMT and GMT+2.',
+      'Core hours UTC+1 ± 2 hours.',
+      'Hours UTC-5 +/- 3 hours.',
+    ]) expect(decide({ ...india, descriptionText: d }), d).toEqual(tz);
+    // never: overlap, flexibility, APAC, or a range or span that includes +5:30
+    for (const d of [
+      'Some overlap with US hours is expected.',
+      'At least 4 hours of overlap with US hours.',
+      'Overlap with UTC-5 to UTC-1 for two hours a day.',
+      'Flexible hours; US time zones only for on-call is not required.',
+      'Flexible working hours.',
+      'APAC timezones preferred.',
+      'APAC time zones only.',
+      'Working hours: UTC+4 to UTC+8.',
+      'Core hours UTC+4 ± 2 hours.',
+      'Asia time zones only.',
+    ]) expect(decide({ ...india, descriptionText: d }).reasons, d).not.toContain('timezone-excludes-india');
+  });
+
+  it('final fix I6: remote with no country, region or worldwide is review whatever hiresInIndia says, unless allRemote', () => {
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    // hiresInIndia (greenhouse example-gh): structured remote, plain remote location, and the Confluent USA1 shape
+    expect(decide({ slug: 'example-gh', remote: remote('remote', []), locationText: 'Remote' })).toEqual(review);
+    expect(decide({ slug: 'example-gh', remote: remote(null, [], ['location:remote']), locationText: 'Remote' })).toEqual(review);
+    expect(decide({ slug: 'example-gh', remote: remote('remote', [], ['workplaceType:Remote', 'isRemote:true']), locationText: '*Job Posting Only: USA1' })).toEqual(review);
+    // hiresInIndia still upgrades structured remote with worldwide, APAC or Asia
+    for (const c of [['worldwide'], ['apac'], ['asia']]) expect(decide({ slug: 'example-gh', remote: remote('remote', c), locationText: 'Remote' }), c.join()).toEqual(ELIGIBLE_UNDISCLOSED);
+    // an all-remote company (lever example-lv) stays eligible with no country
+    expect(decide({ ats: 'lever', slug: 'example-lv', remote: remote('remote', []), locationText: 'Remote' })).toEqual(ELIGIBLE_UNDISCLOSED);
+    // the Confluent posting through the normalizer: USA1 is the United States, so a hiresInIndia board does not rescue it
+    const confluent = normalize({
+      source: 'ashby', sourceId: 'c1', company: 'Example Greenhouse Co', slug: 'example-gh',
+      raw: { id: 'c1', title: 'Senior Software Engineer', jobUrl: 'https://jobs.ashbyhq.com/x/c1', location: '*Job Posting Only: USA1', isRemote: true, workplaceType: 'Remote', employmentType: 'FullTime', descriptionPlain: 'Build storage.' },
+    });
+    expect(confluent.remote.countries).toEqual(['united states']);
   });
 
   it('5.4 remote but unclear: review with the fixed note; nothing remote: onsite', () => {
@@ -407,7 +511,7 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   });
 
   it('every reason and note is one of the fixed codes', () => {
-    const CODE = /^(closed|onsite|hybrid|remote-unclear|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
+    const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
     const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify']);
     const spec = appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.agent.contract.id === 'eligibility')!;
     for (const k of spec.cases) {

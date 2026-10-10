@@ -71,6 +71,8 @@ export function reasonText(code: string): string {
   if (code === 'remote-unclear') return 'The posting does not say clearly where remote work is allowed';
   if (code === 'onsite-only') return 'On-site only, outside the cities you accept';
   if (code.startsWith('remote-excludes-india')) return 'Remote, but not open to people in India';
+  if (code === 'location-outside-india') return 'The posting names only places outside India';
+  if (code === 'timezone-excludes-india') return 'Working hours are limited to time zones that exclude India';
   if (code.startsWith('role:')) return 'The title matches a role you filtered out';
   if (code.startsWith('company:')) return 'A company you filtered out';
   if (code.startsWith('employment:')) return 'Not a full-time job';

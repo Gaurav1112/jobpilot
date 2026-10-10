@@ -15,7 +15,7 @@ const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
  * Canonical lowercase names, each with the spellings that mean it. Regions are tokens of their own: `worldwide`,
  * `apac`, `emea`, `europe`, `americas`, `latam`, `north america`, `asia`, `south asia`, `southeast asia`,
  * `middle east`, `africa`, `oceania`. Matching is whole-word and longest-first, so "Southeast Asia" is not "asia"
- * and "USA1" (an Ashby tier code) is nothing.
+ * and "Indiana" is nothing; a capitalised code glued to a tier number ("USA1", final fix I6) is its country.
  */
 const PLACES: Readonly<Record<string, readonly string[]>> = {
   worldwide: ['worldwide', 'world wide', 'anywhere', 'anywhere in the world', 'global', 'globally'],
@@ -161,8 +161,14 @@ interface PlaceScan {
   excludedParts: string[];
 }
 
+/**
+ * Final fix I6: a country code in capitals glued to a short tier number ("USA1", "US2", "UK3", an Ashby pay-tier or
+ * location code) names that country. Lower case or a longer number is not a tier code.
+ */
+const TIER_CODE = /(?<![\p{L}\p{N}])(USA|US|UK|EU)(?=\d{1,2}(?![\p{L}\p{N}]))/gu;
+
 function scanPlaces(text: string): PlaceScan {
-  const t = text.normalize('NFKC');
+  const t = text.normalize('NFKC').replace(TIER_CODE, '$1 ');
   const out: string[] = [];
   const excluded: string[] = [];
   const excludedParts: string[] = [];
