@@ -25,6 +25,8 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    temporary, intern, freelance). A bare deny word is not an employment phrase, and (final fix I7) a phrase counts
  *    only when it describes this role ("this is a contract role", "freelance basis", "hourly rate of $40", "this
  *    internship"); a word about the employer's product or customers never does. "internship" counts in the title.
+ *    Re-review R9: "on" counts only before "basis" ("work on contract engagement workflows" is product text), and a
+ *    product noun after the phrase ("a temporary staffing product", "a contract management platform") voids it.
  * 5. remote from India, by the decision table:
  *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
  *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
@@ -111,6 +113,12 @@ const MONEY = '(?:[$€£₹]|\\b(?:usd|inr|eur|gbp|rs\\.?)\\s*)\\s*\\d[\\d,]*(?
 const TERM = '(?:\\d+[\\s-]months?[\\s-]|(?:short|long)[\\s-]term\\s+)?';
 const KIND = '(contract|freelance|hourly|temporary)';
 /**
+ * Re-review R9: a product noun right after the phrase makes it product text ("the engagement is a temporary staffing
+ * product", "this is a contract management platform", "join as freelance contractor agencies").
+ */
+const NOT_PRODUCT =
+  '(?![\\s-]+(?:staffing|management|lifecycle|workflows?|agenc(?:y|ies)|platforms?|products?|tools?|software|marketplaces?|solutions?|services?|systems?|onboarding|data|analytics|billing|tracking)\\b)';
+/**
  * Employment phrases, in order. Final fix I7: a phrase counts only when it describes this role ("this is a contract
  * role", "the position is a temporary engagement", "you will be hired on a contract basis", "freelance basis", "hourly
  * rate of $40", "we pay $60 per hour", "this internship"). A word about the employer's product or customers ("the
@@ -121,9 +129,17 @@ const KIND = '(contract|freelance|hourly|temporary)';
 const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
   ['contract-to-hire', /\bcontract[\s-]to[\s-]hire\b/i],
   ['c2h', /\bc2h\b/i],
-  ['', new RegExp(`\\bthis is (?:a|an) ${TERM}${KIND}\\b`, 'i')],
-  ['', new RegExp(`\\b(?:role|position|job|engagement) is (?:on )?(?:a |an )?${TERM}${KIND}\\b`, 'i')],
-  ['', /\b(?:hired|engaged|employed|join|joining|work|working)\b[^.;\n]{0,30}?\b(?:on|as) (?:a |an )?(contract|freelance) (?:basis|employee|contractor|engagement)\b/i],
+  ['', new RegExp(`\\bthis is (?:a|an) ${TERM}${KIND}\\b${NOT_PRODUCT}`, 'i')],
+  ['', new RegExp(`\\b(?:role|position|job|engagement) is (?:on )?(?:a |an )?${TERM}${KIND}\\b${NOT_PRODUCT}`, 'i')],
+  // Re-review R9: "on" only before "basis" ("hired on a contract basis"); "work on contract engagement workflows" is
+  // product text. "as" takes the other nouns ("join as a freelance contractor").
+  [
+    '',
+    new RegExp(
+      `\\b(?:hired|engaged|employed|join|joining|work|working)\\b[^.;\\n]{0,30}?(?:\\bon (?:a |an )?(?=(?:contract|freelance) basis\\b)|\\bas (?:a |an )?)(contract|freelance) (?:basis|employee|contractor|engagement)\\b${NOT_PRODUCT}`,
+      'i',
+    ),
+  ],
   ['contract', /\b\d+[\s-]months?[\s-]contract\b/i],
   ['freelance', /\bfreelance (?:role|position|contract|basis|engagement)s?\b/i],
   ['hourly', new RegExp(`\\bhourly rate(?:\\s+(?:of|is))?\\s*:?\\s*(?:up to\\s*)?${MONEY}`, 'i')],

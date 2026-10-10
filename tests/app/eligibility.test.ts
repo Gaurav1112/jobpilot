@@ -125,7 +125,21 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'A contract position with our client.',
       'We hire freelance developers.',
       'A six-month internship in our platform team.',
-    ]) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
+      // re-review R9: product text
+      'You will work on contract engagement workflows for our CLM platform.',
+      'You will be working on contract employee onboarding.',
+      'Businesses join our marketplace as freelance contractor agencies.',
+      'The engagement is a temporary staffing product.',
+      'Ours is a contract management platform; this is a contract lifecycle tool for legal teams.',
+    ])expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
+    // the role phrases still reject
+    for (const [d, r] of [
+      ['You will be hired on a contract basis.', 'employment:contract'],
+      ['You will join as a freelance contractor.', 'employment:freelance'],
+      ['You will be engaged as a contract employee.', 'employment:contract'],
+      ['This position is a temporary engagement for 6 months.', 'employment:temporary'],
+      ['The engagement is a temporary one for 6 months.', 'employment:temporary'],
+    ] as const) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(rejected(r));
   });
 
   it('4. employment: the reviewer\'s six false rejections are eligible (I1)', () => {
