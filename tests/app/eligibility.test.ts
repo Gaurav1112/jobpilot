@@ -131,6 +131,9 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'Businesses join our marketplace as freelance contractor agencies.',
       'The engagement is a temporary staffing product.',
       'Ours is a contract management platform; this is a contract lifecycle tool for legal teams.',
+      // rereview-2 M4: a product compound with no role noun after it stays product text
+      'This is a contract management platform for engineering teams.',
+      'This is a contract data platform used by procurement.',
     ])expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(ELIGIBLE_UNDISCLOSED);
     // the role phrases still reject
     for (const [d, r] of [
@@ -139,6 +142,12 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       ['You will be engaged as a contract employee.', 'employment:contract'],
       ['This position is a temporary engagement for 6 months.', 'employment:temporary'],
       ['The engagement is a temporary one for 6 months.', 'employment:temporary'],
+      // rereview-2 M4: a role noun after the word means the phrase describes the role, not a product
+      ['This is a contract data engineering role for 6 months.', 'employment:contract'],
+      ['This is a contract software engineering position.', 'employment:contract'],
+      ['The position is a contract platform engineering role.', 'employment:contract'],
+      ['This is a contract data engineer opportunity.', 'employment:contract'],
+      ['This is a contract software developer hire.', 'employment:contract'],
     ] as const) expect(decide({ employmentType: null, descriptionText: d }), d).toEqual(rejected(r));
   });
 

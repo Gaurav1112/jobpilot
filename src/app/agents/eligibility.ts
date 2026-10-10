@@ -112,12 +112,17 @@ const MONEY = '(?:[$€£₹]|\\b(?:usd|inr|eur|gbp|rs\\.?)\\s*)\\s*\\d[\\d,]*(?
 /** A duration before the employment word: "6-month", "12 month", "short-term". */
 const TERM = '(?:\\d+[\\s-]months?[\\s-]|(?:short|long)[\\s-]term\\s+)?';
 const KIND = '(contract|freelance|hourly|temporary)';
+/** Nouns that name the role itself: a phrase ending in one describes the job ("a contract data engineering role"). */
+const ROLE_NOUN =
+  '(?:roles?|positions?|jobs?|engineers?|developers?|opportunit(?:y|ies)|hires?|contractors?|consultants?|analysts?|architects?|scientists?|specialists?|assignments?|gigs?|openings?|vacanc(?:y|ies))';
 /**
  * Re-review R9: a product noun right after the phrase makes it product text ("the engagement is a temporary staffing
  * product", "this is a contract management platform", "join as freelance contractor agencies").
+ * Re-review-2 M4: only as a noun compound. When a role noun follows within two more words ("a contract data
+ * engineering role", "a contract software developer hire"), the phrase describes the role and still counts.
  */
 const NOT_PRODUCT =
-  '(?![\\s-]+(?:staffing|management|lifecycle|workflows?|agenc(?:y|ies)|platforms?|products?|tools?|software|marketplaces?|solutions?|services?|systems?|onboarding|data|analytics|billing|tracking)\\b)';
+  `(?![\\s-]+(?:staffing|management|lifecycle|workflows?|agenc(?:y|ies)|platforms?|products?|tools?|software|marketplaces?|solutions?|services?|systems?|onboarding|data|analytics|billing|tracking)\\b(?![\\s-]+(?:(?!(?:for|of|to|with|that|which|and|or|the|a|an|in|on|at|by)\\b)[a-z]+[\\s-]+){0,2}${ROLE_NOUN}\\b))`;
 /**
  * Employment phrases, in order. Final fix I7: a phrase counts only when it describes this role ("this is a contract
  * role", "the position is a temporary engagement", "you will be hired on a contract basis", "freelance basis", "hourly
