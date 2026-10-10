@@ -42,17 +42,32 @@ describe('rereview R6: squashChars fast path', () => {
     for (const s of mixed) expect(squashChars(s)).toEqual(ref(s));
   });
 
-  it('redacting 2,000 jobs with long descriptions takes well under the old cost, and still hides glued terms', () => {
+  it('redacting 2,000 jobs with long descriptions still hides glued terms and leaves clean text alone', () => {
     const naming = { forbiddenTerms: ['Initech'] };
     const jd = 'Build distributed Go services with Kafka and PostgreSQL across regions; own reliability. '.repeat(70);
     const jobs = Array.from({ length: 2_000 }, (_, i) => ({ jobKey: String(i), company: i % 500 === 0 ? 'InitechPay Labs' : `Company ${i % 37}`, title: 'Senior Engineer', jdText: jd + String(i) }));
-    const t = performance.now();
     const out = redactor(naming).deep(jobs);
-    const ms = performance.now() - t;
     expect(out.filter((j) => j.company === HIDDEN)).toHaveLength(4);
     expect(out[1]?.jdText).toBe(jd + '1');
-    // ~12M characters: the per-character fold took ~2.5 s here; the fast path is several times quicker
-    expect(ms).toBeLessThan(1_200);
+  });
+
+  it('the fast path is several times quicker than the per-character fold, measured side by side (rereview-2 M1)', async () => {
+    // A ratio against the reference measured in the same loop, not a wall-clock bound: a loaded machine slows both
+    // paths alike. Interleaved rounds and the best time of each keep one scheduler hiccup from deciding the result.
+    const { foldForTests, STAND_INS_FOR_TESTS } = await import('../../src/app/pack/rules.js');
+    const text = 'Build distributed Go services with Kafka and PostgreSQL across regions; own reliability. '.repeat(700);
+    let fast = Infinity;
+    let slow = Infinity;
+    for (let round = 0; round < 7; round++) {
+      let t = performance.now();
+      squashChars(text);
+      fast = Math.min(fast, performance.now() - t);
+      t = performance.now();
+      referenceSquash(text, foldForTests, STAND_INS_FOR_TESTS);
+      slow = Math.min(slow, performance.now() - t);
+    }
+    // measured ~9x; 3x leaves wide room for noise while still failing if the fast path stops being taken
+    expect(slow / fast).toBeGreaterThan(3);
   });
 });
 
