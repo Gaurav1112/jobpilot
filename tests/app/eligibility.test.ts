@@ -354,10 +354,14 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     ]) expect(decide(p), p.locationText).toEqual(rejected('location-outside-india'));
     // something says remote, but the JD's only "region" is prose: still outside India
     expect(decide(onsite('Redwood City, US', ['united states'], 'Remote work is supported. We are a global company with customers worldwide.'))).toEqual(rejected('location-outside-india'));
+    // LIVE RUN 1 Celonis benefits line: "globally" and "remote" in one sentence, but not about each other
+    expect(decide(onsite('New York, US, New York', ['united states'], 'Enjoy generous PTO globally, as well as a work model that balances remote focus with vibrant office collaboration.'))).toEqual(rejected('location-outside-india'));
     // L1's intended cases stay: remote plus India (or APAC) named, or a remote sentence that says anywhere in the world
     expect(decide(onsite('Redwood City, US', ['united states'], 'Remote work is supported; we also hire in India.'))).toEqual(review);
     expect(decide(onsite('London, UK', ['united kingdom'], 'Fully remote across APAC is possible.'))).toEqual(review);
     expect(decide(onsite('Berlin, Germany', ['germany'], 'This role is fully remote: work from anywhere in the world.'))).toEqual(review);
+    // LIVE RUN 1 ClickHouse: the title names the region ("APJ-Remote"), the location only two of its countries
+    expect(decide({ ...onsite('Singapore; Australia', ['australia', 'singapore'], 'Run our cloud.'), title: 'Senior Site Reliability Engineer- (APJ-Remote)' })).toEqual(review);
   });
 
   it('final fix L2: working hours limited to time zones that exclude UTC+5:30 reject', () => {

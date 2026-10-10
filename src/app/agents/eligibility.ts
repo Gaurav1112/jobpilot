@@ -369,8 +369,11 @@ const namesIndiaRegion = (countries: readonly string[]): boolean => countries.so
  */
 function descriptionNamesIndiaScope(description: string): boolean {
   if (namesIndiaRegion(countriesIn(description))) return true;
-  return description.split(/[.!?;\n]+/).some((s) => REMOTE_WORD.test(s) && countriesIn(s).includes('worldwide'));
+  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s).includes('worldwide'));
 }
+/** "remote … anywhere", "work from anywhere", "worldwide, remote": the worldwide word is about the remote work itself, close to it. */
+const REMOTE_ANYWHERE =
+  /\bremote(?:ly)?\b[^.;\n]{0,40}\b(?:anywhere|worldwide|globally|global)\b|\b(?:anywhere|worldwide|globally|global)\b[^.;\n]{0,15}\bremote\b|\bwork (?:from )?anywhere\b/i;
 
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
 function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 'review-timezone' | null {
@@ -412,7 +415,7 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   // or a region with India; "global", "worldwide" or "anywhere" count only inside a sentence that says remote ("a
   // global leader", "customers worldwide" are prose). With nothing remote it is outside India whatever the JD names.
   if (countries.length > 0 && !indiaInScope(countries)) {
-    return anythingRemote && descriptionNamesIndiaScope(p.descriptionText) ? 'review' : 'location-outside-india';
+    return anythingRemote && descriptionNamesIndiaScope(`${p.title}\n${p.descriptionText}`) ? 'review' : 'location-outside-india';
   }
 
   const entry = watchEntry(p, pack);
