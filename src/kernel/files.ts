@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { constants } from 'node:fs';
+import { constants, realpathSync } from 'node:fs';
 import { lstat, mkdir, open, readdir, readFile, realpath, rename, rm, unlink } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { basename, join, relative, sep } from 'node:path';
 import { KernelError } from './errors.js';
 
 /**
@@ -47,6 +47,35 @@ const STEP_KEY = /^[0-9a-f]{16,128}$/;
 
 const sha256 = (b: Uint8Array): string => createHash('sha256').update(b).digest('hex');
 const code = (e: unknown): string | undefined => (typeof e === 'object' && e !== null ? ((e as { code?: unknown }).code as string | undefined) : undefined);
+
+/**
+ * Final minor: a raw fs error (a Node error whose `code` is an errno name such as EACCES or ENOSPC) as `invalid_output`,
+ * named by its syscall, its code and its path relative to the root's parent (`out/.pending/…`, `out/<jobKey>/…`), so no
+ * absolute path reaches an event, a problem, the run summary or `/runs`. A path outside the root keeps its base name
+ * only. Anything else (a KernelError included) is returned unchanged.
+ */
+export function fsFailure(e: unknown, root: string, rootName: string): unknown {
+  const c = code(e);
+  if (!(e instanceof Error) || e instanceof KernelError || typeof c !== 'string' || !/^E[A-Z0-9]+$/.test(c)) return e;
+  const syscall = (e as { syscall?: unknown }).syscall;
+  const p = (e as { path?: unknown }).path;
+  const bases = [root];
+  try {
+    bases.push(realpathSync(root));
+  } catch {
+    // the root itself may be what is missing
+  }
+  const rel = (abs: string): string => {
+    for (const b of bases) {
+      if (abs === b) return rootName;
+      if (abs.startsWith(b + sep)) return `${rootName}/${relative(b, abs).split(sep).join('/')}`;
+    }
+    return basename(abs);
+  };
+  const where = typeof p === 'string' && p !== '' ? ` on ${rel(p)}` : '';
+  return new KernelError('invalid_output', `${typeof syscall === 'string' ? syscall : 'fs'} failed (${c})${where}`);
+}
+
 const fold = (s: string): string => s.normalize('NFKC').toLowerCase().normalize('NFC');
 /** A segment that names an applied snapshot, whatever its case or compatibility form. */
 export const isAppliedSegment = (s: string): boolean => fold(s).startsWith('applied-');
@@ -412,12 +441,14 @@ export async function hasPending(root: string, stepKey: string): Promise<boolean
  * Startup recovery: every stage under `<root>/.pending` in ascending stepKey order. A done step's stage is committed
  * (the crash came between recording it and committing it); any other is deleted. An entry that is not a real
  * directory (a link, a file) is reported and left alone, and a `.pending` that is itself a link is reported and
- * nothing under it is touched. A commit that fails is deleted and reported.
+ * nothing under it is touched. A commit that fails is deleted and reported (an fs error by code and a path relative to
+ * the root's parent, `rootName` naming the root).
  */
 export async function recoverPending(
   root: string,
   isDone: (stepKey: string) => boolean,
   maxBytes: number,
+  rootName = basename(root),
 ): Promise<{ committed: string[]; discarded: string[]; failed: { stepKey: string; message: string }[] }> {
   const out = { committed: [] as string[], discarded: [] as string[], failed: [] as { stepKey: string; message: string }[] };
   let rootReal: string;
@@ -426,7 +457,10 @@ export async function recoverPending(
   } catch {
     return out;
   }
-  const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+  const message = (e: unknown): string => {
+    const m = fsFailure(e, root, rootName);
+    return m instanceof Error ? m.message : String(m);
+  };
   try {
     if (!(await realDir(pendingRoot(rootReal), PENDING_DIR))) return out;
   } catch (e) {
