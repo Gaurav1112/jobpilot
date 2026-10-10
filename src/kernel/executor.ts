@@ -184,6 +184,29 @@ export async function executeStep(deps: ExecutorDeps, runId: string, agent: AnyA
   return outcome;
 }
 
+/** At most this many skip notes are kept per step, each cut to SKIP_NOTE_MAX characters; the count is always exact. */
+export const SKIP_NOTES_KEPT = 20;
+const SKIP_NOTE_MAX = 200;
+
+/** The event fields for a step's skipped input items: none when nothing was skipped. */
+function skipData(notes: readonly string[]): { skipped?: number; skippedNotes?: string[] } {
+  if (notes.length === 0) return {};
+  return { skipped: notes.length, skippedNotes: notes.slice(0, SKIP_NOTES_KEPT).map((n) => (n.length > SKIP_NOTE_MAX ? `${n.slice(0, SKIP_NOTE_MAX - 1)}…` : n)) };
+}
+
+/** The skip fields a done step stored in its row detail (none for a step without skips or an older row). */
+function skipsOf(detail: string | null | undefined): { skipped?: number; skippedNotes?: string[] } {
+  if (!detail) return {};
+  try {
+    const d = JSON.parse(detail) as { skipped?: unknown; skippedNotes?: unknown };
+    if (typeof d.skipped !== 'number' || !Number.isSafeInteger(d.skipped) || d.skipped < 1) return {};
+    const notes = Array.isArray(d.skippedNotes) ? d.skippedNotes.filter((n): n is string => typeof n === 'string') : [];
+    return { skipped: d.skipped, skippedNotes: notes };
+  } catch {
+    return {};
+  }
+}
+
 async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input: Envelope, staging: Staging | undefined): Promise<StepOutcome> {
   const c = agent.contract; // 1 contract lookup (registry.get already threw if unknown)
   const full = c.capabilities.pack === 'full';
@@ -243,7 +266,7 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       const outputs = deps.store.envelopesOfStep(stepKey);
       const broken = staging === undefined || (await hasPending(staging.root, stepKey)) ? [] : await brokenFileRefs(staging, outputs);
       if (broken.length === 0) {
-        event('step_replayed', { status: 'done' });
+        event('step_replayed', { status: 'done', ...skipsOf(prior.detail) });
         return { kind: 'done', stepKey, outputs, replayed: true };
       }
       const e = eventOf('replay-healed', { files: broken });
@@ -374,7 +397,9 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       // done record still knows which stage to commit, and a crash before it leaves nothing that will be).
       await pendingFiles?.markFinal();
       // 12-13 one transaction: envelopes, step status, cost and the hash-chained event
-      finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd }));
+      // A partial skip is never silent: its count and first notes go in the event, and in the step row for replays.
+      const skips = skipData(ctx.skips());
+      finish('done', outputs, eventOf('step_done', { outputs: outputs.length, usd: stepSpent.usd, ...skips }), skips.skipped === undefined ? {} : { detail: JSON.stringify(skips) });
       return { kind: 'done', stepKey, outputs, replayed: false };
     }
   } catch (err) {

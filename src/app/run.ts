@@ -10,7 +10,7 @@ import { withLock } from './lock.js';
 import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
 import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
-import { runProblems, staleProblems, type Problem } from './problems.js';
+import { runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
 import { citeable } from './pack/rules.js';
 import type { Pack } from './pack/schema.js';
@@ -200,6 +200,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       markStaleDocs(app, citeableIn(loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
+      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
       const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       o.afterProject?.();
       const fresh = newMatches(app);

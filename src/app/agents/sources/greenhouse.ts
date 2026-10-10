@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { checkParsed, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
+import { checkParsed, reportSkips, finish, getBoard, idOf, isRecord, sourceContract, type Parsed } from './common.js';
 
 /**
  * Greenhouse Job Board API: the whole board in one response (no paging).
@@ -32,5 +32,5 @@ export const srcGreenhouseContract = sourceContract('src-greenhouse', GREENHOUSE
 
 export const srcGreenhouse = defineAgent(srcGreenhouseContract, async (req, ctx) => {
   if (req.ats !== 'greenhouse') return [];
-  return finish(greenhouseParse(await getBoard(ctx, greenhouseUrl(req.slug), req.slug), req).postings);
+  return finish(reportSkips(ctx, greenhouseParse(await getBoard(ctx, greenhouseUrl(req.slug), req.slug), req)).postings);
 });

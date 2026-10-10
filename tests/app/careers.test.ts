@@ -743,6 +743,8 @@ describe('src-careers with real chromium', async () => {
     spent: () => ({ usd: 0, inputTokens: 0, outputTokens: 0 }),
     maxCall: () => 0,
     denials: () => [],
+    skipped: () => undefined,
+    skips: () => [],
   });
 
   /** src-careers-list, then src-careers-job on each link, over the real provider; the first failure is thrown. */

@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, reportSkips, finish, getBoard, idOf, isRecord, omit, onlySeenBefore, repeatedPage, sourceContract, type Parsed } from './common.js';
 
 /**
  * Lever Postings API: a top-level array. A big board unpaged (veeva: 937 postings, 13 MB) comes
@@ -66,7 +66,7 @@ export const srcLever = defineAgent(srcLeverContract, async (req, ctx) => {
   for (let page = 0; ; page++) {
     const url = leverUrl(req.slug, page * LEVER_PAGE_SIZE);
     const json = await getBoard(ctx, url, req.slug);
-    const parsed = leverParse(json, req);
+    const parsed = reportSkips(ctx, leverParse(json, req), `page ${page + 1}: `);
     const jobs = json as unknown[];
     if (jobs.length === 0) {
       // After a short page (or on page 0) an empty page is the end. After a full page it is the end

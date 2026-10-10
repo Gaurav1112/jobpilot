@@ -1,7 +1,7 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
 import type { RawPosting } from '../../types.js';
-import { capReached, checkParsed, finish, getBoard, idOf, isRecord, onlySeenBefore, sourceContract, type Parsed } from './common.js';
+import { capReached, checkParsed, reportSkips, finish, getBoard, idOf, isRecord, onlySeenBefore, sourceContract, type Parsed } from './common.js';
 
 /**
  * Jobicy remote-jobs API, `tag=backend&count=50`, for `geo=apac` then `geo=anywhere` (there is
@@ -62,7 +62,7 @@ export const srcJobicy = defineAgent(srcJobicyContract, async (req, ctx) => {
       if (requests > JOBICY_MAX_REQUESTS) throw capReached(what, 'request', finish(all).length);
       requests++;
       const json = await getBoard(ctx, jobicyUrl(geo, cursor), JOBICY_FEED);
-      const parsed = jobicyParse(json);
+      const parsed = reportSkips(ctx, jobicyParse(json), `${geo} page ${page}: `);
       const body = json as { jobs: unknown[]; hasMore?: unknown; nextCursor?: unknown; jobCount?: unknown };
       if (typeof body.hasMore !== 'boolean') throw fail(page, 'has no boolean hasMore');
       if (typeof body.jobCount === 'number' && body.jobCount !== body.jobs.length) {
