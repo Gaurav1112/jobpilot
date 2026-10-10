@@ -13,6 +13,11 @@ import { Sessions } from '../../src/app/web/security.js';
 import * as htmlModule from '../../src/app/web/html.js';
 import Database from 'better-sqlite3';
 import { jobRow } from '../support/app-fixtures.js';
+import { coverPlanOf, fullPack, posting } from '../support/render-fixtures.js';
+import { fillCover } from '../../src/app/render/fill.js';
+import { coverNoteShort } from '../../src/app/agents/writing/grounded.js';
+import type { CoverPlan } from '../../src/app/types.js';
+import { Store as KernelStore } from '../../src/kernel/store/store.js';
 
 /**
  * The dashboard (Task 13) through Hono's `app.request()`: a temp JOBPILOT_HOME with the fictional fixture pack, rows
@@ -182,6 +187,46 @@ describe('I2: stale documents on the dashboard', () => {
     expect(page.body.replace(/&#0?39;|&apos;/g, "'")).toContain("These documents cite a fact you rejected; they'll be rebuilt next time the posting is seen");
     expect(page.body).not.toContain(`/jobs/${K1}/files/`);
     for (const name of ['resume.pdf', 'cover.docx', 'resume.html']) expect((await app.request(`/jobs/${K1}/files/${name}`, { headers: { cookie, ...dl } })).status).toBe(404);
+  });
+});
+
+describe('dashboard: the short cover note', () => {
+  /** Records the Rendered envelope behind K1's documents, the way the kernel stores it, with the filled letter. */
+  function recordLetter(company = 'Acme Robotics'): CoverPlan {
+    const plan = fillCover(coverPlanOf(posting({ jobKey: K1, title: 'Senior Backend Engineer', company })), fullPack().answers, fullPack().contact.city);
+    const docs = withStore((s) => s.getJob(K1)!.docs);
+    const ks = KernelStore.open(join(home, 'jobpilot.db'));
+    try {
+      ks.putSeed('seed-letter', {
+        envelopeId: 'env-letter', stepKey: 'seed-letter', index: 0, type: 'Rendered@1', producer: { agentId: 'renderer', version: '1.1.0', contractHash: 'h' }, parents: [],
+        payload: { jobKey: K1, files: docs.map((d) => ({ kind: d.kind, format: d.format, path: d.path, sha256: d.sha256, pages: d.pages })), recommended: 'pdf', plan, text: { resume: '', cover: '' } },
+        handoff: { guarantees: [], dataClass: 'P1', obligations: [], pins: { policyHash: 'p' } }, guardrails: [], cost: { usd: 0, inputTokens: 0, outputTokens: 0 },
+      }, '1', 'h');
+    } finally {
+      ks.close();
+    }
+    return plan;
+  }
+  const unescape = (b: string) => b.replace(/&#0?39;|&apos;/g, "'").replace(/&amp;/g, '&');
+
+  it("shows the letter's opening sentence and its top fact, not the stale answers.yaml text", async () => {
+    writeFileSync(join(home, 'pack', 'answers.yaml'), `${readFileSync(join(home, 'pack', 'answers.yaml'), 'utf8')}cover_note_short: I am available from 1 November and love Rust.\n`);
+    const plan = recordLetter();
+    const note = "I'm applying for the Senior Backend Engineer role at Acme Robotics. At Contoso Retail, I built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly.";
+    expect(plan.paragraphs[0]!.text.startsWith("I'm applying for the Senior Backend Engineer role at Acme Robotics. ")).toBe(true);
+    expect(plan.paragraphs[1]!.text.startsWith(note.slice(note.indexOf('At Contoso')))).toBe(true);
+    expect(coverNoteShort(plan)).toBe(note);
+    const body = unescape((await get(`/jobs/${K1}`)).body);
+    expect(body).toContain(`<dt>Cover note short</dt><dd>${note}</dd>`);
+    expect(body).not.toContain('love Rust');
+  });
+
+  it('adds the row when answers.yaml has none, and keeps the answers.yaml text when no letter is on record', async () => {
+    expect(unescape((await get(`/jobs/${K1}`)).body)).not.toContain('Cover note short');
+    recordLetter();
+    expect(unescape((await get(`/jobs/${K1}`)).body)).toContain('<dt>Cover note short</dt><dd>I&#39;m applying'.replace('&#39;', "'"));
+    writeFileSync(join(home, 'pack', 'answers.yaml'), `${readFileSync(join(home, 'pack', 'answers.yaml'), 'utf8')}cover_note_short: My own note.\n`);
+    expect(unescape((await get(`/jobs/${K3}`)).body)).toContain('<dt>Cover note short</dt><dd>My own note.</dd>');
   });
 });
 

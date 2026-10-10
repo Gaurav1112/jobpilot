@@ -9,7 +9,9 @@ import { getCookie, setCookie } from 'hono/cookie';
 import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../../kernel/clock.js';
 import { verifyChain } from '../../kernel/store/audit.js';
+import { coverNoteShort } from '../agents/writing/grounded.js';
 import { profileFor } from '../ats-profiles.js';
+import { CoverPlan } from '../types.js';
 import { DEFAULT_FX } from '../pack/defaults.js';
 import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
@@ -157,6 +159,23 @@ const humanKey = (k: string): string => {
   const s = k.replace(/[_-]+/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2').trim().toLowerCase();
   return s.charAt(0).toUpperCase() + s.slice(1);
 };
+
+/** The answers.yaml key of the short cover note the job page shows. */
+export const COVER_NOTE_KEY = 'cover_note_short';
+
+/**
+ * The screening answers for a job page (cover letter v2): when the letter behind the job's current documents is on
+ * record, `cover_note_short` is that letter's opening sentence and top fact (`coverNoteShort`), so the note never says
+ * more than the letter (a stale answers.yaml note could carry an old availability date); it is added when answers.yaml
+ * has no such key. Without a letter, answers.yaml is shown as it is.
+ */
+export function withCoverNote(answers: Readonly<Record<string, unknown>>, plan: unknown): [string, unknown][] {
+  const rows = Object.entries(answers);
+  const cover = CoverPlan.schema.safeParse(plan);
+  const note = cover.success ? coverNoteShort(cover.data) : undefined;
+  if (note === undefined) return rows;
+  return rows.some(([k]) => k === COVER_NOTE_KEY) ? rows.map(([k, v]) => [k, k === COVER_NOTE_KEY ? note : v]) : [...rows, [COVER_NOTE_KEY, note]];
+}
 
 const CONTENT_TYPE: Readonly<Record<string, string>> = {
   pdf: 'application/pdf',
@@ -380,7 +399,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       const job = s.getJob(key);
       if (!job) return undefined;
       const pref = job.duplicateOf === null ? undefined : s.getJob(job.duplicateOf);
-      return { job, sent: sentData(s, c, key), preferred: pref ? { jobKey: pref.jobKey, source: pref.source } : null, overrides: s.factOverrides() };
+      return { job, sent: sentData(s, c, key), preferred: pref ? { jobKey: pref.jobKey, source: pref.source } : null, overrides: s.factOverrides(), plan: s.renderedPlanOf(key) };
     });
     if (!data) return notFound(c, 'No such job.');
     const job = r.deep(data.job);
@@ -389,7 +408,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const display = (k: string): string => r.text(displays.get(k) ?? k);
     const profile = profileFor(data.job.ats, data.job.url);
     const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, atsName: ATS_SENTENCE[profile.id] ?? 'Most applicant systems' };
-    const answers = ps.pack ? Object.entries(ps.pack.answers).map(([k, v]) => [r.text(humanKey(k)), r.text(typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v))] as const) : null;
+    const answers = ps.pack ? withCoverNote(ps.pack.answers, data.plan).map(([k, v]) => [r.text(humanKey(k)), r.text(typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v))] as const) : null;
     const banners = commonBanners(ps, istDate(at), data.overrides);
     if (job.unplaced.length > 0) {
       banners.push({ tone: 'warn', text: `Some of your facts don't fall inside any role's dates — fix the dates in your pack: ${job.unplaced.join(', ')}` });

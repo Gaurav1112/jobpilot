@@ -195,7 +195,7 @@ ${
     ? html`<p class="muted">Your pack could not be read, so the answers are not shown.</p>`
     : a.length === 0
       ? html`<p class="muted">No answers in answers.yaml yet.</p>`
-      : html`<p class="hint">From your answers.yaml, to copy into the application form. They never go into your documents.</p><dl class="answers">${a.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`
+      : html`<p class="hint">From your answers.yaml, to copy into the application form; when this job has a cover letter, the short cover note is taken from it. Only the notice period goes into your documents.</p><dl class="answers">${a.map(([k, v]) => html`<div><dt>${k}</dt><dd>${v}</dd></div>`)}</dl>`
 }
 </section>`;
 }
