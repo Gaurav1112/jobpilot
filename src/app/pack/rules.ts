@@ -25,19 +25,29 @@ export class ForbiddenTermError extends Error {
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
- * Cyrillic and Greek letters that look like Latin ones, mapped to the Latin letter, so a homoglyph spelling of a
- * forbidden term still matches. For the forbidden-term check only. Over-folding is safe here: it can only make the
- * check stricter, and a false hit needs foreign text that folds to the exact term between word boundaries.
- * Task 9 adds the lower-case lookalikes Greek ε (e) and τ (t), and Cyrillic т (t) and н (h; in many fonts it is a
- * small capital H, and with the text case-folded it reads as h). Greek η is deliberately not mapped to n.
+ * Letters that look like Latin ones, mapped to the Latin letter, so a homoglyph spelling of a forbidden term still
+ * matches: a skeleton fold in the spirit of UTS #39 for the scripts a look-alike spelling realistically uses (Cyrillic,
+ * Greek, Armenian, the Latin small capitals and IPA letters). For the forbidden-term check only. Over-folding is safe
+ * here: it can only make the check stricter, and a false hit needs foreign text that folds to the exact term.
+ * Task 9 added Greek ε (e) and τ (t), and Cyrillic т (t) and н (h; in many fonts a small capital H, and with the text
+ * case-folded it reads as h). Greek η is deliberately not mapped to n. Final I8 added Armenian, the small capitals,
+ * Cyrillic һ ԁ ԛ ԝ ӏ к в and Greek α υ ϲ.
  */
 const CONFUSABLES: Readonly<Record<string, string>> = {
   // Cyrillic lower and upper case
-  а: 'a', е: 'e', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', т: 't', н: 'h',
+  а: 'a', в: 'b', е: 'e', к: 'k', о: 'o', р: 'p', с: 'c', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', т: 't', н: 'h',
+  һ: 'h', ԁ: 'd', ԛ: 'q', ԝ: 'w', ӏ: 'l', ү: 'y',
   А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X', І: 'I', Ј: 'J', Ѕ: 'S',
+  Һ: 'H', Ԁ: 'D', Ԛ: 'Q', Ԝ: 'W', Ӏ: 'I',
   // Greek upper case, and the lower case letters that read as Latin
-  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Χ: 'X', Υ: 'Y',
-  ο: 'o', ι: 'i', κ: 'k', ρ: 'p', ν: 'v', ε: 'e', τ: 't',
+  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H', Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O', Ρ: 'P', Τ: 'T', Χ: 'X', Υ: 'Y', Ϲ: 'C',
+  ο: 'o', ι: 'i', κ: 'k', ρ: 'p', ν: 'v', ε: 'e', τ: 't', α: 'a', υ: 'u', ϲ: 'c',
+  // Armenian lower and upper case
+  ա: 'w', գ: 'q', զ: 'q', հ: 'h', ո: 'n', ս: 'u', ց: 'g', օ: 'o', լ: 'l',
+  Լ: 'L', Ս: 'U', Տ: 'S', Օ: 'O',
+  // Latin small capitals and IPA letters
+  ᴀ: 'a', ʙ: 'b', ᴄ: 'c', ᴅ: 'd', ᴇ: 'e', ꜰ: 'f', ɢ: 'g', ʜ: 'h', ɪ: 'i', ᴊ: 'j', ᴋ: 'k', ʟ: 'l', ᴍ: 'm', ɴ: 'n',
+  ᴏ: 'o', ᴘ: 'p', ʀ: 'r', ꜱ: 's', ᴛ: 't', ᴜ: 'u', ᴠ: 'v', ᴡ: 'w', ʏ: 'y', ᴢ: 'z', ɑ: 'a', ɡ: 'g', ɩ: 'i', ȷ: 'j',
   // Turkish dotless i (dotted İ decomposes to I plus a combining dot, removed with the other marks)
   ı: 'i',
 };
@@ -45,7 +55,7 @@ const CONFUSABLE_RE = new RegExp(`[${Object.keys(CONFUSABLES).join('')}]`, 'gu')
 
 /**
  * Folds text for matching: NFKD, combining marks and invisible format characters (zero-width etc.) removed, Cyrillic
- * and Greek homoglyphs and the dotless i mapped to Latin, case-folded, ß as ss, then NFKC. So `İnitech`, `Іnitech`
+ * Greek, Armenian and small-capital homoglyphs and the dotless i mapped to Latin, case-folded, ß as ss, then NFKC. So `İnitech`, `Іnitech`
  * (Cyrillic І) and `Café` fold like `initech` and `cafe`.
  */
 function fold(s: string): string {
@@ -87,7 +97,7 @@ function squashedTokens(folded: string): { toks: string[]; runs: string[] } {
  *    letter/digit lookarounds.
  * 2. (Task 9 review M3) Token by token, on squashed tokens: hyphens, dots and apostrophes inside a token are dropped,
  *    digit and symbol stand-ins are mapped (1 ! | l to i, 3 to e, 0 to o, ...), a run of one-letter tokens is joined,
- *    and a trailing plural s or possessive is allowed; inside a run of spelled-out letters the term may sit anywhere. So `Ini-tech`, `In1tech`, `lnitech`, `I n i t e c h` and
+ *    and a trailing plural s or es or a possessive is allowed; inside a run of spelled-out letters the term may sit anywhere. So `Ini-tech`, `In1tech`, `lnitech`, `I n i t e c h` and
  *    `Initechs` match `Initech`, while `reinitechnology` (a longer word) does not.
  */
 export function assertNoForbidden(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): void {
@@ -105,7 +115,7 @@ export function assertNoForbidden(text: string, naming: Pick<NamingRules, 'forbi
     for (let i = 0; i + want.length <= toks.length; i++) {
       const hit = want.every((w, j) => {
         const t = toks[i + j];
-        return t === w || (j === want.length - 1 && t === `${w}s`);
+        return t === w || (j === want.length - 1 && (t === `${w}s` || t === `${w}es`));
       });
       if (hit) throw new ForbiddenTermError(term);
     }
@@ -150,6 +160,48 @@ export function forbiddenSubstring(text: string, naming: Pick<NamingRules, 'forb
     if (want !== '' && tokens.some((t) => t.includes(want))) return term;
   }
   return undefined;
+}
+
+/**
+ * The one strict forbidden-term check (final I8) for every string that is not the source posting: G-NAMING, the
+ * renderer, qa.naming, the pack scan at load and at import, and the error redactor. The first forbidden term found, or
+ * undefined. A term matches when it is
+ * - word-bounded, as `assertNoForbidden` finds it (spelled-out letters, stand-ins, a plural or possessive);
+ * - glued inside a token (`InitechPay`, `MyInitech`, a domain or a URL path), on squashed text (`squashChars`: folded,
+ *   look-alikes and stand-ins mapped, punctuation, soft hyphens and zero-width characters dropped), so `Ini/tech` and
+ *   a plural (`Initeches`) are a token holding the term;
+ * - split across whole tokens (`Ini tech`, `Ini-` and a newline then `tech`), the joined tokens being exactly the term,
+ *   or the term plus a plural s or es. Whole tokens only, so prose that merely runs into the term across a space
+ *   (`unit tech`, `I am in tech`) does not hit.
+ */
+export function forbiddenTermStrict(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): string | undefined {
+  try {
+    assertNoForbidden(text, naming);
+  } catch (e) {
+    if (e instanceof ForbiddenTermError) return e.term;
+    throw e;
+  }
+  let toks: string[] | undefined;
+  for (const term of naming.forbiddenTerms) {
+    const want = squashChars(term).text;
+    if (want === '') continue;
+    toks ??= text.split(/\s+/u).map((t) => squashChars(t).text).filter((t) => t !== '');
+    for (let i = 0; i < toks.length; i++) {
+      let joined = toks[i] as string;
+      if (joined.includes(want)) return term;
+      for (let j = i + 1; j < toks.length && joined.length < want.length; j++) {
+        joined += toks[j] as string;
+        if (joined === want || joined === `${want}s` || joined === `${want}es`) return term;
+      }
+    }
+  }
+  return undefined;
+}
+
+/** `forbiddenTermStrict` as an assertion: throws `ForbiddenTermError` naming the term found. */
+export function assertNoForbiddenStrict(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): void {
+  const term = forbiddenTermStrict(text, naming);
+  if (term !== undefined) throw new ForbiddenTermError(term);
 }
 
 export class EmployerNameError extends Error {

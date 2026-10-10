@@ -19,7 +19,6 @@ import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
 import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
-import { packTextProblems } from './app/pack/scan.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
@@ -253,6 +252,8 @@ pack
   .description('Validate the pack as today\'s run would load it, prove the wiring and pacing, and print the pack hash')
   .action(() =>
     guarded(() => {
+      // m8, final I8: `loadRunPack` re-checks user edits after the import for undrawable characters and forbidden
+      // terms (strictly, in every pack file but naming.yaml) and throws on any, exactly as the run would refuse.
       const loaded = todaysPack();
       const prepared = preparePipeline(loaded.pack);
       const careers = loaded.pack.watchlist.filter((w) => w.ats === 'careers').length;
@@ -261,9 +262,6 @@ pack
       console.log(`full pack hash ${loaded.fullPackHash}`);
       console.log(`experience as of ${loaded.asOf}; ${loaded.pack.facts.length} facts; watchlist ${loaded.pack.watchlist.length} entries (${careers} careers); feeds ${loaded.pack.feeds.enabled.join(', ') || 'none'}`);
       console.log(`pipeline ${prepared.compiled.pipeline.id}@${prepared.compiled.pipeline.version}: ${prepared.registry.list().length} agents; policy ${prepared.policyHash.slice(0, 12)}`);
-      // m8: user edits after the import are re-checked for undrawable characters and forbidden terms (glued too).
-      const text = packTextProblems(loaded.pack);
-      if (text.length > 0) throw new Error(`pack text problems:\n  - ${text.join('\n  - ')}`);
     }),
   );
 

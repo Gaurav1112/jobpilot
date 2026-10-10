@@ -12,7 +12,8 @@ import type { CompiledPipeline } from '../kernel/wiring.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import { codeHash } from './code-hash.js';
 import { appGuardrails } from './guardrails.js';
-import { loadPack } from './pack/load.js';
+import { loadPack, PackError } from './pack/load.js';
+import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
 import { makeJobTracker } from './tracker.js';
@@ -65,9 +66,14 @@ export interface RunPack {
  * Loads the pack for a run: the user's fact overrides applied, `experience.asOf` set to `asOf` (the run passes the
  * current IST month of its injected clock, and nothing else), and both hashes. `render.nonce` goes into the full pack
  * only, so a rebuild changes the renderer's step key and no other.
+ * Final I8: refuses (a `PackError`, so the run exits 2) on any `packTextProblems` problem, so a forbidden term or an
+ * undrawable character edited into any pack file after the import never reaches a run. The problems name a file,
+ * field or fact id and a term by its position only.
  */
 export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce?: number): RunPack {
   const { pack, hash } = loadPack(dir, overrides, { asOf });
+  const text = packTextProblems(pack);
+  if (text.length > 0) throw new PackError(`the pack has text problems; nothing runs until they are fixed:\n  - ${text.join('\n  - ')}`);
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
   return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(fullPack), asOf, nonce };

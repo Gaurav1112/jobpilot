@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { defineAgent } from '../../../kernel/agent.js';
 import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
-import { assertNoForbidden, ForbiddenTermError } from '../../pack/rules.js';
+import { forbiddenTermStrict } from '../../pack/rules.js';
 import { docxText } from '../../render/docx.js';
 import { htmlAttributeText, htmlText } from '../../render/html.js';
 import { contactLineOf, contactTokens, normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
@@ -134,13 +134,9 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
   const docxProblems: string[] = [];
   const contact: string[] = [];
   const scan = (where: string, text: string) => {
-    try {
-      assertNoForbidden(text, pack.naming);
-      assertNoForbidden(normText(text), pack.naming);
-    } catch (e) {
-      if (e instanceof ForbiddenTermError) naming.push(`forbidden term #${pack.naming.forbiddenTerms.indexOf(e.term) + 1} appears in ${where}`);
-      else throw e;
-    }
+    // final I8: the strict check (glued, split, plural, look-alike) on the raw and the normalised text
+    const t = forbiddenTermStrict(text, pack.naming) ?? forbiddenTermStrict(normText(text), pack.naming);
+    if (t !== undefined) naming.push(`forbidden term #${pack.naming.forbiddenTerms.indexOf(t) + 1} appears in ${where}`);
   };
   for (const kind of ['resume', 'cover'] as const) {
     const pdfPath = renderedPath(rendered.jobKey, kind, 'pdf');

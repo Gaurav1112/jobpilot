@@ -615,6 +615,15 @@ describe('qa-gate', () => {
     expect(JSON.stringify(checks).toLowerCase()).not.toContain('initech');
   });
 
+  it('I8: fails qa.naming on a glued or look-alike term in a text layer (the strict check)', async () => {
+    const { rendered, out } = await render();
+    for (const t of ['InitechPay', 'I\u0578itech', 'Ini-\ntech']) {
+      const fake: PdfTextProvider = async (abs) => (abs.endsWith('resume.pdf') ? `${rendered.text.resume}\n${t}\n` : rendered.text.cover);
+      const report = await runQa(rendered, out, { pdfText: fake });
+      expect(report.checks.find((c) => c.id === 'qa.naming'), JSON.stringify(t)).toEqual({ id: 'qa.naming', ok: false, detail: 'forbidden term #1 appears in 0123456789abcdef/resume.pdf' });
+    }
+  });
+
   it('fails qa.naming when an HTML preview names a forbidden term (tags stripped, entities decoded)', async () => {
     const { rendered, out } = await render();
     const htmlPath = join(out, '0123456789abcdef/cover.html');

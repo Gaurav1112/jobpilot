@@ -678,6 +678,30 @@ describe('jobpilot pack import (CLI)', () => {
     expect(r.stderr).not.toMatch(/→|initech|REST/i);
   }, 60_000);
 
+  it('I8: pack check scans every pack file but naming.yaml, strictly, naming the file and field only', async () => {
+    cpSync(join(root, 'tests/fixtures/pack'), join(tmp, 'pack'), { recursive: true });
+    const watch = readFileSync(join(tmp, 'pack/watchlist.yaml'), 'utf8').split('\n').filter((l) => !l.includes('ats: careers')).join('\n');
+    writeFileSync(join(tmp, 'pack/watchlist.yaml'), watch);
+    // a raw employer that naming.yaml maps is allowed (facts.yaml already holds one)
+    expect(cli(tmp, 'pack', 'check').status).toBe(0);
+    const edit = (file: string, from: string, to: string) => {
+      const text = readFileSync(join(tmp, 'pack', file), 'utf8');
+      expect(text, `${file} has ${from}`).toContain(from);
+      writeFileSync(join(tmp, 'pack', file), text.replace(from, to));
+    };
+    edit('lexicon.yaml', 'display: Redis', 'display: InitechRedis');
+    edit('watchlist.yaml', 'company: Example Lever Co', 'company: Example I\u0578itech Co');
+    edit('targets.yaml', 'titles:\n', 'titles:\n  - Initeches Engineer\n');
+    edit('filters.yaml', 'companyDeny:\n', 'companyDeny:\n  - MyInitech\n');
+    const r = cli(tmp, 'pack', 'check');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toMatch(/lexicon\.yaml: strong\[\d+\]\.display holds forbidden term #1/);
+    expect(r.stderr).toMatch(/watchlist\.yaml: watchlist\[1\]\.company holds forbidden term #1/);
+    expect(r.stderr).toMatch(/targets\.yaml: titles\[0\] holds forbidden term #1/);
+    expect(r.stderr).toMatch(/filters\.yaml: companyDeny\[0\] holds forbidden term #1/);
+    expect(r.stderr).not.toMatch(/initech|redis|\u0578/i);
+  }, 60_000);
+
   it('rejects a bad --floor-inr', async () => {
     const a = args();
     a[a.indexOf('--floor-inr') + 1] = '12 lakh';

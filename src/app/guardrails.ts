@@ -30,7 +30,7 @@ import { profileFor } from './ats-profiles.js';
 import { hasBrace, RenderPack, renderModels } from './render/fill.js';
 import { modelText, RENDER_FILES, renderedPath } from './render/model.js';
 import { literalIn, tagIs, tagsBack } from './lexicon.js';
-import { assertNoForbidden, citeable, ForbiddenTermError } from './pack/rules.js';
+import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermError } from './pack/rules.js';
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 
 /**
@@ -51,8 +51,8 @@ import { CoverPlan, Rendered, ResumePlan } from './types.js';
  *   resume checks; every paragraph fact id is a known citeable fact placed in a role whose claim appears verbatim in
  *   the paragraph; then every paragraph equals the template rendering from recomputed slots, with the renderer
  *   placeholders `{availableFrom}` and `{notice}` intact.
- * - **G-NAMING** (out of every writing agent) runs `assertNoForbidden` over every string and key of the payload, and
- *   over the JSON-stringified payload, except the embedded source posting (`scored.posting`,
+ * - **G-NAMING** (out of every writing agent) runs `forbiddenTermStrict` over every string and key of the payload, and
+ *   `assertNoForbidden` over the JSON-stringified payload (word-bounded: joined fields must not glue), except the embedded source posting (`scored.posting`,
  *   `evidence.scored.posting`, `resume.evidence.scored.posting`): the JD's own text is not generated output, and the
  *   posting's title and company are still checked where a template renders them.
  * - **G-NO-GAP-CLAIM** (out of resume-planner) trips when a skills entry is, or names, a gap group's key, display or
@@ -319,7 +319,8 @@ export const G_NAMING: Guardrail = {
     const payload = ctx.output.payload;
     for (const s of strings(payload)) {
       try {
-        assertNoForbidden(s.text, naming);
+        // final I8: every generated string, strictly (glued, split, plural, look-alike); the posting is exempt
+        assertNoForbiddenStrict(s.text, naming);
       } catch (e) {
         if (e instanceof ForbiddenTermError) return trip('G-NAMING', `forbidden term #${index(e)} appears in ${s.path}`);
         throw e;

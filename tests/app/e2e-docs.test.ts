@@ -8,6 +8,9 @@ import { offlineProviders } from '../../src/app/offline.js';
 import { runDaily, type DailySummary } from '../../src/app/run.js';
 import { AppStore, type JobView } from '../../src/app/store/app-store.js';
 import type { Fact } from '../../src/app/pack/schema.js';
+import { forbiddenTermStrict } from '../../src/app/pack/rules.js';
+import { docxText } from '../../src/app/render/docx.js';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Documents across runs (final review I1, I2, I3): each test has its own home with the fictional fixture pack and the
@@ -201,6 +204,40 @@ describe.skipIf(pdftotext === undefined)('I2: documents that cite a fact the use
       const back = await h.run();
       for (const k of citing) expect(h.jobs().find((x) => x.jobKey === k)?.docsState).toBe('ready');
       expect(back.problems.filter((p) => p.kind === 'docs-stale')).toEqual([]);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+});
+
+describe.skipIf(pdftotext === undefined)('I8: glued and look-alike terms edited into the pack after import never reach ready documents', () => {
+  // The run refuses to start (loadRunPack runs packTextProblems), so nothing is rendered and nothing becomes ready.
+  // Rendered documents are still checked strictly, in case a refused run left any.
+  it.each([
+    ['a glued term in a fact claim', 'facts.yaml', 'on Kafka handling 40M events a day.', 'on Kafka for InitechPay handling 40M events a day.', /fact f-nw-01 claim holds forbidden term #1/],
+    ['a look-alike (Armenian) term in a fact claim', 'facts.yaml', 'on Kafka handling 40M events a day.', 'on Kafka for Iոitech handling 40M events a day.', /fact f-nw-01 claim holds forbidden term #1/],
+    ['an -es plural in a fact claim', 'facts.yaml', 'on Kafka handling 40M events a day.', 'on Kafka for the Initeches handling 40M events a day.', /fact f-nw-01 claim holds forbidden term #1/],
+    ['a glued term in a lexicon display', 'lexicon.yaml', 'display: Redis}', 'display: InitechRedis}', /lexicon\.yaml: strong\[\d+\]\.display holds forbidden term #1/],
+    ['a glued term in a document answer', 'answers.yaml', 'notice_period: 30 days', 'notice_period: 30 days per InitechHR', /answers\.notice_period holds forbidden term #1/],
+  ])('%s', async (_what, file, from, to, problem) => {
+    const h = docsHome();
+    try {
+      const text = readFileSync(join(h.home, 'pack', file), 'utf8');
+      expect(text).toContain(from);
+      writeFileSync(join(h.home, 'pack', file), text.replace(from, to));
+      const run = h.run();
+      await expect(run).rejects.toThrow(problem);
+      const message = await run.then(() => '', (e: unknown) => (e instanceof Error ? e.message : String(e)));
+      expect(message).not.toMatch(/initech|\u0578/i);
+      const naming = { forbiddenTerms: ['Initech'] };
+      for (const j of h.jobs().filter((x) => x.docsState === 'ready')) {
+        for (const d of h.withApp((a) => a.getJob(j.jobKey)?.docs ?? [])) {
+          const abs = join(h.home, 'out', d.path);
+          const body = d.format === 'pdf' ? execFileSync(pdftotext as string, ['-layout', abs, '-'], { encoding: 'utf8' }) : d.format === 'docx' ? docxText(readFileSync(abs)) : readFileSync(abs, 'utf8');
+          expect(forbiddenTermStrict(body, naming), `${d.path}`).toBeUndefined();
+        }
+      }
+      expect(h.jobs().filter((x) => x.docsState === 'ready')).toEqual([]);
     } finally {
       h.done();
     }

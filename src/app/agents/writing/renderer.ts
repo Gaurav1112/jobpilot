@@ -2,7 +2,7 @@ import { defineAgent } from '../../../kernel/agent.js';
 import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { profileFor } from '../../ats-profiles.js';
-import { assertNoForbidden, ForbiddenTermError } from '../../pack/rules.js';
+import { forbiddenTermStrict } from '../../pack/rules.js';
 import { docxText, renderDocx } from '../../render/docx.js';
 import { RenderPack, renderModels } from '../../render/fill.js';
 import { renderHtml } from '../../render/html.js';
@@ -66,14 +66,11 @@ function checkText(m: DocModel, pack: RenderPack, slots: readonly string[]): voi
   }
   const bad = uncoveredGlyph([text, m.title, m.author]);
   if (bad !== null) throw fail(`unrenderable-glyph:${bad} (the ${m.kind} has a character the embedded font cannot draw)`);
+  // final I8: the strict check (glued, split, plural, look-alike), on the posting slots too, so a posting that names a
+  // term is refused as this job's input before the same text fails the document as a whole.
   const term = (s: string): number | undefined => {
-    try {
-      assertNoForbidden(s, pack.naming);
-      return undefined;
-    } catch (e) {
-      if (e instanceof ForbiddenTermError) return pack.naming.forbiddenTerms.indexOf(e.term) + 1;
-      throw e;
-    }
+    const t = forbiddenTermStrict(s, pack.naming);
+    return t === undefined ? undefined : pack.naming.forbiddenTerms.indexOf(t) + 1;
   };
   for (const s of slots) {
     const n = term(s);

@@ -468,6 +468,20 @@ describe('fix round 1: review probes as regressions', () => {
     expect(onResume(G_NAMING, elsewhere).detail).toBe('forbidden term #1 appears in missing[3]');
   });
 
+  it('I8: G-NAMING uses the strict check on every generated field (glued, plural, look-alike); the source posting stays exempt', () => {
+    for (const t of ['InitechPay', 'MyInitech', 'Initeches', 'I\u0578itech', '\u026a\u0274\u026a\u1d1b\u1d07\u1d04\u029c', 'initechcorp.com']) {
+      const glued = clone(resume);
+      glued.roles[0]!.bullets[0]!.text = `Built ${t} services`;
+      expect(onResume(G_NAMING, glued).verdict, t).toBe('trip');
+      const skill = clone(resume);
+      skill.skills.push(`${t}DB`);
+      expect(onResume(G_NAMING, skill).detail, t).toMatch(/^forbidden term #1 appears in skills\[\d+\]$/);
+    }
+    // the posting itself is source data: a glued mention in its description is not a generated field
+    const src = planFor({ descriptionText: `${JD} We integrate with InitechPay.` });
+    expect(onResume(G_NAMING, src.r)).toEqual({ id: 'G-NAMING', verdict: 'pass' });
+  });
+
   it('G-NO-GAP-CLAIM catches spaced and naming variants; G-GROUND catches the rest', () => {
     const noGap = (s: string) => G_NO_GAP_CLAIM.check(ctxOut(resumePlanner.contract, evidenceIn, { skills: [s] })).verdict;
     for (const s of ['scala', 'Scala', 'C#', 'c #', '.NET', 'C++', 'Ruby on Rails', 'Apache Spark']) expect(noGap(s), s).toBe('trip');

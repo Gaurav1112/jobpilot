@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
 import { assertNoForbidden, citeable, ForbiddenTermError, loadPack, PackError } from '../../src/app/pack/load.js';
+import { assertNoForbiddenStrict, forbiddenTermStrict } from '../../src/app/pack/rules.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
 import { compileRoleDeny, compileSafePattern } from '../../src/app/pack/regex.js';
 import { WatchEntrySchema } from '../../src/app/pack/schema.js';
@@ -323,6 +324,29 @@ describe('assertNoForbidden', () => {
     } catch (e) {
       expect((e as ForbiddenTermError).term).toBe('Initech');
     }
+  });
+});
+
+describe('I8: one strict forbidden-term check for the run path and the importer', () => {
+  const naming: Naming = { employerDisplay: {}, forbiddenTerms: ['Initech'] };
+  const hit = (t: string) => forbiddenTermStrict(t, naming);
+  it('finds glued, split, plural and look-alike spellings', () => {
+    for (const t of [
+      'Built InitechPay services', 'at MyInitech', 'see initechcorp.com', 'the Initeches team', 'Ini/tech', 'Ini tech', 'Ini-\ntech',
+      'I\u0578itech', // Armenian \u0578 for n
+      'Initec\u0570', // Armenian \u0570 for h
+      '\u026a\u0274\u026a\u1d1b\u1d07\u1d04\u029c', // Latin small capitals
+      'Init\u1d07ch', // one small capital e
+      'In\u0131t\u0435\u0441\u04bb', // dotless i, Cyrillic e, es, shha
+      'Initech', 'INITECH Ltd',
+    ]) expect(hit(t), JSON.stringify(t)).toBe('Initech');
+    for (const t of ['initiative tech', 'Northwind Labs', 'I am in tech', 'reinitiated', 'unit tech']) expect(hit(t), t).toBeUndefined();
+  });
+  it('assertNoForbiddenStrict throws ForbiddenTermError for the same spellings; assertNoForbidden now accepts an -es plural', () => {
+    expect(() => assertNoForbiddenStrict('for InitechPay', naming)).toThrow(ForbiddenTermError);
+    expect(() => assertNoForbiddenStrict('Northwind Labs', naming)).not.toThrow();
+    expect(() => assertNoForbidden('the Initeches', naming)).toThrow(ForbiddenTermError);
+    expect(() => assertNoForbidden('worked at I\u0578itec\u0570 once', naming)).toThrow(ForbiddenTermError);
   });
 });
 

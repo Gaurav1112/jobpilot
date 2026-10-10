@@ -1,26 +1,31 @@
 import { uncoveredGlyph } from '../render/pdf.js';
-import { assertNoForbidden, ForbiddenTermError, forbiddenSubstring, type NamingRules } from './rules.js';
+import { forbiddenTermStrict, type NamingRules } from './rules.js';
 import type { Pack } from './schema.js';
 
 /**
  * Pack text checks shared by `pack import` and `pack check` (Task 12): characters the embedded font cannot draw, and
- * forbidden terms, both word-bounded (`assertNoForbidden`) and glued inside a token (`forbiddenSubstring`). Messages
+ * forbidden terms, by the one strict check (`forbiddenTermStrict`: word-bounded, glued, split, plural, look-alike). Messages
  * name a field or fact id, a term by its 1-based position and a character by its code point only: never the term,
  * the character or the text around it.
  */
 
-/** The 1-based position of the forbidden term in `text` (word-bounded or glued into a token), or undefined. */
+/** The 1-based position of the forbidden term in `text` (`forbiddenTermStrict`), or undefined. */
 export function forbiddenTermIn(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): number | undefined {
-  let term: string | undefined;
-  try {
-    assertNoForbidden(text, naming);
-  } catch (e) {
-    if (!(e instanceof ForbiddenTermError)) throw e;
-    term = e.term;
-  }
-  term ??= forbiddenSubstring(text, naming);
+  const term = forbiddenTermStrict(text, naming);
   return term === undefined ? undefined : naming.forbiddenTerms.indexOf(term) + 1;
 }
+
+/** Every string value under `v`, with its path (`strong[9].display`, `watchlist[1].company`, `titles[0]`). */
+function* stringsIn(v: unknown, path: string): Generator<{ path: string; text: string }> {
+  if (typeof v === 'string') yield { path, text: v };
+  else if (Array.isArray(v)) for (let i = 0; i < v.length; i++) yield* stringsIn(v[i], `${path}[${i}]`);
+  else if (v !== null && typeof v === 'object') for (const [k, child] of Object.entries(v)) yield* stringsIn(child, path === '' ? k : `${path}.${k}`);
+}
+
+type ScannedPack = Pick<
+  Pack,
+  'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser'
+>;
 
 /** What to write instead of a character Noto Sans cannot draw. */
 const GLYPH_HINTS: Readonly<Record<number, string>> = {
@@ -59,10 +64,13 @@ export const DOCUMENT_ANSWERS: readonly string[] = ['available_from', 'notice_pe
 /**
  * Every glyph and forbidden-term problem in the pack's user-edited text (m8): facts (claim, tech, employer, role),
  * contact, roles, claimable titles and answers (all keys and values for terms; the document answers for glyphs).
- * Employers are checked as displayed (through `naming.employerDisplay`).
+ * Employers are checked as displayed (through `naming.employerDisplay`), and every `employerDisplay` value.
+ * Final I8: every string value of every other pack file but naming.yaml too (the lexicon key, display and synonyms,
+ * the watchlist, targets titles, filters, ...), as `<file>: <path> holds forbidden term #<n>`. The daily run and the
+ * rebuild refuse to start on any problem (`loadRunPack`).
  * Ids are named only when they are clean.
  */
-export function packTextProblems(pack: Pick<Pack, 'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming'>): string[] {
+export function packTextProblems(pack: ScannedPack): string[] {
   const p: string[] = [];
   // Raw employers are allowed in the pack when naming.yaml maps them; what a document shows is the display name.
   const shown = (raw: string): string => (Object.hasOwn(pack.naming.employerDisplay, raw) ? (pack.naming.employerDisplay[raw] as string) : raw);
@@ -100,5 +108,12 @@ export function packTextProblems(pack: Pick<Pack, 'facts' | 'contact' | 'roles' 
     term(String(value), name);
     if (DOCUMENT_ANSWERS.includes(key)) p.push(...glyphProblems(String(value), name));
   });
+  Object.values(pack.naming.employerDisplay).forEach((display, i) => term(display, `naming.yaml: employerDisplay value ${i + 1}`));
+  const { claimableTitles: _claimable, ...targets } = pack.targets;
+  const files: readonly (readonly [string, unknown])[] = [
+    ['lexicon.yaml', pack.lexicon], ['watchlist.yaml', { watchlist: pack.watchlist }], ['targets.yaml', targets], ['filters.yaml', pack.filters],
+    ['eligibility.yaml', pack.eligibility], ['offers.yaml', pack.offers], ['fx.yaml', pack.fx], ['feeds.yaml', pack.feeds], ['policy.user.yaml', pack.policyUser],
+  ];
+  for (const [file, value] of files) for (const s of stringsIn(value, '')) term(s.text, `${file}: ${s.path}`);
   return p;
 }
