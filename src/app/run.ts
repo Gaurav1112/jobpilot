@@ -45,6 +45,17 @@ const citeableIn = (pack: Pack): ((id: string) => boolean) => {
   return (id) => ok.has(id);
 };
 
+/**
+ * Rereview R3: citeable under this run's pack and under the overrides stored now. A fact the user rejects on the
+ * dashboard while a run is in flight (the run loaded the pack before) is not citeable, so the run's stale pass never
+ * restores, or leaves ready, documents the reject handler set aside.
+ */
+const citeableNow = (app: AppStore, pack: Pack): ((id: string) => boolean) => {
+  const inPack = citeableIn(pack);
+  const now = app.factOverrides();
+  return (id) => inPack(id) && (now[id] === undefined || citeable({ status: now[id] }));
+};
+
 /** Every job of the catalogue, duplicates included, for the stale problems. */
 const allJobs = (app: AppStore) => app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'], duplicates: true });
 
@@ -197,7 +208,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });
-      markStaleDocs(app, citeableIn(loaded.pack), diskDocCheck(paths.out));
+      markStaleDocs(app, citeableNow(app, loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
       warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
@@ -310,7 +321,7 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, [...plans.values()]);
       app.setSetting(RENDER_NONCE_KEY, String(nonce));
       const docChanges = projectDocs(app.kernel, app, runId, { docOnDisk: diskDocCheck(paths.out) });
-      markStaleDocs(app, citeableIn(loaded.pack), diskDocCheck(paths.out));
+      markStaleDocs(app, citeableNow(app, loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       const warnings = skippedWarnings(skipped);

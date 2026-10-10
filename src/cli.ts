@@ -21,6 +21,8 @@ import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
+import { diskDocCheck } from './app/docs-check.js';
+import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { forbiddenTermsAt, redactedError, runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
@@ -385,11 +387,14 @@ for (const [verb, status] of [['verify', 'verified'], ['reject', 'rejected']] as
         if (!fact) throw new Error(`unknown fact ${id}`);
         const app = AppStore.open(paths.db);
         try {
-          app.setFactOverride(id, status, systemClock.now());
+          // rereview R3: documents citing a fact that is no longer citeable are set aside at once (one transaction)
+          const { stale, restored } = overrideFact(app, p.facts, id, status, systemClock.now(), diskDocCheck(paths.out));
+          console.log(`${id}: ${fact.status} -> ${status}`);
+          if (stale.length > 0) console.log(`documents of ${stale.length} job(s) cite it and are set aside until the next run makes them again`);
+          if (restored.length > 0) console.log(`documents of ${restored.length} job(s) are offered again`);
         } finally {
           app.close();
         }
-        console.log(`${id}: ${fact.status} -> ${status}`);
       }),
     );
 }

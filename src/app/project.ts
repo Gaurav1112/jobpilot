@@ -2,6 +2,8 @@ import type { FxRates } from './comp/floor.js';
 import type { DocCheck } from './docs-check.js';
 import type { Doc, DocsState, JobUpsert } from './store/app-store.js';
 import type { AppStore } from './store/app-store.js';
+import { citeable } from './pack/rules.js';
+import type { Fact } from './pack/schema.js';
 import { JOB_TRACKER_KIND, jobKeyOf } from './tracker.js';
 import type { CoverPlan, EligibilityVerdict, Evidence, Posting, QaReport, Rendered, ResumePlan, Scored } from './types.js';
 import type { Envelope, GuardrailVerdict } from '../kernel/envelope.js';
@@ -432,6 +434,23 @@ export function markStaleDocs(app: AppStore, citeable: (factId: string) => boole
     }
   });
   return out;
+}
+
+/**
+ * Rereview R3: sets the user's override for one fact and, in the same transaction, runs the stale pass with the
+ * overrides as they now are, so documents citing a fact the user has just rejected (or un-verified) are `stale` at
+ * once, never served until the next run; verifying it again restores them. `facts` are the pack's facts as written
+ * (no overrides); citeability is `citeable` over the stored overrides, which is exactly what the next run's
+ * `markStaleDocs(citeableIn(loadRunPack(...)))` computes, so the run agrees with this flip and replay stays unchanged
+ * (`docsState` is an app projection, never a kernel envelope or step key).
+ */
+export function overrideFact(app: AppStore, facts: readonly Pick<Fact, 'id' | 'status'>[], factId: string, status: Fact['status'], at: string, docOnDisk: DocCheck): { stale: string[]; restored: string[] } {
+  return app.tx(() => {
+    app.setFactOverride(factId, status, at);
+    const overrides = app.factOverrides();
+    const ok = new Set(facts.filter((f) => citeable({ status: overrides[f.id] ?? f.status })).map((f) => f.id));
+    return markStaleDocs(app, (id) => ok.has(id), docOnDisk);
+  });
 }
 
 export interface AgentCounts {

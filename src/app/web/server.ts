@@ -15,6 +15,8 @@ import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
 import { employerDisplay, forbiddenTermStrict, redactText, type NamingRules } from '../pack/rules.js';
 import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
+import { diskDocCheck } from '../docs-check.js';
+import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
@@ -590,13 +592,17 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       if (!ps.pack) return c.text('Your pack could not be read, so facts cannot be changed now.', 409);
       const fact = ps.pack.facts.find((f) => f.id === id);
       if (!fact || redactor(ps.naming).text(id) !== id) return c.text('No such fact', 404);
-      const overrides = withStore((s) => {
-        s.setFactOverride(id, status, at);
-        return s.factOverrides();
+      // rereview R3: the override and the stale pass are one transaction, so a rejected claim is never served again
+      const { overrides, changed } = withStore((s) => {
+        const changed = overrideFact(s, ps.pack?.facts ?? [], id, status, at, diskDocCheck(paths.out));
+        return { overrides: s.factOverrides(), changed };
       });
       if (!isHx(c)) return c.redirect(`/facts#fact-${encodeURIComponent(id)}`, 303);
       const row = factRows(ps, overrides).find((f) => f.id === id) as FactRow;
-      return c.html(factRow(row, csrf(c), 'Saved. The next run makes the affected documents again.').value);
+      const note = changed.stale.length > 0
+        ? `Saved. The documents of ${changed.stale.length} ${changed.stale.length === 1 ? 'job cite' : 'jobs cite'} this fact; they are set aside now, and the next run makes them again.`
+        : 'Saved. The next run makes the affected documents again.';
+      return c.html(factRow(row, csrf(c), note).value);
     });
   }
 

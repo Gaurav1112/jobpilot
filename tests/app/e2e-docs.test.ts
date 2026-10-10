@@ -11,6 +11,10 @@ import type { Fact } from '../../src/app/pack/schema.js';
 import { forbiddenTermStrict } from '../../src/app/pack/rules.js';
 import { docxText } from '../../src/app/render/docx.js';
 import { execFileSync } from 'node:child_process';
+import { createDashboard } from '../../src/app/web/server.js';
+import { overrideFact } from '../../src/app/project.js';
+import { loadPack } from '../../src/app/pack/load.js';
+import { diskDocCheck } from '../../src/app/docs-check.js';
 
 /**
  * Documents across runs (final review I1, I2, I3): each test has its own home with the fictional fixture pack and the
@@ -204,6 +208,89 @@ describe.skipIf(pdftotext === undefined)('I2: documents that cite a fact the use
       const back = await h.run();
       for (const k of citing) expect(h.jobs().find((x) => x.jobKey === k)?.docsState).toBe('ready');
       expect(back.problems.filter((p) => p.kind === 'docs-stale')).toEqual([]);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+});
+
+describe.skipIf(pdftotext === undefined)('rereview R3: rejecting a fact makes its documents stale at once, with no run in between', () => {
+  it('the dashboard reject flips the citing jobs to stale: the job page and list stop saying ready and the files are 404; verify restores them', async () => {
+    const h = docsHome();
+    try {
+      await h.run();
+      const job = h.jobs().find((j) => j.docsState === 'ready') as JobView;
+      const fact = (job.citedFacts ?? []).find((f) => f.startsWith('f-nw')) ?? (job.citedFacts?.[0] as string);
+      expect(fact).toBeDefined();
+      const raw = createDashboard({ home: h.home, clock: h.clock });
+      const req = (p: string, init: { method?: string; body?: string; headers?: Record<string, string> } = {}) => raw.request(p, { ...init, headers: { host: 'localhost', ...(init.headers ?? {}) } });
+      let res = await req(`/jobs/${job.jobKey}`);
+      const cookie = /jp_sid=[0-9a-f]{32}/.exec(res.headers.get('set-cookie') ?? '')?.[0] ?? '';
+      const csrf = /name="_csrf" value="([0-9a-f]{64})"/.exec(await res.text())?.[1] ?? '';
+      const post = (path: string) => req(path, { method: 'POST', body: new URLSearchParams({ _csrf: csrf }).toString(), headers: { cookie, 'content-type': 'application/x-www-form-urlencoded', 'hx-request': 'true', origin: 'http://localhost' } });
+      const dl = () => req(`/jobs/${job.jobKey}/files/resume.pdf`, { headers: { cookie, 'sec-fetch-site': 'same-origin' } });
+      expect((await dl()).status).toBe(200);
+
+      expect((await post(`/facts/${fact}/reject`)).status).toBe(200);
+      const after = h.jobs().find((j) => j.jobKey === job.jobKey);
+      expect(after?.docsState).toBe('stale');
+      expect(after?.docsDetail).toContain(fact);
+      const page = await (await req(`/jobs/${job.jobKey}`, { headers: { cookie } })).text();
+      expect(page).not.toContain('Documents ready');
+      expect(page).not.toContain(`/jobs/${job.jobKey}/files/`);
+      for (const name of ['resume.pdf', 'resume.docx', 'resume.html', 'cover.pdf']) {
+        expect((await req(`/jobs/${job.jobKey}/files/${name}`, { headers: { cookie, 'sec-fetch-site': 'same-origin' } })).status).toBe(404);
+      }
+      const list = await (await req('/?band=all', { headers: { cookie } })).text();
+      const rowOf = list.split('data-job=').find((x) => x.startsWith(`"${job.jobKey}"`)) ?? '';
+      expect(rowOf).not.toContain('Documents ready');
+      // every other citing job went stale too, and no job that does not cite it did
+      for (const j of h.jobs()) if (j.docsState === 'ready') expect(j.citedFacts ?? []).not.toContain(fact);
+
+      // verifying it again restores the same files (they are unchanged on disk)
+      expect((await post(`/facts/${fact}/verify`)).status).toBe(200);
+      expect(h.jobs().find((j) => j.jobKey === job.jobKey)?.docsState).toBe('ready');
+      expect((await dl()).status).toBe(200);
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+
+  it('a reject made while a run is in flight (the run loaded the pack before it) still leaves the citing documents stale', async () => {
+    const h = docsHome();
+    try {
+      let done = false;
+      const fact = 'f-nw-01';
+      await h.run({
+        afterStep: () => {
+          if (done) return;
+          done = true;
+          h.withApp((a) => overrideFact(a, loadPack(join(h.home, 'pack'), {}, { asOf: '2026-10' }).pack.facts, fact, 'rejected', h.clock.t, diskDocCheck(join(h.home, 'out'))));
+        },
+      });
+      const citing = h.jobs().filter((j) => (j.citedFacts ?? []).includes(fact));
+      expect(citing.length).toBeGreaterThan(0);
+      for (const j of citing) expect(j.docsState).not.toBe('ready');
+    } finally {
+      h.done();
+    }
+  }, 240_000);
+
+  it('the CLI reject path does the same (one shared helper): the override and the stale flip are one transaction', async () => {
+    const h = docsHome();
+    try {
+      await h.run();
+      const job = h.jobs().find((j) => j.docsState === 'ready') as JobView;
+      const fact = job.citedFacts?.[0] as string;
+      h.withApp((a) => overrideFact(a, loadPack(join(h.home, 'pack'), {}, { asOf: '2026-10' }).pack.facts, fact, 'rejected', h.clock.t, diskDocCheck(join(h.home, 'out'))));
+      expect(h.jobs().find((j) => j.jobKey === job.jobKey)?.docsState).toBe('stale');
+      // the next run (nothing re-seen) agrees with the immediate flip: same state, same detail
+      const before = h.jobs().map((j) => [j.jobKey, j.docsState, j.docsDetail]);
+      writeFileSync(join(h.home, 'pack/watchlist.yaml'), 'watchlist: []\n');
+      writeFileSync(join(h.home, 'pack/feeds.yaml'), 'enabled: []\n');
+      h.clock.t = '2026-10-10T01:30:00.000Z';
+      await h.run();
+      expect(h.jobs().map((j) => [j.jobKey, j.docsState, j.docsDetail])).toEqual(before);
     } finally {
       h.done();
     }
