@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -13,7 +13,7 @@ import { offlineProviders } from '../../src/app/offline.js';
 import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
 import { failureNotification, istDate, istMonth, pickRunId } from '../../src/app/run.js';
 import { Store } from '../../src/kernel/store/store.js';
-import { resolvePdftotext } from '../../src/app/kernel.js';
+import { loadRunPack, resolvePdftotext } from '../../src/app/kernel.js';
 import { defineAgent } from '../../src/kernel/agent.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { mergePolicy, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
@@ -296,6 +296,28 @@ describe('the failure notification (I1)', () => {
     expect(failureNotification(new Error('refusing to start:\n- minHostIntervalMs 40000 ms breaks …'), ['Initech'])).toBe('jobpilot run failed: refusing to start:');
     expect(failureNotification(new Error('pack: Initech appears'), ['Initech'])).toBe('jobpilot run failed; see the log');
     expect(failureNotification(new Error('anything'), undefined)).toBe('jobpilot run failed; see the log');
+  });
+
+  it('for pack text problems, says how many and points to `jobpilot pack check`, never echoing a term (rereview R11)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jp-r11-'));
+    try {
+      cpSync(join(import.meta.dirname, '../fixtures/pack'), dir, { recursive: true });
+      const f = join(dir, 'facts.yaml');
+      writeFileSync(f, readFileSync(f, 'utf8').replace('on Kafka handling 40M events a day.', 'on Kafka for InitechPay handling 40M events a day.'));
+      writeFileSync(join(dir, 'answers.yaml'), readFileSync(join(dir, 'answers.yaml'), 'utf8').replace('notice_period: 30 days', 'notice_period: 30 days per InitechHR'));
+      let err: unknown;
+      try {
+        loadRunPack(dir, {}, '2026-10');
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(Error);
+      const note = failureNotification(err, ['Initech']);
+      expect(note).toBe('jobpilot run failed: the pack has 2 text problems; nothing runs until they are fixed (`jobpilot pack check` lists them)');
+      expect(note).not.toMatch(/initech/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

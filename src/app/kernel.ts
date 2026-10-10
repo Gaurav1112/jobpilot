@@ -73,7 +73,11 @@ export interface RunPack {
 export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce?: number): RunPack {
   const { pack, hash } = loadPack(dir, overrides, { asOf });
   const text = packTextProblems(pack);
-  if (text.length > 0) throw new PackError(`the pack has text problems; nothing runs until they are fixed:\n  - ${text.join('\n  - ')}`);
+  // rereview R11: the first line (the failure notification's text) gives the count and where to look, never a term
+  if (text.length > 0) {
+    const n = text.length === 1 ? '1 text problem' : `${text.length} text problems`;
+    throw new PackError(`the pack has ${n}; nothing runs until they are fixed (\`jobpilot pack check\` lists them)\n  - ${text.join('\n  - ')}`);
+  }
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
   return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(fullPack), asOf, nonce };
