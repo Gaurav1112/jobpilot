@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { defineAgent } from '../../src/kernel/agent.js';
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
-import { KernelError } from '../../src/kernel/errors.js';
-import { fakeLlm } from '../../src/kernel/fakes.js';
+import { RETRYABLE, KernelError } from '../../src/kernel/errors.js';
+import { fakeBrowser, fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
 import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import type { LlmProvider } from '../../src/kernel/providers.js';
@@ -13,6 +13,8 @@ import { Store } from '../../src/kernel/store/store.js';
 import { StateMachine } from '../../src/kernel/state-machine.js';
 import { Supervisor, type SupervisorDeps, type Tracker } from '../../src/kernel/supervisor.js';
 import { compileWiring, type Pipeline } from '../../src/kernel/wiring.js';
+import { defineType } from '../../src/kernel/types.js';
+import { z } from 'zod';
 import { demoScorer, demoScorerContract, demoSource, demoSourceContract } from '../../src/demo/agents.js';
 import { demoKernel } from '../../src/demo/kernel.js';
 import { demoLlm, demoPipeline, demoTracker } from '../../src/demo/pipeline.js';
@@ -407,17 +409,69 @@ describe('supervisor end to end', () => {
     expect(store.entityState('no-such-id')).toBeUndefined();
   });
 
-  it('a throwing tracker is audited and does not wedge the run or the other trackers', async () => {
+  it('a throwing eventFor is audited and does not wedge the run or the other trackers', async () => {
     const store = Store.open(':memory:');
-    const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: () => { throw new Error('keyOf exploded'); } };
     const badEvent: Tracker = { ...scoreTracker, kind: 'bad-event', eventFor: () => { throw new Error('eventFor exploded'); } };
-    const r = await handBuilt({ store, scorer: demoScorer, trackers: [broken, demoTracker, badEvent] }).start('run-1', [seed]);
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, badEvent] }).start('run-1', [seed]);
     expect(r.queue).toMatchObject({ pending: 0, done: 6, failed: 0 });
     const errors = store.events('run-1').filter((e) => e.kind === 'tracker_error').map((e) => JSON.parse(e.data) as { tracker: string; agent: string; stepKey: string; message: string });
-    expect(errors.filter((e) => e.tracker === 'broken')).toHaveLength(10);
-    expect(errors.filter((e) => e.tracker === 'bad-event')).toHaveLength(5);
-    expect(errors[0]).toMatchObject({ tracker: 'broken', agent: 'demo-source', message: 'keyOf exploded', stepKey: expect.any(String) });
+    expect(errors).toHaveLength(5);
+    expect(errors[0]).toMatchObject({ tracker: 'bad-event', agent: 'demo-scorer', message: 'eventFor exploded', stepKey: expect.any(String) });
     expect(store.entityState('demo-003')).toBe('SCORED');
+  });
+
+  it('a throwing keyOf quarantines the step with verdict G-TRACKER: nothing is routed or kept', async () => {
+    const store = Store.open(':memory:');
+    const broken: Tracker = { ...scoreTracker, kind: 'broken', keyOf: (env) => { if (env.type === 'DemoScore@1') throw new Error('keyOf exploded'); return null; } };
+    const r = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken] }).start('run-1', [seed]);
+    expect(r.queue).toMatchObject({ pending: 0, done: 1, quarantined: 5, failed: 0 });
+    const trips = store.events('run-1').filter((e) => e.kind === 'step_quarantined').map((e) => JSON.parse(e.data) as { agent: string; stepKey: string; persisted: boolean; verdict: { id: string; verdict: string; detail: string } });
+    expect(trips).toHaveLength(5);
+    for (const t of trips) {
+      expect(t).toMatchObject({ agent: 'demo-scorer', persisted: true, verdict: { id: 'G-TRACKER', verdict: 'trip', detail: expect.stringContaining('keyOf exploded') } });
+      expect(store.getStep(t.stepKey)).toMatchObject({ status: 'quarantined' });
+      expect(JSON.parse(store.getStep(t.stepKey)!.detail!)).toEqual([t.verdict]);
+      expect(store.envelopesOfStep(t.stepKey)).toEqual([]);
+    }
+    expect(store.entityState('demo-003', 'demo-item')).toBe('QUARANTINED');
+    expect(store.quarantinedSteps().map((q) => q.step_key).sort()).toEqual(trips.map((t) => t.stepKey).sort());
+    // A second run replays the quarantine instead of running the scorer again.
+    const inv = invocations();
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [demoTracker, broken], onInvoke: inv.onInvoke }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ done: 1, quarantined: 5 });
+    expect(inv.calls).toEqual([]);
+  });
+  /** demoTracker, except keyOf now throws on DemoItem@1: a tracker code change, so a replayed step trips. */
+  const itemBreaker: Tracker = { ...demoTracker, keyOf: (env) => { if (env.type === 'DemoItem@1') throw new Error('keyOf regressed'); return demoTracker.keyOf(env); } };
+
+  it('G-TRACKER on a replayed step is run-local: earlier runs keep their history, a fixed tracker heals', async () => {
+    const store = Store.open(':memory:');
+    await handBuilt({ store, scorer: demoScorer }).start('run-1', [seed]);
+    const steps = store.dump('steps', 'step_key');
+    const envelopes = store.dump('envelopes', 'envelope_id');
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [itemBreaker] }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ pending: 0, done: 0, quarantined: 1 });
+    const trip = store.events('run-2').find((e) => e.kind === 'step_quarantined');
+    expect(JSON.parse(trip!.data)).toMatchObject({ side: 'tracker', persisted: false, verdict: { id: 'G-TRACKER' } });
+    expect(store.dump('steps', 'step_key')).toBe(steps);
+    expect(store.dump('envelopes', 'envelope_id')).toBe(envelopes);
+    expect(store.quarantinedSteps()).toEqual([]);
+    const inv = invocations();
+    const r3 = await handBuilt({ store, scorer: demoScorer, onInvoke: inv.onInvoke }).start('run-3', [seed]);
+    expect(r3.queue).toMatchObject({ done: 6, quarantined: 0 });
+    expect(r3.replayed).toBe(6);
+    expect(inv.calls).toEqual([]);
+  });
+
+  it('G-TRACKER on a replayed step does not wedge the resume of a crashed run', async () => {
+    const store = Store.open(':memory:');
+    const crashing = handBuilt({ store, scorer: demoScorer, afterStep: (n) => { if (n === 3) throw new Error('simulated crash'); } });
+    await expect(crashing.start('run-1', [seed])).rejects.toThrow('simulated crash');
+    const r2 = await handBuilt({ store, scorer: demoScorer, trackers: [itemBreaker] }).start('run-2', [seed]);
+    expect(r2.queue).toMatchObject({ quarantined: 1 });
+    const r1 = await handBuilt({ store, scorer: demoScorer }).resume('run-1');
+    expect(r1.queue).toMatchObject({ pending: 0, done: 6, failed: 0, quarantined: 0 });
+    expect(store.entityState('demo-005', 'demo-item')).toBe('SCORED');
   });
 });
 
@@ -474,5 +528,210 @@ describe('G-BUDGET: an over-priced model call stops that agent for the rest of t
     for (const s of skipped) {
       expect(s).toMatchObject({ reason: 'budget', detail: 'G-BUDGET: demo-scorer made a call above usdPerCall earlier in this run' });
     }
+  });
+});
+
+describe('v1 kernel extensions: supervisor', () => {
+  const Req = defineType('PaceReq', 1, z.object({ n: z.number().int().positive() }).strict());
+  const Ref = defineType('PaceRef', 1, z.object({ id: z.string() }).strict());
+  const Detail = defineType('PaceDetail', 1, z.object({ id: z.string(), title: z.string(), owner: z.string() }).strict());
+  const HOST = 'jobs.example.test';
+  const common = { version: '1.0.0', dataClasses: { in: ['P0' as const], out: ['P0' as const] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000 };
+  const lister = defineAgent(
+    defineContract({ ...common, id: 'pace-lister', description: 'Lists job refs from one board', skills: ['listing'], team: 'pace-src', kind: 'io', consumes: Req, produces: Ref, capabilities: { http: true }, egress: [HOST] }),
+    async (req: { n: number }, ctx) => {
+      const { json } = await ctx.http!.getJson(`https://${HOST}/list?n=${req.n}`);
+      return (json as string[]).map((id) => ({ id }));
+    },
+  );
+  const packSeen: unknown[] = [];
+  const detailer = defineAgent(
+    defineContract({ ...common, id: 'pace-detailer', description: 'Fetches one job detail', skills: ['detailing'], team: 'pace-det', kind: 'io', consumes: Ref, produces: Detail, capabilities: { http: true, pack: true }, egress: [HOST] }),
+    async (ref: { id: string }, ctx) => {
+      packSeen.push(ctx.pack);
+      const { json } = await ctx.http!.getJson(`https://${HOST}/job/${ref.id}`);
+      return [{ id: ref.id, title: (json as { title: string }).title, owner: (ctx.pack as { name: string }).name }];
+    },
+  );
+  const pipeline: Pipeline = {
+    id: 'pace',
+    version: '1.0.0',
+    seed: { type: Req, guarantees: [] },
+    teams: [
+      { id: 'pace-src', lead: 'pace-src-lead', members: ['pace-lister'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } },
+      { id: 'pace-det', lead: 'pace-det-lead', members: ['pace-detailer'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } },
+    ],
+    edges: [
+      { type: 'PaceReq@1', to: 'pace-lister' },
+      { type: 'PaceRef@1', to: 'pace-detailer' },
+    ],
+  };
+  const build = (store: Store, slept: number[], pack: unknown, packHash: string, inv?: ReturnType<typeof invocations>) => {
+    const registry = new Registry();
+    registry.register(lister);
+    registry.register(detailer);
+    const guardrails = builtinGuardrails();
+    const policy = mergePolicy(PRODUCT_POLICY_V1, {});
+    const fetch = fakeFetch({
+      [`https://${HOST}/list?n=2`]: { body: '["a","b"]' },
+      [`https://${HOST}/job/a`]: { body: '{"title":"A"}' },
+      [`https://${HOST}/job/b`]: { body: '{"title":"B"}' },
+    });
+    const sup = new Supervisor({
+      store,
+      registry,
+      compiled: compileWiring(registry, pipeline, guardrails),
+      guardrails,
+      policy,
+      policyHash: policyHash(policy),
+      providers: { fetch },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+      pack,
+      packHash,
+      ...(inv ? { onInvoke: inv.onInvoke } : {}),
+    });
+    return { sup, fetch };
+  };
+
+  it('paces requests to one host across agents: every request after the first waits at least minHostIntervalMs', async () => {
+    const slept: number[] = [];
+    const { sup, fetch } = build(Store.open(':memory:'), slept, { name: 'Asha Rao' }, 'pack-1');
+    const r = await sup.start('run-1', [{ n: 2 }]);
+    expect(r.queue).toMatchObject({ done: 3, failed: 0 });
+    expect(fetch.calls).toHaveLength(3);
+    expect(slept).toHaveLength(2);
+    for (const ms of slept) expect(ms).toBeGreaterThanOrEqual(PRODUCT_POLICY_V1.minHostIntervalMs);
+  });
+
+  it('freezes one deep copy of the pack: the caller\'s object stays mutable, typed arrays do not break it', async () => {
+    packSeen.length = 0;
+    const pack = { name: 'Asha Rao', tags: ['go'], bytes: new Uint8Array([1, 2]) };
+    const r = await build(Store.open(':memory:'), [], pack, 'pack-1').sup.start('run-1', [{ n: 2 }]);
+    expect(r.queue).toMatchObject({ done: 3, failed: 0 });
+    expect(Object.isFrozen(pack)).toBe(false);
+    expect(Object.isFrozen(pack.tags)).toBe(false);
+    const seen = packSeen[0] as typeof pack;
+    expect(seen).not.toBe(pack);
+    expect(Object.isFrozen(seen)).toBe(true);
+    expect(Object.isFrozen(seen.tags)).toBe(true);
+    expect(packSeen[1]).toBe(seen);
+  });
+
+  it('passes the pack to pack agents, and a pack edit re-runs only the agents that read it', async () => {
+    packSeen.length = 0;
+    const store = Store.open(':memory:');
+    const r1 = await build(store, [], { name: 'Asha Rao' }, 'pack-1').sup.start('run-1', [{ n: 2 }]);
+    expect(r1.queue).toMatchObject({ done: 3 });
+    expect(packSeen).toEqual([{ name: 'Asha Rao' }, { name: 'Asha Rao' }]);
+    const inv = invocations();
+    const same = await build(store, [], { name: 'Asha Rao' }, 'pack-1', inv).sup.start('run-2', [{ n: 2 }]);
+    expect(same.replayed).toBe(3);
+    expect(inv.calls).toEqual([]);
+    const edited = await build(store, [], { name: 'Asha R.' }, 'pack-2', inv).sup.start('run-3', [{ n: 2 }]);
+    expect(inv.calls.map((c) => c.split(':')[0])).toEqual(['pace-detailer', 'pace-detailer']);
+    expect(edited.replayed).toBe(1);
+    expect(packSeen.slice(2)).toEqual([{ name: 'Asha R.' }, { name: 'Asha R.' }]);
+  });
+
+  it('paces browser renders by minBrowserIntervalMs, and http requests to the same host against them', async () => {
+    const Done = defineType('PaceDone', 1, z.object({ n: z.number() }).strict());
+    const renderer = defineAgent(
+      defineContract({ ...common, id: 'pace-renderer', description: 'Renders two pages of one board', skills: ['rendering'], team: 'pace-src', kind: 'io', consumes: Req, produces: Done, capabilities: { browser: { maxPages: 5 }, http: true }, egress: [HOST] }),
+      async (req: { n: number }, ctx) => {
+        await ctx.browser!.render(`https://${HOST}/a`);
+        await ctx.browser!.render(`https://${HOST}/b`);
+        await ctx.http!.getText(`https://${HOST}/c`);
+        return [{ n: req.n }];
+      },
+    );
+    const registry = new Registry();
+    registry.register(renderer);
+    const guardrails = builtinGuardrails();
+    const slept: number[] = [];
+    const sup = new Supervisor({
+      store: Store.open(':memory:'),
+      registry,
+      compiled: compileWiring(registry, { id: 'pace-b', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'pace-src-lead', members: ['pace-renderer'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'pace-renderer' }] }, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: fakeFetch({ [`https://${HOST}/c`]: { body: 'ok' } }), browser: fakeBrowser({ [`https://${HOST}/a`]: { html: '<h1>a</h1>' }, [`https://${HOST}/b`]: { html: '<h1>b</h1>' } }) },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async (ms) => {
+        slept.push(ms);
+      },
+    });
+    const r = await sup.start('run-b', [{ n: 1 }]);
+    expect(r.queue).toMatchObject({ done: 1, failed: 0 });
+    // The fixed clock never advances, so each wait is the full gap to its slot: the second render waits out the
+    // browser interval (10 s), then its host slot (1 s); the http request waits for the slot after that (2 s).
+    expect(slept).toEqual([PRODUCT_POLICY_V1.minBrowserIntervalMs, 1000, 2000]);
+  });
+
+  it('a gone item fails its step but never trips a breaker; another failure code does', async () => {
+    const Out = defineType('GoneOut', 1, z.object({ n: z.number() }).strict());
+    const build = (code: 'gone' | 'invalid_output') => {
+      const agent = defineAgent(
+        defineContract({ ...common, id: 'gone-src', description: 'Fails for low numbers', skills: ['x'], team: 'pace-src', kind: 'deterministic', consumes: Req, produces: Out, breaker: { consecutiveFailures: 3 } }),
+        async (req: { n: number }) => {
+          if (req.n <= 15) throw new KernelError(code, `item ${req.n} is ${code}`);
+          return [{ n: req.n }];
+        },
+      );
+      const registry = new Registry();
+      registry.register(agent);
+      const guardrails = builtinGuardrails();
+      return new Supervisor({
+        store: Store.open(':memory:'),
+        registry,
+        compiled: compileWiring(registry, { id: 'gone', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'l', members: ['gone-src'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'gone-src' }] }, guardrails),
+        guardrails,
+        policy: PRODUCT_POLICY_V1,
+        policyHash: policyHash(PRODUCT_POLICY_V1),
+        providers: { fetch: fakeFetch({}) },
+        clock: fixedClock('2026-10-08T07:00:00.000Z'),
+        sleep: async () => undefined,
+      });
+    };
+    const seeds = Array.from({ length: 20 }, (_, i) => ({ n: i + 1 }));
+    const gone = await build('gone').start('run-gone', seeds);
+    expect(gone.queue).toMatchObject({ done: 5, failed: 15, skipped: 0 });
+    expect(gone.gone).toBe(15);
+    const other = await build('invalid_output').start('run-bad', seeds);
+    expect(other.queue.skipped).toBeGreaterThan(0);
+    expect(other.gone).toBe(0);
+  });
+
+  it('input_rejected (a refusal decided by the input alone) never trips a breaker: five rejected jobs do not stop a sixth', async () => {
+    const Out = defineType('RejOut', 1, z.object({ n: z.number() }).strict());
+    const agent = defineAgent(
+      defineContract({ ...common, id: 'rej-src', description: 'Refuses low numbers', skills: ['x'], team: 'pace-src', kind: 'deterministic', consumes: Req, produces: Out, breaker: { consecutiveFailures: 3 } }),
+      async (req: { n: number }) => {
+        if (req.n <= 5) throw new KernelError('input_rejected', `item ${req.n} cannot be written`);
+        return [{ n: req.n }];
+      },
+    );
+    const registry = new Registry();
+    registry.register(agent);
+    const guardrails = builtinGuardrails();
+    const sup = new Supervisor({
+      store: Store.open(':memory:'),
+      registry,
+      compiled: compileWiring(registry, { id: 'rej', version: '1.0.0', seed: { type: Req, guarantees: [] }, teams: [{ id: 'pace-src', lead: 'l', members: ['rej-src'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }], edges: [{ type: 'PaceReq@1', to: 'rej-src' }] }, guardrails),
+      guardrails,
+      policy: PRODUCT_POLICY_V1,
+      policyHash: policyHash(PRODUCT_POLICY_V1),
+      providers: { fetch: fakeFetch({}) },
+      clock: fixedClock('2026-10-08T07:00:00.000Z'),
+      sleep: async () => undefined,
+    });
+    const r = await sup.start('run-rej', Array.from({ length: 6 }, (_, i) => ({ n: i + 1 })));
+    expect(r.queue).toMatchObject({ done: 1, failed: 5, skipped: 0 });
+    expect(r.inputRejected).toBe(5);
+    expect(r.gone).toBe(0);
+    expect(RETRYABLE.has('input_rejected')).toBe(false);
   });
 });

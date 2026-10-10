@@ -1,0 +1,45 @@
+{
+  "jobs": [
+    {
+      "id": 5001,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.example-gh.test/jobs/5001",
+      "location": { "name": "Remote, India" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-05T10:00:00Z",
+      "updated_at": "2026-10-05T10:00:00Z",
+      "content": "<p>We build distributed systems for payments.</p><p>You will design microservices in Java with Spring Boot, Kafka and PostgreSQL on AWS and Kubernetes, with Redis for caching.</p><p>This role is fully remote from India.</p>"
+    },
+    {
+      "id": 5002,
+      "title": "Backend Engineer",
+      "absolute_url": "https://boards.example-gh.test/jobs/5002",
+      "location": { "name": "San Francisco, CA, United States" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-04T10:00:00Z",
+      "updated_at": "2026-10-04T10:00:00Z",
+      "content": "<p>Work from our San Francisco office five days a week on Java services.</p>"
+    },
+    {
+      "id": 5003,
+      "title": "Software Engineer",
+      "absolute_url": "https://boards.example-gh.test/jobs/5003",
+      "location": { "name": "Remote, India" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-03T10:00:00Z",
+      "updated_at": "2026-10-03T10:00:00Z",
+      "content": "<p>Build internal tools in Python for our finance team. Fully remote from India.</p>"
+    },
+    {
+      "id": 5004,
+      "title": "Senior Frontend Engineer",
+      "absolute_url": "https://boards.example-gh.test/jobs/5004",
+      "location": { "name": "Remote, India" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-03T10:00:00Z",
+      "updated_at": "2026-10-03T10:00:00Z",
+      "content": "<p>Build our web app in React and TypeScript. Fully remote from India.</p>"
+    }
+  ],
+  "meta": { "total": 4 }
+}

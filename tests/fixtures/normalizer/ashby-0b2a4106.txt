@@ -1,0 +1,24 @@
+We’re not just building better tech. We’re rewriting how data moves and what the world can do with it. With Confluent, data doesn’t sit still. Our platform puts information in motion, streaming in near real-time so companies can react faster, build smarter, and deliver experiences as dynamic as the world around them.
+
+It takes a certain kind of person to join this team. Those who ask hard questions, give honest feedback, and show up for each other. No egos, no solo acts. Just smart, curious humans pushing toward something bigger, together.
+
+One Confluent. One Team. One Data Streaming Platform.
+
+About the Role:
+
+Confluent Cloud processes millions of events per second across AWS, GCP, and Azure. When incidents happen in a multi-cloud streaming platform, they happen at scale—data in motion, exactly-once semantics, and cascading failure modes that require deep systems thinking. We need an expert-level engineer who can drive proactive reliability improvements that prevent these incidents before they occur.
+
+This role combines hands-on technical work with strategic program ownership. You'll spend roughly 75% of your time on engineering: building automation, improving tooling, analyzing systemic failure patterns, and designing reliability improvements. The remaining 25% is teaching and coordination: coaching teams through post-mortems, training incident commanders, and evolving our incident response practices.
+
+You'll be part of a global team with follow-the-sun coverage, with clean handoffs that keep everyone working sustainable hours. Confluent has 800-1000 engineers across highly autonomous teams. This role sits within Cloud Architecture and Reliability - Supportability (CAR-S), a horizontal team that owns reliability standards and tooling across engineering. You're the person who makes us need incident management less.
+
+What You Will Do:
+
+- Proactive Reliability Engineering (~75% of role) · Analyze systemic failure patterns and design improvements that prevent incident recurrence · Define and maintain SLO/SLA frameworks; use error budgets to guide reliability investments · Build tooling and automation to reduce incident response toil and scale team impact · Own Rootly configuration, workflows, and integrations with PagerDuty, Jira, Confluence, and Slack · Analyze reliability data to identify systemic improvements; build dashboards that drive action · Explore AI-assisted approaches to documentation quality and incident analysis · Design scalable reliability standards that reduce reactive workload over time.
+- Incident Management Program (~25% of role) · Own standards, practices, and continuous improvement of incident response · Serve as an on-call Incident Commander for production incidents, including acting as escalation IC when incidents exceed a team's management chain · Develop and deliver training programs for engineering teams at all levels · Coach teams through post-mortems and on developing actionable corrective actions
+- Customer Root Cause Analysis (CRCA) · Edit and review customer-facing incident documents to ensure quality and clarity · Drive turnaround SLAs while maintaining technical accuracy · Ensure clear explanation of what happened, why, and how we'll prevent recurrence
+- Cross-Team Leadership · Partner with engineering leaders to elevate reliability practices · Be the expert who teams proactively engage for guidance
+
+What You Will Bring:
+
+- 10+ years in SRE, incident management, or reliabi

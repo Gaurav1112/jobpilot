@@ -1,0 +1,5 @@
+# Verified extra boards (the controller prepares this file from the ATS research).
+watchlist:
+  - {company: Example Lever Co, ats: lever, slug: example-lv, hiresInIndia: true, allRemote: true}
+  - {company: Globex Systems Inc, ats: ashby, slug: globex, hiresInIndia: true, allRemote: false}
+  - {company: Example Careers Co, ats: careers, slug: example-careers, listUrl: 'https://careers.example.com/jobs', linkPattern: '^/jobs/[a-z0-9-]+$', hiresInIndia: true, allRemote: false}

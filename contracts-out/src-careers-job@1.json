@@ -1,0 +1,127 @@
+{
+  "hash": "00315c7f235bdd17dad856e521d4f97a7e787968d8f95db847060348d7244514",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 10
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "browser": {
+        "maxPages": 1
+      }
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "linkPattern": {
+            "type": "string"
+          },
+          "listUrl": {
+            "type": "string"
+          },
+          "refresh": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "titleKey": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "company",
+          "slug",
+          "listUrl",
+          "url",
+          "linkPattern",
+          "titleKey",
+          "refresh"
+        ],
+        "type": "object"
+      },
+      "type": "CareerLink@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "pack:careers-hosts"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-careers-job",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "raw": {},
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawPosting@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [
+        2000,
+        8000
+      ],
+      "max": 2,
+      "on": [
+        "network",
+        "timeout"
+      ]
+    },
+    "team": "sourcing",
+    "timeoutMs": 90000,
+    "version": "1.0.0"
+  }
+}

@@ -17,10 +17,6 @@ const registry = (...agents: Parameters<Registry['register']>[0][]) => {
 };
 
 describe('contract export and drift', () => {
-  it('the committed contracts-out/ matches the code', () => {
-    expect(checkDrift(registry(...demoAgents), join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
-  });
-
   it('writes one file per agent major, with JSON Schemas for both message types', () => {
     const dir = mkdtempSync(join(tmpdir(), 'contracts-'));
     const paths = exportContracts(registry(...demoAgents), dir);

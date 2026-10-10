@@ -5,10 +5,11 @@ import { contractHash, defineContract } from '../../src/kernel/contract.js';
 import { type Envelope, ZERO_COST } from '../../src/kernel/envelope.js';
 import { KernelError } from '../../src/kernel/errors.js';
 import { executeStep, type ExecutorDeps } from '../../src/kernel/executor.js';
+import { freezePack } from '../../src/kernel/broker.js';
 import type { AnyAgent } from '../../src/kernel/agent.js';
 import type { LlmProvider } from '../../src/kernel/providers.js';
 import { builtinGuardrails } from '../../src/kernel/guardrails/builtin.js';
-import { backoffDelay } from '../../src/kernel/memo.js';
+import { backoffDelay, computeStepKey } from '../../src/kernel/memo.js';
 import { PRODUCT_POLICY_V1, policyHash } from '../../src/kernel/policy.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { demoSourceContract } from '../../src/demo/agents.js';
@@ -438,5 +439,196 @@ describe('executeStep: a timed-out model call is charged its reservation (G-BUDG
       expect(store.runCost('r')).toBeLessThanOrEqual(1.0 + 1e-9);
     }
     expect(store.runCost('r')).toBeCloseTo(0.9, 10);
+  });
+});
+
+describe('v1 kernel extensions: executor', () => {
+  const packContract = (pack: true | 'full', id = 'pack-reader') =>
+    defineContract({
+      ...demoSourceContract,
+      id,
+      description: 'Reads the pack to make items',
+      kind: 'deterministic',
+      capabilities: { pack },
+      // A 'full' pack agent read contact details, so it must declare P1 outputs (M7).
+      ...(pack === 'full' ? { emits: 'P1' as const, dataClasses: { in: ['P0' as const], out: ['P1' as const] } } : {}),
+      egress: [],
+      budget: { usdPerCall: 0, usdPerRun: 0 },
+      obligations: { adds: [], discharges: [] },
+    });
+  const plainContract = defineContract({
+    ...demoSourceContract,
+    id: 'plain-maker',
+    description: 'Makes items without the pack',
+    kind: 'deterministic',
+    egress: [],
+    capabilities: {},
+    budget: { usdPerCall: 0, usdPerRun: 0 },
+    obligations: { adds: [], discharges: [] },
+  });
+
+  it('computeStepKey includes packHash only for a contract that declares capabilities.pack', () => {
+    const reader = packContract(true);
+    expect(computeStepKey(reader, seedEnv(), pHash, 'pack-a')).not.toBe(computeStepKey(reader, seedEnv(), pHash, 'pack-b'));
+    expect(computeStepKey(reader, seedEnv(), pHash)).toBe(computeStepKey(reader, seedEnv(), pHash, 'none'));
+    expect(computeStepKey(plainContract, seedEnv(), pHash, 'pack-a')).toBe(computeStepKey(plainContract, seedEnv(), pHash, 'pack-b'));
+    expect(computeStepKey(plainContract, seedEnv(), pHash, 'pack-a')).toBe(computeStepKey(plainContract, seedEnv(), pHash));
+  });
+
+  it('I4: computeStepKey includes the code hash for every contract; "none" (the default) leaves the key as before', () => {
+    const reader = packContract(true);
+    for (const c of [reader, plainContract]) {
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a')).not.toBe(computeStepKey(c, seedEnv(), pHash, 'p', 'code-b'));
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a')).toBe(computeStepKey(c, seedEnv(), pHash, 'p', 'code-a'));
+      expect(computeStepKey(c, seedEnv(), pHash, 'p', 'none')).toBe(computeStepKey(c, seedEnv(), pHash, 'p'));
+    }
+  });
+
+  it('I4: the executor keys every step on deps.codeHash, so a code change re-runs a step that would have replayed', async () => {
+    const agent = defineAgent(plainContract, async (req) => [{ id: `${req.prefix}-001`, text: 'x' }]);
+    const store = Store.open(':memory:');
+    const run = (codeHash: string | undefined) =>
+      executeStep(
+        { ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(agent.contract)), ...(codeHash !== undefined ? { codeHash } : {}) },
+        'r',
+        agent,
+        seedEnv(),
+      );
+    const a = await run('code-1');
+    expect(a).toMatchObject({ kind: 'done', replayed: false });
+    expect(await run('code-1')).toMatchObject({ kind: 'done', replayed: true, stepKey: a.stepKey });
+    const b = await run('code-2');
+    expect(b).toMatchObject({ kind: 'done', replayed: false });
+    expect(b.stepKey).not.toBe(a.stepKey);
+    expect(b.stepKey).toBe(computeStepKey(plainContract, seedEnv(), pHash, 'none', 'code-2'));
+  });
+
+  it('passes the frozen pack to a pack agent and keys its step on packHash; a non-pack agent sees no pack', async () => {
+    const seen: unknown[] = [];
+    const mk = (c: ReturnType<typeof packContract>) =>
+      defineAgent(c, async (req, ctx) => {
+        seen.push(ctx.pack);
+        if (ctx.pack !== undefined) expect(Object.isFrozen(ctx.pack)).toBe(true);
+        return [{ id: `${req.prefix}-001`, text: 'x' }];
+      });
+    const reader = mk(packContract(true));
+    const plainAgent = mk(plainContract);
+    const store = Store.open(':memory:');
+    const run = (a: AnyAgent, packHash: string) =>
+      executeStep(
+        { ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(a.contract)), pack: freezePack({ name: 'Asha Rao' }), packHash },
+        'r',
+        a,
+        seedEnv(),
+      );
+    const a1 = await run(reader, 'p1');
+    const a2 = await run(reader, 'p2');
+    expect(a1.stepKey).not.toBe(a2.stepKey);
+    expect(a2).toMatchObject({ kind: 'done', replayed: false });
+    const b1 = await run(plainAgent, 'p1');
+    const b2 = await run(plainAgent, 'p2');
+    expect(b1.stepKey).toBe(b2.stepKey);
+    expect(b2).toMatchObject({ kind: 'done', replayed: true });
+    expect(seen).toEqual([{ name: 'Asha Rao' }, { name: 'Asha Rao' }, undefined]);
+  });
+
+  it("gives a 'full' pack agent fullPack keyed on fullPackHash", async () => {
+    const seen: unknown[] = [];
+    const full = defineAgent(packContract('full', 'full-reader'), async (req, ctx) => {
+      seen.push(ctx.pack);
+      return [{ id: `${req.prefix}-001`, text: 'x' }];
+    });
+    const store = Store.open(':memory:');
+    const run = (packHash: string, fullPackHash: string) =>
+      executeStep(
+        {
+          ...deps(store, [], []),
+          contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(full.contract)),
+          pack: freezePack({ name: 'Asha Rao' }),
+          packHash,
+          fullPack: freezePack({ name: 'Asha Rao', email: 'asha@example.test' }),
+          fullPackHash,
+        },
+        'r',
+        full,
+        seedEnv(),
+      );
+    const a = await run('p1', 'f1');
+    const b = await run('p2', 'f1');
+    const c = await run('p2', 'f2');
+    expect(b.stepKey).toBe(a.stepKey);
+    expect(c.stepKey).not.toBe(a.stepKey);
+    expect(seen).toEqual([{ name: 'Asha Rao', email: 'asha@example.test' }, { name: 'Asha Rao', email: 'asha@example.test' }]);
+  });
+
+  it('passes the pack to guardrails', async () => {
+    const reader = defineAgent(defineContract({ ...packContract(true), guardrails: { in: ['G-PACK-SEEN'], out: [] } }), async (req) => [{ id: `${req.prefix}-001`, text: 'x' }]);
+    const guardrails = builtinGuardrails();
+    const seen: unknown[] = [];
+    guardrails.add({ id: 'G-PACK-SEEN', sides: ['in'], check: (g) => (seen.push(g.pack), { id: 'G-PACK-SEEN', verdict: 'pass' }) });
+    const store = Store.open(':memory:');
+    const out = await executeStep(
+      { ...deps(store, [], []), guardrails, contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(reader.contract)), pack: freezePack({ name: 'Asha Rao' }), packHash: 'p' },
+      'r',
+      reader,
+      seedEnv(),
+    );
+    expect(out.kind).toBe('done');
+    expect(seen).toEqual([{ name: 'Asha Rao' }]);
+    expect(Object.isFrozen(seen[0])).toBe(true);
+  });
+
+  it('records each attempt\'s spend before the retry sleep', async () => {
+    const store = Store.open(':memory:');
+    const a = payingAgent({ usdPerRun: 0.5, failOn: [1] });
+    const atSleep: number[] = [];
+    const out = await executeStep({ ...depsFor(store, a, []), sleep: async () => { atSleep.push(store.runCost('r')); } }, 'r', a, seedEnv());
+    expect(out).toMatchObject({ kind: 'done' });
+    expect(atSleep).toHaveLength(1);
+    expect(atSleep[0]).toBeCloseTo(0.002, 10);
+    expect(store.runCost('r')).toBeCloseTo(0.004, 10);
+    if (out.kind === 'done') expect(out.outputs[0]!.cost.usd).toBeCloseTo(0.004, 10);
+  });
+
+  it('keeps the first attempt\'s spend when the process dies during the retry sleep, and resume adds the second', async () => {
+    const store = Store.open(':memory:');
+    const a = payingAgent({ usdPerRun: 0.5, failOn: [1] });
+    let crashed!: () => void;
+    const died = new Promise<void>((r) => (crashed = r));
+    // The "process" dies inside the backoff sleep: this execution never continues.
+    void executeStep({ ...depsFor(store, a, []), sleep: () => (crashed(), new Promise<void>(() => {})) }, 'r', a, seedEnv());
+    await died;
+    expect(store.runCost('r')).toBeCloseTo(0.002, 10);
+    const resumed = await executeStep(depsFor(store, a, []), 'r', a, seedEnv());
+    expect(resumed).toMatchObject({ kind: 'done', replayed: false });
+    expect(store.runCost('r')).toBeCloseTo(0.004, 10);
+  });
+});
+
+describe('skipped input items (final minor: no silent partial skips)', () => {
+  const skipper = defineAgent(
+    defineContract({ ...demoSourceContract, id: 'skipper', description: 'Skips two malformed items', obligations: { adds: [], discharges: [] } }),
+    async (_input, ctx) => {
+      ctx.skipped(['item 1: missing id', 'item 4: missing title']);
+      return [];
+    },
+  );
+  const skipDeps = (store: Store): ExecutorDeps => ({ ...deps(store, [], []), contractHashOf: (id) => (id === 'supervisor' ? 'seed-hash' : contractHash(skipper.contract)) });
+  const data = (store: Store, kind: string) => store.events().filter((e) => e.kind === kind).map((e) => JSON.parse(e.data) as Record<string, unknown>);
+
+  it('puts the count and the notes in the step_done event, and again in the step_replayed event', async () => {
+    const store = Store.open(':memory:');
+    expect((await executeStep(skipDeps(store), 'r1', skipper, seedEnv())).kind).toBe('done');
+    expect(data(store, 'step_done')[0]).toMatchObject({ agent: 'skipper', skipped: 2, skippedNotes: ['item 1: missing id', 'item 4: missing title'] });
+    expect(await executeStep(skipDeps(store), 'r2', skipper, seedEnv())).toMatchObject({ kind: 'done', replayed: true });
+    expect(data(store, 'step_replayed')[0]).toMatchObject({ status: 'done', skipped: 2, skippedNotes: ['item 1: missing id', 'item 4: missing title'] });
+  });
+
+  it('keeps only the final attempt\'s skips, and records nothing extra when nothing was skipped', async () => {
+    const store = Store.open(':memory:');
+    const a = defineAgent(skipper.contract, async () => []);
+    await executeStep(skipDeps(store), 'r', a, seedEnv());
+    expect(data(store, 'step_done')[0]).not.toHaveProperty('skipped');
+    expect(data(store, 'step_done')[0]).not.toHaveProperty('skippedNotes');
   });
 });

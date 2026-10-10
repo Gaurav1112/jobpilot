@@ -1,0 +1,303 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8638232002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6449994002,
+      "location": {
+        "name": "Remote, United States"
+      },
+      "metadata": [
+        {
+          "id": 4595831002,
+          "name": "Quota Coverage Type",
+          "value": "n/a",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8638232002,
+      "updated_at": "2026-09-29T10:38:50-04:00",
+      "requisition_id": "6682",
+      "title": "AI Transformation Owner, CRO",
+      "pay_input_ranges": [
+        {
+          "min_cents": 13920000,
+          "max_cents": 23520000,
+          "currency_type": "USD",
+          "title": "United States Salary Range",
+          "blurb": "<p><em>The base salary range for this role’s listed level is currently for residents of the&nbsp;United States only. This range is intended to reflect the role's base salary rate in locations throughout the US.&nbsp;Grade level and salary ranges are determined through interviews and a review of education, experience, knowledge, skills, abilities of the applicant, equity with other team members, alignment with market data,&nbsp;and geographic location.&nbsp;The base salary range does not include any bonuses, equity, or benefits. See more information on our <a class=\"waffle-rich-text-link\" href=\"https://about.gitlab.com/handbook/total-rewards/benefits/general-and-entity-benefits/\" data-sheets-formula-bar-text-link=\"https://bit.ly/GLBeneUS\" data-sheets-formula-bar-text-style=\"font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:''Arial'';font-style:normal;text-decoration-skip-ink:none;\">benefits</a><span data-sheets-formula-bar-text-style=\"font-size:12px;color:#000000;font-weight:normal;text-decoration:none;font-family:'Arial';font-style:normal;text-decoration-skip-ink:none;\"> and </span><a class=\"waffle-rich-text-link\" href=\"https://about.gitlab.com/handbook/stock-options/\" data-sheets-formula-bar-text-link=\"https://bit.ly/GLequity\" data-sheets-formula-bar-text-style=\"font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:''Arial'';font-style:normal;text-decoration-skip-ink:none;\">equity</a>. Sales roles are also eligible for incentive pay targeted at up to 100% of the offered base salary.</em></p>"
+        }
+      ],
+      "company_name": "GitLab",
+      "first_published": "2026-07-22T13:38:40-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h4&gt;&lt;strong&gt;An overview of this role&lt;/strong&gt;&lt;/h4&gt;\n&lt;p&gt;The AI Transformation Owner drives the end-to-end AI agenda for the field organization, translating emerging AI capabilities into concrete enablement roadmaps, field use cases, and org-level strategy. You will partner closely with product and engineering teams to pilot and scale AI solutions, own the operational transformation plan needed to embed AI into day-to-day field workflows, and establish the governance framework that keeps AI adoption safe, compliant, and aligned with company standards. This is a hands-on role for someone who can move from strategy to execution without heavy oversight.&lt;/p&gt;\n&lt;p&gt;This role reports to the Vice President, Enablement &amp;amp; AI.&lt;/p&gt;\n&lt;p&gt;&lt;strong&gt;What You’ll Do&lt;/strong&gt; &amp;nbsp;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;AI Enablement Roadmap:&lt;/strong&gt; Own and continuously evolve the roadmap for AI-driven enablement initiatives, prioritizing based on field impact, feasibility, and alignment with broader Enterprise AI team and strategy..&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;AI Field Use Cases:&lt;/strong&gt; Identify, scope, and execute on high-value AI use cases for the field (e.g., deal support, prospecting, content generation, guided selling, skills, change management), working with stakeholders to define success criteria and measure impact.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;AI Field Champions: &lt;/strong&gt;build relationships with champions in the field organization to activate power-usage and drive peer-led adoption; track this adoption (e.g., usage, proficiency, behavior change) with our AI Ops Specialist and Enablement Analyst.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Ops Transformation Plan:&lt;/strong&gt; Design and drive the operational plan that turns AI pilots into scaled, repeatable processes, coordinating across enablement, ops, and technical teams to remove execution bottlenecks.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;AI Governance:&lt;/strong&gt; Influence and lead governance standards for AI tool adoption in the field, including data usage, risk review, tool vetting, and alignment with company-wide AI policy.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;p&gt;&lt;strong&gt;What You’ll Bring&amp;nbsp;&lt;/strong&gt;&lt;/p&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Mid-Senior Experience:&lt;/strong&gt; Several years of experience in enablement, sales operations, or a related GTM function, with a track recor",
+      "departments": [
+        {
+          "id": 4114891002,
+          "name": "Enablement",
+          "child_ids": [],
+          "parent_id": 4011049002
+        }
+      ],
+      "offices": [],
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": null,
+      "ai_opt_out_request_url": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8775507002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6510727002,
+      "location": {
+        "name": "Bangalore, India"
+      },
+      "metadata": [
+        {
+          "id": 4595831002,
+          "name": "Quota Coverage Type",
+          "value": "n/a",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8775507002,
+      "updated_at": "2026-09-29T10:38:50-04:00",
+      "requisition_id": "6928",
+      "title": "Intermediate Backend Engineer, India",
+      "pay_input_ranges": [],
+      "company_name": "GitLab",
+      "first_published": "2026-09-02T14:50:52-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h2&gt;&lt;strong&gt;About the role&lt;/strong&gt;&lt;/h2&gt;\n&lt;p&gt;As an Intermediate Backend Engineer, you will take backend features and improvements from clarifying the problem through shipping them and following up in production. You will work within a product area, partnering with Product Management, Frontend, Infrastructure, and Security to deliver predictably and contribute to the quality, security, performance, and maintainability of shared backend code and services. You will be trusted to work with minimal guidance, to know when to seek help, and to communicate clearly in a remote, asynchronous environment — with other tenured engineers alongside you to review your work, think through hard problems with you, and help you grow.&lt;/p&gt;\n&lt;h2&gt;&lt;strong&gt;Why you’ll love this role&lt;/strong&gt;&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Ownership:&lt;/strong&gt; You&#39;ll take features from requirements through delivery and follow-up; your code will run on a platform used by millions of users.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Learning and Growth :&lt;/strong&gt; You’ll work alongside your engineering team, who treat code review and design review as a learning loop rather than a gate — one of the fastest ways to grow your engineering judgment.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Innovative Culture:&lt;/strong&gt; You’ll use AI as a genuine part of daily engineering work, developing the judgment to know when to trust it and when not to.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Autonomy:&lt;/strong&gt; You’ll thrive in our remote-first, asynchronous organization, where clear written communication and self-direction are the pillars of success.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;User-Centric Collaboration:&lt;/strong&gt; You’ll partner closely with PMs and designers to shape requirements, so you understand why you’re building something, not just what.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h2&gt;&lt;strong&gt;What you’ll do&lt;/strong&gt;&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Own and Ship Features:&lt;/strong&gt; Design, implement, test, and ship backend features and improvements with minimal guidance, working in Ruby/Rails, Go, or any other modern languages.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Build for Production:&lt;/strong&gt; Write maintainable, secure, observable, and performant code. Design and maintain APIs, background jobs, integrations, and bounded service functionality, and work with data models, migrations, indexes, and query behavior.&lt;/li&gt;\n&lt;",
+      "departments": [
+        {
+          "id": 4011044002,
+          "name": "Engineering",
+          "child_ids": [
+            4012212002,
+            4118841002,
+            4096122002,
+            4115238002,
+            4011053002,
+            4135581002,
+            4135580002,
+            4115239002,
+            4115240002,
+            4034706002,
+            4061741002,
+            4016843002,
+            4099701002,
+            4099700002
+          ],
+          "parent_id": null
+        }
+      ],
+      "offices": [],
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": null,
+      "ai_opt_out_request_url": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8869149002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6551117002,
+      "location": {
+        "name": "Remote Ireland; Remote, Australia; Remote, Canada; Remote, India; Remote, Mexico; Remote, Poland; Remote, United Kingdom; Remote, United States"
+      },
+      "metadata": [
+        {
+          "id": 4595831002,
+          "name": "Quota Coverage Type",
+          "value": "n/a",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8869149002,
+      "updated_at": "2026-10-08T20:05:04-04:00",
+      "requisition_id": "7138",
+      "title": "Recruiter,  GTM",
+      "pay_input_ranges": [
+        {
+          "min_cents": 8640000,
+          "max_cents": 14640000,
+          "currency_type": "USD",
+          "title": "United States Salary Range",
+          "blurb": "<p><em>The base salary range for this role’s listed level is currently for residents of the&nbsp;United States only. This range is intended to reflect the role's base salary rate in locations throughout the US.&nbsp;Grade level and salary ranges are determined through interviews and a review of education, experience, knowledge, skills, abilities of the applicant, equity with other team members, alignment with market data,&nbsp;and geographic location.&nbsp;The base salary range does not include any bonuses, equity, or benefits. See more information on our <a class=\"waffle-rich-text-link\" href=\"https://about.gitlab.com/handbook/total-rewards/benefits/general-and-entity-benefits/\" data-sheets-formula-bar-text-link=\"https://bit.ly/GLBeneUS\" data-sheets-formula-bar-text-style=\"font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:''Arial'';font-style:normal;text-decoration-skip-ink:none;\">benefits</a><span data-sheets-formula-bar-text-style=\"font-size:12px;color:#000000;font-weight:normal;text-decoration:none;font-family:'Arial';font-style:normal;text-decoration-skip-ink:none;\"> and </span><a class=\"waffle-rich-text-link\" href=\"https://about.gitlab.com/handbook/stock-options/\" data-sheets-formula-bar-text-link=\"https://bit.ly/GLequity\" data-sheets-formula-bar-text-style=\"font-size:12px;color:#1155cc;font-weight:normal;text-decoration:underline;font-family:''Arial'';font-style:normal;text-decoration-skip-ink:none;\">equity</a>. Sales roles are also eligible for incentive pay targeted at up to 100% of the offered base salary.</em></p>"
+        }
+      ],
+      "company_name": "GitLab",
+      "first_published": "2026-10-08T10:39:54-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h4&gt;&lt;strong&gt;An overview of this role&lt;/strong&gt;&lt;/h4&gt;\n&lt;p&gt;As a GTM Recruiter you&#39;ll help GitLab build the go-to-market teams that drive our growth. In this individual contributor role, you&#39;ll partner with leaders across Sales, Marketing, Customer Success, Professional Services, Field Operations, Enablement and Ecosystems and own searches from intake through close. You&#39;ll build inclusive pipelines and use data and market insight to guide hiring decisions, while growing into a trusted talent advisor.&lt;/p&gt;\n&lt;h4&gt;&lt;strong&gt;What you&#39;ll do&lt;/strong&gt;&lt;/h4&gt;\n&lt;ul&gt;\n&lt;li&gt;Manage full-cycle searches for Account Executives, Solutions Architects, Customer Success, Sales Development, and Sales Operations, delivering against agreed recruiting goals and key metrics with accurate, timely documentation in Greenhouse.&lt;/li&gt;\n&lt;li&gt;Lead intake and kickoff conversations to align hiring teams on role scope, territory or segment, quota and ramp expectations, interview plans, and timelines, with senior team guidance as needed.&lt;/li&gt;\n&lt;li&gt;Partner with hiring teams on structured, equitable interviews with clear competencies and actionable feedback; challenge assumptions and escalate risks or blockers early.&lt;/li&gt;\n&lt;li&gt;Use talent-market research, compensation and on-target earnings (OTE) benchmarks, funnel metrics, and candidate feedback to shape search strategy and address hiring issues.&lt;/li&gt;\n&lt;li&gt;Assess sales candidates on track record, quota attainment, deal complexity, and experience relevant to GitLab&#39;s sales segments and approach.&lt;/li&gt;\n&lt;li&gt;Build research-based, diversity-focused sourcing plans that balance applicants, passive talent, referrals, internal talent, and targeted outreach.&lt;/li&gt;\n&lt;li&gt;Deliver a thoughtful candidate experience through disciplined pipeline management, proactive communication, timely feedback, and offer negotiations that clearly explain compensation and OTE.&lt;/li&gt;\n&lt;li&gt;Improve recruiting practices by sharing learnings and reusable resources, using artificial intelligence (AI) responsibly, and representing GitLab&#39;s mission, values, and culture.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h4&gt;&lt;strong&gt;What you&#39;ll bring&lt;/strong&gt;&lt;/h4&gt;\n&lt;ul&gt;\n&lt;li&gt;Intermediate-level recruiting experience, with a track record of owning full-cycle searches independently.&lt;/li&gt;\n&lt;li&gt;Sales or go-to-market recruiting experi",
+      "departments": [
+        {
+          "id": 4011065002,
+          "name": "Talent Acquisition",
+          "child_ids": [],
+          "parent_id": 4111246002
+        }
+      ],
+      "offices": [],
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": null,
+      "ai_opt_out_request_url": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8716143002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6483848002,
+      "location": {
+        "name": "Bangalore, India"
+      },
+      "metadata": [
+        {
+          "id": 4595831002,
+          "name": "Quota Coverage Type",
+          "value": "n/a",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8716143002,
+      "updated_at": "2026-09-29T10:38:50-04:00",
+      "requisition_id": "6823",
+      "title": "Senior Backend Engineer, India",
+      "pay_input_ranges": [],
+      "company_name": "GitLab",
+      "first_published": "2026-08-14T14:14:15-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h2&gt;About the role&lt;/h2&gt;\n&lt;p&gt;As a Senior Backend Engineer, you will design, implement, and evolve product capabilities while solving high-scope backend problems and influencing the technical and product direction of our teams. You will move beyond &quot;assigned work&quot; to actively improve the quality, reliability, and performance of our systems. You will work across product, frontend, infrastructure, data, and security boundaries, making sound architectural trade-offs, communicating complex ideas clearly in an asynchronous environment, and helping define the standards for a high-scale, global product.&lt;/p&gt;\n&lt;h2&gt;Why you’ll love this role&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;High Impact: &lt;/strong&gt;You aren&#39;t just shipping features; you are shaping the architecture of a global platform used by millions.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Technical Agency: &lt;/strong&gt;You will influence team objectives, technical direction, and long-range goals, helping us solve problems of high scope and complexity.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Innovative Culture: &lt;/strong&gt;You will get to experiment with and integrate agentic AI into production engineering workflows, moving beyond simple prompt engineering to build resilient, AI-assisted systems.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Autonomy: &lt;/strong&gt;You will thrive in our remote-first, asynchronous organization, where clear written communication and self-direction are the pillars of success.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;User-Centric Collaboration: &lt;/strong&gt;You’ll partner closely with PMs and designers to shape requirements, ensuring every technical decision delivers genuine value to our users.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h2&gt;What you’ll do&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Drive Technical Direction: &lt;/strong&gt;Design and ship moderate to complex backend features with minimal guidance, making pragmatic choices between modular-monolith code, shared components, or independently operated services.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Raise the Bar: &lt;/strong&gt;Advocate for product quality, security, availability, and performance. You will define backend standards for style, maintainability, testing, APIs, and operational readiness.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Mentor &amp;amp; Lead: &lt;/strong&gt;Mentor associate and intermediate engineers, remove technical blockers, and improve team delivery practices through code and design reviews.&lt;/li",
+      "departments": [
+        {
+          "id": 4011044002,
+          "name": "Engineering",
+          "child_ids": [
+            4012212002,
+            4118841002,
+            4096122002,
+            4115238002,
+            4011053002,
+            4135581002,
+            4135580002,
+            4115239002,
+            4115240002,
+            4034706002,
+            4061741002,
+            4016843002,
+            4099701002,
+            4099700002
+          ],
+          "parent_id": null
+        }
+      ],
+      "offices": [],
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": null,
+      "ai_opt_out_request_url": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/gitlab/jobs/8775136002",
+      "data_compliance": [
+        {
+          "type": "gdpr",
+          "requires_consent": false,
+          "requires_processing_consent": false,
+          "requires_retention_consent": false,
+          "retention_period": null,
+          "demographic_data_consent_applies": false
+        }
+      ],
+      "internal_job_id": 6510686002,
+      "location": {
+        "name": "Bangalore, India"
+      },
+      "metadata": [
+        {
+          "id": 4595831002,
+          "name": "Quota Coverage Type",
+          "value": "n/a",
+          "value_type": "single_select"
+        }
+      ],
+      "id": 8775136002,
+      "updated_at": "2026-09-29T10:38:50-04:00",
+      "requisition_id": "6926",
+      "title": "Staff Backend Engineer, India",
+      "pay_input_ranges": [],
+      "company_name": "GitLab",
+      "first_published": "2026-09-02T14:50:19-04:00",
+      "language": "en",
+      "application_deadline": null,
+      "content": "&lt;div class=&quot;content-intro&quot;&gt;&lt;p&gt;GitLab is the intelligent orchestration platform for DevSecOps. GitLab enables organizations to increase developer productivity, improve operational efficiency, reduce security and compliance risk, and accelerate digital transformation. More than 50 million registered users and more than 50% of the Fortune 100* trust GitLab to ship better, more secure software faster.&lt;/p&gt;\n&lt;p&gt;The same principles built into our products are reflected in how our team works: we embrace AI as a core productivity multiplier, with all team members expected to incorporate AI into their daily workflows to drive efficiency, innovation, and impact. GitLab is where careers accelerate, innovation flourishes, and every voice is valued. Our high-performance culture is driven by our values&amp;nbsp;and continuous knowledge exchange, enabling our team members to reach their full potential while collaborating with industry leaders to solve complex problems. &lt;a href=&quot;https://www.youtube.com/watch?v=OuZIb5zszQI&quot;&gt;Co-create the future with us&lt;/a&gt; as we build technology that transforms how the world develops software.&lt;/p&gt;\n&lt;p&gt;*&lt;em&gt;Fortune 500® is a registered trademark of Fortune Media IP Limited, used under license. Claim based on GitLab data. Fortune 100 refers to the top 20% ranked companies in the 2025 Fortune 500 list, published in June 2025. Fortune and Fortune Media IP Limited are not affiliated with, and do not endorse products or services of GitLab.&lt;/em&gt;&lt;/p&gt;&lt;/div&gt;&lt;h2&gt;&lt;strong&gt;About the role&lt;/strong&gt;&lt;/h2&gt;\n&lt;p&gt;As a Staff Backend Engineer, you will provide technical leadership across your team and adjacent teams, solving the highest-scope and most complex problems in your area. You will lead large, cross-cutting backend initiatives, drive our modular architecture strategy, and define the standards that let teams move faster without compromising quality, security, reliability, or operability.&lt;/p&gt;\n&lt;p&gt;This is a technical leadership role that combines deep backend expertise, systems judgment, product judgment, and influence across organizational boundaries. You will work with Product, Frontend, Infrastructure, Security, Data, Engineering Managers, and engineers across product groups, bringing subject matter expertise, and you will do it without relying on formal authority.&lt;/p&gt;\n&lt;h2&gt;&lt;strong&gt;Why you’ll love this role&lt;/strong&gt;&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Leverage:&lt;/strong&gt; Your work multiplies across teams. The platforms, standards, and architectural decisions you lead determine how quickly everyone else can ship.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Genuinely Hard Problems:&lt;/strong&gt; You’ll lead the modernization of a large monolith toward modular, reusable, appropriately independent systems — at the scale of a platform used by millions of users.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Influence Without Bureaucracy:&lt;/strong&gt; You’ll shape technical direction across teams through clear written proposals and decision records, and partner with Product and Engineering leadership on platform roadmap and investment trade-offs.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Frontier AI Work:&lt;/strong&gt; You’ll lead adoption of AI-assisted and agentic engineering workflows and define the review, quality, security, and privacy guardrails that make them safe to rely on.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Autonomy:&lt;/strong&gt; You’ll thrive in our remote-first, asynchronous organization, where clear written communication and self-direction are the pillars of success.&lt;/li&gt;\n&lt;/ul&gt;\n&lt;h2&gt;&lt;strong&gt;What you’ll do&lt;/strong&gt;&lt;/h2&gt;\n&lt;ul&gt;\n&lt;li&gt;&lt;strong&gt;Lead Cross-Cutting Initiatives:&lt;/strong&gt; Lead the technical design and delivery of large backend initiatives that span teams, and identify and remove systemic bottlenecks across product and infrastructure groups.&lt;/li&gt;\n&lt;li&gt;&lt;strong&gt;Own Architecture Strategy:&lt;/st",
+      "departments": [
+        {
+          "id": 4011044002,
+          "name": "Engineering",
+          "child_ids": [
+            4012212002,
+            4118841002,
+            4096122002,
+            4115238002,
+            4011053002,
+            4135581002,
+            4135580002,
+            4115239002,
+            4115240002,
+            4034706002,
+            4061741002,
+            4016843002,
+            4099701002,
+            4099700002
+          ],
+          "parent_id": null
+        }
+      ],
+      "offices": [],
+      "ai_disclaimer": null,
+      "include_ai_disclaimer": null,
+      "ai_opt_out_request_url": null
+    }
+  ],
+  "meta": {
+    "total": 220
+  }
+}

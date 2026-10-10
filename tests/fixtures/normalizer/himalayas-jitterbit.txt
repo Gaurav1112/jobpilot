@@ -1,0 +1,37 @@
+Jitterbit is seeking a Java Backend Software Engineer to join our Engineer team. Jitterbit is an iPaaS (Integration Platform as a Service) and API Management platform that has been recognized in the leader quadrant of Gartner for five straight years. Our customers use our iPaaS and API Manager platform to solve mission-critical business problems. What is our challenge? To make it easy to integrate our customers’ systems. In order to do this, we need to build and create a SaaS offering that is reliable, stable, and scalable for our customers. Do you have the design, architecting, and code-writing capabilities to take on this challenge? And can succeed in a big way?
+
+About the Team
+
+The engineering team at Jitterbit believes that the quality of our code reflects directly on us as professionals. We are relentless about crafting a product that is innovative and delivers a memorable user experience; an experience that is fast and robust. As a key engineer on our team, you will collaborate with other engineers, product management, and operations.
+
+Our culture is fun, fast-paced, performance-oriented, open, and collegial. We are constantly pushing the technology envelope to the edge! We are very distributed and our culture is set up to make all of us very effective working remotely. We believe in hiring talent where it exists.
+
+Key team values:
+
+- Quality-first mindset: We believe code quality directly reflects on us as professionals
+- Distributed ownership: Engineers own their subsystems end-to-end, from design to production support
+- Mentorship culture: Senior engineers actively develop junior talent and foster technical growth
+- Innovation mindset: We constantly explore new technologies and architectural patterns to stay ahead
+
+About the Job
+
+As a Java Backend Software Engineer, you will join our team to design, architect, and implement robust, scalable distributed systems that power our SaaS platform. This role offers significant technical depth and opportunities for engineers ready to grow into more senior responsibilities.
+
+Key Responsibilities:
+
+- Design and implement high-performance, fault-tolerant connector integrations and adapters that reliably handle mission-critical business workflows 24x7x365.
+- Architect distributed microservices following cloud-native design patterns (circuit breakers, bulkheads, observability, etc.) for multi-tenant SaaS environments.
+- Build and optimize data pipelines handling multiple protocols (REST, SOAP, GraphQL, gRPC, webhooks) and communication patterns (synchronous, asynchronous, event-driven).
+- Drive technical decisions on critical subsystems; contribute to RFCs and architectural reviews; mentor junior engineers on system design principles.
+- Implement comprehensive monitoring, logging, and tracing; own the operational health and observability of deployed systems.
+- Collaborate with Product, DevOps, and SRE teams to deliver features, resolve production incidents, and improve platform reliability.
+- Champion best practices: code reviews, testing strategies (unit, integration, chaos), security hardening, and performance optimization.
+- Contribute to platform infrastructure and developer experience initiatives that benefit the entire engineering organization.
+
+About You
+
+You are an engineer who can turn ideas into extremely reliable and scalable designs. You code in such a way that other engineers find your code easy to comprehend, modify, and build upon. You believe in the power of Integration and APIs to transform how systems are integrated and how applications are built.
+
+You will be successful in this role if you:
+
+- Enjoy helping and mentoring others around you as you grow and become

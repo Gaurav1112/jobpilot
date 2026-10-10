@@ -5,12 +5,42 @@ import { ERROR_CODES, RETRYABLE, type ErrorCode } from './errors.js';
 import type { Predicate } from './predicates.js';
 import type { MessageType } from './types.js';
 
+/**
+ * Symbolic egress entries. A contract may name one instead of fixed hosts when its hosts are the user's data (the
+ * careers sites of the watchlist): the contract, and so its hash, stays the same whatever the hosts are, and the
+ * broker resolves the entry at call time from the `egressSets` the supervisor is given (exact hosts, still checked
+ * against the policy and its deny lists). A set that is not given resolves to no host at all.
+ */
+export const SYMBOLIC_EGRESS = ['pack:careers-hosts'] as const;
+export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
+export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
+
 export const AGENT_KINDS = ['deterministic', 'llm', 'io', 'io-session', 'human', 'effect'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
 export interface Capabilities {
   readonly http?: true;
   readonly llm?: { readonly model: string; readonly maxTokens: number };
+  /**
+   * Read-only access to the user's pack as `ctx.pack` (deep-frozen). `true` is the public pack;
+   * `'full'` also carries P1 contact details. The step key includes the matching pack hash, so a
+   * pack edit re-runs only the agents that read it.
+   */
+  readonly pack?: true | 'full';
+  /**
+   * Read-only page rendering as `ctx.browser.render(url)`, at most `maxPages` renders per step, to the exact
+   * `egress` hosts only. There is deliberately nothing else here: no stealth, proxy, user-agent, header or
+   * fingerprint option exists (G-NO-EVASION), and the strict meta-schema rejects any extra key.
+   */
+  readonly browser?: { readonly maxPages: number };
+  /**
+   * Files under one named root (`out`: the documents folder the app configures as `providers.fileRoots.out`), as
+   * `ctx.files.read(relPath)` and, with `access: 'read-write'`, `ctx.files.write(relPath, bytes)`. Paths are relative,
+   * with no `..`, NUL, backslash or symlink; nothing is ever written into an `applied-*` directory.
+   */
+  readonly files?: { readonly root: 'out'; readonly access: 'read' | 'read-write' };
+  /** `ctx.pdfText(relPath)`: the text layer of a PDF under the files root (`pdftotext -layout`). Needs `files`. */
+  readonly pdfText?: true;
 }
 
 export interface ObligationSpec {
@@ -54,46 +84,62 @@ const kebab = /^[a-z][a-z0-9-]*$/;
 const dotted = /^[a-z][a-z0-9.-]*$/;
 const guardrailId = /^G-[A-Z0-9-]+$/;
 
-const Meta = z.object({
-  id: z.string().regex(kebab, 'id must be kebab-case'),
-  version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be semver x.y.z'),
-  description: z
-    .string()
-    .min(10, 'description must say what the agent does')
-    .refine((d) => !/\band\b/i.test(d), 'description contains "and": one agent does one skill, so split it'),
-  skills: z.array(z.string().min(1)).min(1),
-  team: z.string().regex(kebab, 'team must be kebab-case'),
-  kind: z.enum(AGENT_KINDS),
-  capabilities: z
-    .object({
-      http: z.literal(true).optional(),
-      llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
+/** Strict: an unknown key in a contract spec is a typo or a smuggled field, so it is rejected. */
+const Meta = z
+  .object({
+    consumes: z.custom<MessageType<unknown>>((v) => typeof v === 'object' && v !== null, 'consumes must be a message type'),
+    produces: z.custom<MessageType<unknown>>((v) => typeof v === 'object' && v !== null, 'produces must be a message type'),
+    requires: z.array(z.custom<Predicate<unknown>>((v) => typeof v === 'object' && v !== null)),
+    guarantees: z.array(z.custom<Predicate<unknown>>((v) => typeof v === 'object' && v !== null)),
+    id: z.string().regex(kebab, 'id must be kebab-case'),
+    version: z.string().regex(/^\d+\.\d+\.\d+$/, 'version must be semver x.y.z'),
+    description: z
+      .string()
+      .min(10, 'description must say what the agent does')
+      .refine((d) => !/\band\b/i.test(d), 'description contains "and": one agent does one skill, so split it'),
+    skills: z.array(z.string().min(1)).min(1),
+    team: z.string().regex(kebab, 'team must be kebab-case'),
+    kind: z.enum(AGENT_KINDS),
+    capabilities: z
+      .object({
+        http: z.literal(true).optional(),
+        llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
+        pack: z.union([z.literal(true), z.literal('full')]).optional(),
+        browser: z.object({ maxPages: z.number().int().positive().max(500) }).strict().optional(),
+        files: z.object({ root: z.literal('out'), access: z.enum(['read', 'read-write']) }).strict().optional(),
+        pdfText: z.literal(true).optional(),
+      })
+      .strict(),
+    egress: z.array(
+      z.string().refine((e) => /^[a-z0-9.-]+$/.test(e) || isSymbolicEgress(e), `egress entries are bare host names or a known symbolic set (${SYMBOLIC_EGRESS.join(', ')})`),
+    ),
+    dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }).strict(),
+    redactor: z.boolean(),
+    emits: z.enum(DATA_CLASSES).optional(),
+    obligations: z.object({
+      adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
+      discharges: z.array(z.string().regex(dotted)),
     })
     .strict(),
-  egress: z.array(z.string().regex(/^[a-z0-9.-]+$/, 'egress entries are bare host names')),
-  dataClasses: z.object({ in: z.array(z.enum(DATA_CLASSES)).min(1), out: z.array(z.enum(DATA_CLASSES)).min(1) }),
-  redactor: z.boolean(),
-  emits: z.enum(DATA_CLASSES).optional(),
-  obligations: z.object({
-    adds: z.array(z.object({ id: z.string().regex(dotted), dischargedBy: z.string().regex(kebab) }).strict()),
-    discharges: z.array(z.string().regex(dotted)),
-  }),
-  guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }),
-  budget: z
-    .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
-    .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
-  timeoutMs: z.number().int().positive().max(600_000),
-  retry: z
-    .object({
-      max: z.number().int().min(0).max(5),
-      on: z.array(z.enum(ERROR_CODES)),
-      backoffMs: z.array(z.number().int().nonnegative()),
-    })
-    .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
-    .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
-    .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
-  breaker: z.object({ consecutiveFailures: z.number().int().min(1) }),
-});
+    guardrails: z.object({ in: z.array(z.string().regex(guardrailId)), out: z.array(z.string().regex(guardrailId)) }).strict(),
+    budget: z
+      .object({ usdPerCall: z.number().nonnegative(), usdPerRun: z.number().nonnegative() })
+      .strict()
+      .refine((b) => b.usdPerRun >= b.usdPerCall, 'budget.usdPerRun must be at least budget.usdPerCall'),
+    timeoutMs: z.number().int().positive().max(1_800_000),
+    retry: z
+      .object({
+        max: z.number().int().min(0).max(5),
+        on: z.array(z.enum(ERROR_CODES)),
+        backoffMs: z.array(z.number().int().nonnegative()),
+      })
+      .strict()
+      .refine((r) => r.backoffMs.length === r.max, 'retry.backoffMs needs exactly one entry per retry')
+      .refine((r) => r.max === 0 || r.on.length > 0, 'retry.max > 0 needs at least one code in retry.on')
+      .refine((r) => r.on.every((c) => RETRYABLE.has(c)), 'retry.on may only list retryable codes'),
+    breaker: z.object({ consecutiveFailures: z.number().int().min(1) }).strict(),
+  })
+  .strict();
 
 export function defineContract<I, O>(spec: ContractSpec<I, O>): Contract<I, O> {
   const c: Contract<I, O> = {
@@ -136,6 +182,10 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
     capabilities: {
       ...(capabilities.http ? { http: capabilities.http } : {}),
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
+      ...(capabilities.pack ? { pack: capabilities.pack } : {}),
+      ...(capabilities.browser ? { browser: { maxPages: capabilities.browser.maxPages } } : {}),
+      ...(capabilities.files ? { files: { root: capabilities.files.root, access: capabilities.files.access } } : {}),
+      ...(capabilities.pdfText ? { pdfText: capabilities.pdfText } : {}),
     },
     egress: [...c.egress],
     dataClasses: { in: [...c.dataClasses.in], out: [...c.dataClasses.out] },
@@ -154,10 +204,23 @@ function checkKindCapabilities(c: AnyContract): void {
   const httpKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
   if (c.capabilities.http && !httpKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.http`);
   if (c.capabilities.http && c.egress.length === 0) problems.push('capabilities.http requires at least one egress host');
-  if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm) problems.push('egress requires capabilities.http or capabilities.llm');
+  const browserKinds: readonly AgentKind[] = ['io', 'io-session'];
+  if (c.capabilities.browser && !browserKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.browser`);
+  if (c.capabilities.browser && c.egress.length === 0) problems.push('capabilities.browser requires at least one egress host');
+  if (c.egress.length > 0 && !c.capabilities.http && !c.capabilities.llm && !c.capabilities.browser) {
+    problems.push('egress requires capabilities.http, capabilities.llm or capabilities.browser');
+  }
   if ((c.kind === 'deterministic' || c.kind === 'human') && c.egress.length > 0) problems.push(`kind ${c.kind} may not declare egress`);
   if (c.kind === 'deterministic' && c.budget.usdPerCall > 0) problems.push('kind deterministic has no spend, so budget must be 0');
   if (c.emits !== undefined && !c.dataClasses.out.includes(c.emits)) problems.push(`emits ${c.emits} is not in dataClasses.out`);
+  const writeKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
+  if (c.capabilities.files?.access === 'read-write' && !writeKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not write files`);
+  if (c.capabilities.pdfText && !c.capabilities.files) problems.push('capabilities.pdfText requires capabilities.files');
+  // M7: contact details make an output P1 whatever the agent returns, so a 'full' pack agent must say so and may not redact.
+  if (c.capabilities.pack === 'full' && (c.emits === undefined || DATA_CLASSES.indexOf(c.emits) < DATA_CLASSES.indexOf('P1'))) {
+    problems.push("capabilities.pack 'full' requires emits P1 or higher");
+  }
+  if (c.capabilities.pack === 'full' && c.redactor) problems.push("capabilities.pack 'full' may not be a redactor");
   if (problems.length > 0) throw new TypeError(`contract ${c.id}: ${problems.join('; ')}`);
 }
 

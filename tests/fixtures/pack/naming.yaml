@@ -1,0 +1,6 @@
+employerDisplay:
+  "Initech India (GCC for Northwind)": Northwind Labs
+  Northwind Labs: Northwind Labs
+  Contoso Retail: Contoso Retail
+  Fabrikam: Fabrikam
+forbiddenTerms: [Initech]

@@ -1,0 +1,26 @@
+{
+  "comments": "fixture",
+  "updatedAt": 1790985600,
+  "offset": 0,
+  "limit": 20,
+  "totalCount": 1,
+  "jobs": [
+    {
+      "title": "Backend Developer",
+      "excerpt": "Ruby on Rails work",
+      "companyName": "Example Feed Co",
+      "companySlug": "example-feed-co",
+      "employmentType": "Full Time",
+      "minSalary": null,
+      "maxSalary": null,
+      "salaryPeriod": "annual",
+      "currency": null,
+      "locationRestrictions": [],
+      "categories": ["Backend-Engineer"],
+      "description": "<p>Maintain our Ruby on Rails monolith and a PHP billing service.</p>",
+      "pubDate": 1790985600,
+      "guid": "https://himalayas.example.test/companies/example-feed-co/jobs/backend-developer",
+      "applicationLink": "https://himalayas.example.test/companies/example-feed-co/jobs/backend-developer"
+    }
+  ]
+}

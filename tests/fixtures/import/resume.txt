@@ -1,0 +1,12 @@
+Senior Backend Engineer | Initech India (GCC for Northwind) | Pune, India | Dec 2025 - Present
+Leads the order platform team.
+Owns the event pipeline.
+
+Backend Engineer | Northwind Labs | Pune, India | Mar 2022 - Nov 2025
+Built pricing services.
+
+Software Engineer II | Contoso Retail | Bengaluru, India | Apr 2020 - Jan 2022
+Built the reconciliation service.
+
+Associate Software Engineer, promoted to Software Engineer | Fabrikam | Pune, India | Jul 2016 - Mar 2020
+Built store-locator services.

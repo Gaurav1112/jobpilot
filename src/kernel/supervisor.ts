@@ -1,9 +1,11 @@
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
+import { createHostPacer, freezePack, type EgressSets, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
-import { type Envelope, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
+import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
 import { InvalidTransition } from './errors.js';
+import { recoverPending } from './files.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
 import type { Policy } from './policy.js';
@@ -17,6 +19,14 @@ import { type CompiledPipeline, SUPERVISOR_ID, seedClass } from './wiring.js';
 export interface Tracker {
   readonly kind: string;
   readonly machine: StateMachine;
+  /**
+   * The entity this envelope belongs to, or null when the tracker does not follow it. Must be a
+   * pure function of the envelope. Throwing is treated as a broken output, not a broken tracker:
+   * when it throws for an output of a done step, that step is quarantined with verdict G-TRACKER
+   * and nothing is routed. A step executed in this run is quarantined in the store (its outputs are
+   * dropped); a replayed step is quarantined for this run only, leaving stored history untouched.
+   * A throw while tracking a quarantined input is only audited (`tracker_error`).
+   */
   keyOf(env: Envelope): string | null;
   /** `env` is the tracked envelope: an output when the step is done, its input when it is quarantined. */
   eventFor(agentId: string, outcome: 'done' | 'quarantined', env: Envelope): string | null;
@@ -37,6 +47,21 @@ export interface SupervisorDeps {
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
   /** Test hook: runs after a step's own transaction, before routing. Throwing here simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** The user's public pack; given to contracts with `capabilities.pack: true` and to guardrails. */
+  readonly pack?: unknown;
+  /** Hash of `pack`, part of the step key of pack agents only. Default 'none'. */
+  readonly packHash?: string;
+  /** The full pack (with P1 contact details); given to contracts with `capabilities.pack: 'full'`. */
+  readonly fullPack?: unknown;
+  /** Hash of `fullPack`, part of the step key of 'full' pack agents only. Default 'none'. */
+  readonly fullPackHash?: string;
+  /** The hosts behind symbolic egress entries (`pack:careers-hosts`); the app derives them from the pack. */
+  readonly egressSets?: EgressSets;
+  /**
+   * Fingerprint of the agents' implementation (review I4), in every step key: a code change re-runs every step once.
+   * Default 'none' (kernel and demo), which leaves the keys as before.
+   */
+  readonly codeHash?: string;
 }
 
 export interface RunReport {
@@ -44,6 +69,10 @@ export interface RunReport {
   readonly status: 'completed';
   readonly queue: Record<'pending' | 'done' | 'failed' | 'quarantined' | 'skipped', number>;
   readonly replayed: number;
+  /** Failed steps whose item no longer exists at its source (error code `gone`); they are inside `queue.failed`. */
+  readonly gone: number;
+  /** Failed steps refused for their input alone (error code `input_rejected`); they are inside `queue.failed`. */
+  readonly inputRejected: number;
   readonly openObligations: readonly { readonly envelopeId: string; readonly ids: readonly string[] }[];
   readonly costUsd: number;
 }
@@ -60,8 +89,22 @@ export class Supervisor {
    * needs is read back from the store.
    */
   private readonly breakersByRun = new Map<string, Breakers>();
+  private readonly sleep: (ms: number) => Promise<void>;
+  /** One per supervisor: every step's requests to a host share its spacing. */
+  private readonly hostPacer: HostPacer;
+  /** One per supervisor: browser renders of a host are also spaced by policy.minBrowserIntervalMs. */
+  private readonly browserPacer: HostPacer;
+  /** One frozen deep copy of each pack, made once; the caller's objects are left alone. */
+  private readonly pack: unknown;
+  private readonly fullPack: unknown;
 
-  constructor(private readonly d: SupervisorDeps) {}
+  constructor(private readonly d: SupervisorDeps) {
+    this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+    this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+    this.browserPacer = createHostPacer(d.policy.minBrowserIntervalMs, d.clock, this.sleep);
+    this.pack = d.pack === undefined ? undefined : freezePack(d.pack);
+    this.fullPack = d.fullPack === undefined ? undefined : freezePack(d.fullPack);
+  }
 
   private get exec(): ExecutorDeps {
     const d = this.d;
@@ -72,7 +115,15 @@ export class Supervisor {
       providers: d.providers,
       clock: d.clock,
       guardrails: d.guardrails,
-      sleep: d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms))),
+      sleep: this.sleep,
+      hostPacer: this.hostPacer,
+      browserPacer: this.browserPacer,
+      ...(this.pack !== undefined ? { pack: this.pack } : {}),
+      ...(d.packHash !== undefined ? { packHash: d.packHash } : {}),
+      ...(this.fullPack !== undefined ? { fullPack: this.fullPack } : {}),
+      ...(d.fullPackHash !== undefined ? { fullPackHash: d.fullPackHash } : {}),
+      ...(d.egressSets !== undefined ? { egressSets: d.egressSets } : {}),
+      ...(d.codeHash !== undefined ? { codeHash: d.codeHash } : {}),
       contractHashOf: (id, v) => (id === SUPERVISOR_ID && v === d.compiled.pipeline.version ? d.compiled.seedHash : d.registry.contractHashOf(id, v)),
       ...(d.onInvoke ? { onInvoke: d.onInvoke } : {}),
     };
@@ -122,7 +173,20 @@ export class Supervisor {
       this.event(runId, 'run_started', { pipeline: compiled.pipeline.id, seeds: envs.length });
     });
     this.rememberContracts();
+    await this.recoverFiles(runId);
     return this.drain(runId);
+  }
+
+  /**
+   * Staged writes left by a crashed process (files.ts): a done step's stage is committed (the crash came between
+   * recording the step and committing its files), every other stage is deleted. Runs before any step of this run.
+   */
+  private async recoverFiles(runId: string): Promise<void> {
+    for (const [name, root] of Object.entries(this.d.providers.fileRoots ?? {})) {
+      if (root === undefined) continue;
+      const r = await recoverPending(root, (k) => this.d.store.getStep(k)?.status === 'done', this.d.policy.maxResponseBytes, name);
+      if (r.committed.length + r.discarded.length + r.failed.length > 0) this.event(runId, 'files_recovered', { root: name, ...r });
+    }
   }
 
   /** Continues a crashed run. Finished steps replay from the store; nothing finished runs again. */
@@ -133,6 +197,7 @@ export class Supervisor {
     if (run.policy_hash !== this.d.policyHash) throw new Error(`run ${runId} used a different policy; start a new run instead`);
     this.event(runId, 'run_resumed', {});
     this.rememberContracts();
+    await this.recoverFiles(runId);
     return this.drain(runId);
   }
 
@@ -180,16 +245,26 @@ export class Supervisor {
       if (breakers.isOpen(agentKey) || (teamKey !== undefined && breakers.isOpen(teamKey))) {
         store.tx(() => {
           store.markQueue(runId, item.agent_id, item.envelope_id, 'skipped');
-          this.event(runId, 'step_skipped', { agent: item.agent_id, reason: 'breaker_open' });
+          this.event(runId, 'step_skipped', { agent: item.agent_id, envelopeId: item.envelope_id, reason: 'breaker_open' });
           this.reportOpen(runId, input);
         });
         continue;
       }
-      const outcome: StepOutcome = await executeStep(this.exec, runId, agent, input);
+      const executed: StepOutcome = await executeStep(this.exec, runId, agent, input);
       count += 1;
       this.d.afterStep?.(count);
+      const trip = executed.kind === 'done' ? this.trackerTrip(executed.outputs) : undefined;
+      const outcome: StepOutcome = trip ? { kind: 'quarantined', stepKey: executed.stepKey, verdicts: [trip] } : executed;
 
       store.tx(() => {
+        if (trip) {
+          // Persist only what this execution created and nothing has consumed yet. A replayed step's
+          // envelopes may belong to other runs' history, so its quarantine is for this run only: keyOf
+          // is pure, so later runs re-derive it, and a fixed tracker heals the pipeline.
+          const persisted = executed.kind === 'done' && !executed.replayed;
+          if (persisted) store.quarantineDoneStep(outcome.stepKey, JSON.stringify([trip]));
+          this.event(runId, 'step_quarantined', { agent: item.agent_id, stepKey: outcome.stepKey, envelopeId: item.envelope_id, side: 'tracker', persisted, verdict: trip });
+        }
         if (outcome.kind === 'done') {
           for (const out of outcome.outputs) {
             this.route(runId, out);
@@ -203,7 +278,10 @@ export class Supervisor {
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
       });
 
-      if (outcome.kind === 'failed') {
+      // A gone or input-rejected item is that item's failure, not the service's: it neither trips nor resets a breaker.
+      if (outcome.kind === 'failed' && (outcome.error === 'gone' || outcome.error === 'input_rejected')) {
+        // reported through the step_failed event and RunReport.gone / inputRejected
+      } else if (outcome.kind === 'failed') {
         this.failure(agentKey, agent.contract.breaker.consecutiveFailures, runId);
         if (team && teamKey !== undefined) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
       } else if (outcome.kind === 'done') {
@@ -217,12 +295,28 @@ export class Supervisor {
       runId,
       status: 'completed',
       queue: store.queueCounts(runId),
-      replayed: events.filter((e) => e.kind === 'step_replayed').length,
+      replayed: replayedOf(events),
+      gone: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'gone').length,
+      inputRejected: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'input_rejected').length,
       openObligations: openObligationsOf(events),
       costUsd: store.runCost(runId),
     };
     this.event(runId, 'run_finished', report);
     return report;
+  }
+
+  /** G-TRACKER: an output no tracker can key is not trusted. The first throw, in output then tracker order, decides. */
+  private trackerTrip(outputs: readonly Envelope[]): GuardrailVerdict | undefined {
+    for (const [i, out] of outputs.entries()) {
+      for (const t of this.d.trackers ?? []) {
+        try {
+          t.keyOf(out);
+        } catch (err) {
+          return { id: 'G-TRACKER', verdict: 'trip', detail: `tracker ${t.kind} could not key output ${i}: ${messageOf(err)}` };
+        }
+      }
+    }
+    return undefined;
   }
 
   private track(runId: string, env: Envelope, stepKey: string, agentId: string, outcome: 'done' | 'quarantined'): void {
@@ -267,6 +361,20 @@ function messageOf(err: unknown): string {
   } catch {
     return 'unprintable error';
   }
+}
+
+/**
+ * Queue items answered from the store: one per (agent, input envelope), so a step a crash interrupted after its
+ * replay (before its queue row was marked) is not counted twice when the run resumes (review m1).
+ */
+export function replayedOf(events: readonly EventRow[]): number {
+  const seen = new Set<string>();
+  for (const e of events) {
+    if (e.kind !== 'step_replayed') continue;
+    const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown; stepKey?: unknown };
+    seen.add(`${String(d.agent)}\u0000${String(d.envelopeId ?? `step:${String(d.stepKey)}:${e.seq}`)}`);
+  }
+  return seen.size;
 }
 
 /** The run's `obligation_open` events, one per envelope, in envelope order. */

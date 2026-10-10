@@ -15,6 +15,13 @@ export interface GuardrailContext {
   readonly input: Envelope;
   /** Present on the out side: one output payload and its computed data class. */
   readonly output?: { readonly payload: unknown; readonly dataClass: DataClass };
+  /** The user's public pack, deep-frozen; passed whenever the supervisor has one, whatever the contract declares. */
+  readonly pack?: Readonly<unknown>;
+  /**
+   * The full pack (with P1 contact details and answers), deep-frozen; present only when the contract declares
+   * `capabilities.pack: 'full'`, so a guardrail can re-derive what that agent rendered from what it read.
+   */
+  readonly fullPack?: Readonly<unknown>;
 }
 
 /** A pure function of the envelope, the contract and the policy. */

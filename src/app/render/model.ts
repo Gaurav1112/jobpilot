@@ -1,0 +1,174 @@
+import type { CoverPlan, ResumePlan } from '../types.js';
+
+/**
+ * The document model every format is drawn from (Task 10). A document is a flat list of blocks in reading order, one
+ * column, no tables: the PDF, DOCX and HTML renderers only choose fonts and spacing for each block kind, so the three
+ * formats carry the same text. Pure: agent code (the renderer), the G-FILL guardrail and the qa-gate all build it.
+ *
+ * Layout (user's resume v5 ATS rules): contact details in the body, never a header or footer; section headings in
+ * capitals; literal "•" bullets; dates "Mon YYYY – Mon YYYY" or "– Present".
+ */
+
+/** The P1 contact block, as `contact.yaml` holds it. */
+export interface ContactDetails {
+  readonly name: string;
+  readonly email: string;
+  readonly phone: string;
+  readonly city: string;
+  readonly links: readonly string[];
+}
+
+export type Block =
+  /** The candidate's name, large and bold. */
+  | { readonly kind: 'name'; readonly text: string }
+  /** The contact line: email | phone | city | links. */
+  | { readonly kind: 'contact'; readonly text: string }
+  /** A section heading, already in capitals. */
+  | { readonly kind: 'heading'; readonly text: string }
+  /** A bold line: the headline, or a role's "Title | Employer". */
+  | { readonly kind: 'title'; readonly text: string }
+  /** A role's "Location | Mon YYYY – Mon YYYY". */
+  | { readonly kind: 'meta'; readonly text: string }
+  /** A paragraph; `factIds` names the facts it cites (cover paragraphs). */
+  | { readonly kind: 'para'; readonly text: string; readonly factIds: readonly string[] }
+  /** A bullet: a fact's claim verbatim, drawn after a literal "•". */
+  | { readonly kind: 'bullet'; readonly text: string; readonly factId: string }
+  /** A plain line (the cover's salutation and sign-off). */
+  | { readonly kind: 'line'; readonly text: string };
+
+export interface DocModel {
+  readonly kind: 'resume' | 'cover';
+  /** Document title metadata. */
+  readonly title: string;
+  readonly author: string;
+  /** `plan.firstSeen` (YYYY-MM-DD): the fixed creation date of every format. */
+  readonly date: string;
+  readonly blocks: readonly Block[];
+}
+
+export const BULLET = '•';
+export const SALUTATION = 'Dear Hiring Team,';
+export const SIGN_OFF = 'Sincerely,';
+export const HEADINGS = { summary: 'SUMMARY', skills: 'SKILLS', experience: 'EXPERIENCE', certifications: 'CERTIFICATIONS', education: 'EDUCATION' } as const;
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** "2022-01" → "Jan 2022"; "present" → "Present". */
+export function monthYear(ym: string): string {
+  if (ym === 'present') return 'Present';
+  const m = /^(\d{4})-(\d{2})$/.exec(ym);
+  const name = m ? MONTHS[Number(m[2]) - 1] : undefined;
+  if (!m || name === undefined) throw new Error(`not a YYYY-MM month: ${ym}`);
+  return `${name.slice(0, 3)} ${m[1]}`;
+}
+
+/** What separates the contact tokens; the only place the contact line may wrap (L4). */
+export const CONTACT_SEPARATOR = ' | ';
+
+/** email | phone | city | links, skipping empty fields. */
+export function contactLine(c: ContactDetails): string {
+  return [c.email, c.phone, c.city, ...c.links].map((s) => s.trim()).filter((s) => s !== '').join(CONTACT_SEPARATOR);
+}
+
+/**
+ * The tokens of a contact line (an email, a phone number, a city, a link). Each is laid out as one unit in every format
+ * (L4): the line wraps only between tokens, never inside one, so a URL is never split.
+ */
+export const contactTokens = (line: string): string[] => line.split(CONTACT_SEPARATOR).map((t) => t.trim()).filter((t) => t !== '');
+
+/** The contact line of a document text (`Rendered.text`): its second line, under the name. */
+export const contactLineOf = (text: string): string => text.split('\n')[1] ?? '';
+
+/**
+ * Invisible format characters (soft hyphen U+00AD, zero-width spaces and joiners, bidi marks: Unicode category Cf)
+ * are removed from every block before rendering: a soft hyphen would otherwise surface as a visible "-" wherever the
+ * PDF wraps, and the qa-gate compares the text layers with this cleaned text.
+ */
+export const cleanText = (s: string): string => s.replace(/\p{Cf}/gu, '');
+const cleanBlock = (b: Block): Block => ({ ...b, text: cleanText(b.text) });
+
+const head = (c: ContactDetails): Block[] => [
+  { kind: 'name', text: c.name.trim() },
+  { kind: 'contact', text: contactLine(c) },
+];
+
+/** The resume: header, headline, summary, skills, experience, certifications, education. Empty sections are left out. */
+export function resumeModel(plan: ResumePlan, c: ContactDetails): DocModel {
+  const blocks: Block[] = [...head(c), { kind: 'title', text: plan.headline }];
+  blocks.push({ kind: 'heading', text: HEADINGS.summary }, { kind: 'para', text: plan.summary.text, factIds: [] });
+  if (plan.skills.length > 0) blocks.push({ kind: 'heading', text: HEADINGS.skills }, { kind: 'para', text: plan.skills.join(', '), factIds: [] });
+  if (plan.roles.length > 0) {
+    blocks.push({ kind: 'heading', text: HEADINGS.experience });
+    for (const r of plan.roles) {
+      blocks.push({ kind: 'title', text: `${r.title} | ${r.employer}` });
+      const dates = `${monthYear(r.start)} – ${monthYear(r.end)}`;
+      blocks.push({ kind: 'meta', text: r.location.trim() === '' ? dates : `${r.location.trim()} | ${dates}` });
+      for (const b of r.bullets) blocks.push({ kind: 'bullet', text: b.text, factId: b.factId });
+    }
+  }
+  if (plan.certs.length > 0) {
+    blocks.push({ kind: 'heading', text: HEADINGS.certifications });
+    for (const b of plan.certs) blocks.push({ kind: 'bullet', text: b.text, factId: b.factId });
+  }
+  if (plan.education.length > 0) {
+    blocks.push({ kind: 'heading', text: HEADINGS.education });
+    for (const b of plan.education) blocks.push({ kind: 'bullet', text: b.text, factId: b.factId });
+  }
+  return { kind: 'resume', title: cleanText(`${c.name.trim()} - Resume`), author: cleanText(c.name.trim()), date: plan.firstSeen, blocks: blocks.map(cleanBlock) };
+}
+
+/**
+ * The cover letter: header, "Dear Hiring Team,", the paragraphs, "Sincerely," and the name. There is no date line
+ * (LIVE RUN 1, L5): the only date a plan has is the posting's, which is not the day the user sends the letter.
+ */
+export function coverModel(cover: CoverPlan, c: ContactDetails): DocModel {
+  const blocks: Block[] = [
+    ...head(c),
+    { kind: 'line', text: SALUTATION },
+    ...cover.paragraphs.map((p): Block => ({ kind: 'para', text: p.text, factIds: [...p.factIds] })),
+    { kind: 'line', text: SIGN_OFF },
+    { kind: 'line', text: c.name.trim() },
+  ];
+  return { kind: 'cover', title: cleanText(`${c.name.trim()} - Cover Letter`), author: cleanText(c.name.trim()), date: cover.resume.firstSeen, blocks: blocks.map(cleanBlock) };
+}
+
+/** One block's text as a line of the document text: a bullet is "• claim", every other block its text. */
+export const blockLine = (b: Block): string => (b.kind === 'bullet' ? `${BULLET} ${b.text}` : b.text);
+
+/** The document text (`Rendered.text`): one line per block, in order. */
+export const modelText = (m: DocModel): string => m.blocks.map(blockLine).join('\n');
+
+/**
+ * The normalisation every text comparison uses (qa-gate, renderer self-check). Documented rule:
+ * 1. NFC; format characters (Cf: soft hyphens, zero-width characters) removed; form feeds (pdftotext page breaks)
+ *    and CR become newlines;
+ * 2. a line break right after a hyphen that follows a letter or digit is removed ("event-\n driven" → "event-driven"),
+ *    since a PDF line may break after a hyphen of the source text;
+ * 3. every run of whitespace (spaces, tabs, newlines, NBSP) becomes one space, and the ends are trimmed.
+ * Layout spacing (pdftotext -layout indents, DOCX paragraph boundaries) therefore never counts, and words never merge.
+ */
+export function normText(s: string): string {
+  return s
+    .normalize('NFC')
+    .replace(/\p{Cf}/gu, '')
+    .replace(/[\f\r]/g, '\n')
+    .replace(/(?<=[\p{L}\p{N}]-)[ \t]*\n\s*/gu, '')
+    .replace(/[\s ]+/gu, ' ')
+    .trim();
+}
+
+/** The six files of one job, in the order the renderer writes and lists them. */
+export const RENDER_FILES: readonly { readonly kind: 'resume' | 'cover'; readonly format: 'pdf' | 'docx' | 'html' }[] = [
+  { kind: 'resume', format: 'pdf' },
+  { kind: 'resume', format: 'docx' },
+  { kind: 'resume', format: 'html' },
+  { kind: 'cover', format: 'pdf' },
+  { kind: 'cover', format: 'docx' },
+  { kind: 'cover', format: 'html' },
+];
+
+/** `<jobKey>/resume.pdf` and so on, relative to the out root. */
+export const renderedPath = (jobKey: string, kind: 'resume' | 'cover', format: 'pdf' | 'docx' | 'html'): string => `${jobKey}/${kind}.${format}`;
+
+/** The page limits the qa-gate enforces. */
+export const PAGE_LIMITS = { resume: 2, cover: 1 } as const;

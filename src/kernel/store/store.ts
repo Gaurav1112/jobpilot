@@ -1,3 +1,4 @@
+import { chmodSync, closeSync, constants, lstatSync, openSync, statSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from '../canonical.js';
 import type { Cost, Envelope } from '../envelope.js';
@@ -55,11 +56,62 @@ export function eventHash(prevHash: string, e: Pick<EventRow, 'run_id' | 'at' | 
  * The only module that touches SQLite. better-sqlite3 is synchronous, so
  * writes happen in program order and every multi-row write is one transaction.
  */
+/**
+ * Makes an existing file owner-only (`mode`) when it is a regular file (never through a symlink) the user owns and
+ * other accounts can read. Anything else it cannot or may not fix, a file someone else owns or a refused chmod,
+ * is reported through `onLoose` instead; it never throws for that.
+ */
+export type LooseReason = 'link' | 'not-owned' | 'refused';
+
+export function tightenOwnedFile(path: string, mode: number, onLoose: (path: string, why: LooseReason) => void): void {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch (e) {
+    if ((e as { code?: string }).code === 'ENOENT') return;
+    throw e;
+  }
+  if (st.isSymbolicLink()) {
+    // Never chmod through a link (it may point anywhere); report an open target instead. A dangling link has none.
+    try {
+      if ((statSync(path).mode & 0o077) !== 0) onLoose(path, 'link');
+    } catch {
+      // dangling: nothing to report
+    }
+    return;
+  }
+  if (!st.isFile() || (st.mode & 0o077) === 0) return;
+  if (process.getuid !== undefined && st.uid !== process.getuid()) return onLoose(path, 'not-owned');
+  try {
+    chmodSync(path, mode);
+  } catch (e) {
+    const c = (e as { code?: string }).code;
+    if (c === 'EPERM' || c === 'EACCES') return onLoose(path, 'refused');
+    throw e;
+  }
+}
+
 export class Store {
   private constructor(readonly db: Database.Database) {}
 
-  static open(path: string): Store {
-    const db = new Database(path);
+  /** `timeoutMs`: how long a statement waits for another connection's lock (SQLite busy_timeout); default the driver's 5 s. */
+  /**
+   * `timeoutMs`: SQLite busy_timeout. Owner-only files: a new DB file is created 0600 before SQLite opens it (SQLite
+   * gives its -wal and -shm files the database file's mode); an existing looser one is tightened when it is a regular
+   * file the user owns, else `onLooseFile` is told (default: nothing).
+   */
+  static open(path: string, opts: { readonly timeoutMs?: number; readonly onLooseFile?: (path: string, why: LooseReason) => void } = {}): Store {
+    const onDisk = path !== ':memory:' && path !== '';
+    if (onDisk) {
+      try {
+        closeSync(openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600));
+      } catch (e) {
+        const c = (e as { code?: string }).code;
+        if (c !== 'EEXIST' && c !== 'ELOOP') throw e;
+      }
+    }
+    const db = new Database(path, opts.timeoutMs !== undefined ? { timeout: opts.timeoutMs } : {});
+    if (onDisk) for (const f of [path, `${path}-wal`, `${path}-shm`]) tightenOwnedFile(f, 0o600, opts.onLooseFile ?? (() => {}));
     db.pragma('journal_mode = WAL');
     db.pragma('foreign_keys = ON');
     try {
@@ -97,6 +149,15 @@ export class Store {
 
   finishRun(runId: string, at: string): void {
     this.db.prepare(`UPDATE runs SET status = 'completed', finished_at = ? WHERE run_id = ?`).run(at, runId);
+  }
+
+  /** Runs that started but never completed (a crash, a kill), oldest first. */
+  incompleteRuns(): { run_id: string; pipeline: string; policy_hash: string }[] {
+    return this.db.prepare(`SELECT run_id, pipeline, policy_hash FROM runs WHERE status != 'completed' ORDER BY started_at, run_id`).all() as {
+      run_id: string;
+      pipeline: string;
+      policy_hash: string;
+    }[];
   }
 
   getRun(runId: string): { run_id: string; pipeline: string; policy_hash: string; status: string } | undefined {
@@ -143,12 +204,64 @@ export class Store {
       if (res.changes !== 1) throw new Error(`finishStep: step ${a.stepKey} is not running`);
       const ins = this.db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`);
       for (const e of a.envelopes) ins.run(e.envelopeId, e.stepKey, e.index, e.type, canonicalJson(e));
-      if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
-        this.db
-          .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens, max_call_usd) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-          .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens, a.maxCallUsd ?? 0);
-      }
+      this.addCost(a);
       if (a.event) this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
+    });
+  }
+
+  /**
+   * Records the spend of a finished attempt of a still-running step (before its retry sleep),
+   * with its hash-chained event, in one transaction. finishStep later records only what came after.
+   */
+  recordAttemptSpend(a: {
+    runId: string;
+    stepKey: string;
+    agentId: string;
+    cost: Cost;
+    maxCallUsd?: number;
+    event: { at: string; kind: string; data: unknown; policyHash: string };
+  }): void {
+    this.tx(() => {
+      this.addCost(a);
+      this.appendEvent(a.runId, a.event.at, a.event.kind, a.event.data, a.event.policyHash);
+    });
+  }
+
+  private addCost(a: { runId: string; stepKey: string; agentId: string; cost: Cost; maxCallUsd?: number }): void {
+    if (a.cost.usd > 0 || a.cost.inputTokens > 0 || a.cost.outputTokens > 0) {
+      this.db
+        .prepare(`INSERT INTO cost_ledger (run_id, step_key, agent_id, usd, input_tokens, output_tokens, max_call_usd) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(a.runId, a.stepKey, a.agentId, a.cost.usd, a.cost.inputTokens, a.cost.outputTokens, a.maxCallUsd ?? 0);
+    }
+  }
+
+  /**
+   * Turns a done step into a quarantined one (e.g. a tracker could not key its outputs): its
+   * envelopes are dropped, so nothing downstream can use them and a released step can run again.
+   * Spend already recorded stays recorded.
+   */
+  quarantineDoneStep(stepKey: string, detail: string): void {
+    this.tx(() => {
+      const res = this.db.prepare(`UPDATE steps SET status = 'quarantined', detail = ? WHERE step_key = ? AND status = 'done'`).run(detail, stepKey);
+      if (res.changes !== 1) throw new Error(`quarantineDoneStep: step ${stepKey} is not done`);
+      this.db.prepare(`DELETE FROM envelopes WHERE step_key = ?`).run(stepKey);
+    });
+  }
+
+  /**
+   * Review I1: forgets a done step whose files are no longer what its stored output references, so the executor runs it
+   * again (memo bypass for this step only). Its envelopes are dropped and it is marked failed, both with the
+   * hash-chained `replay-healed` event in one transaction; a crash before the re-execution leaves a failed step, which
+   * the next run executes anyway. Spend already recorded stays recorded.
+   */
+  forgetDoneStep(runId: string, stepKey: string, event: { at: string; kind: string; data: unknown; policyHash: string }): void {
+    this.tx(() => {
+      const res = this.db
+        .prepare(`UPDATE steps SET status = 'failed', error_code = 'invalid_output', detail = 'replay-healed: its files changed on disk' WHERE step_key = ? AND status = 'done'`)
+        .run(stepKey);
+      if (res.changes !== 1) throw new Error(`forgetDoneStep: step ${stepKey} is not done`);
+      this.db.prepare(`DELETE FROM envelopes WHERE step_key = ?`).run(stepKey);
+      this.appendEvent(runId, event.at, event.kind, event.data, event.policyHash);
     });
   }
 
@@ -221,6 +334,11 @@ export class Store {
     return out;
   }
 
+  /** Read-only: every queue item of one run, in the queue's total order (stage, agent, envelope id). */
+  queueItems(runId: string): QueueRow[] {
+    return this.db.prepare(`SELECT * FROM queue WHERE run_id = ? ORDER BY stage, agent_id, envelope_id`).all(runId) as QueueRow[];
+  }
+
   // events: append-only, hash-chained
   appendEvent(runId: string, at: string, kind: string, data: unknown, policyHash: string): void {
     this.tx(() => {
@@ -284,6 +402,16 @@ export class Store {
       this.db.prepare(`SELECT 1 FROM entity_transitions WHERE kind = ? AND entity_id = ? AND step_key = ? AND event = ?`).get(kind, entityId, stepKey, event) !==
       undefined
     );
+  }
+
+  /**
+   * Read-only: the entity moves a step key made, by kind, entity and event. The only link from an input-side
+   * quarantine (which writes no step row) to the entity it held.
+   */
+  transitionsOfStep(stepKey: string): { kind: string; entity_id: string; event: string; from_state: string; to_state: string; outcome: 'done' | 'quarantined' }[] {
+    return this.db
+      .prepare(`SELECT kind, entity_id, event, from_state, to_state, outcome FROM entity_transitions WHERE step_key = ? ORDER BY kind, entity_id, event`)
+      .all(stepKey) as { kind: string; entity_id: string; event: string; from_state: string; to_state: string; outcome: 'done' | 'quarantined' }[];
   }
 
   /** The entity's state under `kind`; without a kind, the id must belong to at most one kind. */

@@ -36,6 +36,11 @@ describe('defineContract', () => {
     expect(() => defineContract({ ...base, description: 'Parses and scores a posting' })).toThrow(/split it/);
   });
 
+  it('allows a step timeout up to 30 minutes (a 60-page career site at 10 s + 20 s per page), not beyond', () => {
+    expect(defineContract({ ...base, timeoutMs: 1_800_000 }).timeoutMs).toBe(1_800_000);
+    expect(() => defineContract({ ...base, timeoutMs: 1_800_001 })).toThrow(/timeoutMs/);
+  });
+
   it('rejects non-semver versions and non-kebab ids', () => {
     expect(() => defineContract({ ...base, version: '1.0' })).toThrow(/semver/);
     expect(() => defineContract({ ...base, id: 'Thing_Doubler' })).toThrow(/kebab-case/);
@@ -133,7 +138,7 @@ describe('defineContract', () => {
 
   it('requires egress for http and http or llm for egress', () => {
     expect(() => defineContract({ ...base, kind: 'io', capabilities: { http: true } })).toThrow(/capabilities.http requires at least one egress host/);
-    expect(() => defineContract({ ...base, kind: 'io', egress: ['example.com'] })).toThrow(/egress requires capabilities.http or capabilities.llm/);
+    expect(() => defineContract({ ...base, kind: 'io', egress: ['example.com'] })).toThrow(/egress requires capabilities.http, capabilities.llm or capabilities.browser/);
   });
 
   it('accepts a valid io contract and a valid llm contract', () => {
@@ -190,5 +195,33 @@ describe('contractShape ordering is locale independent', () => {
     const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => (statSync(join(dir, f)).isDirectory() ? walk(join(dir, f)) : [join(dir, f)]));
     const users = walk(join(import.meta.dirname, '../../src')).filter((f) => /\blocaleCompare\b/.test(readFileSync(f, 'utf8')));
     expect(users).toEqual([]);
+  });
+});
+
+describe('v1 kernel extensions: contract', () => {
+  it('rejects unknown top-level keys (strict meta-schema)', () => {
+    expect(() => defineContract({ ...base, bogus: 1 } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/bogus|unrecognized/i);
+  });
+
+  it('rejects unknown capability keys', () => {
+    expect(() => defineContract({ ...base, capabilities: { files: true } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities/);
+  });
+
+  it('accepts capabilities.pack as true or full, and keeps it in the frozen contract', () => {
+    expect(defineContract({ ...base, capabilities: { pack: true } }).capabilities).toEqual({ pack: true });
+    expect(defineContract({ ...base, capabilities: { pack: 'full' }, emits: 'P1', dataClasses: { in: ['P0'], out: ['P1'] } }).capabilities).toEqual({ pack: 'full' });
+    expect(() => defineContract({ ...base, capabilities: { pack: 'some' } } as unknown as ContractSpec<{ n: number }, { n: number }>)).toThrow(/capabilities\.pack/);
+  });
+});
+
+describe('v1 kernel extensions: nested strictness', () => {
+  const bad = (spec: unknown) => () => defineContract(spec as ContractSpec<{ n: number }, { n: number }>);
+  it('rejects unknown keys inside budget, retry, breaker, dataClasses, obligations, guardrails', () => {
+    expect(bad({ ...base, budget: { usdPerCall: 0, usdPerRun: 0, usdPerRUN: 1 } })).toThrow(/budget/);
+    expect(bad({ ...base, retry: { max: 0, on: [], backoffMs: [], maxx: 3 } })).toThrow(/retry/);
+    expect(bad({ ...base, breaker: { consecutiveFailures: 5, cooldown: 1 } })).toThrow(/breaker/);
+    expect(bad({ ...base, dataClasses: { in: ['P0'], out: ['P0'], emits: 'P1' } })).toThrow(/dataClasses/);
+    expect(bad({ ...base, obligations: { adds: [], discharges: [], waives: [] } })).toThrow(/obligations/);
+    expect(bad({ ...base, guardrails: { in: [], out: [], bypass: ['G-SIZE'] } })).toThrow(/guardrails/);
   });
 });

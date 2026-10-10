@@ -1,0 +1,16 @@
+roles:
+  - employer: Northwind Labs
+    title: Senior Backend Engineer
+    location: Pune, India (Remote)
+    start: "2022-03"
+    end: present
+  - employer: Contoso Retail
+    title: Software Engineer II
+    location: Bengaluru, India
+    start: "2018-06"
+    end: "2022-02"
+  - employer: Fabrikam
+    title: Software Engineer
+    location: Pune, India
+    start: "2016-07"
+    end: "2018-05"
