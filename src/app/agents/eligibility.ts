@@ -25,6 +25,8 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    temporary, intern, freelance). A bare deny word is not an employment phrase, and (final fix I7) a phrase counts
  *    only when it describes this role ("this is a contract role", "freelance basis", "hourly rate of $40", "this
  *    internship"); a word about the employer's product or customers never does. "internship" counts in the title.
+ *    Re-review R9: "on" counts only before "basis" ("work on contract engagement workflows" is product text), and a
+ *    product noun after the phrase ("a temporary staffing product", "a contract management platform") voids it.
  * 5. remote from India, by the decision table:
  *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
  *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
@@ -39,10 +41,13 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
  *    b1. final fix L2: working hours limited to time zones that exclude UTC+5:30 → `timezone-excludes-india`
- *       (`timezoneExcludesIndia`); overlap, flexibility and APAC time zones never count.
+ *       (`timezoneExcludesIndia`); overlap, flexibility, preferences, descriptions of the team and APAC time zones
+ *       never count, and a range counts only with restrictive wording. Re-review R2: when the posting names India (or
+ *       IST) it is `review` with the note `time zone may exclude India - verify`, never rejected.
  *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
- *       worldwide → `location-outside-india`, whatever remote words it has; with the same guard (the description
- *       names India or such a region → `review`).
+ *       worldwide → `location-outside-india`, whatever remote words it has. Guard (re-review R1): when something says
+ *       remote and the description names India, apac, asia or south asia (or a sentence saying remote also says
+ *       worldwide/anywhere) → `review`. "Global" or "worldwide" in prose never counts, and nothing remote never reviews.
  *    c. eligible when: India is a country and something structured or the location or title says remote; or the
  *       watchlist entry is all-remote; or structured remote, the countries name apac, asia, south asia or worldwide,
  *       and the watchlist says hiresInIndia; or the location says remote and India. Remote with no country, region or
@@ -60,6 +65,7 @@ const HEAD = 1500;
 export const NOTE_PAY_UNDISCLOSED = 'pay not disclosed';
 export const NOTE_PAY_BASIS = 'pay basis unclear';
 export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
+export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
@@ -107,6 +113,12 @@ const MONEY = '(?:[$€£₹]|\\b(?:usd|inr|eur|gbp|rs\\.?)\\s*)\\s*\\d[\\d,]*(?
 const TERM = '(?:\\d+[\\s-]months?[\\s-]|(?:short|long)[\\s-]term\\s+)?';
 const KIND = '(contract|freelance|hourly|temporary)';
 /**
+ * Re-review R9: a product noun right after the phrase makes it product text ("the engagement is a temporary staffing
+ * product", "this is a contract management platform", "join as freelance contractor agencies").
+ */
+const NOT_PRODUCT =
+  '(?![\\s-]+(?:staffing|management|lifecycle|workflows?|agenc(?:y|ies)|platforms?|products?|tools?|software|marketplaces?|solutions?|services?|systems?|onboarding|data|analytics|billing|tracking)\\b)';
+/**
  * Employment phrases, in order. Final fix I7: a phrase counts only when it describes this role ("this is a contract
  * role", "the position is a temporary engagement", "you will be hired on a contract basis", "freelance basis", "hourly
  * rate of $40", "we pay $60 per hour", "this internship"). A word about the employer's product or customers ("the
@@ -117,9 +129,17 @@ const KIND = '(contract|freelance|hourly|temporary)';
 const EMPLOYMENT_PHRASES: readonly (readonly [string, RegExp])[] = [
   ['contract-to-hire', /\bcontract[\s-]to[\s-]hire\b/i],
   ['c2h', /\bc2h\b/i],
-  ['', new RegExp(`\\bthis is (?:a|an) ${TERM}${KIND}\\b`, 'i')],
-  ['', new RegExp(`\\b(?:role|position|job|engagement) is (?:on )?(?:a |an )?${TERM}${KIND}\\b`, 'i')],
-  ['', /\b(?:hired|engaged|employed|join|joining|work|working)\b[^.;\n]{0,30}?\b(?:on|as) (?:a |an )?(contract|freelance) (?:basis|employee|contractor|engagement)\b/i],
+  ['', new RegExp(`\\bthis is (?:a|an) ${TERM}${KIND}\\b${NOT_PRODUCT}`, 'i')],
+  ['', new RegExp(`\\b(?:role|position|job|engagement) is (?:on )?(?:a |an )?${TERM}${KIND}\\b${NOT_PRODUCT}`, 'i')],
+  // Re-review R9: "on" only before "basis" ("hired on a contract basis"); "work on contract engagement workflows" is
+  // product text. "as" takes the other nouns ("join as a freelance contractor").
+  [
+    '',
+    new RegExp(
+      `\\b(?:hired|engaged|employed|join|joining|work|working)\\b[^.;\\n]{0,30}?(?:\\bon (?:a |an )?(?=(?:contract|freelance) basis\\b)|\\bas (?:a |an )?)(contract|freelance) (?:basis|employee|contractor|engagement)\\b${NOT_PRODUCT}`,
+      'i',
+    ),
+  ],
   ['contract', /\b\d+[\s-]months?[\s-]contract\b/i],
   ['freelance', /\bfreelance (?:role|position|contract|basis|engagement)s?\b/i],
   ['hourly', new RegExp(`\\bhourly rate(?:\\s+(?:of|is))?\\s*:?\\s*(?:up to\\s*)?${MONEY}`, 'i')],
@@ -270,16 +290,25 @@ function exclusionRule(s: string): string | undefined {
  * - "must work in|within (the) (US|EU|…) (business|working) hours";
  * - an explicit "UTC±a to UTC±b" (or "between GMT±a and GMT±b") range, or a "UTC±a ± n hours" span, that does not
  *   contain +5:30.
- * A clause that speaks of overlap or flexibility never counts ("some overlap with US hours", "flexible hours"), nor
- * does a negated one; APAC or Asia time zones are not in the list. Unicode minus and dashes count as a minus sign.
+ * A clause that speaks of overlap, flexibility or a preference never counts ("some overlap with US hours", "flexible
+ * hours", "the preferred timezone is GMT-4 to GMT+2"), nor does a negated one; APAC or Asia time zones are not in the
+ * list. Unicode minus and dashes count as a minus sign.
+ *
+ * Re-review R2: a range or span counts only in a sentence with restrictive wording (only, must, required, need to
+ * be/work, "candidates in|from …"); a description of where the team sits ("our team spans GMT to GMT+3", "we sit in
+ * UTC-5 and UTC+1") never does, and "X and Y" is a range only after "between". "Candidates in|from <zone> time zones"
+ * is a restriction of its own. A posting that names India never reaches a reject here (`postingNamesIndia`).
  */
-const TZ_ZONE = '(?:european|eu|us|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
+const TZ_ZONE = '(?:european|eu|us|usa|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
 const TZ_ONLY = new RegExp(`\\b${TZ_ZONE}\\s+time\\s?zones?\\s+only\\b`, 'i');
 const TZ_MUST_WORK = new RegExp(`\\bmust work (?:in|within) (?:the )?${TZ_ZONE}(?:\\s+(?:business|working|office))? hours\\b`, 'i');
+const TZ_CANDIDATES = new RegExp(`\\b(?:candidates?|applicants?)\\s+(?:located\\s+|based\\s+)?(?:in|from|within)\\s+(?:the\\s+)?(?:${TZ_ZONE}\\s+)*${TZ_ZONE}\\s+time\\s?zones?\\b`, 'i');
 const OFFSET = '(?:\\s*([+-])\\s*(\\d{1,2})(?::?(\\d{2}))?)?';
-const TZ_RANGE = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:to|-|and)\\s*(?:utc|gmt)${OFFSET}(?![\\d:])`, 'gi');
+const TZ_RANGE = new RegExp(`\\b(between\\s+)?(?:utc|gmt)${OFFSET}\\s*(to|-|and)\\s*(?:utc|gmt)${OFFSET}(?![\\d:])`, 'gi');
 const TZ_SPAN = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:±|\\+\\s*\\/\\s*-|\\+-|plus or minus)\\s*(\\d{1,2})\\s*h(?:ou)?rs?\\b`, 'gi');
-const TZ_SOFT = /\b(?:overlap\w*|flexib\w*)\b/i;
+const TZ_SOFT = /\b(?:overlap\w*|flexib\w*|prefer\w*)\b/i;
+const TZ_STRICT =
+  /\b(?:only|must|required|requirement|mandatory|needs?\s+to\s+(?:be|work|live|reside)|(?:candidates?|applicants?)\s+(?:located\s+|based\s+)?(?:in|from|within))\b/i;
 const IST = 5.5;
 const offsetOf = (sign: string | undefined, h: string | undefined, m: string | undefined): number =>
   sign === undefined ? 0 : (sign === '-' ? -1 : 1) * (Number(h) + Number(m ?? '0') / 60);
@@ -288,20 +317,33 @@ function timezoneExcludesIndia(head: string): boolean {
   // Unicode minus, hyphen and dashes as an ASCII minus, so "UTC−1" reads as UTC-1.
   const s = withoutAlternatives(head.replace(/[−‐‑–—]/g, '-'));
   const counts = (at: number, len: number): boolean => !TZ_SOFT.test(sentenceAt(s, at, len));
-  for (const re of [TZ_ONLY, TZ_MUST_WORK]) {
+  const strict = (at: number, len: number): boolean => TZ_STRICT.test(sentenceAt(s, at, len)) && counts(at, len);
+  for (const re of [TZ_ONLY, TZ_MUST_WORK, TZ_CANDIDATES]) {
     for (const m of s.matchAll(new RegExp(re.source, 'gi'))) if (counts(m.index ?? 0, m[0].length)) return true;
   }
   for (const m of s.matchAll(TZ_RANGE)) {
-    const a = offsetOf(m[1], m[2], m[3]);
-    const b = offsetOf(m[4], m[5], m[6]);
-    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && counts(m.index ?? 0, m[0].length)) return true;
+    if (m[5]?.toLowerCase() === 'and' && m[1] === undefined) continue;
+    const a = offsetOf(m[2], m[3], m[4]);
+    const b = offsetOf(m[6], m[7], m[8]);
+    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && strict(m.index ?? 0, m[0].length)) return true;
   }
   for (const m of s.matchAll(TZ_SPAN)) {
     const a = offsetOf(m[1], m[2], m[3]);
     const n = Number(m[4]);
-    if ((IST < a - n || IST > a + n) && counts(m.index ?? 0, m[0].length)) return true;
+    if ((IST < a - n || IST > a + n) && strict(m.index ?? 0, m[0].length)) return true;
   }
   return false;
+}
+
+/**
+ * Re-review R2: the posting names India as a place or time zone: India or a named region with it (apac, asia, south
+ * asia; not `worldwide`) among the countries or in the title, location or head, "India" in the title or location, or
+ * IST / UTC+5:30 in the head. Such a posting is never rejected on time zones; a restriction sends it to review.
+ */
+function postingNamesIndia(p: Posting, head: string): boolean {
+  if (namesIndiaRegion(p.remote.countries) || /\bindia\b/i.test(`${p.title}\n${p.locationText}`)) return true;
+  if (namesIndiaRegion(countriesIn(head))) return true;
+  return /\bIST\b/.test(head) || /\b(?:utc|gmt)\s*\+\s*0?5:?30\b/i.test(head);
 }
 
 /** Regions that include India (decision 1: asia and south asia, like apac). */
@@ -318,9 +360,23 @@ function watchEntry(p: Posting, pack: EligibilityPack): EligibilityPack['watchli
 }
 
 const indiaInScope = (countries: readonly string[]): boolean => countries.some((c) => c === 'india' || INDIA_REGIONS.has(c));
+/** India or a named region with India (apac, asia, south asia); `worldwide` is not one ("global", "anywhere" are prose). */
+const namesIndiaRegion = (countries: readonly string[]): boolean => countries.some((c) => c !== 'worldwide' && indiaInScope([c]));
+
+/**
+ * Re-review R1: the description names India or a region with India as a place, or a sentence that says remote also
+ * says worldwide ("fully remote: work from anywhere in the world"). "A global leader", "customers worldwide" do not.
+ */
+function descriptionNamesIndiaScope(description: string): boolean {
+  if (namesIndiaRegion(countriesIn(description))) return true;
+  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s).includes('worldwide'));
+}
+/** "remote … anywhere", "work from anywhere", "worldwide, remote": the worldwide word is about the remote work itself, close to it. */
+const REMOTE_ANYWHERE =
+  /\bremote(?:ly)?\b[^.;\n]{0,40}\b(?:anywhere|worldwide|globally|global)\b|\b(?:anywhere|worldwide|globally|global)\b[^.;\n]{0,15}\bremote\b|\bwork (?:from )?anywhere\b/i;
 
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
-function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | null {
+function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 'review-timezone' | null {
   const { structured, countries, signals } = p.remote;
   if (structured === 'onsite') return 'onsite';
   if (structured === 'hybrid') return 'hybrid';
@@ -345,21 +401,24 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
       (countries.includes('india') && REMOTE_WORD.test(p.descriptionText));
     return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
   }
-  if (timezoneExcludesIndia(head)) return 'timezone-excludes-india';
+  if (timezoneExcludesIndia(head)) return postingNamesIndia(p, head) ? 'review-timezone' : 'timezone-excludes-india';
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
     return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'remote-excludes-india:country-list';
   }
+  const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
+  const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
   // Final fix L1 (LIVE RUN 1): the posting names places and none is India or a region with India, whether or not
   // anything says remote ("UK; Lithuania; Bulgaria; Serbia", "Redwood City, US; New York, US" with a remote-friendly
-  // JD). Same guard: a description that names India or such a region as a place makes it unclear instead.
+  // JD). Re-review R1: the guard (review instead) needs something that says remote AND a description that names India
+  // or a region with India; "global", "worldwide" or "anywhere" count only inside a sentence that says remote ("a
+  // global leader", "customers worldwide" are prose). With nothing remote it is outside India whatever the JD names.
   if (countries.length > 0 && !indiaInScope(countries)) {
-    return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'location-outside-india';
+    return anythingRemote && descriptionNamesIndiaScope(`${p.title}\n${p.descriptionText}`) ? 'review' : 'location-outside-india';
   }
 
   const entry = watchEntry(p, pack);
-  const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
   if (countries.includes('india') && remoteStated) return null;
   if (entry?.allRemote === true) return null;
   // Final fix I6: hiresInIndia upgrades only a stated region with India (apac, asia, south asia, worldwide). Remote with
@@ -367,7 +426,6 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (structured === 'remote' && countries.some((c) => INDIA_REGIONS.has(c)) && entry?.hiresInIndia === true) return null;
   if (REMOTE_WORD.test(p.locationText) && /india/i.test(p.locationText)) return null;
 
-  const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
   return anythingRemote ? 'review' : 'onsite';
 }
 
@@ -404,9 +462,11 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const remote = remoteDecision(p, pack);
   const reasons: string[] = [];
   const notes: string[] = [];
-  if (remote === 'review') {
+  const review = remote === 'review' || remote === 'review-timezone';
+  if (review) {
     reasons.push('remote-unclear');
     notes.push(NOTE_REMOTE_UNCLEAR);
+    if (remote === 'review-timezone') notes.push(NOTE_TIMEZONE);
   } else if (remote !== null) {
     return reject(remote);
   }
@@ -414,7 +474,7 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const pay = compDecision(p, pack);
   if ('reject' in pay) return reject(pay.reject);
   if (pay.note !== null) notes.push(pay.note);
-  return { verdict: remote === 'review' ? 'review' : 'eligible', reasons, notes };
+  return { verdict: review ? 'review' : 'eligible', reasons, notes };
 }
 
 /** The pack view, or a loud failure: without the pack there are no rules, so nothing may pass. */
