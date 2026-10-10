@@ -253,15 +253,26 @@ export const HIDDEN_LINE = '[a line naming a forbidden term is hidden]';
  */
 export function redactText(text: string, naming: Pick<NamingRules, 'forbiddenTerms'>): string {
   if (naming.forbiddenTerms.length === 0) return text;
-  return text
-    .split('\n')
-    .map((line) => {
-      if (forbiddenTermStrict(line, naming) === undefined) return line;
-      const tokens = line.replace(/\S+/gu, (t) => (forbiddenTermStrict(t, naming) === undefined ? t : HIDDEN_TOKEN));
-      return forbiddenTermStrict(tokens, naming) === undefined ? tokens : HIDDEN_LINE;
-    })
-    .join('\n');
+  const lines = text.split('\n').map((line) => {
+    if (forbiddenTermStrict(line, naming) === undefined) return line;
+    const tokens = line.replace(/\S+/gu, (t) => (forbiddenTermStrict(t, naming) === undefined ? t : HIDDEN_TOKEN));
+    return forbiddenTermStrict(tokens, naming) === undefined ? tokens : HIDDEN_LINE;
+  });
+  // Rereview R10: a term split across a line break ("Ini-" then "tech") passes every line alone, so the joined text
+  // is checked too, and each smallest run of adjacent lines that names a term is hidden; if the text still names one,
+  // nothing of it is shown.
+  const hits = (ls: readonly string[]): boolean => forbiddenTermStrict(ls.join('\n'), naming) !== undefined;
+  if (!hits(lines)) return lines.join('\n');
+  for (let size = 2; size <= Math.min(lines.length, MAX_SPLIT_LINES) && hits(lines); size++) {
+    for (let i = 0; i + size <= lines.length; i++) {
+      if (hits(lines.slice(i, i + size))) lines.fill(HIDDEN_LINE, i, i + size);
+    }
+  }
+  return hits(lines) ? HIDDEN_LINE : lines.join('\n');
 }
+
+/** The longest run of lines `redactText` searches for a split term before it hides the whole text. */
+const MAX_SPLIT_LINES = 16;
 
 export class EmployerNameError extends Error {
   override readonly name = 'EmployerNameError';

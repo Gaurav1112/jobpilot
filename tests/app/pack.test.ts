@@ -377,6 +377,16 @@ describe('I9: pack-load errors never echo the raw employer or the source line', 
     expect(redactText('a role at Ini tech', naming)).toBe('[a line naming a forbidden term is hidden]');
     expect(redactText('Northwind Labs, unit tech', naming)).toBe('Northwind Labs, unit tech');
   });
+
+  it('redactText hides a term split across a line break: the lines it spans are hidden, the others kept (rereview R10)', () => {
+    const H = '[a line naming a forbidden term is hidden]';
+    expect(redactText('pack bad near Ini-\ntech Labs\nlast line', naming)).toBe(`${H}\n${H}\nlast line`);
+    expect(redactText('first\nIni\ntech\nlast', naming)).toBe(`first\n${H}\n${H}\nlast`);
+    expect(redactText('a\nI\nn\ni\nt\ne\nc\nh\nz end', naming).split('\n').filter((l) => l !== H)).toEqual(['a', 'z end']);
+    for (const t of ['pack bad near Ini-\ntech', 'x In\r\nitech y', 'Ini\n\ntech']) expect(forbiddenTermStrict(redactText(t, naming), naming)).toBeUndefined();
+    // a clean break stays as it is
+    expect(redactText('unit\ntech lead', naming)).toBe('unit\ntech lead');
+  });
 });
 
 describe('fixture hygiene', () => {
