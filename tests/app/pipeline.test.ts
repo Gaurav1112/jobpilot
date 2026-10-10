@@ -298,6 +298,17 @@ describe('the failure notification (I1)', () => {
     expect(failureNotification(new Error('anything'), undefined)).toBe('jobpilot run failed; see the log');
   });
 
+  it('never shows a fragment of a term split across lines, glued or not (rereview-2 M5)', () => {
+    const leaks = (s: string) => /ini|tech/i.test(s.replace(/^jobpilot run failed[:;] ?/, ''));
+    for (const m of ['pack bad near Ini-\ntech', 'pack bad near Ini\ntech', 'pack bad near Ini-\ntechPay', 'pack bad near Ini- techPay', 'pack bad near I n i\nt e c h', 'pack bad near Ini\n-\ntech', 'pack bad near Ini\n\n\ntech']) {
+      const note = failureNotification(new Error(m), ['Initech']);
+      expect(note, JSON.stringify(m)).toBe('jobpilot run failed; see the log');
+      expect(leaks(note)).toBe(false);
+    }
+    // a clean first line is still named when the term is only on a later, separate line
+    expect(failureNotification(new Error('refusing to start:\n- fact id InitechPay-01 is duplicated'), ['Initech'])).toBe('jobpilot run failed: refusing to start:');
+  });
+
   it('for pack text problems, says how many and points to `jobpilot pack check`, never echoing a term (rereview R11)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'jp-r11-'));
     try {

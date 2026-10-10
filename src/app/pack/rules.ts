@@ -218,21 +218,44 @@ export function forbiddenTermStrict(text: string, naming: Pick<NamingRules, 'for
     if (e instanceof ForbiddenTermError) return e.term;
     throw e;
   }
-  let toks: string[] | undefined;
+  let toks: SplitToken[] | undefined;
   for (const term of naming.forbiddenTerms) {
     const want = squashChars(term).text;
     if (want === '') continue;
-    toks ??= text.split(/\s+/u).map((t) => squashChars(t).text).filter((t) => t !== '');
+    toks ??= splitTokens(text);
     for (let i = 0; i < toks.length; i++) {
-      let joined = toks[i] as string;
+      let joined = (toks[i] as SplitToken).text;
       if (joined.includes(want)) return term;
       for (let j = i + 1; j < toks.length && joined.length < want.length; j++) {
-        joined += toks[j] as string;
-        if (joined === want || joined === `${want}s` || joined === `${want}es`) return term;
+        // Rereview-2 M5: after a hyphenated break ("Ini-" then "techPay") the last part may run on past the term
+        const hyphenated = (toks[j - 1] as SplitToken).hyphen;
+        joined += (toks[j] as SplitToken).text;
+        if (joined === want || joined === `${want}s` || joined === `${want}es` || (hyphenated && joined.startsWith(want))) return term;
       }
     }
   }
   return undefined;
+}
+
+interface SplitToken {
+  /** The squashed token. */
+  readonly text: string;
+  /** It ends in a dash, or a token of dashes alone follows it: a word broken by a hyphen goes on in the next token. */
+  readonly hyphen: boolean;
+}
+
+const ENDS_IN_DASH = /[-\u00AD\u2010-\u2015\u2212\uFE63\uFF0D]$/u;
+
+/** Whitespace-separated tokens, squashed (empty ones dropped), each marked when a hyphenated break follows it. */
+function splitTokens(text: string): SplitToken[] {
+  const out: { text: string; hyphen: boolean }[] = [];
+  for (const raw of text.split(/\s+/u)) {
+    const sq = squashChars(raw).text;
+    const dash = ENDS_IN_DASH.test(raw);
+    if (sq !== '') out.push({ text: sq, hyphen: dash });
+    else if (dash && out.length > 0) (out[out.length - 1] as { hyphen: boolean }).hyphen = true;
+  }
+  return out;
 }
 
 /** `forbiddenTermStrict` as an assertion: throws `ForbiddenTermError` naming the term found. */

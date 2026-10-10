@@ -342,6 +342,11 @@ describe('I8: one strict forbidden-term check for the run path and the importer'
     ]) expect(hit(t), JSON.stringify(t)).toBe('Initech');
     for (const t of ['initiative tech', 'Northwind Labs', 'I am in tech', 'reinitiated', 'unit tech']) expect(hit(t), t).toBeUndefined();
   });
+  it('finds a term split by a hyphen with more glued after it (rereview-2 M5)', () => {
+    for (const t of ['Ini-\ntechPay', 'Ini- techPay', 'pack bad near Ini-\ntechPay Labs', 'Ini\n-\ntechPay', 'Ini\u2010 techCorp']) expect(hit(t), JSON.stringify(t)).toBe('Initech');
+    // without the hyphen a glued continuation is ordinary prose, not a split word
+    for (const t of ['Init echo server', 'definite\nchance', 'line two mini\ntech talk', 'Mini- technology']) expect(hit(t), JSON.stringify(t)).toBeUndefined();
+  });
   it('assertNoForbiddenStrict throws ForbiddenTermError for the same spellings; assertNoForbidden now accepts an -es plural', () => {
     expect(() => assertNoForbiddenStrict('for InitechPay', naming)).toThrow(ForbiddenTermError);
     expect(() => assertNoForbiddenStrict('Northwind Labs', naming)).not.toThrow();

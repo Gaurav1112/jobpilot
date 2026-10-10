@@ -12,7 +12,7 @@ import { homePaths } from './pack/paths.js';
 import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
 import { runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
-import { citeable, forbiddenTermStrict } from './pack/rules.js';
+import { citeable, forbiddenTermStrict, redactText } from './pack/rules.js';
 import type { Pack } from './pack/schema.js';
 import { AppStore, type DocsState } from './store/app-store.js';
 import { ensureHome } from './home.js';
@@ -243,15 +243,23 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
 
 /**
  * The text of the notification a run that could not finish posts (`jobpilot run failed: <reason>`): the first line
- * of the error, unless it holds a forbidden term (`forbiddenTermStrict`, when the pack's naming rules can be read) or
- * they cannot be read at all, in which case the reason is left out (the log has it, redacted by `redactText`).
+ * of the error, unless the naming rules cannot be read, or that line names a forbidden term or a fragment of one. The
+ * whole message goes through `redactText` first (rereview-2 M5), so a term split across lines ("Ini-" then "tech")
+ * hides the lines it spans before the first is taken; any redaction in the first line leaves the reason out (the log
+ * has it, redacted the same way).
  */
 export function failureNotification(err: unknown, forbiddenTerms: readonly string[] | undefined): string {
-  const first = (err instanceof Error ? err.message : String(err)).split('\n')[0]?.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim() ?? '';
+  const unknown = 'jobpilot run failed; see the log';
+  if (forbiddenTerms === undefined) return unknown;
+  const message = (err instanceof Error ? err.message : String(err)).replace(/\r\n?/g, '\n');
+  const raw = message.split('\n')[0] ?? '';
+  const redacted = redactText(message, { forbiddenTerms }).split('\n')[0] ?? '';
+  if (redacted !== raw) return unknown;
+  const first = raw.replace(/[\u0000-\u001F\u007F]+/g, ' ').trim();
   const reason = first.length > 180 ? `${first.slice(0, 179)}…` : first;
-  if (forbiddenTerms === undefined || reason === '') return 'jobpilot run failed; see the log';
+  if (reason === '') return unknown;
   // final M-N1/I9: the strict check, the one the log's redactor uses (a substring `includes` missed look-alikes)
-  return forbiddenTermStrict(reason, { forbiddenTerms }) !== undefined ? 'jobpilot run failed; see the log' : `jobpilot run failed: ${reason}`;
+  return forbiddenTermStrict(reason, { forbiddenTerms }) !== undefined ? unknown : `jobpilot run failed: ${reason}`;
 }
 
 export interface RebuildOptions {
