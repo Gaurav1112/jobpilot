@@ -55,3 +55,26 @@ describe('rereview R6: squashChars fast path', () => {
     expect(ms).toBeLessThan(1_200);
   });
 });
+
+describe('rereview R7: problem lists and the notification use the strict matcher', () => {
+  const naming = { forbiddenTerms: ['Initech'] };
+  it('a glued company is hidden in a stale problem, a problem line and the notification', async () => {
+    const { staleProblems, safeLine } = await import('../../src/app/problems.js');
+    const { notificationFor } = await import('../../src/app/notify.js');
+    const items = staleProblems([{ jobKey: 'a', company: 'InitechPay Labs', title: 'Engineer', docsState: 'stale', docsDetail: null }], naming);
+    expect(JSON.stringify(items)).not.toMatch(/initech/i);
+    expect(safeLine('Ini-\ntech Labs — Engineer', naming)).toBe('[hidden: contains a forbidden term]');
+    expect(safeLine('InitechPay — Engineer', naming)).toBe('[hidden: contains a forbidden term]');
+    expect(safeLine('Acme — Engineer', naming)).toBe('Acme — Engineer');
+    expect(notificationFor([{ score: 90, company: 'InitechPay Labs', title: 'Engineer' }], naming)).toBe('1 new match');
+    expect(notificationFor([{ score: 90, company: 'Acme', title: 'In1tech-ops Engineer' }], naming, 2)).toBe('1 new match · 2 problems');
+  });
+
+  it('no problem or notification surface keeps the word-bounded matcher', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    for (const f of ['src/app/problems.ts', 'src/app/notify.ts']) {
+      expect(readFileSync(join(import.meta.dirname, '../..', f), 'utf8')).not.toMatch(/\bassertNoForbidden\b/);
+    }
+  });
+});

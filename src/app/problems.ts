@@ -1,7 +1,17 @@
 import type { Envelope } from '../kernel/envelope.js';
 import type { Store } from '../kernel/store/store.js';
-import { assertNoForbidden, ForbiddenTermError } from './pack/rules.js';
+import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
+
+/**
+ * One problem or warning line (rereview R7): control characters dropped and whitespace folded, or a fixed notice when
+ * the text, raw or as the line, names a forbidden term under the strict check (`forbiddenTermStrict`: glued, split,
+ * look-alike spellings), the same check the dashboard redacts with.
+ */
+export function safeLine(t: string, naming: Pick<Naming, 'forbiddenTerms'>): string {
+  const line = oneLine(t);
+  return forbiddenTermStrict(t, naming) === undefined && forbiddenTermStrict(line, naming) === undefined ? line : '[hidden: contains a forbidden term]';
+}
 
 /**
  * One item the run did not carry through: a failed step (with `gone` and `input_rejected` told apart), a quarantined
@@ -142,16 +152,7 @@ export function runProblems(kernel: Store, runId: string, naming: Pick<Naming, '
     const envelopeId = typeof data['envelopeId'] === 'string' ? data['envelopeId'] : kernel.getStep(s(data['stepKey']))?.input_envelope_id;
     if (typeof data['agent'] === 'string' && envelopeId) last.set(`${data['agent']}\u0000${envelopeId}`, { kind: ev.kind, data });
   }
-  const safe = (t: string): string => {
-    const line = oneLine(t);
-    try {
-      assertNoForbidden(line, naming);
-      return line;
-    } catch (err) {
-      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
-      throw err;
-    }
-  };
+  const safe = (t: string): string => safeLine(t, naming);
   const out: Problem[] = [];
   for (const q of kernel.queueItems(runId)) {
     if (q.status === 'done' || q.status === 'pending') continue;
@@ -227,16 +228,7 @@ export function staleProblems(
   jobs: readonly { jobKey: string; company: string; title: string; docsState: string; docsDetail: string | null }[],
   naming: Pick<Naming, 'forbiddenTerms'>,
 ): Problem[] {
-  const safe = (t: string): string => {
-    const line = oneLine(t);
-    try {
-      assertNoForbidden(line, naming);
-      return line;
-    } catch (err) {
-      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
-      throw err;
-    }
-  };
+  const safe = (t: string): string => safeLine(t, naming);
   return [...jobs]
     .filter((j) => j.docsState === 'stale')
     .sort((a, b) => (a.jobKey < b.jobKey ? -1 : a.jobKey > b.jobKey ? 1 : 0))
@@ -270,16 +262,7 @@ export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Na
     const a = byAgent.get(agent) ?? { postings: 0, boards: 0, first: undefined };
     byAgent.set(agent, { postings: a.postings + n, boards: a.boards + 1, first: a.first ?? (typeof notes[0] === 'string' ? notes[0] : undefined) });
   }
-  const safe = (t: string): string => {
-    const line = oneLine(t);
-    try {
-      assertNoForbidden(line, naming);
-      return line;
-    } catch (err) {
-      if (err instanceof ForbiddenTermError) return '[hidden: contains a forbidden term]';
-      throw err;
-    }
-  };
+  const safe = (t: string): string => safeLine(t, naming);
   return [...byAgent.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([agent, a]) => {

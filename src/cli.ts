@@ -17,7 +17,8 @@ import { loadRunPack, preparePipeline } from './app/kernel.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
-import { assertNoForbidden, ForbiddenTermError } from './app/pack/load.js';
+import { ForbiddenTermError } from './app/pack/load.js';
+import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
 import type { Fact } from './app/pack/schema.js';
@@ -366,7 +367,7 @@ facts
         const status = `${f.status}${Object.hasOwn(overrides, f.id) ? ' (override)' : ''}`;
         let line = `${f.id.padEnd(w)}  ${status.padEnd(30)}  ${f.kind.padEnd(10)}  ${f.claim}`;
         try {
-          assertNoForbidden(line, p.naming);
+          assertNoForbiddenStrict(line, p.naming);
         } catch (e) {
           if (!(e instanceof ForbiddenTermError)) throw e;
           line = `${f.id.padEnd(w)}  ${status.padEnd(30)}  ${f.kind.padEnd(10)}  [hidden: contains a forbidden term]`;

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { assertNoForbidden, ForbiddenTermError } from './pack/rules.js';
+import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
 
 /** Posts one notification. The run uses `osascriptNotifier`; tests inject a fake. */
@@ -25,15 +25,8 @@ const plural = (n: number, one: string, many: string): string => `${n} ${n === 1
  */
 export function notificationFor(matches: readonly NewMatch[], naming: Pick<Naming, 'forbiddenTerms'>, problems = 0): string {
   const tail = problems > 0 ? ` · ${plural(problems, 'problem', 'problems')}` : '';
-  const clean = (s: string): string | undefined => {
-    try {
-      assertNoForbidden(s, naming);
-      return s;
-    } catch (e) {
-      if (e instanceof ForbiddenTermError) return undefined;
-      throw e;
-    }
-  };
+  // rereview R7: the strict check, as on the dashboard, so a glued or split company name never reaches the banner
+  const clean = (s: string): string | undefined => (forbiddenTermStrict(s, naming) === undefined ? s : undefined);
   if (matches.length === 0) return clean(`No new matches today${tail}`) ?? 'jobpilot run finished';
   const top = matches.reduce((best, m) => ((m.score ?? -Infinity) > (best.score ?? -Infinity) ? m : best));
   const count = plural(matches.length, 'new match', 'new matches');
