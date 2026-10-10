@@ -115,6 +115,16 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
  *   controls that only a script could follow.
  * - Every handler is guarded: an error inside one fails the render with a KernelError, never the process.
  */
+/**
+ * Runs in every frame before its scripts (rereview R4): deletes `SharedWorker` and hides `navigator.serviceWorker`,
+ * whose traffic Playwright's context routing does not see. Plain source text, so no bundler or closure is involved.
+ */
+const NO_UNROUTED_WORKERS = `(() => {
+  try { delete globalThis.SharedWorker; } catch {}
+  try { Object.defineProperty(globalThis, 'SharedWorker', { value: undefined, configurable: false, writable: false }); } catch {}
+  try { Object.defineProperty(Navigator.prototype, 'serviceWorker', { get: () => undefined, configurable: false }); } catch {}
+})();`;
+
 export class PlaywrightBrowserProvider implements BrowserProvider {
   private browser: Promise<Browser> | undefined;
   private readonly timing: RenderTiming;
@@ -176,6 +186,10 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     const fail = (e: unknown): void => {
       state.handlerError ??= e;
     };
+    // Rereview R4: a SharedWorker's requests never pass through context.route, so the API is removed before any page
+    // or subframe script runs (init scripts apply to every frame). Service workers are blocked by the context option;
+    // their registration is removed as well, so neither kind of worker can fetch past the route handler.
+    await context.addInitScript(NO_UNROUTED_WORKERS);
     await context.routeWebSocket(/.*/, (ws) => {
       try {
         void ws.close().catch(() => undefined);

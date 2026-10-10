@@ -682,6 +682,11 @@ describe('src-careers with real chromium', async () => {
     '/r-2.js': () => ({ status: 302, body: '', headers: { location: `http://px.linkedin.localhost:${new URL(base).port}/denied.js` } }),
     '/frame-redir': () => ({ status: 302, body: '', headers: { location: `http://www.linkedin.localhost:${new URL(base).port}/denied-frame` } }),
     '/xhr-redir': () => ({ status: 307, body: '', headers: { location: `http://api.linkedin.localhost:${new URL(base).port}/denied-xhr` } }),
+    // rereview R4: a SharedWorker's requests bypass context.route; it fetches a denied host directly and via a redirect.
+    '/shared-worker': () => ({ body: doc(`<h1>Shared</h1><p id="sw">pending</p><iframe src="/shared-frame"></iframe><script>try { new SharedWorker('/shared.js'); document.getElementById('sw').textContent = 'SharedWorker started'; } catch (e) { document.getElementById('sw').textContent = 'SharedWorker unavailable ' + typeof SharedWorker; } const f = document.createElement('iframe'); document.body.appendChild(f); try { new f.contentWindow.SharedWorker('/shared.js?blank'); document.getElementById('sw').textContent += ' / blank frame worker started'; } catch (e) { document.getElementById('sw').textContent += ' / blank frame has none'; }</script>`) }),
+    '/shared-frame': () => ({ body: doc(`<script>try { new SharedWorker('/shared.js?frame'); } catch (e) {}</script>`) }),
+    '/shared.js': () => ({ type: 'application/javascript', body: `fetch('/sw-redir').catch(() => 0); fetch('http://direct.linkedin.localhost:' + self.location.port + '/direct').catch(() => 0);` }),
+    '/sw-redir': () => ({ status: 302, body: '', headers: { location: `http://shared.linkedin.localhost:${new URL(base).port}/s` } }),
     '/api/slow-desc': () => ({ type: 'application/json', body: JSON.stringify({ t: 'Real Title', d: 'Full description' }), delayMs: 25_000 }),
   };
 
@@ -834,6 +839,23 @@ describe('src-careers with real chromium', async () => {
     expect(reached).toEqual([]);
     // An allowed chain still loads (the hops are followed inside the handler, then fulfilled).
     expect(page.text).toContain('loaded via two hops');
+  }, 30_000);
+
+  it.skipIf(!installed)('a page cannot start a SharedWorker, so no denied host is reached through one, directly or via a redirect (rereview R4)', async () => {
+    const { PlaywrightBrowserProvider } = await import('../../src/app/browser/playwright-provider.js');
+    const mapped = new PlaywrightBrowserProvider({
+      allowInsecureLocalhostForTests: true,
+      resolveToLoopbackForTests: ['direct.linkedin.localhost', 'shared.linkedin.localhost'],
+      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 6_000 },
+    });
+    const before = hits.length;
+    const page = await render(`${base}/shared-worker`, { via: mapped }).finally(() => mapped.close());
+    await sleep(1_000); // a worker that did start would have fetched by now
+    const seen = since(before);
+    expect(seen.filter((h) => /linkedin/.test(h))).toEqual([]);
+    expect(seen.filter((h) => h.includes('/shared.js'))).toEqual([]);
+    expect(page.text).toContain('SharedWorker unavailable undefined');
+    expect(page.text).toContain('blank frame has none');
   }, 30_000);
 
   it.skipIf(!installed)('survives window.open: pop-ups load nothing and the render completes', async () => {
