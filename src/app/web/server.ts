@@ -334,7 +334,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       const hist = s.histories(slice.map((j) => j.jobKey));
       const hiddenCount = bands.length === 0 ? s.listJobs({ ...filter, band: ALL.filter((b) => !DEFAULT_BANDS.includes(b)) }).length : 0;
       return {
-        jobs: slice.map((j): ListedJob => ({ ...j, isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
+        // rereview R6: the list never shows the description, so it is dropped before the (strict, per-string) redaction
+        jobs: slice.map((j): ListedJob => ({ ...j, jdText: '', isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
         hidden: hiddenCount,
         overrides: s.factOverrides(),
         total: list.length,

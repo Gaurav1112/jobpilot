@@ -68,14 +68,26 @@ function fold(s: string): string {
     .normalize('NFKC');
 }
 
+/** @internal For the R6 equivalence test only. */
+export const foldForTests = (s: string): string => fold(s);
+
 /** Digits and symbols that stand in for letters, and l for I, for the squashed token check only. */
 const STAND_INS: Readonly<Record<string, string>> = { '1': 'i', '!': 'i', '|': 'i', l: 'i', '3': 'e', '0': 'o', '4': 'a', '5': 's', '7': 't', $: 's', '@': 'a' };
+/** @internal For the R6 equivalence test only. */
+export const STAND_INS_FOR_TESTS = STAND_INS;
 /** A token with its stand-ins mapped and everything but letters and digits (hyphens, dots, apostrophes) removed. */
-const squash = (tok: string): string =>
-  [...tok.replace(/['’]s$/u, '')]
-    .map((c) => STAND_INS[c] ?? c)
-    .join('')
-    .replace(/[^\p{L}\p{N}]/gu, '');
+const squash = (tok: string): string => {
+  // Rereview R6: one pass, code point by code point, with an ASCII range check before the Unicode class test; the
+  // same result as mapping the stand-ins and then removing every non-letter, non-digit code point.
+  let out = '';
+  for (const c of tok.replace(/['’]s$/u, '')) {
+    const m = STAND_INS[c] ?? c;
+    const code = m.charCodeAt(0);
+    if (code < 0x80 ? (m >= 'a' && m <= 'z') || (m >= 'A' && m <= 'Z') || (m >= '0' && m <= '9') : LETTER_OR_DIGIT.test(m)) out += m;
+  }
+  return out;
+};
+const LETTER_OR_DIGIT = /^[\p{L}\p{N}]$/u;
 /** The squashed tokens of folded text, and each run of two or more one-letter tokens joined ("I n i t e c h"). */
 function squashedTokens(folded: string): { toks: string[]; runs: string[] } {
   const toks = folded.split(/[\s,;:/()[\]{}"<>?*+=~^&#%\\]+/u).map(squash).filter((t) => t !== '');
@@ -89,6 +101,19 @@ function squashedTokens(folded: string): { toks: string[]; runs: string[] } {
     }
   }
   return { toks, runs };
+}
+
+/** The word-bounded pattern of a folded term's words, compiled once per term (rereview R6). */
+const TERM_RE = new Map<string, RegExp>();
+function boundedTermRe(words: readonly string[]): RegExp {
+  const key = words.join(' ');
+  let re = TERM_RE.get(key);
+  if (re === undefined) {
+    re = new RegExp(`(?<![\\p{L}\\p{N}])${words.map(escapeRe).join('\\s+')}(?![\\p{L}\\p{N}])`, 'u');
+    if (TERM_RE.size > 256) TERM_RE.clear();
+    TERM_RE.set(key, re);
+  }
+  return re;
 }
 
 /**
@@ -106,8 +131,7 @@ export function assertNoForbidden(text: string, naming: Pick<NamingRules, 'forbi
   for (const term of naming.forbiddenTerms) {
     const words = fold(term).split(/\s+/u).filter((w) => w !== '');
     if (words.length === 0) continue;
-    const body = words.map(escapeRe).join('\\s+');
-    if (new RegExp(`(?<![\\p{L}\\p{N}])${body}(?![\\p{L}\\p{N}])`, 'u').test(hay)) throw new ForbiddenTermError(term);
+    if (boundedTermRe(words).test(hay)) throw new ForbiddenTermError(term);
     const want = words.map(squash).filter((w) => w !== '');
     if (want.length === 0) continue;
     tokens ??= squashedTokens(hay);
@@ -134,6 +158,19 @@ export function squashChars(s: string): { text: string; at: number[] } {
   const at: number[] = [];
   let i = 0;
   for (const ch of s) {
+    // Rereview R6: an ASCII character folds to its lower case alone (NFKD and NFKC leave it, it is no mark, format
+    // character or look-alike), so it skips `fold`; the result is the same character for character (tested).
+    const code = ch.charCodeAt(0);
+    if (code < 0x80) {
+      const lower = code >= 0x41 && code <= 0x5a ? String.fromCharCode(code + 32) : ch;
+      const m = STAND_INS[lower] ?? lower;
+      if ((m >= 'a' && m <= 'z') || (m >= '0' && m <= '9')) {
+        text += m;
+        at.push(i);
+      }
+      i += 1;
+      continue;
+    }
     for (const c of fold(ch)) {
       const m = STAND_INS[c] ?? c;
       if (/[\p{L}\p{N}]/u.test(m)) {
