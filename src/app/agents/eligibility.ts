@@ -41,8 +41,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    b1. final fix L2: working hours limited to time zones that exclude UTC+5:30 → `timezone-excludes-india`
  *       (`timezoneExcludesIndia`); overlap, flexibility and APAC time zones never count.
  *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
- *       worldwide → `location-outside-india`, whatever remote words it has; with the same guard (the description
- *       names India or such a region → `review`).
+ *       worldwide → `location-outside-india`, whatever remote words it has. Guard (re-review R1): when something says
+ *       remote and the description names India, apac, asia or south asia (or a sentence saying remote also says
+ *       worldwide/anywhere) → `review`. "Global" or "worldwide" in prose never counts, and nothing remote never reviews.
  *    c. eligible when: India is a country and something structured or the location or title says remote; or the
  *       watchlist entry is all-remote; or structured remote, the countries name apac, asia, south asia or worldwide,
  *       and the watchlist says hiresInIndia; or the location says remote and India. Remote with no country, region or
@@ -318,6 +319,17 @@ function watchEntry(p: Posting, pack: EligibilityPack): EligibilityPack['watchli
 }
 
 const indiaInScope = (countries: readonly string[]): boolean => countries.some((c) => c === 'india' || INDIA_REGIONS.has(c));
+/** India or a named region with India (apac, asia, south asia); `worldwide` is not one ("global", "anywhere" are prose). */
+const namesIndiaRegion = (countries: readonly string[]): boolean => countries.some((c) => c !== 'worldwide' && indiaInScope([c]));
+
+/**
+ * Re-review R1: the description names India or a region with India as a place, or a sentence that says remote also
+ * says worldwide ("fully remote: work from anywhere in the world"). "A global leader", "customers worldwide" do not.
+ */
+function descriptionNamesIndiaScope(description: string): boolean {
+  if (namesIndiaRegion(countriesIn(description))) return true;
+  return description.split(/[.!?;\n]+/).some((s) => REMOTE_WORD.test(s) && countriesIn(s).includes('worldwide'));
+}
 
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
 function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | null {
@@ -351,15 +363,18 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
     return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'remote-excludes-india:country-list';
   }
+  const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
+  const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
   // Final fix L1 (LIVE RUN 1): the posting names places and none is India or a region with India, whether or not
   // anything says remote ("UK; Lithuania; Bulgaria; Serbia", "Redwood City, US; New York, US" with a remote-friendly
-  // JD). Same guard: a description that names India or such a region as a place makes it unclear instead.
+  // JD). Re-review R1: the guard (review instead) needs something that says remote AND a description that names India
+  // or a region with India; "global", "worldwide" or "anywhere" count only inside a sentence that says remote ("a
+  // global leader", "customers worldwide" are prose). With nothing remote it is outside India whatever the JD names.
   if (countries.length > 0 && !indiaInScope(countries)) {
-    return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'location-outside-india';
+    return anythingRemote && descriptionNamesIndiaScope(p.descriptionText) ? 'review' : 'location-outside-india';
   }
 
   const entry = watchEntry(p, pack);
-  const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
   if (countries.includes('india') && remoteStated) return null;
   if (entry?.allRemote === true) return null;
   // Final fix I6: hiresInIndia upgrades only a stated region with India (apac, asia, south asia, worldwide). Remote with
@@ -367,7 +382,6 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (structured === 'remote' && countries.some((c) => INDIA_REGIONS.has(c)) && entry?.hiresInIndia === true) return null;
   if (REMOTE_WORD.test(p.locationText) && /india/i.test(p.locationText)) return null;
 
-  const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
   return anythingRemote ? 'review' : 'onsite';
 }
 

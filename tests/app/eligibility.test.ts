@@ -326,6 +326,26 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
     expect(decide({ ...tide, locationText: 'London, UK (hybrid)' })).toEqual(rejected('hybrid'));
   });
 
+  it('rereview R1: the L1 guard needs a remote signal, and "global" or "worldwide" in prose is no region with India', () => {
+    const review = { verdict: 'review', reasons: ['remote-unclear'], notes: ['remote scope unclear - verify', 'pay not disclosed'] };
+    const onsite = (locationText: string, countries: string[], descriptionText: string) => ({ locationText, remote: remote(null, countries, []), descriptionText });
+    // on-site foreign jobs whose JD only says "global", "worldwide", "anywhere", or names India or APAC without remote
+    for (const p of [
+      onsite('New York, New York, USA', ['united states'], 'We are a global leader in payments, serving customers worldwide.'),
+      onsite('London, United Kingdom', ['united kingdom'], 'Our products are used globally, anywhere people pay.'),
+      onsite('San Francisco, California, United States', ['united states'], 'You will support our APAC expansion.'),
+      onsite('Toronto, Ontario, Canada', ['canada'], 'We also have engineering hubs in Bengaluru and Singapore.'),
+      onsite('Tel Aviv, Israel', ['israel'], 'Join a global team; we have an office in India.'),
+      onsite('United States', ['united states'], 'Our customers are in 40 countries worldwide.'),
+    ]) expect(decide(p), p.locationText).toEqual(rejected('location-outside-india'));
+    // something says remote, but the JD's only "region" is prose: still outside India
+    expect(decide(onsite('Redwood City, US', ['united states'], 'Remote work is supported. We are a global company with customers worldwide.'))).toEqual(rejected('location-outside-india'));
+    // L1's intended cases stay: remote plus India (or APAC) named, or a remote sentence that says anywhere in the world
+    expect(decide(onsite('Redwood City, US', ['united states'], 'Remote work is supported; we also hire in India.'))).toEqual(review);
+    expect(decide(onsite('London, UK', ['united kingdom'], 'Fully remote across APAC is possible.'))).toEqual(review);
+    expect(decide(onsite('Berlin, Germany', ['germany'], 'This role is fully remote: work from anywhere in the world.'))).toEqual(review);
+  });
+
   it('final fix L2: working hours limited to time zones that exclude UTC+5:30 reject', () => {
     const india = { remote: remote('remote', ['india']), locationText: 'Remote - India' };
     const tz = rejected('timezone-excludes-india');
