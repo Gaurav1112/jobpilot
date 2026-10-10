@@ -146,7 +146,7 @@ const EXPECTED_RESUME_BODY = {
   summary: {
     // aws is covered (the verified AWS cert backs it), but only an experience fact placed in a role may back a
     // "years building X" claim, so it is not a summary term.
-    text: 'Senior Backend Engineer with 10+ years building Java, Spring, Kafka and PostgreSQL systems. Currently at Northwind Labs.',
+    text: 'Senior Backend Engineer with 10+ years of experience. Core skills: Java, Spring, Kafka and PostgreSQL. Currently at Northwind Labs.',
     slots: { title: 'Senior Backend Engineer', years: 10, top1: 'Java', top2: 'Spring', top3: 'Kafka', top4: 'PostgreSQL', employer: 'Northwind Labs' },
   },
   skills: ['Java', 'Spring', 'Kafka', 'PostgreSQL', 'event-driven', 'AWS', 'Kubernetes', 'fintech', 'Docker', 'microservices', 'Redis', 'multi-tenant', 'SaaS', 'RabbitMQ', 'Python'],
@@ -324,7 +324,7 @@ describe('resume-planner', () => {
 describe('summary template', () => {
   const base = { title: 'Backend Engineer', years: 10, employer: 'Northwind Labs' };
   it('keeps the exact template strings', () => {
-    expect(SUMMARY_TEMPLATE).toBe('{title} with {years}+ years building {top1}, {top2}, {top3} and {top4} systems. Currently at {employer}.');
+    expect(SUMMARY_TEMPLATE).toBe('{title} with {years}+ years of experience. Core skills: {top1}, {top2}, {top3} and {top4}. Currently at {employer}.');
     expect(COVER_P1).toBe('I am applying for the {title} role at {company}. I am {article} {targetTitle} with {years}+ years of experience. I am based in India and am looking for a fully remote role.');
     expect(COVER_P1_PAST).toBe('I am applying for the {title} role at {company}. I most recently worked as {article} {targetTitle}, with {years}+ years of experience. I am based in India and am looking for a fully remote role.');
     expect(COVER_P3_TAIL).toBe('The role asks for {coveredList}; each appears in the work above.');
@@ -332,26 +332,26 @@ describe('summary template', () => {
     expect(COVER_P4).toBe('I am available from {availableFrom}, with a notice period of {notice}. Thank you for your time.');
   });
   it('drops missing term slots, joining the rest with ", " and " and "', () => {
-    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka', top3: 'aws', top4: 'redis' })).toBe('Backend Engineer with 10+ years building java, kafka, aws and redis systems. Currently at Northwind Labs.');
-    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka', top3: 'aws' })).toBe('Backend Engineer with 10+ years building java, kafka and aws systems. Currently at Northwind Labs.');
-    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka' })).toBe('Backend Engineer with 10+ years building java and kafka systems. Currently at Northwind Labs.');
-    expect(renderSummary({ ...base, top1: 'java' })).toBe('Backend Engineer with 10+ years building java systems. Currently at Northwind Labs.');
+    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka', top3: 'aws', top4: 'redis' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java, kafka, aws and redis. Currently at Northwind Labs.');
+    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka', top3: 'aws' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java, kafka and aws. Currently at Northwind Labs.');
+    expect(renderSummary({ ...base, top1: 'java', top2: 'kafka' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java and kafka. Currently at Northwind Labs.');
+    expect(renderSummary({ ...base, top1: 'java' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java. Currently at Northwind Labs.');
   });
   it('with no covered term, drops the building clause; with no current role, drops the Currently sentence', () => {
-    expect(renderSummary(base)).toBe('Backend Engineer with 10+ years. Currently at Northwind Labs.');
-    expect(renderSummary({ title: 'Backend Engineer', years: 10, top1: 'java' })).toBe('Backend Engineer with 10+ years building java systems.');
+    expect(renderSummary(base)).toBe('Backend Engineer with 10+ years of experience. Currently at Northwind Labs.');
+    expect(renderSummary({ title: 'Backend Engineer', years: 10, top1: 'java' })).toBe('Backend Engineer with 10+ years of experience. Core skills: java.');
     expect(joinList([])).toBe('');
     expect(joinList(['a', 'b', 'c'])).toBe('a, b and c');
   });
   it('plans fewer slots when fewer terms are covered', () => {
     const plan = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Java and Kafka, on Kubernetes.' })), pack), pack);
     expect(plan.summary).toEqual({
-      text: 'Senior Backend Engineer with 10+ years building Java, Kafka and Kubernetes systems. Currently at Northwind Labs.',
+      text: 'Senior Backend Engineer with 10+ years of experience. Core skills: Java, Kafka and Kubernetes. Currently at Northwind Labs.',
       slots: { title: 'Senior Backend Engineer', years: 10, top1: 'Java', top2: 'Kafka', top3: 'Kubernetes', employer: 'Northwind Labs' },
     });
     const none = planResume(buildEvidence(scoredOf(posting({ descriptionText: 'Build things.' })), pack), pack);
     expect(none.summary).toEqual({
-      text: 'Senior Backend Engineer with 10+ years. Currently at Northwind Labs.',
+      text: 'Senior Backend Engineer with 10+ years of experience. Currently at Northwind Labs.',
       slots: { title: 'Senior Backend Engineer', years: 10, employer: 'Northwind Labs' },
     });
     expect(none.covered).toEqual([]);
@@ -364,7 +364,7 @@ describe('summary template', () => {
     const plan = planResume(buildEvidence(scoredOf(posting(), ended), ended), ended);
     // The Northwind facts run '..present' (to asOf 2026-10), past the role's new end, so none is placed (fix I3):
     // Kafka loses its only experience backing and the Northwind role has no bullets.
-    expect(plan.summary.text).toBe('Senior Backend Engineer with 10+ years building Java, Spring, PostgreSQL and fintech systems.');
+    expect(plan.summary.text).toBe('Senior Backend Engineer with 10+ years of experience. Core skills: Java, Spring, PostgreSQL and fintech.');
     expect(plan.summary.slots).not.toHaveProperty('employer');
     expect(plan.unplaced).toEqual(['f-nw-01', 'f-nw-02', 'f-nw-03', 'f-nw-04']);
     expect(plan.roles[0]?.bullets).toEqual([]);
@@ -493,7 +493,7 @@ describe('fix round 1: review probes as regressions', () => {
   it('I2: a cert, a project or an education fact never backs a "years building X" term', () => {
     const awsOnly = plans(posting({ descriptionText: 'We run on AWS and Kubernetes. Python scripting helpful.' }));
     expect(awsOnly.r.covered).toEqual(['aws', 'kubernetes', 'python']); // AWS by the cert, Python by a project
-    expect(awsOnly.r.summary.text).toBe('Senior Backend Engineer with 10+ years building Kubernetes systems. Currently at Northwind Labs.');
+    expect(awsOnly.r.summary.text).toBe('Senior Backend Engineer with 10+ years of experience. Core skills: Kubernetes. Currently at Northwind Labs.');
     expect(awsOnly.r.skills.slice(0, 3)).toEqual(['AWS', 'Kubernetes', 'Python']); // the skills line may still list them
     const edu = freezePack({ ...pack, facts: pack.facts.map((f) => (f.id === 'f-ed-01' ? { ...f, tech: ['go'] } : f)) }) as WritingPack;
     const goJd = plans(posting({ descriptionText: 'Go and Kubernetes services.' }), edu);

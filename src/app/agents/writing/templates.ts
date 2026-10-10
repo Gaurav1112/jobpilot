@@ -4,8 +4,12 @@
  * Pure: no imports.
  */
 
-/** Summary. Fewer than four covered terms drop the missing slots; none drops the "building" clause. */
-export const SUMMARY_TEMPLATE = '{title} with {years}+ years building {top1}, {top2}, {top3} and {top4} systems. Currently at {employer}.';
+/**
+ * Summary. Fewer than four covered terms drop the missing slots; none drops the "Core skills" sentence. The years and
+ * the terms are separate sentences: "N+ years building X" read as N years *of X*, which overstated any skill newer than
+ * the whole career (a 1-year Go fact under 10+ years).
+ */
+export const SUMMARY_TEMPLATE = '{title} with {years}+ years of experience. Core skills: {top1}, {top2}, {top3} and {top4}. Currently at {employer}.';
 /**
  * Cover paragraph 1 (fix round 1). The brief's "and I work fully remote from India" could be untrue, so the last
  * sentence says only what the pack's eligibility rules guarantee; "of backend experience" became "of experience",
@@ -96,14 +100,14 @@ export interface SummarySlots {
 
 /**
  * Renders `SUMMARY_TEMPLATE`. With fewer than four terms the missing slots are dropped and the rest joined with ", "
- * and " and " (one term: "building java systems"); with none the clause " building ... systems" is dropped. Without
+ * and " and " (one term: "Core skills: java."); with none the sentence " Core skills: ..." is dropped. Without
  * an `employer` slot (no ongoing role) the sentence " Currently at ..." is dropped, since it would be untrue.
  */
 export function renderSummary(s: Readonly<SummarySlots>): string {
   const terms = [s.top1, s.top2, s.top3, s.top4].filter((t): t is string => t !== undefined);
-  const building = terms.length > 0 ? ` building ${joinList(terms)} systems` : '';
+  const skills = terms.length > 0 ? ` ${fill('Core skills: {terms}.', { terms: joinList(terms) })}` : '';
   const current = s.employer !== undefined ? ` ${fill('Currently at {employer}.', { employer: s.employer })}` : '';
-  return `${fill('{title} with {years}+ years', { title: s.title, years: s.years })}${building}.${current}`;
+  return `${fill('{title} with {years}+ years of experience.', { title: s.title, years: s.years })}${skills}${current}`;
 }
 
 /** A claim as its own sentence: verbatim, with a full stop added only when it has no closing punctuation. */
