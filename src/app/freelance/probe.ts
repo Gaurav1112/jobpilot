@@ -1,6 +1,6 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Agent } from '../../kernel/agent.js';
 import { createHostPacer, freezePack, HTTP_HEADERS, issueContext, type HostPacer } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
@@ -134,6 +134,12 @@ async function once<I, O>(agent: Agent<I, O>, input: I, loaded: RunPack, clock: 
  * left out (a source that cannot be parsed is the source agent's failure, not a measurement). Order follows the input.
  */
 export async function judgeGigs(raws: readonly RawGig[], loaded: RunPack, clock: Clock): Promise<GigOutcome[]> {
+  return (await judgeGigsCounted(raws, loaded, clock)).outcomes;
+}
+
+/** Like `judgeGigs`, and also counts the raws the normalizer refused (never dropped silently). */
+export async function judgeGigsCounted(raws: readonly RawGig[], loaded: RunPack, clock: Clock): Promise<{ outcomes: GigOutcome[]; rejectedByNormalizer: number }> {
+  let rejectedByNormalizer = 0;
   const rules = loaded.pack.freelance;
   const scorerPack = scorerPackOf(loaded.publicPack);
   const out: GigOutcome[] = [];
@@ -142,6 +148,7 @@ export async function judgeGigs(raws: readonly RawGig[], loaded: RunPack, clock:
     try {
       gig = (await once(gigNormalizer, r, loaded, clock))[0];
     } catch {
+      rejectedByNormalizer += 1;
       continue;
     }
     if (gig === undefined) continue;
@@ -166,7 +173,7 @@ export async function judgeGigs(raws: readonly RawGig[], loaded: RunPack, clock:
       india: where.reject !== null ? 'closed' : where.review !== null ? 'unknown' : 'open',
     });
   }
-  return out;
+  return { outcomes: out, rejectedByNormalizer };
 }
 
 export interface Tally extends ScoreInput {
@@ -388,12 +395,29 @@ function readHistory(app: AppStore): Record<string, Record<string, number>> {
 
 /* ------------------------------------------------------------------ record + guard */
 
+/** The real path of `p`: the nearest existing ancestor is resolved through symlinks, the rest is re-appended. */
+function realish(p: string): string {
+  let cur = resolve(p);
+  const rest: string[] = [];
+  while (!existsSync(cur) && dirname(cur) !== cur) {
+    rest.unshift(basename(cur));
+    cur = dirname(cur);
+  }
+  let real = cur;
+  try {
+    real = realpathSync(cur);
+  } catch {
+    // an unreadable ancestor: compare the lexical path
+  }
+  return join(real, ...rest);
+}
+
 const inside = (path: string, base: string): boolean => {
-  const r = relative(resolve(base), resolve(path));
-  return r === '' || (!r.startsWith('..') && !isAbsolute(r));
+  const r = relative(realish(base), realish(path));
+  return r === '' || (r !== '..' && !r.startsWith(`..${sep}`) && !isAbsolute(r));
 };
 
-/** Refuses a record folder inside ~/.jobpilot, the active jobpilot home or the repo's tests/, unless `force`. */
+/** Refuses a record folder inside ~/.jobpilot, the active jobpilot home or the repo's tests/ (symlinks resolved), unless `force`. */
 export function assertRecordDir(dir: string, o: { readonly home: string; readonly repoRoot: string; readonly force: boolean }): void {
   if (o.force) return;
   if (inside(dir, join(homedir(), '.jobpilot'))) throw new Error(`refusing to record inside ~/.jobpilot (${dir}); pick another folder or pass --force`);
@@ -445,6 +469,8 @@ export interface ProbeRow extends Tally {
   readonly requests: number;
   readonly errors: readonly string[];
   readonly notes: readonly string[];
+  /** Raw gigs the real normalizer refused (counted, not dropped silently). */
+  readonly rejectedByNormalizer: number;
   readonly score: number;
   readonly verdict: string;
 }
@@ -557,8 +583,9 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
   const rows: ProbeRow[] = [];
   for (const r of kept) {
     const access = accessOf(r.requests, r.errors.length);
-    const tally = r.gigs.length === 0 ? EMPTY : tallyGigs(await judgeGigs(r.gigs, d.loaded, d.clock), { now: at, fitFloor: rules.fitFloor, payFloor: rules.rateFloorUsdHour });
-    rows.push({ id: r.id, name: NAMES[r.id] ?? r.id, kept: true, access, requests: r.requests, errors: r.errors, notes: r.notes, ...tally, items: Math.max(tally.items, r.gigs.length), score: probeScore(access, tally), verdict: access === 'failed' ? 'keep (failed this probe)' : 'keep' });
+    const judged = await judgeGigsCounted(r.gigs, d.loaded, d.clock);
+    const tally = r.gigs.length === 0 ? EMPTY : tallyGigs(judged.outcomes, { now: at, fitFloor: rules.fitFloor, payFloor: rules.rateFloorUsdHour });
+    rows.push({ id: r.id, name: NAMES[r.id] ?? r.id, kept: true, access, requests: r.requests, errors: r.errors, notes: r.notes, rejectedByNormalizer: judged.rejectedByNormalizer, ...tally, items: Math.max(tally.items, r.gigs.length), score: probeScore(access, tally), verdict: access === 'failed' ? 'keep (failed this probe)' : 'keep' });
   }
 
   // Parked sources: one lightweight reader each, sequential and paced.
@@ -591,7 +618,7 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     const access = accessOf(p.urls.length, errors.length);
     const tally = tallyParked(items, { now: at, loaded: d.loaded });
     if (access !== 'failed') history[p.id] = { ...(history[p.id] ?? {}), [month]: tally.relevant };
-    rows.push({ id: p.id, name: NAMES[p.id] ?? p.id, kept: false, access, requests: p.urls.length, errors, notes: [], ...tally, score: probeScore(access, tally), verdict: 'park' });
+    rows.push({ id: p.id, name: NAMES[p.id] ?? p.id, kept: false, access, requests: p.urls.length, errors, notes: [], rejectedByNormalizer: 0, ...tally, score: probeScore(access, tally), verdict: 'park' });
   }
   d.app.setSetting(HISTORY_KEY, JSON.stringify(history));
 
@@ -628,6 +655,7 @@ export function formatProbeTable(report: ProbeReport): string {
     if (r.access !== 'ok') lines.push(`${r.name}: access ${r.access}`);
     for (const e of r.errors) lines.push(`  ${r.id}: ${e}`);
     for (const n of r.notes) lines.push(`  ${r.id}: ${n}`);
+    if (r.rejectedByNormalizer > 0) lines.push(`  ${r.id}: ${r.rejectedByNormalizer} raw gig(s) refused by the normalizer`);
   }
   if (report.promote.length > 0) lines.push(`promote (add an adapter, a code change; nothing is promoted automatically): ${report.promote.join(', ')}`);
   return lines.join('\n');

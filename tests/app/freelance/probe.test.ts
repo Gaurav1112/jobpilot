@@ -1,11 +1,13 @@
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import {
   assertRecordDir,
   formatProbeTable,
   judgeGigs,
+  judgeGigsCounted,
+  probeCommand,
   PARKED_IDS,
   probeScore,
   promoteDue,
@@ -21,6 +23,10 @@ import { loadRunPack } from '../../../src/app/kernel.js';
 import { AppStore } from '../../../src/app/store/app-store.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
+
+vi.stubGlobal('fetch', () => {
+  throw new Error('the probe tests must not use the network');
+});
 
 const root = join(import.meta.dirname, '../../..');
 const fixtures = (name: string): string => join(root, 'tests/fixtures/freelance', name);
@@ -171,7 +177,6 @@ describe('sources probed', () => {
 
 describe('--record', () => {
   it('writes every raw response as a fixture candidate', async () => {
-    const dir = tmp();
     const app = AppStore.open(':memory:');
     const files = new Map<string, string>();
     const record = (name: string, text: string): void => void files.set(name, text);
@@ -180,7 +185,6 @@ describe('--record', () => {
     expect(files.size).toBeGreaterThan(5);
     expect([...files.keys()].some((n) => n.startsWith('remotive'))).toBe(true);
     expect([...files.keys()].some((n) => n.startsWith('workingnomads'))).toBe(true);
-    expect(dir).toBeTruthy();
   });
 
   it('assertRecordDir allows a scratch folder and refuses ~/.jobpilot, the home and tests/ unless forced', () => {
@@ -199,6 +203,61 @@ describe('--record', () => {
     rec('remotive-api.json', '{"a":1}');
     expect(readdirSync(dir)).toEqual(['remotive-api.json']);
     expect(readFileSync(join(dir, 'remotive-api.json'), 'utf8')).toBe('{"a":1}');
+  });
+});
+
+describe('assertRecordDir resolves symlinks and relative paths', () => {
+  const home = () => {
+    const h = tmp();
+    return h;
+  };
+  it('refuses a symlink to the home and a symlink to tests/', () => {
+    const h = home();
+    const out = tmp();
+    symlinkSync(h, join(out, 'to-home'));
+    symlinkSync(join(root, 'tests'), join(out, 'to-tests'));
+    const o = { home: h, repoRoot: root, force: false };
+    expect(() => assertRecordDir(join(out, 'to-home', 'raw'), o)).toThrow(/jobpilot home/);
+    expect(() => assertRecordDir(join(out, 'to-tests', 'x'), o)).toThrow(/tests/);
+    expect(() => assertRecordDir(join(out, 'to-home', 'raw'), { ...o, force: true })).not.toThrow();
+  });
+  it('refuses a relative .jobpilot/x with cwd = HOME, and allows a normal scratch dir', () => {
+    const cwd = process.cwd();
+    try {
+      process.chdir(homedir());
+      expect(() => assertRecordDir('.jobpilot/x', { home: '/nowhere/h', repoRoot: root, force: false })).toThrow(/\.jobpilot/);
+    } finally {
+      process.chdir(cwd);
+    }
+    expect(() => assertRecordDir(join(tmp(), 'new', 'deeper'), { home: home(), repoRoot: root, force: false })).not.toThrow();
+  });
+  it('a sibling named like the root is not inside it', () => {
+    const h = home();
+    mkdirSync(`${h}-sibling`, { recursive: true });
+    tmps.push(`${h}-sibling`);
+    expect(() => assertRecordDir(`${h}-sibling/x`, { home: h, repoRoot: root, force: false })).not.toThrow();
+  });
+});
+
+describe('probeCommand end to end', () => {
+  it('runs on fixtures, writes the recorded files and returns the report', async () => {
+    const h = tmp();
+    mkdirSync(join(h, 'pack'), { recursive: true });
+    const { cpSync } = await import('node:fs');
+    cpSync(join(root, 'tests/fixtures/pack'), join(h, 'pack'), { recursive: true });
+    const rec = join(tmp(), 'raw');
+    const lines: string[] = [];
+    const code = await probeCommand({ home: h, repoRoot: root, json: true, record: rec, force: false, clock, sleep: async () => {}, fetch: keptFetch(), get: parkedGet(), out: (l) => lines.push(l) });
+    expect(code).toBe(0);
+    const report = JSON.parse(lines.join('\n')) as { rows: { id: string }[] };
+    expect(report.rows.map((r) => r.id).sort()).toEqual([...PROBE_SOURCE_IDS].sort());
+    expect(readdirSync(rec).length).toBeGreaterThan(5);
+  });
+  it('counts a raw gig the normalizer refuses', async () => {
+    const bad: RawGig = { platform: 'hn-freelancer', sourceId: '9', raw: { not: 'a comment' } };
+    const r = await judgeGigsCounted([bad], loaded, clock);
+    expect(r.rejectedByNormalizer).toBe(1);
+    expect(r.outcomes).toEqual([]);
   });
 });
 
