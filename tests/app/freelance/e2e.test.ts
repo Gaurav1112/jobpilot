@@ -178,7 +178,8 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
  * The banner of the first fixture run: 3 newly shortlisted gigs (the synthetic $70/h HN contract and two fixed-price
  * Freelancer gigs); the top is the contract (a stated rate ranks before an unknown one), its title cut to 40 characters.
  */
-const EXPECTED_NOTIFICATION = '3 new gigs ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
+// 2, not 3, since Task 10 fix round 1: "Cross-Platform Multi-Purpose App Build" backs no term with a fact (covered 0/3) and goes to review.
+const EXPECTED_NOTIFICATION = '2 new gigs ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
 
 describe('run-freelance --if-due', () => {
   const deps = (home: string, at: string, out: string[]) => ({

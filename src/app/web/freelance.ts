@@ -3,6 +3,7 @@ import { termDisplay } from '../agents/writing/grounded.js';
 import { NETWORK_FILES } from '../freelance/networks-command.js';
 import { isoWeek } from '../freelance/health.js';
 import { PLATFORM_AGENT } from '../freelance/pipeline.js';
+import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
 import { rankable } from '../freelance/run.js';
 import { Platform, type GigRendered } from '../freelance/types.js';
@@ -86,8 +87,8 @@ const DEFAULT_RULES = FreelanceFile.parse({});
 
 const NOTICE: Readonly<Record<string, string>> = {
   nodocs: 'Marked applied. No documents were kept: this gig had no ready documents.',
-  keepfail: 'Marked applied, but the documents could not be kept as sent. They are unchanged; see the reason in the log.',
-  keepbusy: "Status saved. Couldn't keep a copy of the documents just now; it is kept the next time you mark it applied.",
+  keepfail: "Marked applied, but the documents could not be kept as sent. They are unchanged; see the reason in the log, then use 'Keep a copy' below.",
+  keepbusy: "Status saved. Couldn't keep a copy of the documents just now; use 'Keep a copy' below.",
 };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -101,6 +102,19 @@ function rateOf(v: unknown): GigRate | null {
     fxDate: typeof v['fxDate'] === 'string' ? v['fxDate'] : null, fxSource: typeof v['fxSource'] === 'string' ? v['fxSource'] : null,
   };
 }
+
+/**
+ * A breakdown row in words; a skill row whose term the user's facts do not back (not in the plan's `covered`) says so,
+ * so the fit table never contradicts the coverage line. Without a plan on record nothing is marked.
+ */
+function rowLabel(k: string, display: (k: string) => string, covered: ReadonlySet<string> | null): string {
+  const label = breakdownText(k, display);
+  const m = /^(strong|medium):(.+)$/.exec(k);
+  return m !== null && covered !== null && !covered.has(m[2] as string) ? `${label} (not backed by your facts)` : label;
+}
+
+const coveredOf = (x: { readonly rendered: GigRendered | null }): ReadonlySet<string> | null =>
+  Array.isArray(x.rendered?.plan?.covered) ? new Set(x.rendered.plan.covered) : null;
 
 interface Extras {
   readonly gig: Record<string, unknown> | null;
@@ -137,9 +151,9 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       overlap: overlap === null ? null : text(overlap),
       istWindow: `${rules.istWindow.replace('-', '–')} IST`,
       coverage: plan !== undefined && Array.isArray(plan.covered) && Array.isArray(plan.missing) ? coverageText(plan.covered, plan.missing, display) : null,
-      fitTitle: fitRows.length === 0 ? 'Not scored' : fitRows.map(([k, p]) => `${breakdownText(k, display)} ${p > 0 ? '+' : ''}${p}`).join('\n'),
+      fitTitle: fitRows.length === 0 ? 'Not scored' : fitRows.map(([k, p]) => `${rowLabel(k, display, coveredOf(x))} ${p > 0 ? '+' : ''}${p}`).join('\n'),
       flags: g.flags.map(flagText),
-      notes: g.notes,
+      notes: g.notes.map((n) => ({ text: n, amber: n === NOTE_ONE_SKILL })),
       client: clientSignals(isObj(g.client) ? g.client : null),
       age: ageText(g.postedAt, now),
       bids,
@@ -320,7 +334,12 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     return { paste: { kind: txt.kind === 'pitch' ? 'pitch' : 'proposal', segments, chars: [...body.replace(/\n$/, '')].length, max: rule?.maxChars ?? null }, problem: null };
   };
 
-  const sentOf = (s: AppStore, g: Pick<GigView, 'gigKey' | 'appliedAt'>) => ({ gigKey: g.gigKey, snapshots: s.gigSnapshots(g.gigKey), appliedDay: g.appliedAt === null ? null : istDate(g.appliedAt) });
+  /** Applied, documents ready and no snapshot yet: the keep-now offer (as v1 `keepable`). */
+  const keepable = (g: GigView & { docs: GigDoc[] }, snapshots: number): boolean => g.status === 'applied' && snapshots === 0 && g.docsState === 'ready' && g.docs.length > 0;
+  const sentOf = (s: AppStore, g: GigView & { docs: GigDoc[] }, c: Context<Env>) => {
+    const snapshots = s.gigSnapshots(g.gigKey);
+    return { gigKey: g.gigKey, snapshots, appliedDay: g.appliedAt === null ? null : istDate(g.appliedAt), canKeep: keepable(g, snapshots.length), csrf: d.csrf(c) };
+  };
 
   app.get('/freelance/:key', (c) => {
     const key = c.req.param('key');
@@ -331,7 +350,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const data = d.withStore((s) => {
       const g = s.getGig(key);
       if (!g) return undefined;
-      return { g, extras: extrasOf(s, [key])[key] as Extras, history: s.gigHistory(key), sent: sentOf(s, g) };
+      return { g, extras: extrasOf(s, [key])[key] as Extras, history: s.gigHistory(key), sent: sentOf(s, g, c) };
     });
     if (!data) return notFound(c);
     const g = r.deep(data.g);
@@ -343,7 +362,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const body = gigBody({
       row, csrf: d.csrf(c), paste, pasteProblem: problem, files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
       history: data.history, sent: data.sent, reasons: g.reasons, duplicateOf: g.duplicateOf, istDay: istDate,
-      breakdown: Object.entries(g.breakdown ?? {}).map(([k, p]) => ({ label: SHOWN_ONLY[k] ?? breakdownText(k, display), points: p, shown: Object.hasOwn(SHOWN_ONLY, k) })),
+      breakdown: Object.entries(g.breakdown ?? {}).map(([k, p]) => ({ label: SHOWN_ONLY[k] ?? rowLabel(k, display, coveredOf(data.extras)), points: p, shown: Object.hasOwn(SHOWN_ONLY, k) })),
       ...(flash !== undefined ? { flash } : {}),
     });
     return d.page(c, 'freelance', g.title, packBanner(ps), body);
@@ -375,13 +394,36 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
           }
         }
       }
-      const g = s.getGig(key) as GigView;
-      return { g, history: s.gigHistory(key), sent: sentOf(s, g), notice };
+      const g = s.getGig(key) as GigView & { docs: GigDoc[] };
+      return { g, history: s.gigHistory(key), sent: sentOf(s, g, c), notice };
     });
     if (!result) return c.text('No such gig', 404);
     if (!d.isHx(c)) return c.redirect(`/freelance/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`, 303);
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
     return c.html(html`${gigStatusSection(result.g, result.history, d.csrf(c), istDate, flash)}${gigSentSection(result.sent, true)}`.value);
+  });
+
+  // "Keep a copy of these documents now": the snapshot an apply could not make (a failed or busy copy). Same confined
+  // helper, same rule: an applied gig with ready documents and no snapshot yet; a second keep is refused (409).
+  app.post('/freelance/:key/keep', (c) => {
+    const key = c.req.param('key');
+    if (!GIG_KEY.test(key)) return c.text('Bad request', 400);
+    const at = d.now();
+    const result = d.withStore((s) => {
+      const g = s.getGig(key);
+      if (!g) return { status: 404 as const, text: 'No such gig' };
+      if (!keepable(g, s.gigSnapshots(key).length)) return { status: 409 as const, text: 'Nothing to keep: the gig is not applied, its documents are not ready, or a copy is already kept.' };
+      try {
+        s.putGigSnapshot(key, istDate(at), snapshotGigApplied(d.paths.out, key, g.docs, istDate(at)), at);
+      } catch (e) {
+        if (d.isBusy(e)) throw e;
+        return { status: 409 as const, text: `The documents could not be kept: ${e instanceof Error ? e.message : String(e)}` };
+      }
+      return { status: 200 as const, sent: sentOf(s, s.getGig(key) as GigView & { docs: GigDoc[] }, c) };
+    });
+    if (result.status !== 200) return c.text(d.redactor(d.packState(at).naming).text(result.text), result.status);
+    if (!d.isHx(c)) return c.redirect(`/freelance/${key}#sent-h`, 303);
+    return c.html(gigSentSection(result.sent).value);
   });
 
   // --- files: only names the store recorded for this gig --------------------------------------------------------------
@@ -400,12 +442,20 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     });
   };
 
-  /** A text file is served only when it is the text the dashboard would show (no forbidden term). */
-  const clean = (read: ReadResult, name: string, text: (s: string) => string): ReadResult => {
-    if (!read.ok || !name.endsWith('.txt')) return read;
+  /**
+   * Whether the gig's paste text (the `.txt` among `files`) names a forbidden term: then none of its files is served
+   * (403), the PDF and DOCX included, since they were written from the same plan. A `.txt` that cannot be read is
+   * left to the per-file read.
+   */
+  const tainted = (files: readonly Pick<GigDoc, 'format' | 'path' | 'sha256'>[], text: (s: string) => string): boolean => {
+    const txt = files.find((f) => f.format === 'txt');
+    if (txt === undefined) return false;
+    const read = readRecorded(d.paths.out, txt.path, txt.sha256);
+    if (!read.ok) return false;
     const body = Buffer.from(read.bytes).toString('utf8');
-    return text(body) === body ? read : { ok: false, why: 'refused', detail: 'names a forbidden term' };
+    return text(body) !== body;
   };
+  const TAINTED = 'Not served: the text of this gig names a forbidden term, so none of its documents leave the dashboard. Check naming.yaml and the posting.';
 
   app.get('/freelance/:key/files/:name', (c) => {
     const { key, name } = c.req.param();
@@ -414,16 +464,19 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const doc = g?.docs.find((f) => f.path === `gigs/${key}/${name}`);
     if (!g || !doc || g.docsState !== 'ready') return c.text('Not found', 404);
     const ps = d.packState(d.now());
-    return sendFile(c, clean(readRecorded(d.paths.out, doc.path, doc.sha256), name, d.redactor(ps.naming).text), name, `${doc.kind}-${key}.${doc.format}`);
+    if (tainted(g.docs, d.redactor(ps.naming).text)) return c.text(TAINTED, 403);
+    return sendFile(c, readRecorded(d.paths.out, doc.path, doc.sha256), name, `${doc.kind}-${key}.${doc.format}`);
   });
 
   app.get('/freelance/:key/sent/:day/:name', (c) => {
     const { key, day, name } = c.req.param();
     if (!GIG_KEY.test(key) || !DAY.test(day) || !GIG_FILE.test(name)) return c.text('Not found', 404);
-    const f = d.withStore((s) => s.gigSnapshots(key).find((x) => x.day === day)?.files.find((x) => x.path === `gigs/${key}/applied-${day}/${name}`));
-    if (!f) return c.text('Not found', 404);
+    const snap = d.withStore((s) => s.gigSnapshots(key).find((x) => x.day === day));
+    const f = snap?.files.find((x) => x.path === `gigs/${key}/applied-${day}/${name}`);
+    if (!snap || !f) return c.text('Not found', 404);
     const ps = d.packState(d.now());
-    return sendFile(c, clean(readRecorded(d.paths.out, f.path, f.sha256), name, d.redactor(ps.naming).text), name, `${f.kind}-${key}-sent-${day}.${f.format}`);
+    if (tainted(snap.files, d.redactor(ps.naming).text)) return c.text(TAINTED, 403);
+    return sendFile(c, readRecorded(d.paths.out, f.path, f.sha256), name, `${f.kind}-${key}-sent-${day}.${f.format}`);
   });
 }
 

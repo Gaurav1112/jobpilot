@@ -130,7 +130,7 @@ function perHour(r: GigRate): string {
 
 /**
  * The rate as the user reads it, always with how it was reached (spec §5: a derived rate is never shown without its
- * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks × 20 h"; `fixed÷stated-hours`:
+ * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
  * "$50/h from ~60 hours stated" or "$25/h from 3 weeks × 20 h stated"; `monthly÷hours`: "$46.19/h from a monthly
  * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"). A rate the
  * platform's own exchange rate converted ends with " · via platform FX". When a derived rate's basis is not on record
@@ -149,10 +149,11 @@ export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
     case 'stated':
       return `${pay} stated${fx}`;
     case 'derived-from-duration': {
+      // The run divided the budget by weeks × the pack's weekly hours cap at that time. The stored rate keeps neither
+      // figure, and the cap is never recomputed from the rate or read from today's pack: only the weeks (from the
+      // run's own Gig@1) are shown, with the honest note.
       const w = basis.weeks;
-      const top = rate.maxUsdH ?? rate.minUsdH;
-      if (w === null || w <= 0 || rate.budgetUsd === null || top === null || top <= 0) return `${pay} derived from the duration${missing}${fx}`;
-      return `${pay} derived from ${plural(w, 'week', 'weeks')} × ${num1(Math.round(rate.budgetUsd / (top * w)))} h${fx}`;
+      return w === null || w <= 0 ? `${pay} derived from the duration${missing}${fx}` : `${pay} derived from ${plural(w, 'week', 'weeks')}${missing}${fx}`;
     }
     case 'fixed÷stated-hours': {
       if (basis.hours !== null && basis.hours > 0 && basis.weeks !== null && basis.weeks > 0) return `${pay} from ${plural(basis.weeks, 'week', 'weeks')} × ${num1(basis.hours)} h stated${fx}`;

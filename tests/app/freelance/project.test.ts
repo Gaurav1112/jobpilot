@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { deadReason, isoWeek, previousWeek } from '../../../src/app/freelance/health.js';
 import { gigDedupeKey, gigKey } from '../../../src/app/freelance/keys.js';
-import { gigRowsOf, type GigRunOutputs } from '../../../src/app/freelance/project.js';
-import { gigNotificationFor } from '../../../src/app/freelance/run.js';
+import { gigRowsOf, NOTE_NO_FACTS, NOTE_ONE_SKILL, type GigRunOutputs } from '../../../src/app/freelance/project.js';
+import { freshGigs, gigNotificationFor } from '../../../src/app/freelance/run.js';
 import type { Gig, GigQaReport, GigRendered, ScoredGig } from '../../../src/app/freelance/types.js';
 import { belowFitFloor, proposalPlanner } from '../../../src/app/freelance/writing/proposal-planner.js';
 import { AppStore, type GigUpsert, type GigView } from '../../../src/app/store/app-store.js';
@@ -213,5 +213,41 @@ describe('the freelance notification', () => {
 
   it('never carries a forbidden term', () => {
     expect(gigNotificationFor([view({ title: 'Initech payments API' })], o)).toBe('1 new gig ≥$40/h');
+  });
+});
+
+describe('the coverage gate (Task 10 fix round 1)', () => {
+  /** A ready proposal whose plan backs `covered` terms and cites `cited` evidence lines. */
+  const planned = (s: ScoredGig, covered: string[], cited: number) => {
+    const d = docsFor(gigOf(s).gigKey, `Proposal for ${gigOf(s).sourceId}.`);
+    const evidence = Array.from({ length: Math.max(cited, 1) }, (_, i) => ({ text: `line ${i}`, factIds: i < cited ? [`f-${i}`] : [] }));
+    d.rendered.plan = { proposal: { evidence }, pitch: null, covered, missing: ['rust'] } as unknown as GigRendered['plan'];
+    return d;
+  };
+  const gigs = [scoredGig({ sourceId: '40' }), scoredGig({ sourceId: '41' }), scoredGig({ sourceId: '42' }), scoredGig({ sourceId: '43', kind: 'contract' })];
+  const docs = [planned(gigs[0]!, [], 0), planned(gigs[1]!, ['java'], 1), planned(gigs[2]!, ['java', 'kafka'], 2), planned(gigs[3]!, ['java', 'kafka'], 0)];
+  const rows = gigRowsOf(outputsOf(gigs, { rendered: docs.map((d) => d.rendered), qa: docs.map((d) => d.qa) }), OPTS);
+  const rowOf = (s: ScoredGig) => rows.find((r) => r.row.gigKey === gigOf(s).gigKey)!.row;
+
+  it('0 covered terms: review, the note, documents blocked; 1: listed with the amber note; 2: listed as it was', () => {
+    expect(rowOf(gigs[0]!)).toMatchObject({ list: 'review', notes: [NOTE_NO_FACTS], docsState: 'blocked', docsDetail: NOTE_NO_FACTS, fit: 60 });
+    expect(rowOf(gigs[1]!)).toMatchObject({ list: 'gigs', notes: [NOTE_ONE_SKILL], docsState: 'ready' });
+    expect(rowOf(gigs[2]!)).toMatchObject({ list: 'gigs', notes: [], docsState: 'ready' });
+  });
+
+  it('covered terms but no cited evidence line: review too (a contract)', () => {
+    expect(rowOf(gigs[3]!)).toMatchObject({ list: 'review', notes: [NOTE_NO_FACTS], docsState: 'blocked' });
+  });
+
+  it('the notification never announces a gated gig', () => {
+    const app = AppStore.open(':memory:');
+    try {
+      for (const r of rows) app.upsertGig(r.row);
+      const fresh = freshGigs(app).map((g) => g.gigKey).sort();
+      expect(fresh).toEqual([gigOf(gigs[1]!).gigKey, gigOf(gigs[2]!).gigKey].sort());
+      expect(gigNotificationFor(freshGigs(app), { rateFloor: 40, half: 'am', naming: { forbiddenTerms: [] }, problems: 0 })).toMatch(/^2 new gigs/);
+    } finally {
+      app.close();
+    }
   });
 });

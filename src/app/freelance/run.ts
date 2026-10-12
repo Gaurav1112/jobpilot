@@ -133,7 +133,7 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
 }
 
 /** The newly shortlisted gigs: Contracts or Gigs, documents ready, not yet announced, duplicate listings excluded. */
-const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null);
+export const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null);
 
 /**
  * `jobpilot run-freelance`: one freelance run under the run lock (spec §3, §8), the freelance counterpart of `runDaily`:

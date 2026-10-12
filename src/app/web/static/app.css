@@ -375,3 +375,4 @@ pre.paste, pre.checklist {
   .char-count { margin-left: 0; }
 }
 .stack { display: grid; gap: var(--space-3); }
+.warn-note { color: var(--warn); font-weight: 600; }

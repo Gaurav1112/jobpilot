@@ -17,6 +17,9 @@ import { repeatKey } from './writing/gig-qa.js';
  *   the fit floor the one with the least canonical JSON, so it never depends on input order.
  * - **list:** the `rankGigs(rows, fitFloor)` list the gig is in; `below-floor` for a contract or gig under the floor;
  *   null when it was rejected or not scored.
+ * - **coverage gate:** a Contracts or Gigs row whose documents' plan backs no lexicon term, or cites no fact
+ *   (`coverageGate`), goes to `review` with the note NOTE_NO_FACTS and its documents `blocked` (never ready to paste,
+ *   never announced); one backed term keeps it listed with the note NOTE_ONE_SKILL. The fit formula is unchanged.
  * - **docs:** from the gig's GigQaReport: `ready` when QA passed and every file is on disk with its sha256, `missing`
  *   when one is not, `blocked` with the failed checks when QA failed. A quarantined writing step, a files commit
  *   failure, or a writing failure with a named reason blocks the documents. Anything else is `none`; a scored gig
@@ -65,6 +68,23 @@ export interface GigRunOutputs {
   readonly blocked: ReadonlyMap<string, string>;
   /** A writing step of the gig failed with no named reason: docs `none`, the failure shown in the detail. */
   readonly writingFailed: ReadonlyMap<string, string>;
+}
+
+/** The note (and docs detail) of a listed gig whose plan backs no lexicon term or cites no fact: it goes to review. */
+export const NOTE_NO_FACTS = 'none of your verified facts match this gig';
+/** The amber note of a listed gig whose plan backs exactly one term. */
+export const NOTE_ONE_SKILL = 'only one of the skills it asks for is backed by your facts';
+
+/**
+ * The coverage of a gig's plan: `none` when it backs no term (`covered` empty) or cites no fact (no evidence or pitch
+ * line with a fact id), `one` when it backs exactly one term, `ok` otherwise; `unknown` without a plan on record.
+ */
+export function coverageGate(plan: GigRendered['plan'] | undefined): 'none' | 'one' | 'ok' | 'unknown' {
+  if (plan === undefined || !Array.isArray(plan.covered)) return 'unknown';
+  const lines = plan.proposal?.evidence ?? plan.pitch?.lines ?? [];
+  const cited = lines.filter((l) => l.factIds.length > 0).length;
+  if (plan.covered.length === 0 || cited === 0) return 'none';
+  return plan.covered.length === 1 ? 'one' : 'ok';
 }
 
 /** The docs detail of a scored gig under the fit floor (review rows included): no documents are written for it. */
@@ -136,10 +156,12 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
 
   // The proposal text behind each gig's chosen documents: the rendering whose files are those the QA report lists.
   const proposalOf = new Map<string, string>();
+  const planOf = new Map<string, GigRendered['plan']>();
   for (const [k, d] of docsOf) {
     const want = d.qa.files.map((f) => `${f.path}\u0000${f.sha256}`).sort().join('\n');
     const r = (renderedOf.get(k) ?? []).find((x) => x.files.map((f) => `${f.path}\u0000${f.sha256}`).sort().join('\n') === want);
     if (r?.text.proposal != null) proposalOf.set(k, r.text.proposal);
+    if (r !== undefined) planOf.set(k, r.plan);
   }
 
   const projectorFlags = new Map<string, { id: string; detail: string }[]>();
@@ -188,6 +210,19 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
       docsDetail = block;
     } else if (d !== undefined) ({ docsState, docsDetail, docs } = d);
     else docsDetail = out.writingFailed.get(k) ?? (b.scored !== null && b.scored.fit < opts.fitFloor ? BELOW_FLOOR_DETAIL : null);
+    // The coverage gate (fix round 1): fit counts the lexicon terms a posting names; coverage counts the terms the
+    // user's verified facts back. A listed gig whose plan backs none of them, or cites no fact, is not shortlisted.
+    let list = b.list;
+    let notes = b.verdict?.notes ?? [];
+    const gate = coverageGate(planOf.get(k));
+    if ((list === 'contracts' || list === 'gigs') && gate === 'none') {
+      list = 'review';
+      notes = [...notes, NOTE_NO_FACTS];
+      if (docsState === 'ready') {
+        docsState = 'blocked';
+        docsDetail = NOTE_NO_FACTS;
+      }
+    } else if ((list === 'contracts' || list === 'gigs') && gate === 'one') notes = [...notes, NOTE_ONE_SKILL];
     rows.push({
       row: {
         gigKey: k,
@@ -204,11 +239,11 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
         hours: g.hoursPerWeek,
         verdict: b.verdict?.verdict ?? null,
         reasons: b.verdict?.reasons ?? [],
-        notes: b.verdict?.notes ?? [],
+        notes,
         flags: [...b.flags, ...(projectorFlags.get(k) ?? [])],
         fit: b.scored?.fit ?? null,
         breakdown: b.scored?.breakdown ?? null,
-        list: b.list,
+        list,
         docsState,
         docsDetail,
         postedAt: g.postedAt,

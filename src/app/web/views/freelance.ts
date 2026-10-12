@@ -43,7 +43,8 @@ export interface GigRowView {
   /** The fit formula's rows, one per line, for the tooltip. */
   readonly fitTitle: string;
   readonly flags: readonly { readonly label: string; readonly tone: Tone; readonly title: string }[];
-  readonly notes: readonly string[];
+  /** Each note of the verdict as written; `amber` for a warning note (only one skill backed). */
+  readonly notes: readonly { readonly text: string; readonly amber: boolean }[];
   readonly client: readonly string[];
   readonly age: string | null;
   readonly bids: number | null;
@@ -68,6 +69,8 @@ function sourceLink(g: GigView, label: string): Html | '' {
   return url === undefined ? '' : html`<a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">${label}<span class="visually-hidden"> (opens in a new tab)</span></a>`;
 }
 
+const noteLine = (n: GigRowView['notes'][number]): Html => (n.amber ? html`<li class="gig-note warn-note">${n.text}</li>` : html`<li class="gig-note muted">${n.text}</li>`);
+
 const flagPills = (v: GigRowView): Html => html`${v.flags.map((f) => html`<span class="pill pill-${f.tone}" title="${f.title}">${f.label}</span>`)}`;
 
 function factsLine(v: GigRowView): Html {
@@ -87,7 +90,7 @@ function gigRow(v: GigRowView): Html {
 <p class="gig-sub"><span>${platformName(g.platform)}</span>${v.client.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span>${v.client.join(', ')}</span>` : html`<span class="sep" aria-hidden="true">·</span><span class="muted">no client details</span>`}<span class="sep" aria-hidden="true">·</span>${sourceLink(g, 'Open the posting')}</p>
 ${factsLine(v)}
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
-${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map((n) => html`<li class="gig-note muted">${n}</li>`)}</ul>` : ''}
+${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 </div>
 <div class="gig-status">${gigStatusPill(g.status)}</div>
@@ -107,11 +110,11 @@ export interface GigListData {
 const LEDE: Readonly<Record<GigListData['tab'], string>> = {
   contracts: 'Contract roles you can pitch for, best rate first, then fit. Red flags sort last.',
   gigs: 'Project gigs you can bid on, best rate first, then fit. Red flags sort last.',
-  review: 'Gigs that need your judgement before you bid: each says what to check.',
+  review: 'Review holds gigs that need your judgement; the fit floor applies to Contracts and Gigs only.',
 };
 
 export function gigListBody(d: GigListData): Html {
-  const lede = html`${LEDE[d.tab]} Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
+  const lede = html`${LEDE[d.tab]}${d.tab === 'review' ? '' : html` Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.`}${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
   return html`${head(d.tab, d.counts, lede)}
 ${d.hidden !== null ? html`<p class="note">${d.hidden}</p>` : ''}
 ${d.rows.length === 0 ? html`<p class="empty">Nothing here yet. The next freelance run fills this list.</p>` : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>`}
@@ -131,6 +134,9 @@ export interface PasteDoc {
 
 export interface GigSentData {
   readonly gigKey: string;
+  /** Applied, ready documents and no snapshot: offer to keep a copy now. */
+  readonly canKeep: boolean;
+  readonly csrf: string;
   readonly snapshots: readonly GigSnapshot[];
   readonly appliedDay: string | null;
 }
@@ -172,14 +178,20 @@ function pasteSection(d: GigPageData): Html {
 <span class="char-count num${over ? ' over' : ''}">${groupWestern(p.chars)}${p.max !== null ? html` / ${groupWestern(p.max)}` : ''} characters</span>
 </div>
 <pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
-<p class="hint">Copy pastes exactly the .txt file. Hover an underlined line to see the fact it comes from. Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
+<p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
 <div class="downloads">${d.files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
 </section>`;
 }
 
 export function gigSentSection(d: GigSentData, oob = false): Html {
-  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 ? '' : html` hidden`}>
+  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 || d.canKeep ? '' : html` hidden`}>
 <h2 id="sent-h">Documents you sent</h2>
+${
+  d.canKeep
+    ? html`<p class="hint">You marked this gig applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
+<form method="post" action="/freelance/${d.gigKey}/keep" hx-post="/freelance/${d.gigKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
+    : ''
+}
 ${d.snapshots.map(
   (s) => html`<div class="sent"><h3>${s.day === d.appliedDay ? 'Applied' : 'Copy kept'} ${dateText(s.day)}</h3><p class="hint">Kept read-only, exactly as they were that day; later runs never change them.</p>
 <ul class="plain sent-files">${s.files.map((f) => html`<li><a href="/freelance/${d.gigKey}/sent/${s.day}/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a></li>`)}</ul></div>`,
@@ -223,7 +235,7 @@ function checksSection(d: GigPageData): Html {
   return html`<section class="card" aria-labelledby="checks-h"><h2 id="checks-h">Before you bid</h2>
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
 ${d.reasons.length > 0 ? html`<ul class="plain">${d.reasons.map((r) => html`<li><code>${r}</code></li>`)}</ul>` : ''}
-${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map((n) => html`<li class="gig-note muted">${n}</li>`)}</ul>` : ''}
+${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${empty ? html`<p class="muted">Nothing to flag.</p>` : ''}
 ${v.client.length > 0 ? html`<p class="hint">Client: ${v.client.join(', ')}</p>` : html`<p class="hint">The platform states nothing about the client.</p>`}
 </section>`;

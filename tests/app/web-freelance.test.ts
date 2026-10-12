@@ -7,6 +7,8 @@ import type { Gig, GigRendered } from '../../src/app/freelance/types.js';
 import { AppStore, type GigDoc, type GigUpsert } from '../../src/app/store/app-store.js';
 import { rateLabel } from '../../src/app/web/copy.js';
 import { createDashboard } from '../../src/app/web/server.js';
+import { createTestDashboard } from '../../src/app/web/server-testing.js';
+import { NOTE_ONE_SKILL } from '../../src/app/freelance/project.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { Store as KernelStore } from '../../src/kernel/store/store.js';
 
@@ -243,7 +245,7 @@ describe('freelance tabs: the rows', () => {
 
   it('the rate label always names its method (exact text)', async () => {
     const t = text((await get('/freelance?tab=gigs')).body) + text((await get('/freelance?tab=review')).body);
-    expect(t).toContain('$75/h derived from 2 weeks × 20 h');
+    expect(t).toContain('$75/h derived from 2 weeks (the basis is not on record)');
     expect(t).toContain('$50/h from ~60 hours stated');
     expect(t).toContain('rate unknown - fixed budget $750');
     expect(t).toContain('$43.80–49.64/h stated · via platform FX');
@@ -252,7 +254,8 @@ describe('freelance tabs: the rows', () => {
   it('rateLabel: every method, and a derived rate is never shown bare', () => {
     const r = (o: Record<string, unknown>) => ({ minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null, ...o });
     expect(rateLabel(r({ minUsdH: 50, maxUsdH: 50, method: 'stated' }), { description: '', weeks: null, hours: null, budgetType: 'hourly' })).toBe('$50/h stated');
-    expect(rateLabel(r({ minUsdH: 75, maxUsdH: 75, method: 'derived-from-duration', budgetUsd: 3000 }), { description: '', weeks: 2, hours: null, budgetType: 'fixed' })).toBe('$75/h derived from 2 weeks × 20 h');
+    // the hours cap the run used is not stored: never recomputed from the rate
+    expect(rateLabel(r({ minUsdH: 75, maxUsdH: 75, method: 'derived-from-duration', budgetUsd: 3000 }), { description: '', weeks: 2, hours: null, budgetType: 'fixed' })).toBe('$75/h derived from 2 weeks (the basis is not on record)');
     expect(rateLabel(r({ minUsdH: 50, maxUsdH: 50, method: 'fixed÷stated-hours', budgetUsd: 3000 }), { description: 'About 60 hours of work.', weeks: null, hours: null, budgetType: 'fixed' })).toBe('$50/h from ~60 hours stated');
     expect(rateLabel(r({ minUsdH: 25, maxUsdH: 25, method: 'fixed÷stated-hours', budgetUsd: 1500 }), { description: '', weeks: 3, hours: 20, budgetType: 'fixed' })).toBe('$25/h from 3 weeks × 20 h stated');
     expect(rateLabel(r({ minUsdH: 46.19, maxUsdH: 46.19, method: 'monthly÷hours', budgetUsd: 4000 }), { description: '', weeks: null, hours: 20, budgetType: 'monthly' })).toBe('$46.19/h from a monthly $4,000 at 20 h/week stated');
@@ -427,5 +430,75 @@ describe('freelance: no external assets', () => {
       expect(body).not.toMatch(/url\(\s*['"]?(https?:)?\/\//i);
     }
     expect(links).toBeGreaterThan(5);
+  });
+});
+
+describe('fix round 1', () => {
+  const G9 = '9a9a9a9a9a9a9a9a';
+  /** A ready gig with its own proposal; `plan` adds the GigRendered envelope behind it. */
+  function readyGig(key: string, proposal: string, over: Partial<GigUpsert> = {}, plan?: { covered: string[]; cited: boolean }): void {
+    const g = gigOf(key, { title: `Extra ${key}` });
+    const docs = withStore((s) => {
+      upsert(s, g, { list: 'below-floor', fit: 40, docsState: 'ready', ...over });
+      return writeGigDocs(s, key, 'proposal', proposal);
+    });
+    seedEnvelope('Gig@1', g);
+    if (plan !== undefined) {
+      const r = rendered(key, docs, 'proposal', plan.covered, []);
+      if (!plan.cited) r.plan.proposal!.evidence = [{ text: EVIDENCE, factIds: [] }];
+      r.text.proposal = proposal;
+      seedEnvelope('GigRendered@1', r);
+    }
+  }
+
+  it('keep-now: a failed snapshot is offered again and made once; a second keep makes no second copy', async () => {
+    let fail = true;
+    const raw = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { beforeSnapshot: () => { if (fail) throw new Error('disk full'); } });
+    app = wrap(raw);
+    const r = await post(`/freelance/${G2}/status`, { to: 'applied', _csrf: token }, hx);
+    expect(r.status).toBe(200);
+    expect(decode(await r.text())).toContain("use 'Keep a copy' below");
+    expect(withStore((s) => s.gigSnapshots(G2))).toHaveLength(0);
+    expect((await get(`/freelance/${G2}`)).body).toContain(`action="/freelance/${G2}/keep"`);
+    fail = false;
+    const k = await post(`/freelance/${G2}/keep`, { _csrf: token }, hx);
+    expect(k.status).toBe(200);
+    expect(withStore((s) => s.gigSnapshots(G2))).toHaveLength(1);
+    expect((await post(`/freelance/${G2}/keep`, { _csrf: token }, hx)).status).toBe(409);
+    expect(withStore((s) => s.gigSnapshots(G2))).toHaveLength(1);
+    expect((await get(`/freelance/${G2}`)).body).not.toContain(`action="/freelance/${G2}/keep"`);
+    expect((await post(`/freelance/${G3}/keep`, { _csrf: token }, hx)).status).toBe(409);
+    expect((await post(`/freelance/${G2}/keep`, {}, hx)).status).toBe(403);
+  });
+
+  it('a .txt naming a forbidden term refuses every file of the gig by direct URL (403)', async () => {
+    readyGig(G9, 'I worked at Initech on payments.');
+    for (const f of ['proposal.txt', 'resume.pdf', 'resume.docx']) expect((await get(`/freelance/${G9}/files/${f}`)).status, f).toBe(403);
+    const page = await get(`/freelance/${G9}`);
+    expect(page.body).not.toContain(`/freelance/${G9}/files/`);
+    expect(page.body).not.toContain('Initech on payments');
+  });
+
+  it('the hover hint shows only when a line cites a fact', async () => {
+    expect((await get(`/freelance/${G2}`)).body).toContain('Hover an underlined line');
+    readyGig(G9, 'A proposal with no cited line.', {}, { covered: ['java', 'kafka'], cited: false });
+    const b = (await get(`/freelance/${G9}`)).body;
+    expect(b).toContain('Copy pastes exactly the .txt file.');
+    expect(b).not.toContain('Hover an underlined line');
+  });
+
+  it('a skill row the facts do not back says so; the one-skill note is amber', async () => {
+    readyGig(G9, 'Short proposal.', { breakdown: { base: 30, 'strong:java': 4, 'medium:react': 1.5 }, notes: [NOTE_ONE_SKILL] }, { covered: ['java'], cited: true });
+    const b = decode((await get(`/freelance/${G9}`)).body);
+    expect(b).toContain('<td>Skill: React (not backed by your facts)</td>');
+    expect(b).toContain('<td>Core skill: Java</td>');
+    expect(b).toContain(`<li class="gig-note warn-note">${NOTE_ONE_SKILL}</li>`);
+  });
+
+  it('review says the fit floor does not apply to it', async () => {
+    const t = text((await get('/freelance?tab=review')).body);
+    expect(t).toContain('Review holds gigs that need your judgement; the fit floor applies to Contracts and Gigs only.');
+    expect(t).not.toContain('Fit floor 45');
+    expect(text((await get('/freelance?tab=gigs')).body)).toContain('Fit floor 45');
   });
 });
