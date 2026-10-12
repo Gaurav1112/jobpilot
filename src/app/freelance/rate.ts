@@ -14,7 +14,8 @@ import { Gig, RatedGig } from './types.js';
  *   (a range "N-M hours" gives minUsdH = min budget / M and maxUsdH = max budget / N); else with `duration.weeks` only,
  *   budget / (weeks x maxHoursPerWeek), `derived-from-duration`; else `unknown`.
  * - `monthly` with `hoursPerWeek.max`: monthly / (hours x 4.33), `monthly÷hours`; else `unknown`.
- * - A budget of type `unknown` (every boards gig, whose pay is an annual salary) is `unknown`.
+ * - A budget of type `unknown` (every boards gig, whose pay is an annual salary) is `unknown`, and so is any gig whose
+ *   description says the bidder sets the price (NO_BUDGET): the platform's bracket is then not an offer.
  * - A bound that is not a finite number above zero, or min above max, makes the whole rate `unknown` with no budget.
  * - Money converts with the pack table first (USD per unit is `toINR[c] / toINR.USD`, `fxSource: 'pack'`, `fxDate` the
  *   table's `asOf`). A currency the table lacks (CAD, AUD, SGD, NZD, HKD) converts with the platform's own
@@ -31,10 +32,13 @@ const UNKNOWN: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate:
 const WEEKS_PER_MONTH = 4.33;
 
 /**
- * Every "N hours" or "N-M hours" figure (two to four digits, not part of a longer number). Which of them are work scope
+ * Every "N hours" or "N-M hours" figure (two to four digits, or one to four for the lower end of a range; not part of a longer number). Which of them are work scope
  * is decided in `totalHours`.
  */
-const TOTAL_HOURS = /(?<![\w.,])~?\s?(\d{2,4})(?:\s?(?:-|–|—|to)\s?(\d{2,4}))?\s?(?:hours|hrs)\b/gi;
+const TOTAL_HOURS = /(?<![\w.,\-–—])~?\s?(?:(\d{1,4})\s?(?:-|–|—|to)\s?)?(\d{2,4})\s?(?:hours|hrs)\b/gi;
+/** The posting says the price is the bidder's to set: the platform's bracket is then not an offer. */
+const NO_BUDGET =
+  /no budget (?:is )?disclosed|you set the price|set (?:their|your) own price|quote your (?:own )?price|name your price|budget (?:is )?(?:open|negotiable|tbd)/i;
 /** After the figure: a per-period rate of work ("per week", "/day", "weekly", "a day"), a cap, or an amount of material. */
 const NOT_SCOPE_AFTER =
   /^(?:\s?(?:\/|per|a|an|each|every)\s?(?:week|wk|day|month|mo)\b|\s?(?:weekly|daily|monthly)\b|\s?\/\s?(?:wk|day|mo)\b|\s+(?:or\s+less|max(?:imum)?\b|of\s+(?:video|footage|audio|content|recordings?|support)\b))/i;
@@ -60,30 +64,34 @@ function unitOf(gig: Gig, fx: Fx): Unit | null {
 
 /**
  * The work hours a description states for the whole job: `{lo, hi}` for "about 27 hours" (lo = hi) or "15-25 hours",
- * `null` when it states none, `'ambiguous'` when it states more than one distinct figure. Not counted: a figure
- * before which (within 25 characters) a deadline or bound word stands, or after which a per-period unit, "or less",
- * "max" or an amount of material follows; a figure that is not scope anywhere is not scope in any other place either.
- * A reversed range ("25-15 hours") is ignored.
+ * `null` when it states no hours figure at all, `'refused'` when it does but none can be used: several distinct
+ * figures (ambiguous), or only figures that are not scope. Not scope: a figure before which a deadline or bound word
+ * stands (within 25 characters, but only in the same clause: the window starts after the last `.`, `;` or `,`; a
+ * colon keeps the label with its figure, "Turnaround: 24 hours"), or after which a per-period unit, "or less", "max"
+ * or an amount of material follows; a figure that is not scope in one place is not scope anywhere. A reversed range
+ * ("25-15 hours") is refused. A refused result is `unknown`: it never falls through to the duration row.
  */
-function totalHours(description: string): { lo: number; hi: number } | 'ambiguous' | null {
+function totalHours(description: string): { lo: number; hi: number } | 'refused' | null {
   const scope = new Map<string, { lo: number; hi: number }>();
   const notScope = new Set<string>();
   for (const m of description.matchAll(TOTAL_HOURS)) {
-    const lo = Number(m[1]);
-    const hi = m[2] === undefined ? lo : Number(m[2]);
+    const hi = Number(m[2]);
+    const lo = m[1] === undefined ? hi : Number(m[1]);
     const start = m.index ?? 0;
     const key = `${lo}-${hi}`;
-    if (NOT_SCOPE_AFTER.test(description.slice(start + m[0].length)) || NOT_SCOPE_BEFORE.test(description.slice(Math.max(0, start - 25), start))) notScope.add(key);
-    else if (lo > 0 && hi >= lo) scope.set(key, { lo, hi });
+    const window = description.slice(Math.max(0, start - 25), start);
+    const clause = window.slice(Math.max(window.lastIndexOf('.'), window.lastIndexOf(';'), window.lastIndexOf(',')) + 1);
+    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(description.slice(start + m[0].length)) || NOT_SCOPE_BEFORE.test(clause)) notScope.add(key);
+    else scope.set(key, { lo, hi });
   }
   const found = [...scope.entries()].filter(([k]) => !notScope.has(k)).map(([, v]) => v);
-  if (found.length > 1) return 'ambiguous';
-  return found[0] ?? null;
+  if (found.length > 1) return 'refused';
+  return found[0] ?? (notScope.size > 0 ? 'refused' : null);
 }
 
 export function rateOf(gig: Gig, fx: Fx, maxHoursPerWeek: number): Rate {
   const { type, min, max } = gig.budget;
-  if (type === 'unknown') return UNKNOWN;
+  if (type === 'unknown' || NO_BUDGET.test(gig.description)) return UNKNOWN;
   if (!valid(min) || !valid(max) || (min === null && max === null) || (min !== null && max !== null && min > max)) return UNKNOWN;
   const unit = unitOf(gig, fx);
   if (unit === null) return UNKNOWN;
@@ -107,7 +115,7 @@ export function rateOf(gig: Gig, fx: Fx, maxHoursPerWeek: number): Rate {
 
   if (hours !== null && hours > 0 && weeks !== null && weeks > 0) return make('fixed÷stated-hours', hours * weeks, hours * weeks, top);
   const total = totalHours(gig.description);
-  if (total === 'ambiguous') return noRate;
+  if (total === 'refused') return noRate;
   if (total !== null) return make('fixed÷stated-hours', total.hi, total.lo, top);
   if (weeks !== null && weeks > 0 && Number.isFinite(maxHoursPerWeek) && maxHoursPerWeek > 0) return make('derived-from-duration', weeks * maxHoursPerWeek, weeks * maxHoursPerWeek, top);
   return noRate;

@@ -80,25 +80,41 @@ function durationOf(text: string): Gig['duration'] {
   return { weeks: first[1] === undefined ? Number(first[2]) : null, text: first[0] };
 }
 
+const CODES = 'USD|EUR|GBP|INR|CAD|AUD|NZD|SGD|HKD';
 const SYMBOL: Readonly<Record<string, Currency>> = {
-  $: 'USD', 'US$': 'USD', 'C$': 'CAD', 'CA$': 'CAD', 'A$': 'AUD', 'AU$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'S$': 'SGD', 'SG$': 'SGD',
+  'US$': 'USD', 'C$': 'CAD', 'CA$': 'CAD', 'A$': 'AUD', 'AU$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'S$': 'SGD', 'SG$': 'SGD',
   '€': 'EUR', '£': 'GBP', '₹': 'INR', USD: 'USD', EUR: 'EUR', GBP: 'GBP', INR: 'INR', CAD: 'CAD', AUD: 'AUD', NZD: 'NZD', SGD: 'SGD', HKD: 'HKD',
 };
 /**
- * A stated pay: a currency sign or code, one figure or a range, then a per-hour or per-month unit. A bare "$" is USD; a
- * prefixed one (C$, CA$, A$, AU$, NZ$, HK$, S$, SG$, US$) names its currency, and a letter glued before the sign
- * ("XC$90") is no currency at all.
+ * A stated pay: a currency sign or code, one figure or a range, then a per-hour or per-month unit. A bare "$" is USD
+ * unless a code sits directly before the sign ("AUD $120", "SGD$60"), directly after the figure ("$90 CAD/hr") or
+ * directly after the unit ("$90/hr CAD"); a prefixed sign (C$, CA$, A$, AU$, NZ$, HK$, S$, SG$, US$) names its own
+ * currency; two different currencies in one pay are a conflict ("C$90 AUD"), and a letter glued before the sign
+ * ("XC$90", "R$100") is no currency at all.
  */
-const PAY =
-  /(?<![A-Za-z])(?<sym>(?:US|CA|AU|NZ|HK|SG|C|A|S)?\$|[€£₹]|\b(?:USD|EUR|GBP|INR|CAD|AUD|NZD|SGD|HKD)\b)\s?(?<lo>\d[\d,]*(?:\.\d+)?)(?<klo>k)?(?:\s?[-–]\s?(?:(?:(?:US|CA|AU|NZ|HK|SG|C|A|S)?\$|[€£₹])\s?|(?:USD|EUR|GBP|INR|CAD|AUD|NZD|SGD|HKD)\s?)?(?<hi>\d[\d,]*(?:\.\d+)?)(?<khi>k)?)?\s?(?:\/|per\s|an?\s)\s?(?<unit>hours?|hrs?|h|months?|mo)\b/giu;
+const PAY = new RegExp(
+  '(?<![A-Za-z])(?:(?<c0>' + CODES + ')\\s?)?(?<sym>(?:US|CA|AU|NZ|HK|SG|C|A|S)?\\$|[€£₹]|\\b(?:' + CODES + ')\\b)\\s?' +
+    '(?<lo>\\d[\\d,]*(?:\\.\\d+)?)(?<klo>k)?(?:\\s?[-–]\\s?(?:(?:(?:US|CA|AU|NZ|HK|SG|C|A|S)?\\$|[€£₹])\\s?|(?:' + CODES + ')\\s?)?(?<hi>\\d[\\d,]*(?:\\.\\d+)?)(?<khi>k)?)?' +
+    '(?:\\s?(?<c1>' + CODES + '))?\\s?(?:\\/|per\\s|an?\\s)\\s?(?<unit>hours?|hrs?|h|months?|mo)\\b(?:\\s?(?<c2>' + CODES + ')\\b)?',
+  'giu',
+);
 /** Words just before a figure that make it a bound or one end of a range, not the rate. */
 const QUALIFIED =
   /\b(?:up\s?to|from|starting(?:\s+at)?|at\s+least|min(?:imum)?|max(?:imum)?|over|under|below|above|less\s+than|more\s+than|estimated|approx(?:imately|\.)?|about|around|roughly|potential(?:\s+of)?|\d\s*(?:to|-|–))\s*$/i;
-/** A monthly figure is pay only next to a pay word; near one of these it is a perk or a price, never pay. */
+/** A monthly figure is pay only next to a pay word or as a "| field |" of a header line; near one of these it is a perk or a price. */
 const PAY_WORD = /\b(?:rate|pay|paid|paying|salary|compensation|budget|retainer|fee)\b/i;
-const NOT_PAY_WORD = /\b(?:stipend|allowance|subscription|internet|per\s+seat|wellness|benefits?|costs?|price[sd]?|plans?)\b/i;
+const NOT_PAY_WORD = /\b(?:stipend|allowance|subscription|internet|per\s+seat|wellness|benefits?|costs?|price[sd]?)\b/i;
+const HEADER_CHARS = 300;
 
 const UNKNOWN_BUDGET: Budget = { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null };
+
+/** True when the match is a whole `|`-delimited field within the first HEADER_CHARS characters ("... | $4000/month |"). */
+function isHeaderField(text: string, at: number, end: number): boolean {
+  if (at >= HEADER_CHARS) return false;
+  const before = text.slice(0, at);
+  const after = text.slice(end);
+  return /\|[^\S\n]*$/.test(before) && /^[^\S\n]*(?:\||\n|$)/.test(after);
+}
 
 function payOf(text: string): Budget {
   const seen = new Map<string, Budget>();
@@ -108,16 +124,21 @@ function payOf(text: string): Budget {
     const unit = (g.unit ?? '').toLowerCase();
     const type = unit.startsWith('mo') ? 'monthly' : 'hourly';
     if (type === 'monthly') {
-      const around = text.slice(Math.max(0, at - 40), at + m[0].length + 40);
-      if (NOT_PAY_WORD.test(around) || !PAY_WORD.test(around)) continue;
+      const field = isHeaderField(text, at, at + m[0].length);
+      const around = field ? m[0] : text.slice(Math.max(0, at - 40), at + m[0].length + 40);
+      if (NOT_PAY_WORD.test(around) || !(field || PAY_WORD.test(around))) continue;
     }
     if (QUALIFIED.test(text.slice(Math.max(0, at - 40), at))) return UNKNOWN_BUDGET;
     const k = (s: string | undefined): number => (s === undefined ? 1 : 1000);
     if (g.hi !== undefined && (g.klo === undefined) !== (g.khi === undefined)) return UNKNOWN_BUDGET;
     const lo = Number((g.lo ?? '').replace(/,/g, '')) * k(g.klo);
     const hi = g.hi === undefined ? lo : Number(g.hi.replace(/,/g, '')) * k(g.khi);
-    const currency = SYMBOL[(g.sym ?? '').toUpperCase()];
-    if (currency === undefined || !Number.isFinite(lo) || !Number.isFinite(hi)) return UNKNOWN_BUDGET;
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return UNKNOWN_BUDGET;
+    const sym = (g.sym ?? '').toUpperCase();
+    const named = [SYMBOL[sym], ...[g.c0, g.c1, g.c2].map((c) => (c === undefined ? undefined : SYMBOL[c.toUpperCase()]))].filter((c): c is Currency => c !== undefined);
+    const currencies = new Set(named);
+    if (currencies.size > 1 || (named.length === 0 && sym !== '$')) return UNKNOWN_BUDGET;
+    const currency = [...currencies][0] ?? 'USD';
     seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
   }
   return seen.size === 1 ? ([...seen.values()][0] ?? UNKNOWN_BUDGET) : UNKNOWN_BUDGET;
@@ -125,7 +146,8 @@ function payOf(text: string): Budget {
 
 /** Countries named in free location text, `worldwide` split off into its flag. */
 function placesOf(text: string | null): { countries: string[]; worldwide: boolean } {
-  const all = text === null ? [] : countriesIn(text);
+  // "US$60" and "CA$100" name a currency, not a place.
+  const all = text === null ? [] : countriesIn(text.replace(/(?<![A-Za-z])(?:US|CA|AU|NZ|HK|SG)\$/g, '$'));
   return { countries: all.filter((c) => c !== 'worldwide'), worldwide: all.includes('worldwide') };
 }
 
@@ -204,7 +226,7 @@ function hn(r: RawGig, o: Rec): Draft {
     description,
     clientName: null,
     kind: 'contract',
-    budget: payOf(description),
+    budget: payOf(text),
     location: { ...placesOf(first), text: null },
     skills: [],
     postedAt: postedAtOf(o.created_at_i, 's'),
