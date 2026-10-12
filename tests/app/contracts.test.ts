@@ -11,7 +11,7 @@ describe('contracts-out', () => {
     const r = new Registry();
     for (const a of exportedAgents) r.register(a);
     expect(r.list().map((a) => a.contract.id)).toEqual([
-      'cover-writer', 'demo-scorer', 'demo-source', 'eligibility', 'evidence-matcher', 'normalizer', 'qa-gate', 'renderer', 'resume-planner',
+      'cover-writer', 'demo-scorer', 'demo-source', 'eligibility', 'evidence-matcher', 'gig-normalizer', 'normalizer', 'qa-gate', 'rate-normalizer', 'renderer', 'resume-planner',
       'scorer-lexicon', 'src-ashby', 'src-board-contracts', 'src-careers-job', 'src-careers-list', 'src-freelancer', 'src-greenhouse', 'src-himalayas', 'src-hn', 'src-jobicy', 'src-lever',
       'src-remotive',
     ]);

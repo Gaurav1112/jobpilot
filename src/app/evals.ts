@@ -12,8 +12,11 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
+import { gigNormalizer } from './freelance/gig-normalizer.js';
+import { rateNormalizer } from './freelance/rate.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
+import type { RatedGig } from './freelance/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -102,6 +105,26 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: evidenceMatcher,
       cases: loadJsonl(join(datasetDir, 'grounding.jsonl')),
       project: async (outs) => (outs.length === 1 ? grounding(outs[0] as Evidence, pack) : { outputs: outs.length }),
+      metric: 'exactMatch',
+      min: 1,
+      pack,
+      packHash: hash,
+    },
+    {
+      // RawGig@1 to Gig@1: the whole Gig, or the error message of a raw the normalizer refuses.
+      name: 'gig-normalizer',
+      agent: gigNormalizer,
+      cases: loadJsonl(join(datasetDir, 'gig-normalizer.jsonl')),
+      project: (outs) => one(outs, (o: unknown) => o),
+      metric: 'exactMatch',
+      min: 1,
+    },
+    {
+      // Gig@1 to the rate: method, USD per hour, fx date and budget, on the fixture pack's fx table and 20 h cap.
+      name: 'gig-rate',
+      agent: rateNormalizer,
+      cases: loadJsonl(join(datasetDir, 'gig-rate.jsonl')),
+      project: (outs) => one(outs, (o: RatedGig) => o.rate),
       metric: 'exactMatch',
       min: 1,
       pack,
