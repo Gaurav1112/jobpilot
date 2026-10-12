@@ -15,7 +15,7 @@ Twice a day (from 07:30 and 19:30 IST, catching up after sleep), with no prompt:
    method, and drops gigs that are not open to India, need more than 20 h/week, need working hours
    that do not fit IST evenings, or forbid other employment;
 3. it flags scam and risk signals, scores fit with the v1 lexicon, and ranks two lists, **Contracts**
-   and **Gigs**, comp-first above **$40/h** with fit ≥ 60;
+   and **Gigs**, comp-first above **$40/h** with fit ≥ 45;
 4. for each shortlisted gig it builds the screening documents (gig proposal, contract pitch + CV,
    network application pack or bounty note) **from verified facts only**, within the platform's
    limits;
@@ -235,7 +235,9 @@ flagged gig is never the notification's "top".
 - **Client quality** (only where exposed): payment verified, hire rate, spend, reviews.
 - **Freshness / competition**: hours since posting, bid count, source-health yield.
 - Lists: **Contracts** (hourly, ≥ 4 weeks), **Gigs** (fixed or < 4 weeks), **Bounties**,
-  **Review** (unknown rate / hours / location). Each sorted comp-first above $40/h with fit ≥ 60;
+  **Review** (unknown rate / hours / location). Each sorted comp-first above $40/h with fit ≥ 45 (user decision
+  2026-10-12: gig titles never earn the full-time title points, so on live data a floor of 60 kept 1 of 51 eligible
+  gigs and 45 keeps 13; the daily pipeline's 60 is unchanged);
   ties by postedAt then gigKey. Pure function of stored inputs.
 
 ## 6. Pack additions (per user, no personal data in the engine)

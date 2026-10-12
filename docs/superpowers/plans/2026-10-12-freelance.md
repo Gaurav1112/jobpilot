@@ -47,7 +47,7 @@ docx, all already pinned. **No new dependencies.** Gmail and Upwork OAuth use `f
   - `istWindow: "18:00-00:00"`
   - `derivedRateCountsForFloor: true`
   - `fixedBudgetFloorUsd: 500`
-  - fit floor `60`
+  - fit floor `45` for gigs (user, 2026-10-12; daily stays 60)
 - Freelancer.com `hourly_project_info.commitment` is a default and is **ignored** (spec §4.6).
 - Determinism:
   - no `Date.now()` or `Math.random()` in agents (use `ctx.clock`);
