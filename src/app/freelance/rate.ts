@@ -63,11 +63,23 @@ function unitOf(gig: Gig, fx: Fx): Unit | null {
 }
 
 /**
+ * The part of `window` (the text just before a figure) that can hold the figure's own deadline word: it starts after
+ * the last `.` or `;`, and after a comma only when a number precedes that comma in the clause ("Deliver within 2
+ * weeks, about 60 hours" ends the deadline at the comma; "Deadline, 48 hours" and "Must be available Mon-Fri, 40
+ * hours" do not, because the comma separates a label from its own figure).
+ */
+function clauseBefore(window: string): string {
+  const rest = window.slice(Math.max(window.lastIndexOf('.'), window.lastIndexOf(';')) + 1);
+  for (let i = rest.lastIndexOf(','); i >= 0; i = rest.lastIndexOf(',', i - 1)) if (/\d/.test(rest.slice(0, i))) return rest.slice(i + 1);
+  return rest;
+}
+
+/**
  * The work hours a description states for the whole job: `{lo, hi}` for "about 27 hours" (lo = hi) or "15-25 hours",
  * `null` when it states no hours figure at all, `'refused'` when it does but none can be used: several distinct
  * figures (ambiguous), or only figures that are not scope. Not scope: a figure before which a deadline or bound word
- * stands (within 25 characters, but only in the same clause: the window starts after the last `.`, `;` or `,`; a
- * colon keeps the label with its figure, "Turnaround: 24 hours"), or after which a per-period unit, "or less", "max"
+ * stands (within 25 characters, but only in the same clause: see `clauseBefore`; a colon keeps the label with its
+ * figure, "Turnaround: 24 hours"), or after which a per-period unit, "or less", "max"
  * or an amount of material follows; a figure that is not scope in one place is not scope anywhere. A reversed range
  * ("25-15 hours") is refused. A refused result is `unknown`: it never falls through to the duration row.
  */
@@ -80,7 +92,7 @@ function totalHours(description: string): { lo: number; hi: number } | 'refused'
     const start = m.index ?? 0;
     const key = `${lo}-${hi}`;
     const window = description.slice(Math.max(0, start - 25), start);
-    const clause = window.slice(Math.max(window.lastIndexOf('.'), window.lastIndexOf(';'), window.lastIndexOf(',')) + 1);
+    const clause = clauseBefore(window);
     if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(description.slice(start + m[0].length)) || NOT_SCOPE_BEFORE.test(clause)) notScope.add(key);
     else scope.set(key, { lo, hi });
   }

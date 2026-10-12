@@ -108,10 +108,10 @@ const HEADER_CHARS = 300;
 
 const UNKNOWN_BUDGET: Budget = { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null };
 
-/** True when the match is a whole `|`-delimited field within the first HEADER_CHARS characters ("... | $4000/month |"). */
+/** True when the match is a whole `|`-delimited field of the first line, within the first HEADER_CHARS characters ("... | $4000/month |"). */
 function isHeaderField(text: string, at: number, end: number): boolean {
-  if (at >= HEADER_CHARS) return false;
   const before = text.slice(0, at);
+  if (at >= HEADER_CHARS || before.includes('\n')) return false;
   const after = text.slice(end);
   return /\|[^\S\n]*$/.test(before) && /^[^\S\n]*(?:\||\n|$)/.test(after);
 }
@@ -137,7 +137,9 @@ function payOf(text: string): Budget {
     const sym = (g.sym ?? '').toUpperCase();
     const named = [SYMBOL[sym], ...[g.c0, g.c1, g.c2].map((c) => (c === undefined ? undefined : SYMBOL[c.toUpperCase()]))].filter((c): c is Currency => c !== undefined);
     const currencies = new Set(named);
-    if (currencies.size > 1 || (named.length === 0 && sym !== '$')) return UNKNOWN_BUDGET;
+    // A bare "$" agrees with another dollar's code ("$90 CAD/hr") but not with EUR, GBP or INR ("$90/hr EUR").
+    const nonDollar = sym === '$' && named.some((c) => c === 'EUR' || c === 'GBP' || c === 'INR');
+    if (currencies.size > 1 || nonDollar || (named.length === 0 && sym !== '$')) return UNKNOWN_BUDGET;
     const currency = [...currencies][0] ?? 'USD';
     seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
   }
