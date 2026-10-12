@@ -240,7 +240,8 @@ export const CoverPlan = defineType(
 );
 export type CoverPlan = z.infer<typeof CoverPlan.schema>;
 
-const RenderedFile = z
+/** One rendered file: exported so the freelance renderer (`GigRendered@1`) extends it rather than copying it. */
+export const RenderedFile = z
   .object({
     kind: z.enum(['resume', 'cover']),
     format: z.enum(['pdf', 'docx', 'html']),

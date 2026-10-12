@@ -5,15 +5,16 @@ import type { AnyContract } from '../kernel/contract.js';
  * wire on any problem). The kernel lets any contract declare these capabilities; the app narrows them to the one agent
  * each is for:
  * - `capabilities.pack: 'full'` (contact details, answers): only the renderer, which merges contact details into the
- *   documents and fills the cover's p4;
- * - `capabilities.files` with `access: 'read-write'`: only the renderer, which writes the documents;
- * - `capabilities.pdfText`: only the qa-gate, which checks the PDFs' text layer;
+ *   documents and fills the cover's p4, and the gig renderer (Task 8), which does the same for the contract CV and
+ *   fills the proposal's update cadence;
+ * - `capabilities.files` with `access: 'read-write'`: only the two renderers, which write the documents;
+ * - `capabilities.pdfText`: only the qa-gate and gig-qa, which check the PDFs' text layer;
  * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents.
  */
 export const CAPABILITY_ALLOW_LIST = {
-  fullPack: ['renderer'],
-  filesWrite: ['renderer'],
-  pdfText: ['qa-gate'],
+  fullPack: ['renderer', 'gig-renderer'],
+  filesWrite: ['renderer', 'gig-renderer'],
+  pdfText: ['qa-gate', 'gig-qa'],
   /** The symbolic egress whose hosts come from the user's watchlist (review R-I3). */
   careersEgress: ['src-careers-list', 'src-careers-job'],
 } as const satisfies Record<string, readonly string[]>;

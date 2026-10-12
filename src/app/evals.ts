@@ -17,9 +17,12 @@ import { gigNormalizer } from './freelance/gig-normalizer.js';
 import { gigRisk } from './freelance/gig-risk.js';
 import { gigScorer } from './freelance/gig-scorer.js';
 import { rateNormalizer } from './freelance/rate.js';
+import { gigQaChecks } from './freelance/writing/gig-qa.js';
+import { gigTexts } from './freelance/writing/gig-text.js';
+import { proposalPlanner } from './freelance/writing/proposal-planner.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
-import type { GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
+import type { GigDocsPlan, GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -74,6 +77,26 @@ async function grounding(evidence: Evidence, pack: unknown): Promise<unknown> {
   return trips.length === 0 ? { pass: true } : { pass: false, trips };
 }
 
+/** The text-level gig QA checks: everything gig-qa checks that needs no rendered file. */
+const GIG_TEXT_CHECKS = ['gig.limits', 'gig.links', 'gig.banned', 'gig.ascii', 'gig.ground'];
+/** A stand-in contact block: the eval pack is public (no contact, no answers), and the text checks never read it. */
+const EVAL_CONTACT = { name: 'Eval', email: '', phone: '', city: '', links: [] };
+
+/**
+ * The `gig-grounding` gate (Task 8): from one ScoredGig, run proposal-planner as the pipeline would and pass every out
+ * guardrail (G-GROUND, G-NAMING, G-NO-GAP-CLAIM), then the text-level gig QA checks on the proposal or pitch with the
+ * default cadence. `{pass: true}`, `{plans: 0}` for a kind with no documents, or the trips and failed check ids.
+ */
+async function gigGrounding(scored: ScoredGig, pack: unknown): Promise<unknown> {
+  const plan = await runChecked(proposalPlanner, 'ScoredGig@1', scored, gigScorer, pack);
+  if (plan.outs.length !== 1) return { plans: plan.outs.length, trips: plan.trips };
+  const p = plan.outs[0] as GigDocsPlan;
+  const text = gigTexts(p, { contact: EVAL_CONTACT, answers: {}, naming: { forbiddenTerms: [] } });
+  const checks = gigQaChecks({ gigKey: p.gigKey, files: [], plan: p, text }, pack, { files: new Map(), pdfText: new Map() });
+  const failed = checks.filter((c) => GIG_TEXT_CHECKS.includes(c.id) && !c.ok).map((c) => `${c.id}: ${c.detail}`);
+  return plan.trips.length === 0 && failed.length === 0 ? { pass: true } : { pass: false, trips: plan.trips, failed };
+}
+
 /**
  * The app's golden-set evals. They run on the fictional fixture pack (`tests/fixtures/pack`), never the user's own:
  * the public part of it (no contact, no answers), frozen with `freezePack` as the supervisor does, with its hash.
@@ -108,6 +131,17 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: evidenceMatcher,
       cases: loadJsonl(join(datasetDir, 'grounding.jsonl')),
       project: async (outs) => (outs.length === 1 ? grounding(outs[0] as Evidence, pack) : { outputs: outs.length }),
+      metric: 'exactMatch',
+      min: 1,
+      pack,
+      packHash: hash,
+    },
+    {
+      // Every scored fixture gig (the recorded Freelancer projects through the real freelance chain), plus edge cases, through the gig writing chain.
+      name: 'gig-grounding',
+      agent: proposalPlanner,
+      cases: loadJsonl(join(datasetDir, 'gig-grounding.jsonl')),
+      project: async (outs) => (outs.length === 1 ? gigGrounding((outs[0] as GigDocsPlan).scored, pack) : { plans: outs.length }),
       metric: 'exactMatch',
       min: 1,
       pack,

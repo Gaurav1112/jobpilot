@@ -4,6 +4,9 @@ import { gigRisk } from './app/freelance/gig-risk.js';
 import { gigScorer } from './app/freelance/gig-scorer.js';
 import { rateNormalizer } from './app/freelance/rate.js';
 import { gigSources } from './app/freelance/sources/index.js';
+import { gigQa } from './app/freelance/writing/gig-qa.js';
+import { gigRenderer } from './app/freelance/writing/gig-renderer.js';
+import { proposalPlanner } from './app/freelance/writing/proposal-planner.js';
 import { dailyAgents } from './app/pipeline.js';
 import { demoAgents } from './demo/pipeline.js';
 
@@ -13,6 +16,7 @@ const WITH_CAREERS = [{ ats: 'careers', listUrl: 'https://careers.example.com/jo
 /**
  * Every agent whose contract is exported to `contracts-out/` (`contracts export`) and drift-checked (`contracts
  * check`, part of `node --run verify`): the demo agents, every agent of the daily pipeline (sources, normalizer,
- * eligibility, scorer and the writing team) and the freelance sources, gig normalizer, rate normalizer, gig eligibility, gig risk and gig scorer.
+ * eligibility, scorer and the writing team) and the freelance sources, gig normalizer, rate normalizer, gig eligibility, gig risk, gig scorer
+ * and the gig writing team (proposal-planner, gig-renderer, gig-qa).
  */
-export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS), ...gigSources, gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer] as const;
+export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS), ...gigSources, gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa] as const;

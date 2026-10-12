@@ -208,7 +208,7 @@ describe('G-GROUND', () => {
   it('fails closed without a pack, without an output, or on a type it does not know', () => {
     expect(G_GROUND.check(ctxOut(resumePlanner.contract, evidenceIn, resume, null)).detail).toMatch(/no pack/);
     expect(G_GROUND.check({ ...ctxOut(resumePlanner.contract, evidenceIn, resume), output: undefined } as unknown as GuardrailContext).verdict).toBe('trip');
-    expect(G_GROUND.check(ctxOut(evidenceMatcher.contract, env('Scored@1', scored, evidenceMatcher.contract), evidence)).detail).toMatch(/only ResumePlan@1, CoverPlan@1 and Rendered@1/);
+    expect(G_GROUND.check(ctxOut(evidenceMatcher.contract, env('Scored@1', scored, evidenceMatcher.contract), evidence)).detail).toMatch(/only ResumePlan@1, CoverPlan@1, Rendered@1, GigDocsPlan@1 and GigRendered@1/);
     expect(onResume(G_GROUND, { ...resume, extra: 1 }).detail).toMatch(/not a valid ResumePlan@1/);
   });
 });

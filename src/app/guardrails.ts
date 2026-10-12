@@ -33,6 +33,10 @@ import { modelText, RENDER_FILES, renderedPath } from './render/model.js';
 import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermError } from './pack/rules.js';
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
+import { GigDocsPlan, GigRendered } from './freelance/types.js';
+import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
+import { asciiPunct } from './freelance/writing/phrases.js';
+import { gigResume, planGigDocs } from './freelance/writing/proposal-planner.js';
 
 /**
  * The app guardrails (spec §5.5, Task 9 and its fix round 1). All run on the out side and read the public pack from
@@ -56,6 +60,10 @@ import { CoverPlan, Rendered, ResumePlan } from './types.js';
  *   and `{notice}` intact. For a Rendered (out of the renderer, cover letter v2) it also re-renders the filled letter
  *   from the input's resume plan, the public pack and the full pack (city, notice) and compares the plan paragraphs and
  *   `text.cover` byte for byte (`renderedProblems`).
+ *   For a GigDocsPlan (out of proposal-planner, Task 8): `gigDocsProblems`. For a GigRendered (out of the gig renderer):
+ *   the input plan's `gigDocsProblems`, the output's plan equal to the input, and the proposal or pitch text and the
+ *   resume text re-rendered from the plan and the full pack (`gigTexts`: cadence, contact block) byte for byte, with
+ *   the expected files in order.
  * - **G-NAMING** (out of every writing agent) runs `forbiddenTermStrict` over every string and key of the payload, and
  *   `assertNoForbidden` over the JSON-stringified payload (word-bounded: joined fields must not glue), except the embedded source posting (`scored.posting`,
  *   `evidence.scored.posting`, `resume.evidence.scored.posting`): the JD's own text is not generated output, and the
@@ -247,6 +255,116 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
   return problems;
 }
 
+/**
+ * Every grounding problem of a GigDocsPlan (Task 8). `rawPack` is the public pack (writing view, freelance rules,
+ * platform rules). Independent checks first, then the whole plan re-derived (`planGigDocs`) and compared:
+ * - the plan's gigKey and platform are the scored gig's, and its kind has the right document (gig: a proposal, contract:
+ *   a pitch, nothing else);
+ * - the resume plan is the gig's synthetic posting planned afresh (`gigResume`) and passes `resumeProblems`;
+ *   `covered` and `missing` are the resume plan's;
+ * - the hook quote, when there is one, is a substring of the description (whitespace collapsed) and stands in the
+ *   hook in quote marks;
+ * - every evidence line (proposal evidence, pitch lines with fact ids) cites known, citeable experience or project
+ *   facts that are bullets of the resume plan, each claim in the text verbatim (ASCII punctuation, `asciiPunct`; its
+ *   first letter may be lower-cased after "I");
+ * - finally the plan equals its re-derivation, so every phrase, variant, step, availability and question is checked.
+ * Details name paths and fact ids only, never a claim or the gig's text.
+ */
+export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
+  const problems: string[] = [];
+  let pack: WritingPack;
+  try {
+    pack = writingPackOf(rawPack, 'G-GROUND');
+  } catch (e) {
+    return [e instanceof Error ? e.message : String(e)];
+  }
+  const gig = plan.scored.risked.verdict.rated.gig;
+  if (plan.gigKey !== gig.gigKey) problems.push("gigKey is not the scored gig's");
+  if (plan.platform !== gig.platform) problems.push("platform is not the scored gig's");
+  if (gig.kind === 'gig' && (plan.proposal === null || plan.pitch !== null)) problems.push('a gig must have a proposal and no pitch');
+  if (gig.kind === 'contract' && (plan.pitch === null || plan.proposal !== null)) problems.push('a contract must have a pitch and no proposal');
+  if (gig.kind !== 'gig' && gig.kind !== 'contract') problems.push(`a ${gig.kind} gets no screening documents`);
+
+  const resume = attempt(problems, 'resume', () => gigResume(plan.scored, rawPack));
+  if (resume !== undefined) {
+    const d = firstDiff(resume.evidence.scored.posting, plan.resume.evidence.scored.posting);
+    if (d !== undefined) problems.push(`resume.evidence.scored.posting is not the gig's synthetic posting (at ${d})`);
+  }
+  problems.push(...resumeProblems(plan.resume, pack, 'resume.', rawPack));
+  if (!same(plan.covered, plan.resume.covered)) problems.push("covered is not the resume plan's covered list");
+  if (!same(plan.missing, plan.resume.missing)) problems.push("missing is not the resume plan's missing list");
+
+  const hook = plan.proposal?.hook;
+  if (hook !== undefined && hook.quote !== null) {
+    if (!gig.description.replace(/\s+/g, ' ').trim().includes(hook.quote)) problems.push('proposal.hook.quote is not in the gig description verbatim');
+    if (!hook.text.includes(`"${hook.quote}"`)) problems.push('proposal.hook.text does not hold the quote in quote marks');
+  }
+  const byId = new Map(pack.facts.map((f) => [f.id, f]));
+  const bullets = new Set(plan.resume.roles.flatMap((r) => r.bullets.map((b) => b.factId)));
+  const lines = [
+    ...(plan.proposal?.evidence.map((e, i) => ({ where: `proposal.evidence[${i}]`, ...e })) ?? []),
+    ...(plan.pitch?.lines.map((e, i) => ({ where: `pitch.lines[${i}]`, ...e })) ?? []),
+  ];
+  for (const l of lines) {
+    if (l.where.startsWith('proposal') && l.factIds.length === 0) problems.push(`${l.where} cites no fact`);
+    for (const id of l.factIds) {
+      const f = byId.get(id);
+      if (f === undefined) {
+        problems.push(`${l.where}: unknown fact ${id}`);
+        continue;
+      }
+      if (!citeable(f)) problems.push(`${l.where}: fact ${id} is not citeable (${f.status})`);
+      if (!RANKABLE.has(f.kind)) problems.push(`${l.where}: fact ${id} is a ${f.kind}, not experience or project`);
+      if (!bullets.has(id)) problems.push(`${l.where}: fact ${id} is not a bullet of the resume plan`);
+      const c = asciiPunct(f.claim);
+      if (!l.text.includes(c) && !l.text.includes(`${c.charAt(0).toLowerCase()}${c.slice(1)}`)) problems.push(`${l.where}: fact ${id}'s claim is not in the text verbatim`);
+    }
+  }
+
+  const expected = attempt(problems, 'plan', () => planGigDocs(plan.scored, rawPack));
+  if (expected !== undefined) {
+    const d = firstDiff(expected, plan);
+    if (d !== undefined) problems.push(`the plan differs from its re-derivation (at ${d})`);
+  }
+  return problems;
+}
+
+/** G-GROUND on the gig renderer's output: see the module rules. Details name fields and lines, never their text. */
+function gigRenderedProblems(ctx: GuardrailContext): string[] {
+  if (ctx.fullPack === undefined || ctx.fullPack === null) return ['no full pack, so the gig documents cannot be re-rendered'];
+  const full = RenderPack.safeParse(ctx.fullPack);
+  if (!full.success) return ['the full pack lacks contact, answers or naming'];
+  const input = GigDocsPlan.schema.safeParse(ctx.input.payload);
+  if (ctx.input.type !== GigDocsPlan.id || !input.success) return [`the input is not a valid ${GigDocsPlan.id}`];
+  const out = GigRendered.schema.safeParse(ctx.output?.payload);
+  if (!out.success) return [`not a valid ${GigRendered.id}`];
+  const problems = gigDocsProblems(input.data, ctx.pack).map((p) => `plan: ${p}`);
+  if (out.data.gigKey !== input.data.gigKey) problems.push("gigKey is not the input plan's");
+  if (!same(out.data.plan, input.data)) problems.push(`plan differs from the input plan (at ${firstDiff(out.data.plan, input.data) ?? '?'})`);
+  const want = attempt(problems, 'text', () => gigTexts(input.data, full.data));
+  if (want !== undefined) {
+    for (const k of ['proposal', 'pitch', 'resume'] as const) {
+      const w = want[k];
+      const g = out.data.text[k];
+      if (w === g) continue;
+      if (w === null || g === null) problems.push(`text.${k} is ${g === null ? 'missing' : 'present'}, the plan gives ${w === null ? 'none' : 'one'}`);
+      else {
+        const got = g.split('\n');
+        const line = w.split('\n').findIndex((l, j) => l !== got[j]);
+        problems.push(`text.${k} line ${line < 0 ? w.split('\n').length + 1 : line + 1} is not the document re-rendered from the plan`);
+      }
+    }
+  }
+  const files = gigFilesOf(input.data);
+  const got = out.data.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path }));
+  if (!same(files, got)) problems.push(`files are not the expected gig documents in order (at ${firstDiff(files, got) ?? '?'})`);
+  out.data.files.forEach((f, i) => {
+    const okPages = f.format === 'pdf' ? f.pages !== null && Number.isInteger(f.pages) && f.pages >= 1 : f.pages === null;
+    if (!okPages) problems.push(`files[${i}].pages ${f.format === 'pdf' ? 'must be a page count' : 'must be null'}`);
+  });
+  return problems;
+}
+
 const report = (id: string, problems: readonly string[]): GuardrailVerdict =>
   problems.length === 0
     ? pass(id)
@@ -319,13 +437,29 @@ export const G_GROUND: Guardrail = {
       return report('G-GROUND', [...unsafe, ...problems, ...rest]);
     }
     if (type === Rendered.id) return report('G-GROUND', renderedProblems(ctx, pack));
-    return trip('G-GROUND', `G-GROUND checks only ResumePlan@1, CoverPlan@1 and Rendered@1, not ${type}`);
+    if (type === GigDocsPlan.id) {
+      const r = GigDocsPlan.schema.safeParse(payload);
+      if (!r.success) return trip('G-GROUND', `not a valid ${GigDocsPlan.id}`);
+      const problems: string[] = [];
+      if (ctx.input.type === 'ScoredGig@1' && !same(ctx.input.payload, r.data.scored)) problems.push('scored differs from the input ScoredGig@1');
+      return report('G-GROUND', [...problems, ...gigDocsProblems(r.data, ctx.pack)]);
+    }
+    if (type === GigRendered.id) return report('G-GROUND', gigRenderedProblems(ctx));
+    return trip('G-GROUND', `G-GROUND checks only ResumePlan@1, CoverPlan@1, Rendered@1, GigDocsPlan@1 and GigRendered@1, not ${type}`);
   },
 };
 
 /** Every string in `v` (values and object keys) with its path. */
 /** The embedded source posting, by exact path: source data, not generated text (G-NAMING scope, fix round 1). */
-export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set(['scored.posting', 'evidence.scored.posting', 'resume.evidence.scored.posting', 'plan.resume.evidence.scored.posting']);
+export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set([
+  'scored.posting',
+  'evidence.scored.posting',
+  'resume.evidence.scored.posting',
+  'plan.resume.evidence.scored.posting',
+  // GigDocsPlan@1 and GigRendered@1 (Task 8): the scored gig is source data; the hook quote is checked where it is used.
+  'scored.risked',
+  'plan.scored.risked',
+]);
 
 /** A copy of `v` without the values at `SOURCE_POSTING_PATHS`. */
 function withoutSourcePosting(v: unknown, path = ''): unknown {

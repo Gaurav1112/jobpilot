@@ -634,15 +634,20 @@ describe('M7: the kernel labels the renderer outputs P1', () => {
 
 describe('capability allow-list', () => {
   const base = { ...rendererContract, id: 'sneaky', description: 'Tries to read the full pack' };
-  it("allows 'full', writable files and pdfText only to their one agent", () => {
-    expect(CAPABILITY_ALLOW_LIST).toEqual({ fullPack: ['renderer'], filesWrite: ['renderer'], pdfText: ['qa-gate'], careersEgress: ['src-careers-list', 'src-careers-job'] });
+  it("allows 'full', writable files and pdfText only to their agents (the daily and gig renderers, the qa-gate and gig-qa)", () => {
+    expect(CAPABILITY_ALLOW_LIST).toEqual({
+      fullPack: ['renderer', 'gig-renderer'],
+      filesWrite: ['renderer', 'gig-renderer'],
+      pdfText: ['qa-gate', 'gig-qa'],
+      careersEgress: ['src-careers-list', 'src-careers-job'],
+    });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;
     const reader = defineContract({ ...noEmits, id: 'peeker', kind: 'deterministic', capabilities: { files: { root: 'out', access: 'read' }, pdfText: true }, dataClasses: { in: ['P0'], out: ['P0'] } });
     expect(capabilityProblems([reader, sneaky, rendererContract])).toEqual([
-      'peeker declares capabilities.pdfText; only qa-gate may run pdftotext',
-      "sneaky declares capabilities.pack 'full'; only renderer may read contact details",
-      'sneaky declares writable files; only renderer may write documents',
+      'peeker declares capabilities.pdfText; only qa-gate, gig-qa may run pdftotext',
+      "sneaky declares capabilities.pack 'full'; only renderer, gig-renderer may read contact details",
+      'sneaky declares writable files; only renderer, gig-renderer may write documents',
     ]);
     expect(capabilityProblems([rendererContract, qaGate.contract])).toEqual([]);
     // an agent object is checked by its contract

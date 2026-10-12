@@ -1,6 +1,7 @@
 import { z } from 'zod';
+import { definePredicate } from '../../kernel/predicates.js';
 import { defineType } from '../../kernel/types.js';
-import { IsoDate, IsoDateOrDateTime, JobKey } from '../types.js';
+import { IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
 
 export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit']);
 export type Platform = z.infer<typeof Platform>;
@@ -116,3 +117,79 @@ export const ScoredGig = defineType(
   z.object({ risked: RiskedGig.schema, fit: z.number(), breakdown: z.record(z.string(), z.number()), list: z.enum(['contracts', 'gigs', 'review']) }).strict(),
 );
 export type ScoredGig = z.infer<typeof ScoredGig.schema>;
+
+const FactLine = z.object({ text: z.string(), factIds: z.array(z.string()) }).strict();
+
+/**
+ * The screening documents of one gig, planned (spec §7, Task 8). `proposal` is set for kind `gig`, `pitch` for kind
+ * `contract`; the other is null. `resume` is the contract CV: `planResume` of the Evidence of the gig's synthetic
+ * posting. `covered` and `missing` are the resume plan's lexicon keys. The availability text keeps the `{cadence}`
+ * placeholder, which only the gig renderer fills (from `answers.yaml`, P1). Rules: `writing/proposal-planner.ts`.
+ */
+export const GigDocsPlan = defineType(
+  'GigDocsPlan',
+  1,
+  z
+    .object({
+      gigKey: JobKey,
+      scored: ScoredGig.schema,
+      platform: Platform,
+      proposal: z
+        .object({
+          /** `quote` is the client's own words, a substring of the description; null for a plain hook. */
+          hook: z.object({ text: z.string(), quote: z.string().nullable() }).strict(),
+          evidence: z.array(FactLine),
+          planIntro: z.string(),
+          plan: z.array(z.string()),
+          availability: z.string(),
+          question: z.string(),
+        })
+        .strict()
+        .nullable(),
+      pitch: z.object({ lines: z.array(FactLine) }).strict().nullable(),
+      resume: ResumePlan.schema,
+      covered: z.array(z.string()),
+      missing: z.array(z.string()),
+    })
+    .strict(),
+);
+export type GigDocsPlan = z.infer<typeof GigDocsPlan.schema>;
+
+/** A gig file: the paste-ready text (`proposal.txt` or `pitch.txt`) or the contract CV (`resume.pdf`, `resume.docx`). */
+export const GigFile = RenderedFile.extend({ kind: z.enum(['proposal', 'pitch', 'resume']), format: z.enum(['txt', 'pdf', 'docx']) }).strict();
+export type GigFile = z.infer<typeof GigFile>;
+
+/**
+ * The gig renderer's output. `plan` is the input plan unchanged (gig-qa re-derives it); `text` is each document's exact
+ * text: the proposal or pitch with `{cadence}` filled (the `.txt` file is this text plus one LF), and the resume's
+ * document text (`render/model.ts` `modelText`, contact block included).
+ */
+export const GigRendered = defineType(
+  'GigRendered',
+  1,
+  z
+    .object({
+      gigKey: JobKey,
+      files: z.array(GigFile),
+      plan: GigDocsPlan.schema,
+      text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string() }).strict(),
+    })
+    .strict(),
+);
+export type GigRendered = z.infer<typeof GigRendered.schema>;
+
+export const GigQaReport = defineType(
+  'GigQaReport',
+  1,
+  z
+    .object({
+      gigKey: JobKey,
+      ok: z.boolean(),
+      checks: z.array(z.object({ id: z.string(), ok: z.boolean(), detail: z.string() }).strict()),
+      files: z.array(GigFile),
+    })
+    .strict(),
+);
+export type GigQaReport = z.infer<typeof GigQaReport.schema>;
+
+export const gigQaRan = definePredicate<GigQaReport>('gig-qa.ran', 'at least one gig QA check ran', (q) => q.checks.length > 0);
