@@ -148,7 +148,7 @@ A probe read every channel A/B endpoint once (polite, sequential, raw responses 
 candidates) and applied this spec's rules with the user's real lexicon: freelance kind, ≥ 2
 strong/medium skills, hours rule (§5.2), India-open (§5.2), pay ≥ $40/h (§5.3). The v1 boards were
 measured from the daily catalogue.
-Score = access (ok 30, partial 22, key 20, email 10, failed 0) + volume 30·log(1+relevant)/log(51)
+Score = access (ok 30, partial 22, key 20, email 10, failed 0) + volume min(30, 30·log(1+relevant)/log(51))
 + India 20·(open + ½ unknown)/relevant + pay 20·(≥$40 + ¼ unknown)/relevant.
 
 | Source | Score | Skill-matched | Relevant (hours ok) | Pass all rules | Review | Verdict |
