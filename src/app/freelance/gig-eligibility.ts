@@ -145,6 +145,8 @@ const clauseOf = (raw: string): string => raw.trim().replace(/[.!?:\s]+$/, '').r
 const SOFTENS = /\b(?:negotiable|flexible|exceptions?|possible|welcome|fine|ok(?:ay)?|not a hard rule|can be discussed|open to|depends?)\b/i;
 const WIDENS = /\b(?:india|anywhere|worldwide|globally|also hire in|other countries|remote applicants from)\b/i;
 const PART_TIME_OK = /part[- ]time (?:is )?(?:possible|fine|ok|okay|welcome)/i;
+/** After an hours requirement: fewer hours would do. */
+const FEWER_HOURS_OK = /part[- ]time (?:is )?(?:possible|fine|ok|okay|welcome)|fewer hours|less hours|(?:10|15|20) hours (?:is )?(?:fine|ok|okay|possible)/i;
 function softenedAfter(following: readonly string[], widening?: RegExp): boolean {
   const t = following.slice(0, 2).join(' ').replace(/\b(?:not negotiable|non-?negotiable)\b/gi, ' ');
   return SOFTENS.test(t) || (widening?.test(t) ?? false);
@@ -332,7 +334,12 @@ function hoursOutcome(g: Gig, cap: number): Outcome {
   if (min !== null) {
     if (min > cap) {
       const status = figureStatus(g.description, min);
-      return status === 'unclear' ? reviewOf('hours-unclear', NOTE_HOURS_UNCLEAR) : rejectOf('hours-over-cap');
+      if (status === 'unclear') return reviewOf('hours-unclear', NOTE_HOURS_UNCLEAR);
+      // "You must commit 40 hours per week. This is negotiable.": the next two clauses may soften the requirement.
+      const ends = [...g.description.matchAll(HOURS_PER_WEEK), ...g.description.matchAll(PLUS_HOURS)].filter((m) => Number(m[1] ?? m[3]) === min).map((m) => (m.index ?? 0) + m[0].length);
+      const end = ends.length > 0 ? Math.max(...ends) : -1;
+      if (end >= 0 && softenedAfter(g.description.slice(end).split(CLAUSES).slice(1), FEWER_HOURS_OK)) return softened();
+      return rejectOf('hours-over-cap');
     }
     return ft === 'yes' ? reviewOf('hours-unclear', NOTE_HOURS_CONFLICT) : PASS;
   }
