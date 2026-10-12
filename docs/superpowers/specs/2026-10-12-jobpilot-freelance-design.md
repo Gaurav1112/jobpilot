@@ -299,7 +299,7 @@ on every rendered byte of PDF, DOCX and plain text.
 - 403 / 429 / challenge → that source is off for the day, named; never retried by evasion.
 - Upwork without approval, Gmail without consent, GitHub/Reddit without token → the source is
   disabled and says why in `pack check` and on the Sources page.
-- Probe failures 3 days running → "source X looks dead" in problems.
+- Probe failures in 3 consecutive runs (about 1.5 days at twice a day) → "source X looks dead" in problems.
 
 ## 10. Testing and evals
 
