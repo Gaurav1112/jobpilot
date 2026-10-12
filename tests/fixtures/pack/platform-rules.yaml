@@ -16,9 +16,11 @@ freelancer:
     - {type: fixed, min: 1500, max: 12500, currencies: [INR]}
     - {type: fixed, min: 600, max: 1500, currencies: [INR]}
     - {type: fixed, min: 37500, max: 75000, currencies: [INR]}
-    - {type: fixed, min: 20, max: 250, currencies: [GBP]}
+    # observed once in live recordings 2026-10-12 (gig 40753031)
     - {type: fixed, min: 8, max: 30, currencies: [EUR]}
+    # observed once in live recordings 2026-10-12 (gig 40762859)
     - {type: fixed, min: 14, max: 30, currencies: [NZD]}
+    # observed once in live recordings 2026-10-12 (gig 40760110)
     - {type: fixed, min: 240, max: 2000, currencies: [HKD]}
     - {type: hourly, min: 15, max: 25, currencies: [USD, EUR, GBP, AUD, NZD, CAD, SGD]}
     - {type: hourly, min: 8, max: 15, currencies: [USD, EUR, GBP, AUD, NZD, CAD, SGD]}

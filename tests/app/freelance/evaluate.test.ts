@@ -163,7 +163,7 @@ describe('gig-eligibility: role filter and preset brackets', () => {
   it('the default freelancer presets are the derived list', () => {
     const rules = freelanceSchema.PlatformRulesFile.parse({});
     const tiers = rules.freelancer.presetBrackets;
-    expect(tiers).toHaveLength(21);
+    expect(tiers).toHaveLength(20);
     expect(tiers).toContainEqual({ type: 'fixed', min: 12500, max: 37500, currencies: ['INR'] });
     expect(tiers).toContainEqual({ type: 'fixed', min: 250, max: 750, currencies: ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'SGD'] });
     expect(tiers.filter((t) => t.type === 'hourly')).toHaveLength(7);
@@ -174,7 +174,7 @@ describe('gig-eligibility: role filter and preset brackets', () => {
     const rules = freelanceSchema.PlatformRulesFile.parse({ freelancer: { maxChars: 1000 } });
     expect(rules.freelancer.maxChars).toBe(1000);
     expect(rules.freelancer.hookChars).toBe(150);
-    expect(rules.freelancer.presetBrackets).toHaveLength(21);
+    expect(rules.freelancer.presetBrackets).toHaveLength(20);
     expect(freelanceSchema.PlatformRulesFile.parse({ freelancer: { presetBrackets: [] } }).freelancer.presetBrackets).toEqual([]); // an explicit empty list is the user's choice
   });
 });

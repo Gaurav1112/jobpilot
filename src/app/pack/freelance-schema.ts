@@ -77,14 +77,13 @@ const inr = (type: 'fixed' | 'hourly', min: number, max: number | null): PresetB
  * dollar-like currencies), 30-250 (18), 10-30 (17), 750-1500 (3), 3000-5000 (3), 5000-10000 (3); INR 12500-37500 (39),
  * 1500-12500 (12), 600-1500 (8), 37500-75000 (4). Hourly: 15-25 (15), 8-15 (7), 25-50 (4), 2-8 (4), 50+ (3); INR
  * 750-1250 (13), 100-400 (3). `owner_id` is null in every recording, so distinct owners could not be counted.
- * Three more were each seen once, in a currency whose tier minimum differs from the dollar one, and were added after a
- * review found the gigs wrongly rejected: EUR 8-30 and NZD 14-30 (the 10-30 tier) and HKD 240-2000 (30-250 x 8). GBP
- * 20-250 is the review's own example of the 30-250 tier in pounds; it is NOT in the recordings (GBP fixed seen: 250-750, 3000-5000).
+ * Three more were each OBSERVED ONCE in the recordings, in a currency whose tier minimum differs from the dollar one:
+ * EUR 8-30 (gig 40753031), NZD 14-30 (40762859) and HKD 240-2000 (40760110). Nothing is added that was not observed.
  */
 const FREELANCER_PRESETS: PresetBracket[] = [
   dollar('fixed', 250, 750), dollar('fixed', 30, 250), dollar('fixed', 10, 30), dollar('fixed', 750, 1500), dollar('fixed', 3000, 5000), dollar('fixed', 5000, 10000),
   inr('fixed', 12500, 37500), inr('fixed', 1500, 12500), inr('fixed', 600, 1500), inr('fixed', 37500, 75000),
-  { type: 'fixed', min: 20, max: 250, currencies: ['GBP'] }, { type: 'fixed', min: 8, max: 30, currencies: ['EUR'] }, { type: 'fixed', min: 14, max: 30, currencies: ['NZD'] }, { type: 'fixed', min: 240, max: 2000, currencies: ['HKD'] },
+  { type: 'fixed', min: 8, max: 30, currencies: ['EUR'] }, { type: 'fixed', min: 14, max: 30, currencies: ['NZD'] }, { type: 'fixed', min: 240, max: 2000, currencies: ['HKD'] },
   dollar('hourly', 15, 25), dollar('hourly', 8, 15), dollar('hourly', 25, 50), dollar('hourly', 2, 8), dollar('hourly', 50, null),
   inr('hourly', 750, 1250), inr('hourly', 100, 400),
 ];
