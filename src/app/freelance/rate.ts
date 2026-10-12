@@ -41,13 +41,19 @@ const NO_BUDGET =
   /no budget (?:is )?disclosed|you set the price|set (?:their|your) own price|quote your (?:own )?price|name your price|budget (?:is )?(?:open|negotiable|tbd)/i;
 /** After the figure: a per-period rate of work ("per week", "/day", "weekly", "a day"), a cap, or an amount of material. */
 const NOT_SCOPE_AFTER =
-  /^(?:\s?(?:\/|per|a|an|each|every)\s?(?:week|wk|day|month|mo)\b|\s?(?:weekly|daily|monthly)\b|\s?\/\s?(?:wk|day|mo)\b|\s+(?:or\s+less|max(?:imum)?\b|of\s+(?:video|footage|audio|content|recordings?|support)\b))/i;
+  /^(?:\s?(?:\/|per|a|an|each|every)\s?(?:week|wk|day|month|mo)\b|\s?(?:weekly|daily|monthly)\b|\s?\/\s?(?:wk|day|mo)\b|\s+(?:or\s+less|max(?:imum)?\b|of\s+(?:video|footage|audio|content|recordings?|support|meetings?|calls|standups?|onboarding|training)\b|(?:turnaround|notice|response|lead\s*time|window|deadline|after|ago|later|before|per|onboarding|training|meetings?|calls|standups?)\b|from\s+(?:award|now|start|acceptance)\b|to\s+(?:deliver|respond|reply|review|get|receive|complete|finish|access)\b|each\s+(?:task|ticket|item|pr|page|unit)\b))/i;
+/** Directly before the figure: a deadline preposition ("done in 48 hours", "the next 48 hours"), whatever cue sits earlier. */
+const DEADLINE_PREPOSITION = /(?:\bin|\bnext|\bfirst|\blast|\bwithin)\s+(?:the\s+)?(?:next\s+)?~?\s*$/i;
 /** Within about 25 characters before the figure: a deadline, response time, uptime, support or a bound, not work scope. */
 const NOT_SCOPE_BEFORE =
   /\b(?:within|in under|under|turnaround|respond(?:s|ing)?|response|reply|resolution|resolve|deadline|available|availability|uptime|support|sla|deliver(?:y|ed)?|up to|at most|at least|minimum|maximum|max|over|more than|less than|no more than|every|each|online|present|on call|overlap)\b/i;
-/** Effort cues: before the figure in its clause, or right after it. Without one a figure is unconfirmed and unused. */
-const EFFORT_BEFORE =
-  /\b(?:about|approx(?:\.|imately)?|estimated?|roughly|around|effort|scope|total|expect(?:s|ed)?|plan on|budgeted|takes?|need(?:s|ed)?|requires?)\b|~/i;
+/**
+ * Effort cues: strong ones before the figure in its clause (they confirm on their own), or an after-cue right behind it.
+ * The weak words need, takes, requires and expect also open deadline and lead-time wording ("takes 48 hours to get
+ * access"), so they confirm nothing without an after-cue, which confirms by itself; they are therefore not listed.
+ * Without a cue a figure is unconfirmed and unused.
+ */
+const EFFORT_BEFORE = /\b(?:about|approx(?:\.|imately)?|estimated?|roughly|around|effort|scope|total|plan on|budgeted)\b|~/i;
 const EFFORT_AFTER = /^\s*(?:of\s+(?:work|development|dev|coding|effort|engineering)\b|(?:in\s+)?total\b)/i;
 
 const round2 = (x: number): number => Math.round(Number((x * 100).toPrecision(15))) / 100;
@@ -84,7 +90,7 @@ function clauseBefore(window: string): string {
  * `unknown`: it never falls through to the duration row.
  *
  * Allow-list: a figure is work scope only with an effort cue in its own clause (EFFORT_BEFORE: about, ~, estimated,
- * roughly, effort, scope, total, expect, plan on, budgeted, takes, needs, requires; or EFFORT_AFTER: "of work",
+ * roughly, around, effort, scope, total, plan on, budgeted; or EFFORT_AFTER: "of work",
  * "of development", "total", "in total"). A figure without a cue is unconfirmed and unused.
  * Deny-list on top, which wins over a cue: a figure before which (within 25 characters, in the same clause: see
  * `clauseBefore`; a colon keeps the label with its figure) a deadline, response, availability, presence, support or
@@ -105,7 +111,7 @@ function totalHours(description: string): { lo: number; hi: number } | 'refused'
     const window = description.slice(Math.max(0, start - 25), start);
     const clause = clauseBefore(window);
     const rest = description.slice(start + m[0].length);
-    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(rest) || NOT_SCOPE_BEFORE.test(clause)) denied.add(key);
+    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(rest) || NOT_SCOPE_BEFORE.test(clause) || DEADLINE_PREPOSITION.test(description.slice(Math.max(0, start - 30), start))) denied.add(key);
     else if (m[0].includes('~') || EFFORT_BEFORE.test(clause) || /approx\.\s*$/i.test(window) || EFFORT_AFTER.test(rest)) confirmed.set(key, { lo, hi });
     else unconfirmed.add(key);
   }
