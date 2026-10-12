@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deadReason, isoWeek, previousWeek } from '../../../src/app/freelance/health.js';
 import { gigDedupeKey, gigKey } from '../../../src/app/freelance/keys.js';
-import { gigRowsOf, NOTE_NO_FACTS, NOTE_ONE_SKILL, type GigRunOutputs } from '../../../src/app/freelance/project.js';
+import { gigRowsOf, NOTE_NO_FACTS, NOTE_ONE_SKILL, NOTE_UNVERIFIED, type GigRunOutputs } from '../../../src/app/freelance/project.js';
 import { freshGigs, gigNotificationFor } from '../../../src/app/freelance/run.js';
 import type { Gig, GigQaReport, GigRendered, ScoredGig } from '../../../src/app/freelance/types.js';
 import { belowFitFloor, proposalPlanner } from '../../../src/app/freelance/writing/proposal-planner.js';
@@ -35,7 +35,8 @@ const flagsOf = (rows: ReturnType<typeof gigRowsOf>, key: string): string[] => r
 function docsFor(key: string, proposal: string): { rendered: GigRendered; qa: GigQaReport } {
   const files = [{ kind: 'proposal' as const, format: 'txt' as const, path: `gigs/${key}/proposal.txt`, sha256: key.padEnd(64, '0').slice(0, 64), pages: null }];
   return {
-    rendered: { gigKey: key, files, plan: {} as GigRendered['plan'], text: { proposal, pitch: null, resume: '' } },
+    // a plan that passes the coverage gate: two backed terms, one cited line
+    rendered: { gigKey: key, files, plan: { proposal: { evidence: [{ text: 'e', factIds: ['f-1'] }] }, pitch: null, covered: ['java', 'kafka'], missing: [] } as unknown as GigRendered['plan'], text: { proposal, pitch: null, resume: '' } },
     qa: { gigKey: key, ok: true, checks: [{ id: 'qa.files', ok: true, detail: '' }], files },
   };
 }
@@ -233,6 +234,23 @@ describe('the coverage gate (Task 10 fix round 1)', () => {
     expect(rowOf(gigs[0]!)).toMatchObject({ list: 'review', notes: [NOTE_NO_FACTS], docsState: 'blocked', docsDetail: NOTE_NO_FACTS, fit: 60 });
     expect(rowOf(gigs[1]!)).toMatchObject({ list: 'gigs', notes: [NOTE_ONE_SKILL], docsState: 'ready' });
     expect(rowOf(gigs[2]!)).toMatchObject({ list: 'gigs', notes: [], docsState: 'ready' });
+  });
+
+  it('a review row with 0 covered: stays in review, the note, documents blocked; 1 covered in review: the amber note', () => {
+    const r0 = { ...scoredGig({ sourceId: '50' }), list: 'review' as const };
+    const r1 = { ...scoredGig({ sourceId: '51' }), list: 'review' as const };
+    const d = [planned(r0, [], 0), planned(r1, ['java'], 1)];
+    const out = gigRowsOf(outputsOf([r0, r1], { rendered: d.map((x) => x.rendered), qa: d.map((x) => x.qa) }), OPTS);
+    const of = (s: ScoredGig) => out.find((r) => r.row.gigKey === gigOf(s).gigKey)!.row;
+    expect(of(r0)).toMatchObject({ list: 'review', notes: [NOTE_NO_FACTS], docsState: 'blocked', docsDetail: NOTE_NO_FACTS });
+    expect(of(r1)).toMatchObject({ list: 'review', notes: [NOTE_ONE_SKILL], docsState: 'ready' });
+  });
+
+  it('ready documents with no plan on record: not verifiable, blocked with the note (fail closed)', () => {
+    const g = scoredGig({ sourceId: '52' });
+    const d = docsFor(gigOf(g).gigKey, 'Hello.');
+    const out = gigRowsOf(outputsOf([g], { rendered: [], qa: [d.qa] }), OPTS);
+    expect(out[0]!.row).toMatchObject({ list: 'gigs', notes: [NOTE_UNVERIFIED], docsState: 'blocked', docsDetail: NOTE_UNVERIFIED });
   });
 
   it('covered terms but no cited evidence line: review too (a contract)', () => {

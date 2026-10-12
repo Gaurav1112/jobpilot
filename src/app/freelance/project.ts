@@ -17,9 +17,10 @@ import { repeatKey } from './writing/gig-qa.js';
  *   the fit floor the one with the least canonical JSON, so it never depends on input order.
  * - **list:** the `rankGigs(rows, fitFloor)` list the gig is in; `below-floor` for a contract or gig under the floor;
  *   null when it was rejected or not scored.
- * - **coverage gate:** a Contracts or Gigs row whose documents' plan backs no lexicon term, or cites no fact
- *   (`coverageGate`), goes to `review` with the note NOTE_NO_FACTS and its documents `blocked` (never ready to paste,
- *   never announced); one backed term keeps it listed with the note NOTE_ONE_SKILL. The fit formula is unchanged.
+ * - **coverage gate:** on every row with ready documents (`coverageGate` of the plan behind them): no backed lexicon
+ *   term or no cited fact adds NOTE_NO_FACTS and blocks the documents (never ready to paste, never announced), and a
+ *   Contracts or Gigs row moves to `review`; one backed term adds NOTE_ONE_SKILL on any list; no plan on record adds
+ *   NOTE_UNVERIFIED and blocks the documents (fail closed). The fit formula is unchanged.
  * - **docs:** from the gig's GigQaReport: `ready` when QA passed and every file is on disk with its sha256, `missing`
  *   when one is not, `blocked` with the failed checks when QA failed. A quarantined writing step, a files commit
  *   failure, or a writing failure with a named reason blocks the documents. Anything else is `none`; a scored gig
@@ -72,7 +73,9 @@ export interface GigRunOutputs {
 
 /** The note (and docs detail) of a listed gig whose plan backs no lexicon term or cites no fact: it goes to review. */
 export const NOTE_NO_FACTS = 'none of your verified facts match this gig';
-/** The amber note of a listed gig whose plan backs exactly one term. */
+/** The note (and docs detail) of ready documents with no plan on record to check them against: blocked, fail closed. */
+export const NOTE_UNVERIFIED = 'documents could not be verified - rerun';
+/** The amber note of a gig whose plan backs exactly one term. */
 export const NOTE_ONE_SKILL = 'only one of the skills it asks for is backed by your facts';
 
 /**
@@ -210,19 +213,26 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
       docsDetail = block;
     } else if (d !== undefined) ({ docsState, docsDetail, docs } = d);
     else docsDetail = out.writingFailed.get(k) ?? (b.scored !== null && b.scored.fit < opts.fitFloor ? BELOW_FLOOR_DETAIL : null);
-    // The coverage gate (fix round 1): fit counts the lexicon terms a posting names; coverage counts the terms the
-    // user's verified facts back. A listed gig whose plan backs none of them, or cites no fact, is not shortlisted.
+    // The coverage gate (fix rounds 1 and 2): fit counts the lexicon terms a posting names; coverage counts the terms
+    // the user's verified facts back. It runs on every row whose documents are ready, whatever its list:
+    // - `none` (no term backed, or no fact cited): the note, the documents blocked, and a Contracts or Gigs row moves to review;
+    // - `one`: the amber note, on any list;
+    // - `unknown` (ready documents but no plan on record to check them against): fail closed, the documents are blocked.
     let list = b.list;
     let notes = b.verdict?.notes ?? [];
-    const gate = coverageGate(planOf.get(k));
-    if ((list === 'contracts' || list === 'gigs') && gate === 'none') {
-      list = 'review';
-      notes = [...notes, NOTE_NO_FACTS];
-      if (docsState === 'ready') {
+    if (docsState === 'ready') {
+      const gate = coverageGate(planOf.get(k));
+      if (gate === 'none') {
+        if (list === 'contracts' || list === 'gigs') list = 'review';
+        notes = [...notes, NOTE_NO_FACTS];
         docsState = 'blocked';
         docsDetail = NOTE_NO_FACTS;
-      }
-    } else if ((list === 'contracts' || list === 'gigs') && gate === 'one') notes = [...notes, NOTE_ONE_SKILL];
+      } else if (gate === 'unknown') {
+        notes = [...notes, NOTE_UNVERIFIED];
+        docsState = 'blocked';
+        docsDetail = NOTE_UNVERIFIED;
+      } else if (gate === 'one') notes = [...notes, NOTE_ONE_SKILL];
+    }
     rows.push({
       row: {
         gigKey: k,

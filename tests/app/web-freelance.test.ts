@@ -302,8 +302,11 @@ describe('freelance: the gig page', () => {
     expect(Buffer.from(await r.arrayBuffer()).toString('utf8')).toBe(`${PROPOSAL}\n`);
     expect((await get(`/freelance/${G2}/files/pitch.txt`)).status).toBe(404);
     expect((await get(`/freelance/${G2}/files/..%2Fsecret.txt`)).status).toBe(404);
+    // fail closed: a changed or missing .txt refuses every file of the gig
     writeFileSync(join(out, 'gigs', G2, 'proposal.txt'), 'tampered\n');
-    expect((await get(`/freelance/${G2}/files/proposal.txt`)).status).toBe(409);
+    for (const f of ['proposal.txt', 'resume.pdf', 'resume.docx']) expect((await get(`/freelance/${G2}/files/${f}`)).status, f).toBe(403);
+    rmSync(join(out, 'gigs', G2, 'proposal.txt'));
+    for (const f of ['proposal.txt', 'resume.pdf', 'resume.docx']) expect((await get(`/freelance/${G2}/files/${f}`)).status, f).toBe(403);
   });
 
   it('a contract shows its pitch; a gig with no documents says why', async () => {

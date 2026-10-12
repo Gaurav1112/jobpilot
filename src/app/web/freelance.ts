@@ -443,19 +443,19 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
   };
 
   /**
-   * Whether the gig's paste text (the `.txt` among `files`) names a forbidden term: then none of its files is served
-   * (403), the PDF and DOCX included, since they were written from the same plan. A `.txt` that cannot be read is
-   * left to the per-file read.
+   * Whether the gig's files may NOT be served: its paste text (the `.txt` among `files`) names a forbidden term, or
+   * cannot be read as recorded (absent, changed, refused). Fail closed: then none of its files is served (403), the PDF
+   * and DOCX included, since they were written from the same plan. Files without any `.txt` are judged by their own read.
    */
   const tainted = (files: readonly Pick<GigDoc, 'format' | 'path' | 'sha256'>[], text: (s: string) => string): boolean => {
     const txt = files.find((f) => f.format === 'txt');
     if (txt === undefined) return false;
     const read = readRecorded(d.paths.out, txt.path, txt.sha256);
-    if (!read.ok) return false;
+    if (!read.ok) return true;
     const body = Buffer.from(read.bytes).toString('utf8');
     return text(body) !== body;
   };
-  const TAINTED = 'Not served: the text of this gig names a forbidden term, so none of its documents leave the dashboard. Check naming.yaml and the posting.';
+  const TAINTED = 'Not served: the text of this gig names a forbidden term, or is missing or changed on disk, so none of its documents leave the dashboard. The next run makes them again; check naming.yaml and the posting.';
 
   app.get('/freelance/:key/files/:name', (c) => {
     const { key, name } = c.req.param();
