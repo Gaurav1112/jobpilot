@@ -72,7 +72,9 @@ describe('the freelance projector: one row per gig', () => {
   it('list: below the fit floor a gig is below-floor with no documents; a rejected gig has no list', () => {
     const low = { ...scoredGig({ sourceId: '1' }), fit: 30 };
     const rows = gigRowsOf(outputsOf([low]), OPTS);
-    expect(rows[0]!.row).toMatchObject({ list: 'below-floor', docsState: 'none' });
+    expect(rows[0]!.row).toMatchObject({ list: 'below-floor', docsState: 'none', docsDetail: 'below the fit floor' });
+    const lowReview = { ...scoredGig({ sourceId: '9' }), fit: 30, list: 'review' as const };
+    expect(gigRowsOf(outputsOf([lowReview]), OPTS)[0]!.row).toMatchObject({ list: 'review', docsState: 'none', docsDetail: 'below the fit floor' });
     const rejected = scoredGig({ sourceId: '2' });
     const v = { ...rejected.risked.verdict, verdict: 'rejected' as const, reasons: ['rate:below-floor'] };
     const r = gigRowsOf({ ...empty(), gigs: [gigOf(rejected)], rated: [v.rated], verdicts: [v] }, OPTS);
@@ -91,7 +93,7 @@ describe('the freelance projector: run-wide flags', () => {
     expect(flagsOf(rows, gigOf(a).gigKey)).toEqual(['duplicate-text']);
     expect(flagsOf(rows, gigOf(b).gigKey)).toEqual(['duplicate-text']);
     expect(flagsOf(rows, gigOf(c).gigKey)).toEqual([]);
-    expect(rows.find((r) => r.row.gigKey === gigOf(a).gigKey)!.row.flags[0]!.detail).toBe(`same description as gig ${gigOf(b).gigKey}`);
+    expect(rows.find((r) => r.row.gigKey === gigOf(a).gigKey)!.row.flags[0]!.detail).toBe(`same description as gig ${gigOf(b).gigKey} (client unknown)`);
   });
 
   it('duplicate-text: the same description from one named client is a repost, not flagged', () => {
@@ -101,6 +103,10 @@ describe('the freelance projector: run-wide flags', () => {
     const rows = gigRowsOf(outputsOf([a, b]), OPTS);
     expect(flagsOf(rows, gigOf(a).gigKey)).toEqual([]);
     expect(flagsOf(rows, gigOf(b).gigKey)).toEqual([]);
+    // A third, named client with the same text: flagged against it, as another client.
+    const c = withGig(scoredGig({ sourceId: '3' }), { description: desc, client: { ...client, name: 'Globex' } });
+    const three = gigRowsOf(outputsOf([a, b, c]), OPTS);
+    expect(three.find((r) => r.row.gigKey === gigOf(a).gigKey)!.row.flags).toEqual([{ id: 'duplicate-text', detail: `same description as gig ${gigOf(c).gigKey} (another client)` }]);
   });
 
   it('repeat: two proposals of one run that share their first 60 characters are both flagged', () => {

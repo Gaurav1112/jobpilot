@@ -11,12 +11,12 @@ import { forbiddenTermStrict } from '../pack/rules.js';
 import type { Naming } from '../pack/schema.js';
 import { runProblems, safeLine, sourceSkipWarnings, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
-import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId } from '../run.js';
-import { AppStore, type GigView } from '../store/app-store.js';
-import { recordSourceHealth } from './health.js';
+import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
+import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
+import { foreignSourceStep, recordSourceHealth } from './health.js';
 import { freelanceSeeds } from './pipeline.js';
 import { projectFreelanceRun, type GigProjectResult } from './project.js';
-import { rankGigs } from './rank.js';
+import { rankGigs, RED } from './rank.js';
 import type { Platform, ScoredGig } from './types.js';
 
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
@@ -121,7 +121,7 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
   if (fresh.length === 0) return clean(`No new gigs this ${o.half === 'am' ? 'morning' : 'evening'}${tail}`) ?? fallback;
   const count = `${plural(fresh.length, 'new gig', 'new gigs')} ≥$${dollars(o.rateFloor)}/h`;
   const byKey = new Map(fresh.map((g) => [g.gigKey, g]));
-  const candidates = rankGigs(fresh.map(rankable), 0).gigs.filter((s) => s.risked.flags.every((f) => !['off-platform', 'unusual-payment', 'upfront-fee'].includes(f.id)));
+  const candidates = rankGigs(fresh.map(rankable), 0).gigs.filter((s) => s.risked.flags.every((f) => !RED.has(f.id)));
   const topRow = candidates[0];
   const top = topRow === undefined ? undefined : byKey.get(topRow.risked.verdict.rated.gig.gigKey);
   if (top === undefined) return clean(`${count}${tail}`) ?? fallback;
@@ -134,19 +134,13 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
 /** The newly shortlisted gigs: Contracts or Gigs, documents ready, not yet announced, duplicate listings excluded. */
 const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null);
 
-/** Whether this run had source steps and every one of them was answered from the store. */
-function sourcesAllReplayed(counts: RunCounts): boolean {
-  const sources = Object.entries(counts.byAgent).filter(([a]) => a.startsWith('src-'));
-  const steps = sources.reduce((n, [, c]) => n + c.done + c.failed + c.quarantined, 0);
-  return steps > 0 && sources.every(([, c]) => c.replayed === c.done + c.quarantined && c.failed === 0);
-}
-
 /**
  * `jobpilot run-freelance`: one freelance run under the run lock (spec §3, §8), the freelance counterpart of `runDaily`:
  * 1. load the pack (overrides, `experience.asOf` = the IST month, the kept `render.nonce`) and wire
  *    `jobpilot-freelance@1.0.0` (`freelanceKernel`);
  * 2. seed (`freelanceSeeds`): Freelancer one request per query, Remotive one, HN two, and one `boards` request per
- *    stored daily contract posting (`AppStore.contractPostings`), all dated with the IST date and half;
+ *    stored daily contract posting seen in the last BOARD_SEED_DAYS (14) days and not skipped or rejected
+ *    (`AppStore.contractPostings`), all dated with the IST date and half;
  * 3. run as `freelance-<date>-<am|pm>` (a completed one moves to `-2`, a crashed one is resumed), project into the gig
  *    tables, count source health and name every problem (a dead source included);
  * 4. notify once per newly shortlisted gig (`notified_at`; only a posted notification announces);
@@ -176,18 +170,22 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
           .filter((r) => r.run_id.startsWith('freelance-') && !r.run_id.startsWith(prefix) && !skipped.includes(r.run_id))
           .map((r) => `run ${r.run_id} never completed and is from an earlier half; it will not be resumed`),
       );
-      const boards = rules.platforms.boards.enabled ? app.contractPostings() : { postings: [], missing: [] };
+      const boards = rules.platforms.boards.enabled ? app.contractPostings(new Date(Date.parse(now) - BOARD_SEED_DAYS * 86_400_000).toISOString()) : { postings: [], missing: [] };
       if (boards.missing.length > 0) warnings.push(`${plural(boards.missing.length, 'stored contract job has', 'stored contract jobs have')} no stored posting (a Desk import) and ${boards.missing.length === 1 ? 'is' : 'are'} not seeded`);
       const seeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting));
       if (seeds.length === 0) warnings.push('no gig platform is enabled: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
-      const projected = projectFreelanceRun(app.kernel, app, runId, { fitFloor: rules.fitFloor, docOnDisk: diskDocCheck(paths.out) });
-      const { rows, ...projection } = projected;
+      // One transaction: the gig rows and the run's source health are written together, or neither is.
+      const { projected, health } = app.tx(() => {
+        const p = projectFreelanceRun(app.kernel, app, runId, { fitFloor: rules.fitFloor, docOnDisk: diskDocCheck(paths.out) });
+        return { projected: p, health: recordSourceHealth(app.kernel, app, runId, { runDate, half, fitFloor: rules.fitFloor, rows: p.rows }) };
+      });
+      const { rows: _rows, ...projection } = projected;
       const counts = runCounts(app.kernel, runId);
       if (sourcesAllReplayed(counts)) warnings.push(FREELANCE_REPLAY_HINT);
       warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
-      const health = app.tx(() => recordSourceHealth(app.kernel, app, runId, { runDate, half, fitFloor: rules.fitFloor, rows }));
-      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) }))];
+      const foreignSkip = (agent: string, input: { type: string; payload: unknown }, status: string) => status === 'skipped' && foreignSourceStep(agent, input);
+      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming, foreignSkip), ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) }))];
       o.afterProject?.();
       const fresh = freshGigs(app);
       const notification = gigNotificationFor(fresh, { rateFloor: rules.rateFloorUsdHour, half, naming: loaded.pack.naming, problems: problems.length });

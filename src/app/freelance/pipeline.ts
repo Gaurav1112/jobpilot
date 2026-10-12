@@ -34,16 +34,24 @@ const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as con
 /** Every agent of the freelance run, in a stable order. */
 export const freelanceAgents = (): AnyAgent[] => [...gigSources, gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa];
 
-/** The wiring for `agents`, with the daily rule for teams and breakers (a team breaker follows its most tolerant member). */
+/**
+ * The wiring for `agents`. Teams follow each contract's `team`; a team breaker follows its most tolerant member (the
+ * daily rule), except **sourcing**: its threshold is the sum of its members' thresholds. Each source answers one
+ * platform, so a team breaker at the largest member's threshold would let one dead platform (5 failed Freelancer
+ * queries) skip every other platform's fetch for the run. With the sum, only a member's own breaker stops it, and the
+ * team breaker opens only when every source could have opened its own. (One team per source is not possible: the
+ * wiring proof requires a member's team to be its contract's `team`, and the source contracts all say `sourcing`.)
+ */
 export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
   const teams: Team[] = TEAM_ORDER.map((id) => {
     const members = agents.filter((a) => a.contract.team === id);
+    const limits = members.map((a) => a.contract.breaker.consecutiveFailures);
     return {
       id,
       lead: `${id}-lead`,
       members: members.map((a) => a.contract.id),
       exitGuarantees: [],
-      breaker: { consecutiveFailures: Math.max(1, ...members.map((a) => a.contract.breaker.consecutiveFailures)) },
+      breaker: { consecutiveFailures: id === 'sourcing' ? Math.max(1, limits.reduce((a, b) => a + b, 0)) : Math.max(1, ...limits) },
     };
   }).filter((t) => t.members.length > 0);
   return {
@@ -64,6 +72,9 @@ export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
     ],
   };
 }
+
+/** The platforms whose source fetches over the network (boards reads the store). */
+export const FETCHING_PLATFORMS: readonly Platform[] = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring'];
 
 /** The platforms this build has a source agent for, and the agent that answers each. */
 export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {

@@ -19,10 +19,12 @@ import { repeatKey } from './writing/gig-qa.js';
  *   null when it was rejected or not scored.
  * - **docs:** from the gig's GigQaReport: `ready` when QA passed and every file is on disk with its sha256, `missing`
  *   when one is not, `blocked` with the failed checks when QA failed. A quarantined writing step, a files commit
- *   failure, or a writing failure with a named reason blocks the documents. Anything else is `none`.
+ *   failure, or a writing failure with a named reason blocks the documents. Anything else is `none`; a scored gig
+ *   under the fit floor (a review row too) says `below the fit floor`.
  * - **flags:** the gig-risk flags, then the projector's own two, which need the whole run:
  *   - `duplicate-text`: another gig of this run has the same normalised description (NFC, whitespace folded, lower
- *     case) and is not provably the same client (both client names known and equal);
+ *     case) and is not provably the same client (both client names known and equal); the detail says "client
+ *     unknown" when either name is missing, else "another client";
  *   - `repeat` (gig-qa's `gig.repeat`): another proposal written in this run opens with the same `repeatKey`.
  * - `duplicate_of` is set by the store (the earliest-first-seen gig of the dedupe key, from another platform).
  * - Status, note and notified_at are never written. A row last seen after this run is skipped (`stale`). Projecting a
@@ -64,6 +66,9 @@ export interface GigRunOutputs {
   /** A writing step of the gig failed with no named reason: docs `none`, the failure shown in the detail. */
   readonly writingFailed: ReadonlyMap<string, string>;
 }
+
+/** The docs detail of a scored gig under the fit floor (review rows included): no documents are written for it. */
+export const BELOW_FLOOR_DETAIL = 'below the fit floor';
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const byJson = <T>(xs: readonly T[]): T[] => [...xs].sort((a, b) => cmp(canonicalJson(a), canonicalJson(b)));
@@ -153,7 +158,9 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
         const them = (bases.get(o) as Base).gig.client.name;
         return me === null || them === null || textKey(me) !== textKey(them);
       });
-      if (others.length > 0) addFlag(k, { id: 'duplicate-text', detail: `same description as gig ${others.slice(0, 3).join(', ')}${others.length > 3 ? ` and ${others.length - 3} more` : ''}` });
+      if (others.length === 0) continue;
+      const unknown = me === null || others.some((o) => (bases.get(o) as Base).gig.client.name === null);
+      addFlag(k, { id: 'duplicate-text', detail: `same description as gig ${others.slice(0, 3).join(', ')}${others.length > 3 ? ` and ${others.length - 3} more` : ''}${unknown ? ' (client unknown)' : ' (another client)'}` });
     }
   }
   // repeat
@@ -180,7 +187,7 @@ export function gigRowsOf(out: GigRunOutputs, opts: Required<Pick<GigProjectOpti
       docsState = 'blocked';
       docsDetail = block;
     } else if (d !== undefined) ({ docsState, docsDetail, docs } = d);
-    else docsDetail = out.writingFailed.get(k) ?? null;
+    else docsDetail = out.writingFailed.get(k) ?? (b.scored !== null && b.scored.fit < opts.fitFloor ? BELOW_FLOOR_DETAIL : null);
     rows.push({
       row: {
         gigKey: k,

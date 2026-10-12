@@ -15,8 +15,8 @@ import type { GigRequest, Platform } from './types.js';
  * | above_floor | eligible or review, with fit at or above `fitFloor` |
  * | shortlisted | in Contracts or Gigs with documents ready |
  * | runs | 1 |
- * | failed_runs | 1 when any of the platform's source steps failed |
- * | probe_failures | the streak of runs in which every source step of the platform failed (0 after one that did not) |
+ * | failed_runs | 1 when any of the platform's source steps failed (or was skipped by an open breaker) |
+ * | probe_failures | the streak of runs in which every source step of the platform failed or was skipped (0 after one that did not) |
  *
  * `applied`, `replied` and `won` are the user's outcomes; no run writes them. A platform is counted only in a run that
  * fetched it: one whose source steps all replayed fetched nothing (a second run in the same half), and Remotive is
@@ -55,6 +55,7 @@ const fetchesIn = (platform: Platform, half: 'am' | 'pm'): boolean => !(platform
 /** One run's source steps, per platform: whether any executed (not replayed), any failed, all failed, and what they returned. */
 function sourceSteps(kernel: Store, runId: string): Map<Platform, { executed: boolean; failed: number; total: number; gigKeys: Set<string> }> {
   const events = new Map<string, { kind: string; status?: unknown }>();
+  // A skipped step has no step event; its queue status says so.
   for (const e of kernel.events(runId)) {
     const d = JSON.parse(e.data) as Record<string, unknown>;
     if (typeof d['agent'] !== 'string' || typeof d['envelopeId'] !== 'string' || !d['agent'].startsWith('src-')) continue;
@@ -73,8 +74,9 @@ function sourceSteps(kernel: Store, runId: string): Map<Platform, { executed: bo
     const s = out.get(req.platform) ?? { executed: false, failed: 0, total: 0, gigKeys: new Set<string>() };
     const e = events.get(`${q.agent_id}\u0000${q.envelope_id}`);
     s.total += 1;
-    if (q.status === 'failed') s.failed += 1;
-    if (e?.kind === 'step_done' || e?.kind === 'step_failed') s.executed = true;
+    // A request of its own platform that a breaker skipped was not fetched: for the probe streak it failed.
+    if (q.status === 'failed' || q.status === 'skipped') s.failed += 1;
+    if (e?.kind === 'step_done' || e?.kind === 'step_failed' || q.status === 'skipped') s.executed = true;
     out.set(req.platform, s);
   }
   return out;
@@ -128,4 +130,14 @@ export function deadReason(rows: readonly SourceHealthRow[], week: string): stri
     w = previousWeek(w);
   }
   return `0 gigs above the fit floor for ${DEAD_WEEKS} weeks running`;
+}
+
+/**
+ * A source step on another platform's request (every source gets every request and answers only its own): when a
+ * breaker skips it, nothing was lost, so it is not a problem.
+ */
+export function foreignSourceStep(agentId: string, input: { readonly type: string; readonly payload: unknown }): boolean {
+  if (!agentId.startsWith('src-') || input.type !== 'GigRequest@1') return false;
+  const platform = (input.payload as Partial<GigRequest>).platform;
+  return platform === undefined || PLATFORM_AGENT[platform] !== agentId;
 }

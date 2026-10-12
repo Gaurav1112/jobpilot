@@ -210,6 +210,11 @@ interface JobRowDb {
   cited_facts: string | null;
 }
 
+/** Job keys per envelope query in `contractPostings` (well under SQLite's bound-parameter limit). */
+const POSTING_BATCH = 500;
+/** How far back a stored daily contract job is still seeded as a board gig. */
+export const BOARD_SEED_DAYS = 14;
+
 const json = (v: unknown): string | null => (v === null || v === undefined ? null : JSON.stringify(v));
 const parse = <T>(s: string | null): T | null => (s === null ? null : (JSON.parse(s) as T));
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -784,31 +789,44 @@ export class AppStore {
 
   /**
    * The stored daily jobs that are contract, freelance or part-time (their reasons include `employment:contract`,
-   * `employment:freelance` or `employment:part-time`), duplicate listings left out, by job key, each with the
+   * `employment:freelance` or `employment:part-time`), seen at or after `since` (the run passes now minus
+   * BOARD_SEED_DAYS), not skipped or rejected by the user, duplicate listings left out, by job key; each with the
    * Posting@1 the daily normalizer emitted for it: the newest stored Posting@1 envelope with that job key (same
    * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
-   * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. `missing` lists the job keys with
-   * no stored posting (a Desk import): they are not seeded.
+   * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. The envelopes are read in one
+   * pass per batch of at most 500 keys (`IN`, newest rowid per key), never one scan per job. `missing` lists the job
+   * keys with no stored posting (a Desk import): they are not seeded.
    */
-  contractPostings(): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
+  contractPostings(since: string): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
     const keys = (
       this.db
         .prepare(
-          `SELECT job_key FROM jobs WHERE duplicate_of IS NULL AND EXISTS (
+          `SELECT job_key FROM jobs WHERE duplicate_of IS NULL AND last_seen >= ? AND status NOT IN ('skipped', 'rejected') AND EXISTS (
              SELECT 1 FROM json_each(jobs.reasons) WHERE value IN ('employment:contract', 'employment:freelance', 'employment:part-time')
            ) ORDER BY job_key`,
         )
-        .all() as { job_key: string }[]
+        .all(since) as { job_key: string }[]
     ).map((r) => r.job_key);
-    const latest = this.db.prepare(
-      `SELECT body FROM envelopes WHERE type = 'Posting@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY rowid DESC LIMIT 1`,
-    );
+    const bodies = new Map<string, string>();
+    for (let i = 0; i < keys.length; i += POSTING_BATCH) {
+      const batch = keys.slice(i, i + POSTING_BATCH);
+      const rows = this.db
+        .prepare(
+          `SELECT k, body FROM (
+             SELECT json_extract(body, '$.payload.jobKey') AS k, max(rowid) AS r FROM envelopes
+             WHERE type = 'Posting@1' AND json_extract(body, '$.payload.jobKey') IN (${batch.map(() => '?').join(', ')})
+             GROUP BY k
+           ) JOIN envelopes ON envelopes.rowid = r`,
+        )
+        .all(...batch) as { k: string; body: string }[];
+      for (const r of rows) bodies.set(r.k, r.body);
+    }
     const postings: { jobKey: string; posting: unknown }[] = [];
     const missing: string[] = [];
     for (const jobKey of keys) {
-      const row = latest.get(jobKey) as { body: string } | undefined;
-      if (row === undefined) missing.push(jobKey);
-      else postings.push({ jobKey, posting: (JSON.parse(row.body) as { payload: unknown }).payload });
+      const body = bodies.get(jobKey);
+      if (body === undefined) missing.push(jobKey);
+      else postings.push({ jobKey, posting: (JSON.parse(body) as { payload: unknown }).payload });
     }
     return { postings, missing };
   }

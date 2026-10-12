@@ -173,7 +173,7 @@ export const exitCodeOf = (report: RunReport, problems: readonly Problem[]): 0 |
   report.queue.failed - report.gone - report.inputRejected > 0 || report.queue.quarantined > 0 || problems.some((p) => p.kind === 'docs-blocked' && p.cause === 'system') ? 1 : 0;
 
 /** Whether this run had source steps and every one of them was answered from the store. */
-function sourcesAllReplayed(counts: RunCounts): boolean {
+export function sourcesAllReplayed(counts: RunCounts): boolean {
   const sources = Object.entries(counts.byAgent).filter(([a]) => a.startsWith(SOURCE_PREFIX));
   const steps = sources.reduce((n, [, c]) => n + c.done + c.failed + c.quarantined, 0);
   return steps > 0 && sources.every(([, c]) => c.replayed === c.done + c.quarantined && c.failed === 0);

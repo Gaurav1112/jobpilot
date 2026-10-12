@@ -24,7 +24,8 @@ export function isoMs(s: string | null): number | null {
  * A row with `fit` below `fitFloor` (`pack.freelance.fitFloor`, passed by the caller; 45 by default in the pack) is left out of `contracts` and `gigs` but kept in `review`.
  * Several rows with one `gigKey` in a list keep only the first by this order. The input is not changed.
  */
-const RED = new Set(['off-platform', 'unusual-payment', 'upfront-fee']);
+/** The red-flag ids: a gig with one ranks after every gig without. */
+export const RED: ReadonlySet<string> = new Set(['off-platform', 'unusual-payment', 'upfront-fee']);
 
 export interface Ranked {
   contracts: ScoredGig[];

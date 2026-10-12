@@ -182,7 +182,13 @@ function reasonOf(e: StepEvent | undefined, kernel: Store): string {
  * the reason from its step's event. Each line is one line of at most 200 characters, and any line holding a
  * forbidden term is replaced by a fixed notice.
  */
-export function runProblems(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): Problem[] {
+export function runProblems(
+  kernel: Store,
+  runId: string,
+  naming: Pick<Naming, 'forbiddenTerms'>,
+  /** Leaves out the queue items it returns true for (the freelance run: a source skipped on another platform's request, a no-op). */
+  ignore?: (agentId: string, input: Envelope, status: string) => boolean,
+): Problem[] {
   const last = new Map<string, StepEvent>();
   const events = kernel.events(runId);
   for (const ev of events) {
@@ -213,7 +219,9 @@ export function runProblems(kernel: Store, runId: string, naming: Pick<Naming, '
                 : 'failed';
     let item: string;
     try {
-      item = itemOf(kernel.getEnvelope(q.envelope_id));
+      const input = kernel.getEnvelope(q.envelope_id);
+      if (ignore?.(q.agent_id, input, q.status) === true) continue;
+      item = itemOf(input);
     } catch {
       item = `envelope ${q.envelope_id}`;
     }

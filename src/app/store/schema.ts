@@ -22,7 +22,17 @@ const V1_DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing'] as
 const list = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
 
 /**
- * Freelance (spec §8). These lists are frozen into the freelance migration's SQL: changing one needs a new migration.
+ * The CHECK lists of the freelance migration (the 8th), frozen: that migration's SQL must never change, whatever the
+ * current lists below become (as `V1_DOCS_STATES`).
+ */
+const V8_GIG_STATUSES = ['new', 'shortlisted', 'applied', 'replied', 'interviewing', 'won', 'lost', 'skipped'] as const;
+const V8_GIG_KINDS = ['contract', 'gig', 'bounty', 'network-alert'] as const;
+const V8_GIG_LISTS = ['contracts', 'gigs', 'review', 'below-floor'] as const;
+const V8_GIG_DOCS_STATES = ['ready', 'blocked', 'missing', 'none'] as const;
+const V8_NETWORK_STATUSES = ['todo', 'applied', 'screening', 'passed', 'rejected'] as const;
+
+/**
+ * Freelance (spec §8): the current lists. A change to one needs a new migration (a table rebuild for its CHECK).
  * A gig's status: new → shortlisted → applied → replied → interviewing → won | lost | skipped (the user's, never a run's).
  */
 export const GIG_STATUSES = ['new', 'shortlisted', 'applied', 'replied', 'interviewing', 'won', 'lost', 'skipped'] as const;
@@ -202,7 +212,7 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     client TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN (${list(GIG_KINDS)})),
+    kind TEXT NOT NULL CHECK (kind IN (${list(V8_GIG_KINDS)})),
     budget TEXT NOT NULL,
     rate TEXT,
     hours TEXT NOT NULL,
@@ -212,13 +222,13 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     flags TEXT NOT NULL DEFAULT '[]',
     fit REAL,
     breakdown TEXT,
-    list TEXT CHECK (list IS NULL OR list IN (${list(GIG_LISTS)})),
-    docs_state TEXT NOT NULL DEFAULT 'none' CHECK (docs_state IN (${list(GIG_DOCS_STATES)})),
+    list TEXT CHECK (list IS NULL OR list IN (${list(V8_GIG_LISTS)})),
+    docs_state TEXT NOT NULL DEFAULT 'none' CHECK (docs_state IN (${list(V8_GIG_DOCS_STATES)})),
     docs_detail TEXT,
     posted_at TEXT,
     first_seen TEXT NOT NULL,
     last_seen TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN (${list(GIG_STATUSES)})),
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN (${list(V8_GIG_STATUSES)})),
     note TEXT NOT NULL DEFAULT '',
     applied_at TEXT,
     notified_at TEXT,
@@ -238,7 +248,7 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     gig_key TEXT NOT NULL REFERENCES gigs (gig_key),
     "from" TEXT,
-    "to" TEXT NOT NULL CHECK ("to" IN (${list(GIG_STATUSES)})),
+    "to" TEXT NOT NULL CHECK ("to" IN (${list(V8_GIG_STATUSES)})),
     at TEXT NOT NULL,
     by TEXT NOT NULL CHECK (by IN ('user', 'migration'))
   );
@@ -292,7 +302,7 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   CREATE TRIGGER gig_snapshots_append_only_d BEFORE DELETE ON gig_snapshots BEGIN SELECT RAISE(ABORT, 'gig_snapshots is append-only'); END;
   CREATE TABLE network_status (
     network_id TEXT PRIMARY KEY,
-    status TEXT NOT NULL CHECK (status IN (${list(NETWORK_STATUSES)})),
+    status TEXT NOT NULL CHECK (status IN (${list(V8_NETWORK_STATUSES)})),
     updated_at TEXT NOT NULL
   );
   `,

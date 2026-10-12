@@ -16,7 +16,7 @@ import { loadPack, PackError, withoutFreelance } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
-import { freelanceAgents, freelancePacingProblems, freelancePipeline } from './freelance/pipeline.js';
+import { FETCHING_PLATFORMS, freelanceAgents, freelancePacingProblems, freelancePipeline } from './freelance/pipeline.js';
 import { freelanceDocsPacks } from './freelance/writing/gig-renderer.js';
 import { makeJobTracker } from './tracker.js';
 
@@ -175,15 +175,28 @@ export function appKernel(o: AppKernelOptions): AppKernel {
 }
 
 /**
- * The freelance counterpart of `preparePipeline`: the freelance agents through the same capability allow-list and
- * wiring proof (`jobpilot-freelance@1.0.0`), the same effective policy (so the same policy hash) and the freelance
- * pacing check. Throws on any problem.
+ * The user policy the freelance run applies: `policy.user.yaml` with `minHostIntervalMs` raised (never lowered) to the
+ * largest `platform-rules.yaml` `minIntervalMs` of the enabled platforms that fetch (Freelancer's 2000 ms by default).
+ * The kernel has one host pacer per supervisor, so the largest interval paces every host; mergePolicy still checks
+ * the result only tightens the product policy. The daily run keeps `policy.user.yaml` as it is.
  */
-export function prepareFreelance(pack: Pick<Pack, 'policyUser'>): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
+export function freelancePolicyUser(pack: Pick<Pack, 'policyUser' | 'freelance' | 'platformRules'>): Record<string, unknown> {
+  const base = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser).minHostIntervalMs;
+  const platforms = FETCHING_PLATFORMS.filter((p) => pack.freelance.platforms[p].enabled);
+  const interval = Math.max(base, ...platforms.map((p) => pack.platformRules[p].minIntervalMs));
+  return { ...pack.policyUser, minHostIntervalMs: interval };
+}
+
+/**
+ * The freelance counterpart of `preparePipeline`: the freelance agents through the same capability allow-list and
+ * wiring proof (`jobpilot-freelance@1.0.0`), the effective policy with the platforms' pacing (`freelancePolicyUser`;
+ * its hash differs from the daily one when that raises the interval) and the freelance pacing check. Throws on any problem.
+ */
+export function prepareFreelance(pack: Pick<Pack, 'policyUser' | 'freelance' | 'platformRules'>): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
   const guardrails = appGuardrails();
   const agents = freelanceAgents();
   const { registry, compiled } = compileDaily(agents, guardrails, freelancePipeline(agents));
-  const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
+  const policy = mergePolicy(PRODUCT_POLICY_V1, freelancePolicyUser(pack));
   const pacing = freelancePacingProblems(policy);
   if (pacing.length > 0) throw new Error(`refusing to start:\n- ${pacing.join('\n- ')}`);
   return { registry, compiled, guardrails, policy, policyHash: policyHash(policy) };
