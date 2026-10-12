@@ -132,7 +132,25 @@ const SUBJ = '(?:you|(?:the\\s+)?(?:freelancers?|developers?|contractors?|engine
 const MODAL = '(?:must|are required to|is required to|have to|has to|need to|needs to|will need to)';
 const CLOSED_TAIL = '(?:(?:\\s*,\\s*|\\s+)(?:daily|every day|each weekday|every weekday|on weekdays|monday to friday|during the (?:contract|engagement|project)|during this (?:contract|engagement|project)|while engaged(?: with us)?|at all times|to apply|to be considered|for [a-z0-9-]+ (?:reasons|purposes)))*';
 /** A clause without its trailing punctuation and its lead-in words ("Note that", "Please be aware:"). */
-const clauseOf = (raw: string): string => raw.trim().replace(/[.!?:\s]+$/, '').replace(FILLER, '');
+const LIST_MARKER = /^(?:[-*•]\s+|\d+[.)]\s+)/;
+/** A leading one- or two-word label ("Requirements:", "Location:", "Note:"); longer lead-ins ("Build a form that says:") are kept, so they stay no requirement. */
+const LABEL = /^[A-Za-z]+(?:\s+[A-Za-z]+)?:\s+/;
+const clauseOf = (raw: string): string => raw.trim().replace(/[.!?:\s]+$/, '').replace(LIST_MARKER, '').replace(FILLER, '').replace(LABEL, '');
+
+/**
+ * After a closed reject, the next two clauses may soften it ("Exceptions are possible", "Hours are flexible", "This is
+ * negotiable", "Part-time is fine"); for a residence requirement also a widening ("we also hire in India", "from
+ * anywhere"). "Not negotiable" does not soften. A softened reject is review.
+ */
+const SOFTENS = /\b(?:negotiable|flexible|exceptions?|possible|welcome|fine|ok(?:ay)?|not a hard rule|can be discussed|open to|depends?)\b/i;
+const WIDENS = /\b(?:india|anywhere|worldwide|globally|also hire in|other countries|remote applicants from)\b/i;
+const PART_TIME_OK = /part[- ]time (?:is )?(?:possible|fine|ok|okay|welcome)/i;
+function softenedAfter(following: readonly string[], widening?: RegExp): boolean {
+  const t = following.slice(0, 2).join(' ').replace(/\b(?:not negotiable|non-?negotiable)\b/gi, ' ');
+  return SOFTENS.test(t) || (widening?.test(t) ?? false);
+}
+const NOTE_SOFTENED = 'requirement softened nearby - verify';
+const softened = (): Outcome => reviewOf('requirement-softened', NOTE_SOFTENED);
 
 /* ------------------------------------------------------------------ 4. location */
 
@@ -151,6 +169,8 @@ const DESCRIPTION_RESTRICTION = new RegExp(
     '\\b(?:United States|Canada|Europe|North America)[\\s-][Oo]nly\\b',
     '\\b[Oo]nly (?:open to |for )?(?:candidates |freelancers |developers |applicants |people |residents )?(?:based |located |residing |living )?(?:in|from) (?:the )?(?:US|USA|U\\.S\\.|United States|UK|Canada|EU|Europe)\\b',
     '\\b(?:must|should|need to|have to) (?:be )?(?:based|located|residing|living|resident) in (?:the )?(?:US|USA|U\\.S\\.|UK|EU|Europe|United States|Canada)\\b',
+    '\\b(?:must|need to|needs to|should|have to) reside in (?:the )?(?:US|USA|U\\.S\\.|UK|EU|Europe|United States|Canada|Germany)\\b',
+    '\\b[Oo]nly (?:US|UK|EU|Canadian|European|American) (?:residents|citizens)\\b',
     '\\b(?:European|American|US|EU|UK|EMEA|Americas) time ?zones? only\\b',
     '\\b(?:in|within) (?:the )?time ?zones?:? (?:GMT|UTC)\\s?[+\\-\\u2212]\\d',
   ].join('|'),
@@ -161,13 +181,17 @@ const TIMEZONE_ABBREVIATIONS = /\b(?:EST|EDT|PST|PDT|CET|CEST|GMT|UTC|PT|ET|IST)
 
 /** Places outside India that a residence requirement can name: a closed list, not a pattern. */
 const PLACES = '(?:U\\.?S\\.?(?:A\\.?)?|United States(?: of America)?|U\\.?K\\.?|United Kingdom|Britain|Canada|EU|European Union|Europe|Australia|New Zealand|Germany|France|Spain|Italy|Netherlands|Poland|Ireland|Sweden|Norway|Denmark|Finland|Switzerland|Israel|Mexico|Brazil|Argentina|Japan)';
-const RESIDENCE = new RegExp(`^(?:${SUBJ})\\s+(?:${MODAL})\\s+be\\s+(?:based|located|living|resident|residing)\\s+in\\s+(?:the\\s+)?${PLACES}${CLOSED_TAIL}$`, 'i');
+const RESIDENCE = new RegExp(`^(?:${SUBJ})\\s+(?:${MODAL})\\s+be\\s+(?:physically\\s+)?(?:based|located|living|resident|residing)\\s+in\\s+(?:the\\s+)?${PLACES}${CLOSED_TAIL}$`, 'i');
+const RESIDE = new RegExp(`^(?:${SUBJ})\\s+must\\s+reside\\s+in\\s+(?:the\\s+)?${PLACES}${CLOSED_TAIL}$`, 'i');
 /** "You must be located in the US.": one closed requirement on the candidate (see the block above). */
-function residenceStated(description: string): boolean {
-  return description.split(CLAUSES).some((raw) => {
-    const c = clauseOf(raw);
-    return !REQ_HEDGE.test(c) && RESIDENCE.test(c);
-  });
+function residenceStated(description: string): 'reject' | 'softened' | null {
+  const clauses = description.split(CLAUSES);
+  for (let k = 0; k < clauses.length; k++) {
+    const c = clauseOf(clauses[k] as string);
+    if (REQ_HEDGE.test(c) || !(RESIDENCE.test(c) || RESIDE.test(c))) continue;
+    return softenedAfter(clauses.slice(k + 1), WIDENS) ? 'softened' : 'reject';
+  }
+  return null;
 }
 
 /** The gig's own location data does not already put India in scope. */
@@ -175,7 +199,11 @@ const indiaNotInScope = (g: Gig): boolean => !inScope(g.location.countries);
 
 function locationOutcome(g: Gig): Outcome {
   const { countries, worldwide, text } = g.location;
-  if (indiaNotInScope(g) && residenceStated(g.description)) return rejectOf('location-outside-india');
+  if (indiaNotInScope(g)) {
+    const stated = residenceStated(g.description);
+    if (stated === 'reject') return rejectOf('location-outside-india');
+    if (stated === 'softened') return softened();
+  }
   // A sentence that also names India or somewhere wider ("the US or India") is no restriction.
   const restricted = g.description.split(/(?<=[.!?])\s+|\n/).some((sentence) => DESCRIPTION_RESTRICTION.test(sentence) && !/\b(?:india|asia|apac|worldwide|anywhere)\b/i.test(sentence));
   const withText = (o: Outcome): Outcome => (o.reject === null && restricted && !o.notes.includes(NOTE_LOCATION_TEXT) ? { reject: null, review: o.review ?? 'location-unclear', notes: [...o.notes, NOTE_LOCATION_TEXT] } : o);
@@ -232,7 +260,7 @@ function figureStatus(text: string, min: number): Figure {
     const after = afterRaw.split(/[.;!?\n]/)[0] ?? '';
     const header = /\|\s*$/.test(windowRaw) && /^\s*(?:\||$)/.test(afterRaw);
     const confirmed = header || CONFIRM.test(before) || CONFIRM_AFTER.test(afterRaw);
-    if (!confirmed || NEGATED_BEFORE.test(before) || CEILING_BEFORE.test(before) || CEILING_AFTER.test(afterRaw) || HABITUAL.test(`${before} ${after}`) || CONDITIONAL.test(`${before} ${after}`)) return 'unclear';
+    if (!confirmed || NEGATED_BEFORE.test(before.split(/,|\bso\b|\bbut\b|\bthen\b/i).pop() ?? '') || CEILING_BEFORE.test(before) || CEILING_AFTER.test(afterRaw) || HABITUAL.test(`${before} ${after}`) || CONDITIONAL.test(`${before} ${after}`)) return 'unclear';
   }
   return 'yes';
 }
@@ -269,10 +297,10 @@ const ANOTHER_JOB_AFTER = /^\s*(?:job|role|position|employment|engagement)?\s*(?
 const THIS_ROLE_AFTER = /^[,\s]*(?:remote\s+)?(?:contract|contractor|freelance|independent)\b/i;
 
 /** `yes`: a "full-time" is tied to this engagement and not hedged; `unclear`: one is hedged; `no`: none is tied to it (boilerplate, or none). */
-function fullTime(text: string): 'yes' | 'unclear' | 'no' {
+function fullTime(text: string): 'yes' | 'unclear' | 'no' | 'softened' {
   const spans: [number, number][] = [];
   for (const shape of FULL_TIME_SHAPES) for (const m of text.matchAll(shape)) spans.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
-  let result: 'yes' | 'unclear' | 'no' = 'no';
+  let result: 'yes' | 'unclear' | 'no' | 'softened' = 'no';
   for (const m of text.matchAll(FULL_TIME)) {
     const at = m.index ?? 0;
     if (!spans.some(([lo, hi]) => lo <= at && at < hi)) continue;
@@ -285,7 +313,9 @@ function fullTime(text: string): 'yes' | 'unclear' | 'no' {
     const after = text.slice(at + m[0].length, at + m[0].length + 40);
     if ((ANOTHER_JOB_BEFORE.test(before) && !THIS_ROLE_AFTER.test(after)) || ANOTHER_JOB_AFTER.test(after)) return 'unclear';
     if (FULL_TIME_SOFT.test(clause) || rightRaw[rightEnd] === '?') return 'unclear';
-    result = 'yes';
+    // "You will work full-time. Actually part-time is fine too.": the next two clauses soften it.
+    const following = text.slice(at + m[0].length).split(CLAUSES).slice(1);
+    result = softenedAfter(following, PART_TIME_OK) ? 'softened' : result === 'softened' ? 'softened' : 'yes';
   }
   return result;
 }
@@ -306,6 +336,7 @@ function hoursOutcome(g: Gig, cap: number): Outcome {
     }
     return ft === 'yes' ? reviewOf('hours-unclear', NOTE_HOURS_CONFLICT) : PASS;
   }
+  if (ft === 'softened') return softened();
   return ft === 'yes' ? rejectOf('hours-over-cap') : reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
 }
 
@@ -394,7 +425,9 @@ function overlapOutcome(g: Gig, istWindow: string): Outcome {
   for (const [re, zone] of ZONE_NAMES) raw = raw.replace(re, zone);
   const shares: number[] = [];
   let unparsed = false;
-  for (const sentence of raw.split(CLAUSES)) {
+  let softenedWindow = false;
+  const clauses = raw.split(CLAUSES);
+  for (const [k, sentence] of clauses.entries()) {
     if (VOID_OVERLAP.test(sentence)) continue;
     let rangeHere = false;
     for (const m of sentence.matchAll(RANGE)) {
@@ -408,6 +441,7 @@ function overlapOutcome(g: Gig, istWindow: string): Outcome {
         unparsed = true;
         continue;
       }
+      if (softenedAfter(clauses.slice(k + 1))) softenedWindow = true;
       const istStart = (((w.start - (ZONE_OFFSET[m[7] as string] as number) * 60 + 330) % DAY) + DAY) % DAY;
       let share = 0;
       for (let k = -1; k <= 1; k++) share += Math.max(0, Math.min(istStart + w.dur, win.end + k * DAY) - Math.max(istStart, win.start + k * DAY));
@@ -420,7 +454,7 @@ function overlapOutcome(g: Gig, istWindow: string): Outcome {
     }
     if (ZONE_HOURS.test(sentence)) unparsed = true;
   }
-  if (shares.length > 0 && shares.every((s) => s < MIN_SHARE_MIN)) return rejectOf('overlap-outside-ist-window');
+  if (shares.length > 0 && shares.every((s) => s < MIN_SHARE_MIN)) return softenedWindow ? softened() : rejectOf('overlap-outside-ist-window');
   return unparsed ? noteOf(NOTE_OVERLAP) : PASS;
 }
 
@@ -445,9 +479,10 @@ const ABOUT_RIGHTS = /\b(?:rights?|licen[sc]\w*|ownership|ip|copyright|source co
 
 function exclusiveOutcome(g: Gig): Outcome {
   let partial = false;
-  for (const raw of g.description.split(CLAUSES)) {
+  const clauses = g.description.split(CLAUSES);
+  for (const [k, raw] of clauses.entries()) {
     const c = clauseOf(raw);
-    if (!REQ_HEDGE.test(c) && !NARROWING.test(c) && EXCLUSIVE_CLOSED.some((re) => re.test(c))) return rejectOf('exclusive');
+    if (!REQ_HEDGE.test(c) && !NARROWING.test(c) && EXCLUSIVE_CLOSED.some((re) => re.test(c))) return softenedAfter(clauses.slice(k + 1)) ? softened() : rejectOf('exclusive');
     if (EXCLUSIVE_LOOSE.test(c) && !GENERALISING.test(c)) partial = true;
   }
   if (partial) return reviewOf('exclusivity-unclear', NOTE_OTHER_WORK);
@@ -466,7 +501,7 @@ function isPreset(g: Gig, tiers: readonly Tier[]): boolean {
 }
 
 /** The price is open to the bidder's proposal: "indicative only", "rate negotiable", "quote your rate", "budget is flexible". */
-const HEDGE_SPECIFIC = /\b(?:fixed[- ]price (?:quote|quotation|estimate|bid)|quote a (?:fixed )?price|bid what you think|open to higher rates|rate depends on|depending on experience|DOE|propose your (?:price|budget)|quote your (?:own )?(?:hourly )?rate|your (?:own )?(?:hourly )?rate|different rate|name your (?:own )?(?:price|rate)|propose (?:a|your) (?:own )?(?:rate|price))\b|\b(?:state|share|include|send|provide|give|tell|quote|propose|let|your)\b[^.]{0,60}\b(?:hourly|project[- ]based|expected|desired)(?: or \w[\w-]*)? (?:rate|price)\b/i;
+const HEDGE_SPECIFIC = /\b(?:budget can (?:increase|go up|be increased)|(?:will|can|happy to) pay more|what(?:'s| is) your (?:price|rate|quote)|tell (?:me|us) your (?:price|rate)|fixed[- ]price (?:quote|quotation|estimate|bid)|quote a (?:fixed )?price|bid what you think|open to higher rates|rate depends on|depending on experience|DOE|propose your (?:price|budget)|quote your (?:own )?(?:hourly )?rate|your (?:own )?(?:hourly )?rate|different rate|name your (?:own )?(?:price|rate)|propose (?:a|your) (?:own )?(?:rate|price))\b|\b(?:state|share|include|send|provide|give|tell|quote|propose|let|your)\b[^.]{0,60}\b(?:hourly|project[- ]based|expected|desired)(?: or \w[\w-]*)? (?:rate|price)\b/i;
 const HEDGE_SOFT = /\b(?:indicative|negotiable|flexible|open to (?:offers|proposals))\b/i;
 const MONEY_WORD = /\b(?:rates?|budgets?|prices?|pricing|pay|payment|fees?|cost|compensation)\b/i;
 /** A request for a price in the bid ("include ... fixed price"), as opposed to the post saying the job is fixed price. */
