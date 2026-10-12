@@ -41,19 +41,42 @@ export const FreelanceFile = z.strictObject({
 });
 export type FreelanceRules = z.infer<typeof FreelanceFile>;
 
+/**
+ * A budget bracket a platform offers as a preset (a client picks it without stating a real budget). Matched on the raw
+ * currency, minimum and maximum before any conversion; `max` is null for an open-ended tier ("50+").
+ */
+const PresetBracket = z.strictObject({ currency: z.string().min(1), min: z.number().nonnegative(), max: z.number().positive().nullable() });
+export type PresetBracket = z.infer<typeof PresetBracket>;
+
 const PlatformRule = z.strictObject({
   maxChars: z.number().int().positive().nullable(),
   hookChars: z.number().int().positive().nullable(),
   linksAllowed: z.boolean(),
   attachmentsAllowed: z.boolean(),
   minIntervalMs: z.number().int().nonnegative(),
+  presetBrackets: z.array(PresetBracket).default([]),
 });
 export type PlatformRule = z.infer<typeof PlatformRule>;
 
-const PLAIN: PlatformRule = { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500 };
+/**
+ * Derived from the 228 live Freelancer projects recorded on 2026-10-12 (scratchpad probe-out/raw/freelancer-*.json): every
+ * (type, currency, min, max) seen on 3 or more distinct projects. Fixed: INR 12500-37500 (39), USD 250-750 (29), USD
+ * 30-250 (16), USD 10-30 (14), INR 1500-12500 (12), INR 600-1500 (8), AUD 250-750 (4), INR 37500-75000 (4), CAD 10-30
+ * (3). Hourly: USD 15-25 (15), INR 750-1250 (13), USD 8-15 (7), USD 25-50 (4), USD 2-8 (4), USD 50+ (3), INR 100-400
+ * (3). (`owner_id` is null in every recording, so distinct owners could not be counted.)
+ */
+const FREELANCER_PRESETS: PresetBracket[] = [
+  { currency: 'INR', min: 12500, max: 37500 }, { currency: 'USD', min: 250, max: 750 }, { currency: 'USD', min: 30, max: 250 },
+  { currency: 'USD', min: 10, max: 30 }, { currency: 'INR', min: 1500, max: 12500 }, { currency: 'INR', min: 600, max: 1500 },
+  { currency: 'AUD', min: 250, max: 750 }, { currency: 'INR', min: 37500, max: 75000 }, { currency: 'CAD', min: 10, max: 30 },
+  { currency: 'USD', min: 15, max: 25 }, { currency: 'INR', min: 750, max: 1250 }, { currency: 'USD', min: 8, max: 15 },
+  { currency: 'USD', min: 25, max: 50 }, { currency: 'USD', min: 2, max: 8 }, { currency: 'USD', min: 50, max: null },
+  { currency: 'INR', min: 100, max: 400 },
+];
+const PLAIN: PlatformRule = { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500, presetBrackets: [] };
 const DEFAULT_RULES: Record<Platform, PlatformRule> = {
-  freelancer: { maxChars: 1500, hookChars: 150, linksAllowed: false, attachmentsAllowed: true, minIntervalMs: 2000 },
-  upwork: { maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000 },
+  freelancer: { maxChars: 1500, hookChars: 150, linksAllowed: false, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: FREELANCER_PRESETS },
+  upwork: { maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: [] },
   remotive: PLAIN,
   'hn-freelancer': PLAIN,
   'hn-hiring': PLAIN,

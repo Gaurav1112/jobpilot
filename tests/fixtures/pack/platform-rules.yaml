@@ -1,5 +1,5 @@
 # Per-platform proposal limits (fictional pack). A document over maxChars fails the gate; it is never truncated.
-freelancer: { maxChars: 1500, hookChars: 150, linksAllowed: false, attachmentsAllowed: true, minIntervalMs: 2000 }
+freelancer: { maxChars: 1500, hookChars: 150, linksAllowed: false, attachmentsAllowed: true, minIntervalMs: 2000 , presetBrackets: [{currency: INR, min: 12500, max: 37500}, {currency: USD, min: 250, max: 750}, {currency: USD, min: 30, max: 250}, {currency: USD, min: 10, max: 30}, {currency: INR, min: 1500, max: 12500}, {currency: INR, min: 600, max: 1500}, {currency: AUD, min: 250, max: 750}, {currency: INR, min: 37500, max: 75000}, {currency: CAD, min: 10, max: 30}, {currency: USD, min: 15, max: 25}, {currency: INR, min: 750, max: 1250}, {currency: USD, min: 8, max: 15}, {currency: USD, min: 25, max: 50}, {currency: USD, min: 2, max: 8}, {currency: USD, min: 50, max: null}, {currency: INR, min: 100, max: 400}] }
 upwork: { maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000 }
 remotive: { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500 }
 hn-freelancer: { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500 }

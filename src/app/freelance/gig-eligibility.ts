@@ -17,8 +17,9 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  * preference, a negation) is `review`, never `rejected`.
  *
  * 1. closed: a blank title or url.
- * 2. role / company: the pack's `filters.roleDeny` against the title (`compileSafePattern`), `filters.companyDeny`
- *    against the client name (`hasTerm`).
+ * 2. role / company: `filters.companyDeny` against the client name (`hasTerm`) rejects as `company:<name>`. A
+ *    `filters.roleDeny` match on the title (`compileSafePattern`) is only a review (`role-filter`, note `title matches
+ *    your role filter: <pattern>`): the v1 list was written for job titles and misfires on gig titles.
  * 3. naming: the client name, title or description names a forbidden term (`forbiddenTermStrict`). Only the reason
  *    `naming` is ever shown.
  * 4. location-outside-india, from a stated place only:
@@ -52,7 +53,9 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    "work exclusively for us"). "Exclusive rights", "non-exclusive" and "exclusively for Android" are not that. Weaker
  *    wording about the person ("exclusivity expected from the developer", "an exclusive engagement") is review.
  * 8. budget-below-floor: kind `gig`, rate unknown, `budgetUsd` below `fixedBudgetFloorUsd`. A kind `gig` with a budget
- *    at or above the floor is eligible on that, with the rate left unknown.
+ *    at or above the floor is eligible on that, with the rate left unknown. A fixed budget whose raw currency, minimum
+ *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
+ *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected.
  * 9. rate-below-floor:<maxUsdH>: `maxUsdH` below `rateFloorUsdHour`, for a `stated` rate, or for a derived one
  *    (`derivedRateCountsForFloor`; when false it is a note). A rate with no maximum cannot be below the floor. An
  *    unknown rate (contract, or a gig with no budget) is `rate unknown - verify`.
@@ -61,6 +64,8 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
 const PackView = z.object({
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()) }),
   naming: z.object({ forbiddenTerms: z.array(z.string()) }),
+  // Per platform, only the preset brackets are read.
+  platformRules: z.record(z.string(), z.object({ presetBrackets: z.array(z.object({ currency: z.string(), min: z.number(), max: z.number().nullable() })).default([]) })).default({}),
   freelance: z.object({
     rateFloorUsdHour: z.number().nonnegative(),
     maxHoursPerWeek: z.number().positive(),
@@ -97,6 +102,8 @@ export const NOTE_HOURS_UNCLEAR = 'hours stated without a clear requirement - ve
 export const NOTE_HOURS_CONFLICT = 'hours conflict - verify';
 export const NOTE_OVERLAP = 'overlap stated - verify';
 export const NOTE_EXCLUSIVITY = 'exclusivity wording - verify';
+export const NOTE_PRESET = 'preset bracket - bids may exceed it';
+export const NOTE_ROLE_FILTER = 'title matches your role filter: ';
 export const NOTE_RATE_UNKNOWN = 'rate unknown - verify';
 export const NOTE_DERIVED_NOT_COUNTED = 'derived rate below floor - not counted';
 
@@ -356,10 +363,19 @@ function exclusiveOutcome(g: Gig): Outcome {
 
 const DERIVED: ReadonlySet<RatedGig['rate']['method']> = new Set(['fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours']);
 
-function payOutcome(r: RatedGig, f: GigPack['freelance']): Outcome {
+/** The raw budget (before any conversion) is exactly one of the platform's preset brackets: the client did not state a real budget. */
+function isPreset(g: Gig, brackets: readonly { currency: string; min: number; max: number | null }[]): boolean {
+  const { currency, min, max } = g.budget;
+  return g.budget.type === 'fixed' && currency !== null && min !== null && brackets.some((b) => b.currency === currency && b.min === min && b.max === max);
+}
+
+function payOutcome(r: RatedGig, f: GigPack['freelance'], brackets: readonly { currency: string; min: number; max: number | null }[]): Outcome {
   const { rate, gig } = r;
   if (rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
-    if (gig.kind === 'gig' && rate.budgetUsd !== null) return rate.budgetUsd < f.fixedBudgetFloorUsd ? rejectOf('budget-below-floor') : PASS;
+    if (gig.kind === 'gig' && rate.budgetUsd !== null) {
+      if (rate.budgetUsd >= f.fixedBudgetFloorUsd) return PASS;
+      return isPreset(gig, brackets) ? reviewOf('budget-preset', NOTE_PRESET) : rejectOf('budget-below-floor');
+    }
     return reviewOf('rate-unclear', NOTE_RATE_UNKNOWN);
   }
   if (rate.maxUsdH === null || rate.maxUsdH >= f.rateFloorUsdHour) return PASS;
@@ -374,18 +390,21 @@ export function decideGig(r: RatedGig, pack: GigPack): GigDecision {
   const g = r.gig;
   const reject = (reason: string): GigDecision => ({ verdict: 'rejected', reasons: [reason], notes: [] });
   if (g.title.trim() === '' || g.url.trim() === '') return reject('closed');
+  // The v1 role filter was written for job titles and misfires on gig titles: here a match is a review, never a reject.
   const role = pack.filters.roleDeny.find((pattern) => pattern.trim() !== '' && compileSafePattern(pattern).test(g.title));
-  if (role !== undefined) return reject(`role:${role}`);
+  const roleOutcome: Outcome = role === undefined ? PASS : reviewOf('role-filter', `${NOTE_ROLE_FILTER}${role}`);
+  const rejectAfterRole = (reason: string): GigDecision => ({ verdict: 'rejected', reasons: [reason], notes: [...roleOutcome.notes] });
   const company = g.client.name === null ? undefined : pack.filters.companyDeny.find((name) => hasTerm(g.client.name as string, name));
-  if (company !== undefined) return reject(`company:${company}`);
-  if (forbiddenTermStrict(`${g.client.name ?? ''}\n${g.title}\n${g.description}`, pack.naming) !== undefined) return reject('naming');
+  if (company !== undefined) return rejectAfterRole(`company:${company}`);
+  if (forbiddenTermStrict(`${g.client.name ?? ''}\n${g.title}\n${g.description}`, pack.naming) !== undefined) return rejectAfterRole('naming');
 
   const outcomes = [
+    roleOutcome,
     locationOutcome(g),
     hoursOutcome(g, pack.freelance.maxHoursPerWeek),
     overlapOutcome(g, pack.freelance.istWindow),
     exclusiveOutcome(g),
-    payOutcome(r, pack.freelance),
+    payOutcome(r, pack.freelance, pack.platformRules[g.platform]?.presetBrackets ?? []),
   ];
   const notes = outcomes.flatMap((o) => o.notes);
   const rejected = outcomes.find((o) => o.reject !== null);

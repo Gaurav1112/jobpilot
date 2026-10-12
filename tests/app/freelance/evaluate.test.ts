@@ -7,6 +7,7 @@ import { normalizeGig } from '../../../src/app/freelance/gig-normalizer.js';
 import { gigDedupeKey, gigKey } from '../../../src/app/freelance/keys.js';
 import { rateOf } from '../../../src/app/freelance/rate.js';
 import { Gig, GigVerdict, RatedGig, RawGig, RiskedGig } from '../../../src/app/freelance/types.js';
+import * as freelanceSchema from '../../../src/app/pack/freelance-schema.js';
 import { appEvalSpecs } from '../../../src/app/evals.js';
 import { assertNoForbidden, loadPack } from '../../../src/app/pack/load.js';
 import { runEval } from '../../../src/evals/runner.js';
@@ -46,6 +47,7 @@ const rated = (over: Partial<Gig> = {}, rate: RatedGig['rate'] = STATED): RatedG
 const gigPack = {
   filters: full.filters,
   naming: full.naming,
+  platformRules: full.platformRules,
   freelance: full.freelance,
 };
 const decide = (r: RatedGig, p: typeof gigPack = gigPack) => decideGig(r, p);
@@ -108,6 +110,36 @@ describe('gig-eligibility: the brief cases', () => {
 
   it('"async, some overlap with EST" passes', () => {
     expect(decide(rated({ description: 'Async, some overlap with EST.' }))).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
+  });
+});
+
+describe('gig-eligibility: role filter and preset brackets', () => {
+  it('a roleDeny match on a gig title is a review with the pattern in the note, and companyDeny/naming still reject', () => {
+    expect(decide(rated({ title: 'Android app for parcels' }))).toEqual({ verdict: 'review', reasons: ['role-filter'], notes: ['title matches your role filter: android'] });
+    expect(decide(rated({ title: 'Full-Stack Mobile-First E-commerce Website' }))).toEqual({ verdict: 'review', reasons: ['role-filter'], notes: ['title matches your role filter: mobile'] }); // a recorded false reject
+    const co = { ...baseGig().client, name: 'Infosys BPM' };
+    expect(decide(rated({ title: 'Android app', client: co }))).toEqual({ verdict: 'rejected', reasons: ['company:Infosys'], notes: ['title matches your role filter: android'] });
+  });
+
+  it('matches preset brackets on the raw currency, min and max, so the fx table does not matter', () => {
+    const fixed = (currency: 'INR' | 'USD' | 'EUR', min: number, max: number, budgetUsd: number) =>
+      decide(rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min, max, currency, usdPerUnit: null } }, { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd }));
+    expect(fixed('INR', 12500, 37500, 449.1)).toEqual({ verdict: 'review', reasons: ['budget-preset'], notes: ['preset bracket - bids may exceed it'] });
+    expect(fixed('INR', 12500, 37500, 4491)).toEqual({ verdict: 'eligible', reasons: [], notes: [] }); // whatever the fx said, the top is above the floor
+    expect(fixed('INR', 12500, 30000, 359.28).reasons).toEqual(['budget-below-floor']);
+    expect(fixed('USD', 300, 300, 300).reasons).toEqual(['budget-below-floor']);
+    // a pack without presets rejects the same INR bracket
+    const none = { ...gigPack, platformRules: {} } as unknown as typeof gigPack;
+    const g = rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min: 12500, max: 37500, currency: 'INR', usdPerUnit: null } }, { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: 449.1 });
+    expect(decide(g, none).reasons).toEqual(['budget-below-floor']);
+  });
+
+  it('the default freelancer presets are the derived list', () => {
+    const { PlatformRulesFile } = freelanceSchema;
+    const rules = PlatformRulesFile.parse({});
+    expect(rules.freelancer.presetBrackets).toContainEqual({ currency: 'INR', min: 12500, max: 37500 });
+    expect(rules.freelancer.presetBrackets).toHaveLength(16);
+    expect(rules.upwork.presetBrackets).toEqual([]);
   });
 });
 
@@ -291,7 +323,7 @@ describe('golden evals', () => {
     expect(spec).toMatchObject({ metric: 'exactMatch', min: 1 });
     expect(spec.cases.length).toBeGreaterThanOrEqual(40);
     const reasons = new Set(spec.cases.flatMap((c) => (c.expected as { reasons: string[] }).reasons.map((r) => r.replace(/:.*$/, ''))));
-    for (const r of ['closed', 'role', 'company', 'location-outside-india', 'hours-over-cap', 'overlap-outside-ist-window', 'exclusive', 'budget-below-floor', 'rate-below-floor', 'location-unclear', 'hours-unclear', 'rate-unclear', 'exclusivity-unclear']) expect(reasons.has(r), r).toBe(true);
+    for (const r of ['closed', 'role-filter', 'budget-preset', 'company', 'location-outside-india', 'hours-over-cap', 'overlap-outside-ist-window', 'exclusive', 'budget-below-floor', 'rate-below-floor', 'location-unclear', 'hours-unclear', 'rate-unclear', 'exclusivity-unclear']) expect(reasons.has(r), r).toBe(true);
     expect(new Set(spec.cases.map((c) => (c.expected as { verdict: string }).verdict))).toEqual(new Set(['eligible', 'rejected', 'review']));
     const gbp = spec.cases.find((c) => c.id === 'rate-gbp-30-31')!;
     expect(gbp.expected).toMatchObject({ reasons: ['rate-below-floor:39.5'] });

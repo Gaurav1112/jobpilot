@@ -535,7 +535,7 @@ describe('freelance pack files', () => {
     expect(pack.freelance.platforms['upwork']?.enabled).toBe(false);
     expect(pack.freelance.platforms['reddit']?.enabled).toBe(false);
     expect(pack.freelance.platforms['freelancer']?.queries).toEqual(['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm']);
-    expect(pack.platformRules['upwork']).toEqual({ maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000 });
+    expect(pack.platformRules['upwork']).toEqual({ maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: [] });
     expect(pack.networks).toEqual([]);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
   });
