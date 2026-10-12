@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CAPABILITY_ALLOW_LIST, capabilityProblems } from '../../../src/app/allow-list.js';
-import { COMPACT, DEFAULT_BUDGET, type WritingPack } from '../../../src/app/agents/writing/grounded.js';
+import { COMPACT, CV_BULLET_CHARS, DEFAULT_BUDGET, planResume, type WritingPack } from '../../../src/app/agents/writing/grounded.js';
 import { gigQa, gigQaChecks, gigQaContract, repeatKey, type GigQaInputs } from '../../../src/app/freelance/writing/gig-qa.js';
 import { freelanceDocsPacks, gigPath, gigRenderer, gigRendererContract } from '../../../src/app/freelance/writing/gig-renderer.js';
 import { asciiPunct, PHRASES, planCategory, variantOf } from '../../../src/app/freelance/writing/phrases.js';
 import { pitchText } from '../../../src/app/freelance/writing/pitch-planner.js';
-import { cadenceOf, DEFAULT_CADENCE, hookQuote, planGigDocs, sentencesOf, proposalPlanner, proposalPlannerContract, proposalText } from '../../../src/app/freelance/writing/proposal-planner.js';
+import { cadenceOf, DEFAULT_CADENCE, hookQuote, hookTitle, planGigDocs, sentencesOf, proposalPlanner, proposalPlannerContract, proposalText } from '../../../src/app/freelance/writing/proposal-planner.js';
 import { GigDocsPlan, GigQaReport, GigRendered, type ScoredGig } from '../../../src/app/freelance/types.js';
 import { appGuardrails, G_GROUND, G_NAMING, gigDocsProblems, resumeProblems } from '../../../src/app/guardrails.js';
 import { loadRunPack } from '../../../src/app/kernel.js';
@@ -176,8 +176,8 @@ describe('proposal-planner', () => {
   });
 
   it('the hook term skips domains and falls back to the lead fact, not the first covered term', () => {
-    // the title names SaaS (a domain) and Redis: the hook names Redis
-    const r = planOf(scoredGig({ title: 'SaaS dashboard on Redis', description: 'Ideal skills: Kafka, Java, Redis, SaaS.', skills: [] }));
+    // the title (2 words, so no title hook) names SaaS (a domain) and Redis: the hook names Redis
+    const r = planOf(scoredGig({ title: 'SaaS Redis', description: 'Ideal skills: Kafka, Java, Redis, SaaS.', skills: [] }));
     expect(r.proposal!.hook.quote).toBeNull();
     expect(PHRASES.hookTerm.map((h) => h.replace('{term}', 'Redis'))).toContain(r.proposal!.hook.text);
     // the title names only SaaS, and the lead fact's only covered term is SaaS: no domain hook, a plain one
@@ -191,6 +191,57 @@ describe('proposal-planner', () => {
     expect(leadId).toBe(n.resume.evidence.ranked.find((x) => x.matched.some((k) => n.covered.includes(k)))!.factId);
     const term = leadId === 'f-nw-02' ? 'Redis' : 'Kafka';
     expect(PHRASES.hookTerm.map((h) => h.replace('{term}', term))).toContain(n.proposal!.hook.text);
+  });
+
+  it('hookTitle: the client title verbatim, cut with "..." outside the quotes; short or all-caps titles fall through', () => {
+    expect(hookTitle('Secure Digital Passport Platform Development', 70)).toEqual({ title: 'Secure Digital Passport Platform Development', cut: false });
+    expect(hookTitle('Aplikasi Android dengan Login Pengguna - 06/10/2026 22:05 EDT', 70)).toEqual({ title: 'Aplikasi Android dengan Login Pengguna', cut: false });
+    expect(hookTitle('Lead Developers Needed: Two Separate Projects – Real-Time Monitoring', 70)).toEqual({ title: 'Lead Developers Needed: Two Separate Projects', cut: true });
+    const long = hookTitle('Build a cross platform mobile application for booking local fitness classes and trainers', 70)!;
+    expect(long.cut).toBe(true);
+    expect(long.title.length).toBeLessThanOrEqual(70);
+    expect('Build a cross platform mobile application for booking local fitness classes and trainers').toContain(long.title);
+    expect(hookTitle('Kafka work', 70)).toBeNull(); // 2 words
+    expect(hookTitle('URGENT JAVA DEVELOPER NEEDED', 70)).toBeNull(); // all capitals
+    expect(hookTitle('Fix my site example.com today', 70)).toBeNull();
+    expect(hookTitle('Initech payments portal rebuild', 70, ['Initech'])).toBeNull();
+    const p = planOf(scoredGig({ title: 'Kafka consumer for order events', description: 'Ideal skills: Kafka, Java.', skills: [] }));
+    expect(p.proposal!.hook).toMatchObject({ quote: null, title: 'Kafka consumer for order events' });
+    expect(PHRASES.hookTitle.map((h) => h.replace('{title}', 'Kafka consumer for order events').replace('{end}', ''))).toContain(p.proposal!.hook.text);
+    // with no evidence at all, a qualifying title still gives a title hook (it claims nothing)
+    const none = planOf(scoredGig({ title: 'Garden landscaping design project', description: 'Design my garden please.', skills: [] }));
+    expect(none.proposal!.evidence).toEqual([]);
+    expect(none.proposal!.hook.title).toBe('Garden landscaping design project');
+    expect(gigDocsProblems(none, pub)).toEqual([]);
+    // G-GROUND: a title that is not the gig's
+    const forged = { ...p, proposal: { ...p.proposal!, hook: { ...p.proposal!.hook, title: 'Kafka consumer for all events', text: p.proposal!.hook.text.replace('order', 'all') } } };
+    expect(gigDocsProblems(forged, pub).join('\n')).toMatch(/hook.title is not in the gig title verbatim/);
+  });
+
+  it('relevance beats rotation: a top-3 fact the hook quote names leads, whatever the gig key', () => {
+    const lead = (gigKey: string) =>
+      planOf(scoredGig({ gigKey, title: 'Java and Kafka services', description: 'The service must cache prices in Redis for speed.', skills: [] })).proposal!;
+    for (let i = 0; i < 6; i++) {
+      const p = lead(keyWith(i, 6));
+      expect(p.hook.quote).toBe('The service must cache prices in Redis for speed.');
+      expect(p.evidence[0]!.factIds).toEqual(['f-nw-02']);
+    }
+  });
+
+  it('the compact CV keeps the total bullet characters within CV_BULLET_CHARS, skipping a fact that would go over', () => {
+    expect(COMPACT).toEqual({ latest: 2, other: 0, chars: CV_BULLET_CHARS });
+    for (const s of fixtures) {
+      const r = planOf(s).resume;
+      expect(r.roles.flatMap((x) => x.bullets).reduce((n, b) => n + b.text.length, 0)).toBeLessThanOrEqual(CV_BULLET_CHARS);
+    }
+    const ev = planOf(scoredGig()).resume.evidence;
+    const tight = planResume(ev, wpack, { latest: 2, other: 0, chars: 120 });
+    const used = tight.roles.flatMap((x) => x.bullets);
+    expect(used.reduce((n, b) => n + b.text.length, 0)).toBeLessThanOrEqual(120);
+    expect(used.length).toBeGreaterThan(0);
+    // a fact that would go over is skipped for the next one in its role, so a later, shorter fact can stand in
+    const loose = planResume(ev, wpack, { latest: 2, other: 0 }).roles.flatMap((x) => x.bullets.map((b) => b.factId));
+    expect(used.map((b) => b.factId)).not.toEqual(loose);
   });
 
   it('a missing term appears in the question, by its display name', () => {
@@ -324,7 +375,7 @@ describe('gigDocsProblems (G-GROUND for GigDocsPlan@1)', () => {
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: ev } }, pub).join('\n')).toMatch(/proposal.evidence\[0\].*verbatim/);
     const yrs = p.proposal!.evidence.map((e, i) => (i === 0 ? { ...e, text: e.text.replace(/\(\d{4}/, '(2001') } : e));
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: yrs } }, pub).join('\n')).toMatch(/proposal.evidence\[0\]: the line is not "- employer \(years\): claim"/);
-    const hook = { text: p.proposal!.hook.text.replace(p.proposal!.hook.quote!, 'The team wants Kafka now.'), quote: 'The team wants Kafka now.' };
+    const hook = { text: p.proposal!.hook.text.replace(p.proposal!.hook.quote!, 'The team wants Kafka now.'), quote: 'The team wants Kafka now.', title: null };
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, hook } }, pub).join('\n')).toMatch(/hook.quote is not in the gig description/);
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, plan: ['Ship it in a day.', ...p.proposal!.plan.slice(1)] } }, pub).join('\n')).toMatch(/differs from its re-derivation/);
     expect(gigDocsProblems({ ...p, missing: [] }, pub).join('\n')).toMatch(/missing/);

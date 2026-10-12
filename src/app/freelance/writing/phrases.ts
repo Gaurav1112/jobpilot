@@ -7,7 +7,7 @@
  * back: a quoting hook is always attributed ("You wrote:") and claims nothing about the gig, it only points to the
  * closest evidence (used only when some follows; the planner checks); the evidence intro only introduces the lines below; a plan step promises only a way of working, never past work.
  *
- * Slots: `{quote}` the client's words; `{end}` "..." after a cut quote, "." after a quote with no closing punctuation,
+ * Slots: `{quote}` the client's words; `{title}` the client's gig title; `{end}` "..." after a cut quote, "." after a quote with no closing punctuation,
  * else nothing; `{term}` a lexicon display name; `{maxHoursPerWeek}`, `{istWindow}` the freelance rules; `{cadence}` left for the gig renderer (`answers.yaml` `updateCadence`).
  */
 
@@ -34,6 +34,8 @@ export type PlanCategory = (typeof PLAN_CATEGORIES)[number];
 export interface PhraseBank {
   /** A hook that quotes the client, always attributed ("You wrote:", "Your brief says"). */
   readonly hook: readonly string[];
+  /** A hook naming the client's own gig title (no sentence to quote). Claims nothing; used with or without evidence. */
+  readonly hookTitle: readonly string[];
   /** A hook with no quote that names a covered term (no sentence safe to quote, but a covered term). */
   readonly hookTerm: readonly string[];
   /** A hook with no quote and no term (nothing covered, or no evidence line follows). */
@@ -58,6 +60,13 @@ export const PHRASES: PhraseBank = {
     'I read your brief, and this line stood out: "{quote}"{end}',
     'Your brief says "{quote}"{end} My closest work to what you describe is below.',
     'You mentioned "{quote}"{end} I would like to help with that; my closest work is below.',
+  ],
+  hookTitle: [
+    'Re your "{title}"{end} post: here is how I would approach it.',
+    'On your "{title}"{end} project, here is what I would bring and how I would run it.',
+    'I read your "{title}"{end} brief and would like to help with it.',
+    'For "{title}"{end}, here is how I would take it from start to handover.',
+    'Your "{title}"{end} post caught my eye. Here is how I would approach it.',
   ],
   hookTerm: [
     'I read through your brief, and the {term} side is where I would start.',

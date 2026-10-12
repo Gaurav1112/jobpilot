@@ -269,7 +269,8 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
  *   `covered` and `missing` are the resume plan's;
  * - the hook quote, when there is one, is a substring of the description (whitespace collapsed) and stands in the
  *   hook in quote marks;
- * - the hook quote also lies inside one sentence of the description (`sentencesOf`);
+ * - the hook quote also lies inside one sentence of the description (`sentencesOf`); a hook title is a substring of
+ *   the gig title (whitespace collapsed) and stands in the hook in quote marks, and a hook has at most one of the two;
  * - every evidence line (proposal evidence, pitch lines with fact ids) cites one known, citeable experience or project
  *   fact placed in a role, its claim in the text verbatim (ASCII punctuation, `asciiPunct`), and the line is exactly
  *   `- <role display employer> (<role years>): <claim>` (`evidenceLine`);
@@ -301,6 +302,11 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
   if (!same(plan.missing, plan.resume.missing)) problems.push("missing is not the resume plan's missing list");
 
   const hook = plan.proposal?.hook;
+  if (hook !== undefined && hook.title !== null) {
+    if (hook.quote !== null) problems.push('proposal.hook has both a quote and a title');
+    if (!gig.title.replace(/\s+/g, ' ').trim().includes(hook.title)) problems.push('proposal.hook.title is not in the gig title verbatim');
+    if (!hook.text.includes(`"${hook.title}"`)) problems.push('proposal.hook.text does not hold the title in quote marks');
+  }
   if (hook !== undefined && hook.quote !== null) {
     if (!sentencesOfDescription(gig.description).some((x) => x.includes(hook.quote as string))) problems.push('proposal.hook.quote is not inside one sentence of the description');
     if (!gig.description.replace(/\s+/g, ' ').trim().includes(hook.quote)) problems.push('proposal.hook.quote is not in the gig description verbatim');

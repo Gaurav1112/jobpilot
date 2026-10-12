@@ -1,5 +1,5 @@
 {
-  "hash": "a4e89005c693e32cffa1e5e8f157e67b3b8eaf09863a0a8dc8bc79dd3f1e7643",
+  "hash": "df3ae0b7626152a5cd8e743c8efe6ea3f7fe2cece82f9e6b23ba0660983c0e54",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -131,11 +131,18 @@
                       },
                       "text": {
                         "type": "string"
+                      },
+                      "title": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
                       }
                     },
                     "required": [
                       "text",
-                      "quote"
+                      "quote",
+                      "title"
                     ],
                     "type": "object"
                   },
@@ -1349,11 +1356,18 @@
                           },
                           "text": {
                             "type": "string"
+                          },
+                          "title": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
                           }
                         },
                         "required": [
                           "text",
-                          "quote"
+                          "quote",
+                          "title"
                         ],
                         "type": "object"
                       },

@@ -24,8 +24,9 @@ import { pitchOf } from './pitch-planner.js';
  * - **Evidence.** Candidates are the Evidence's ranked facts (citeable experience or project facts) that are placed in
  *   a role and whose matched terms meet `covered`, in rank order. A candidate is *literal* when one of its covered
  *   matched terms is named in the gig title, skills or hook quote. The **lead** is chosen first: among the literal
- *   candidates within the top 3 by rank, the one at `variantOf(gigKey, k)` (k of them; a deterministic rotation),
- *   else the first literal candidate, else rank 1; the lead is exempt from the length limit. The other candidates
+ *   candidates within the top 3 by rank, the first whose terms the hook quote names (relevance beats rotation),
+ *   else the one at `variantOf(gigKey, k)` (k of them; a deterministic rotation among equals), else the first literal
+ *   candidate, else rank 1; the lead is exempt from the length limit. The other candidates
  *   drop a claim over 220 characters while enough shorter ones remain (else it moves last), take at most 2 per
  *   employer (the lead counts), and the rest of the lines are the shortest of the first four (ties by rank), shown in
  *   rank order after the lead: at most 3 lines for a proposal (2 when 3 would put it, `{cadence}` unfilled, over the
@@ -33,7 +34,8 @@ import { pitchOf } from './pitch-planner.js';
  *   <claim>`, the claim verbatim with ASCII punctuation (`asciiPunct`), its role the one it is placed in. A proposal
  *   puts a `PHRASES.evidenceIntro` line before the list.
  * - **Hook.** With at least one evidence line, the best client sentence to quote (`hookQuote`), in an attributed
- *   `PHRASES.hook` phrase. Else a `PHRASES.hookTerm` phrase naming the hook term: the first covered key that is not a
+ *   `PHRASES.hook` phrase. Else, when the gig title qualifies (`hookTitle`), a `PHRASES.hookTitle` phrase naming it
+ *   (with or without evidence; it claims nothing). Else a `PHRASES.hookTerm` phrase naming the hook term: the first covered key that is not a
  *   domain (`DOMAIN_KEYS`) named in the title, then the skills, else the lead fact's first non-domain matched key.
  *   With no evidence or no such term, `PHRASES.hookPlain`.
  * - **Plan.** `PHRASES.planIntro`, then a wording of the steps of the title's category (`planCategory`).
@@ -64,7 +66,7 @@ type Proposal = NonNullable<GigDocsPlan['proposal']>;
 
 /** Every slot both documents draw from. */
 export interface GigSlots {
-  readonly hook: { readonly text: string; readonly quote: string | null };
+  readonly hook: { readonly text: string; readonly quote: string | null; readonly title: string | null };
   readonly evidenceIntro: string;
   readonly evidence: readonly FactLine[];
   readonly planIntro: string;
@@ -180,6 +182,38 @@ export function hookQuote(description: string, groups: readonly TermGroup[], all
   return best === null ? null : { quote: best.quote, cut: best.cut };
 }
 
+/** The longest gig title a hook names. */
+export const TITLE_MAX = 70;
+const TRAILING_JOINERS = /[\s,;:\-&(/+|]+$/u;
+
+/**
+ * The client's gig title to name in a hook: the title, whitespace collapsed; a trailing posting timestamp
+ * (" - 10/10/2026 06:21 EDT") dropped; cut before its first non-ASCII punctuation mark ("Projects – Real-Time" keeps
+ * "Projects"), then at the last space within `max` characters (trailing joiners removed); every cut marked, so the
+ * hook puts "..." after the closing quote mark. Null (the hook falls through) when what is left has fewer than 3
+ * words, is all capitals, has unbalanced brackets, or holds a URL or email, a quote mark, brace, markup, control
+ * character or forbidden term. Always a prefix of the collapsed title, so G-GROUND checks it as a substring.
+ */
+export function hookTitle(title: string, max: number, forbidden: readonly string[] = []): { title: string; cut: boolean } | null {
+  let t = collapse(title).replace(/\s+-\s+\d{1,2}\/\d{1,2}\/\d{2,4}\b.*$/u, '');
+  let cut = false;
+  const at = [...t].findIndex((ch) => hasNonAsciiPunct(ch));
+  if (at >= 0) {
+    t = [...t].slice(0, at).join('').replace(TRAILING_JOINERS, '');
+    cut = true;
+  }
+  if (t.length > max) {
+    const sp = t.lastIndexOf(' ', max);
+    if (sp <= 0) return null;
+    t = t.slice(0, sp).replace(TRAILING_JOINERS, '');
+    cut = true;
+  }
+  if (words(t) < 3 || !/\p{Ll}/u.test(t) || !balanced(t)) return null;
+  if (URL_OR_EMAIL.test(t) || /["{}<>\\`]|[\x00-\x1f\x7f]/u.test(t)) return null;
+  if (forbiddenTermStrict(t, { forbiddenTerms: forbidden }) !== undefined) return null;
+  return { title: t, cut };
+}
+
 /** `{end}` of a hook phrase: "..." after a cut quote, "." after one with no closing punctuation, else nothing. */
 const endOf = (quote: string, cut: boolean): string => (cut ? '...' : /[.!?]$/.test(quote) ? '' : '.');
 
@@ -235,10 +269,12 @@ function candidatesOf(resume: ResumePlan, pack: WritingPack): Candidate[] {
 }
 
 /** The evidence lines (lead first) and the lead's covered matched keys: see the module rules. */
-function evidenceLines(cands: readonly Candidate[], literal: ReadonlySet<string>, gigKey: string, max: number): { lines: FactLine[]; lead: Candidate | undefined } {
+function evidenceLines(cands: readonly Candidate[], literal: ReadonlySet<string>, inQuote: ReadonlySet<string>, gigKey: string, max: number): { lines: FactLine[]; lead: Candidate | undefined } {
   const isLiteral = (c: Candidate): boolean => c.matched.some((k) => literal.has(k));
   const tier = cands.slice(0, 3).filter(isLiteral);
-  const lead = tier.length > 0 ? tier[variantOf(gigKey, tier.length)] : (cands.find(isLiteral) ?? cands[0]);
+  // relevance beats rotation: a tier fact the hook quote names leads outright; rotation only among equals
+  const quoted = tier.find((c) => c.matched.some((k) => inQuote.has(k)));
+  const lead = quoted ?? (tier.length > 0 ? tier[variantOf(gigKey, tier.length)] : (cands.find(isLiteral) ?? cands[0]));
   if (lead === undefined) return { lines: [], lead };
   const others = cands.filter((c) => c.id !== lead.id);
   // A claim over CLAIM_SOFT_MAX is skipped while enough shorter ones remain, else moved last; the lead is exempt.
@@ -270,10 +306,14 @@ function hookTermKey(resume: ResumePlan, gig: Gig, lead: Candidate | undefined, 
 }
 
 /** The hook: see the module rules. */
-function hookOf(gig: Gig, quote: { quote: string; cut: boolean } | null, termKey: string | undefined, hasEvidence: boolean, pack: WritingPack): GigSlots['hook'] {
-  if (quote !== null && hasEvidence) return { text: fill(pick(PHRASES.hook, gig.gigKey), { quote: quote.quote, end: endOf(quote.quote, quote.cut) }), quote: quote.quote };
-  if (termKey !== undefined && hasEvidence) return { text: fill(pick(PHRASES.hookTerm, gig.gigKey), { term: asciiPunct(displayAny(termKey, pack)) }), quote: null };
-  return { text: pick(PHRASES.hookPlain, gig.gigKey), quote: null };
+function hookOf(gig: Gig, quote: { quote: string; cut: boolean } | null, termKey: string | undefined, hasEvidence: boolean, hookChars: number | null, pack: WritingPack): GigSlots['hook'] {
+  if (quote !== null && hasEvidence) return { text: fill(pick(PHRASES.hook, gig.gigKey), { quote: quote.quote, end: endOf(quote.quote, quote.cut) }), quote: quote.quote, title: null };
+  const phrase = pick(PHRASES.hookTitle, gig.gigKey);
+  const room = hookChars === null ? TITLE_MAX : Math.min(TITLE_MAX, hookChars - (phrase.length - '{title}'.length - '{end}'.length + 3));
+  const t = hookTitle(gig.title, room, pack.naming.forbiddenTerms);
+  if (t !== null) return { text: fill(phrase, { title: t.title, end: t.cut ? '...' : '' }), quote: null, title: t.title };
+  if (termKey !== undefined && hasEvidence) return { text: fill(pick(PHRASES.hookTerm, gig.gigKey), { term: asciiPunct(displayAny(termKey, pack)) }), quote: null, title: null };
+  return { text: pick(PHRASES.hookPlain, gig.gigKey), quote: null, title: null };
 }
 
 /** The question: see the module rules. A one-word capitalised domain ("Fintech") is lower-cased mid-sentence. */
@@ -325,9 +365,10 @@ export function gigSlots(scored: ScoredGig, resume: ResumePlan, rawPack: unknown
   const all = allGroups(pack);
   const quote = cands.length === 0 ? null : hookQuote(gig.description, groupsOf(resume.covered, pack), all, room, pack.naming.forbiddenTerms);
   const literal = new Set(termsIn(`${gig.title}\n${skillsText(gig)}\n${quote?.quote ?? ''}`, groupsOf(resume.covered, pack), all));
-  const { lines: evidence, lead } = evidenceLines(cands, literal, gig.gigKey, maxEvidence);
+  const inQuote = new Set(quote === null ? [] : termsIn(quote.quote, groupsOf(resume.covered, pack), all));
+  const { lines: evidence, lead } = evidenceLines(cands, literal, inQuote, gig.gigKey, maxEvidence);
   return {
-    hook: hookOf(gig, quote, hookTermKey(resume, gig, lead, pack), evidence.length > 0, pack),
+    hook: hookOf(gig, quote, hookTermKey(resume, gig, lead, pack), evidence.length > 0, hookChars, pack),
     evidenceIntro: evidence.length === 0 ? '' : pick(PHRASES.evidenceIntro, gig.gigKey),
     evidence,
     planIntro: pick(PHRASES.planIntro, gig.gigKey),

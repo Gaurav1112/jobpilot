@@ -308,14 +308,26 @@ export const BULLETS_OTHER = 2;
 export interface BulletBudget {
   readonly latest: number;
   readonly other: number;
+  /**
+   * When set, the total characters of every bullet's claim in the plan stay at or under this: roles are filled newest
+   * first, each in rank order, and a fact whose claim would go over the budget is skipped for the next one in that
+   * role. Unset (the daily resume): no character budget.
+   */
+  readonly chars?: number;
 }
 /** The daily resume (up to 2 pages): 4 bullets for each of the latest two roles, 2 for the rest. */
 export const DEFAULT_BUDGET: BulletBudget = { latest: BULLETS_LATEST, other: BULLETS_OTHER };
 /**
- * The 1-page contract CV (freelance, Task 8 fix round 1, user decision): 2 bullets for each of the latest two roles;
- * older roles keep their title, employer and dates with no bullet.
+ * The total bullet characters of the 1-page contract CV (Task 8 fix round 3). Calibrated on the 161 live gig CVs of
+ * 2026-10-12 with the user's real pack: every CV renders on one page up to 869 (870 puts one on two pages); 825 is
+ * that less about 5%.
  */
-export const COMPACT: BulletBudget = { latest: 2, other: 0 };
+export const CV_BULLET_CHARS = 825;
+/**
+ * The 1-page contract CV (freelance, Task 8 fix rounds 1 and 3, user decisions): up to 2 bullets for each of the latest
+ * two roles, within `CV_BULLET_CHARS` in total; older roles keep their title, employer and dates with no bullet.
+ */
+export const COMPACT: BulletBudget = { latest: 2, other: 0, chars: CV_BULLET_CHARS };
 
 /** The summary slots: see the module rules. `terms` are display names, in order. */
 export function summarySlots(headline: string, years: number, terms: readonly string[], roles: readonly Role[]): SummarySlots {
@@ -358,11 +370,21 @@ export function planResume(evidence: Evidence, pack: WritingPack, budget: Bullet
     const f = byId.get(r.factId);
     return f !== undefined && isRankable(f) ? [f] : [];
   });
-  const bulletsOf = (i: number) =>
-    ranked
-      .filter((f) => roleIndexOf(f, roles, pack) === i)
-      .slice(0, i < 2 ? budget.latest : budget.other)
-      .map((f) => ({ factId: f.id, text: f.claim }));
+  let used = 0;
+  const bulletsOf = (i: number) => {
+    const placed = ranked.filter((f) => roleIndexOf(f, roles, pack) === i);
+    const cap = i < 2 ? budget.latest : budget.other;
+    const max = budget.chars;
+    if (max === undefined) return placed.slice(0, cap).map((f) => ({ factId: f.id, text: f.claim }));
+    const out: { factId: string; text: string }[] = [];
+    for (const f of placed) {
+      if (out.length >= cap) break;
+      if (used + f.claim.length > max) continue;
+      used += f.claim.length;
+      out.push({ factId: f.id, text: f.claim });
+    }
+    return out;
+  };
   const unplaced = pack.facts
     .filter((f) => isRankable(f) && roleIndexOf(f, roles, pack) === undefined)
     .map((f) => f.id)
