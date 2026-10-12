@@ -35,7 +35,8 @@ export const FreelanceFile = z.strictObject({
   istWindow: IstWindow.default('18:00-00:00'),
   derivedRateCountsForFloor: z.boolean().default(true),
   fixedBudgetFloorUsd: Money.default(500),
-  fitFloor: z.number().min(0).max(100).default(60),
+  // 45, not the daily pipeline's 60 (user decision 2026-10-12): a gig title never earns the full-time title points (seniority, family), so the same lexicon scores gigs lower.
+  fitFloor: z.number().min(0).max(100).default(45),
   kinds: z.array(z.enum(['contract', 'gig', 'bounty'])).min(1, 'at least one kind is required').default(['contract', 'gig', 'bounty']),
   platforms: perPlatform((p) => PlatformConfig(DEFAULT_PLATFORMS[p].enabled), DEFAULT_PLATFORMS).prefault({}),
 });

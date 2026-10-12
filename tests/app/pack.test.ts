@@ -518,7 +518,7 @@ describe('freelance pack files', () => {
     expect(pack.freelance.rateFloorUsdHour).toBe(40);
     expect(pack.freelance.maxHoursPerWeek).toBe(20);
     expect(pack.freelance.istWindow).toBe('18:00-00:00');
-    expect(pack.freelance.fitFloor).toBe(60);
+    expect(pack.freelance.fitFloor).toBe(45);
     expect(pack.platformRules['freelancer']?.maxChars).toBe(1500);
     expect(pack.networks.map((n) => n.id)).toEqual(['arc', 'braintrust', 'contra', 'flexiple', 'gunio', 'lemon', 'toptal', 'turing']);
     expect(pack.networks.every((n) => !n.checkedByUser)).toBe(true);

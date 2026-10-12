@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
 import { gigScorer, gigScorerContract } from '../../../src/app/freelance/gig-scorer.js';
 import { gigDedupeKey, gigKey } from '../../../src/app/freelance/keys.js';
 import { rankGigs } from '../../../src/app/freelance/rank.js';
@@ -142,15 +143,15 @@ describe('rankGigs', () => {
       sc(7, { maxUsdH: 80, fit: 75, postedAt: '2026-10-12' }),
     ];
     // 7 (newest), 6, 5 (postedAt null last) then 4 (lower fit), 2, 3 (null rate), then the red-flagged 1
-    expect(keys(rankGigs(rows).contracts)).toEqual(['7', '6', '5', '4', '2', '3', '1']);
+    expect(keys(rankGigs(rows, 45).contracts)).toEqual(['7', '6', '5', '4', '2', '3', '1']);
   });
 
   it('a red flag of any of the three kinds is never first, but other flags do not demote', () => {
     for (const f of ['off-platform', 'unusual-payment', 'upfront-fee']) {
-      const out = rankGigs([sc(1, { maxUsdH: 500, flags: [f] }), sc(2, { maxUsdH: 41 })]).contracts;
+      const out = rankGigs([sc(1, { maxUsdH: 500, flags: [f] }), sc(2, { maxUsdH: 41 })], 45).contracts;
       expect(keys(out)).toEqual(['2', '1']);
     }
-    expect(keys(rankGigs([sc(1, { maxUsdH: 500, flags: ['thin-brief'] }), sc(2, { maxUsdH: 41 })]).contracts)).toEqual(['1', '2']);
+    expect(keys(rankGigs([sc(1, { maxUsdH: 500, flags: ['thin-brief'] }), sc(2, { maxUsdH: 41 })], 45).contracts)).toEqual(['1', '2']);
   });
 
   it('ties break by gigKey ascending whatever the input order', () => {
@@ -158,11 +159,11 @@ describe('rankGigs', () => {
     const b = sc(2, {});
     const c = sc(3, {});
     const want = [a, b, c].sort((x, y) => (x.risked.verdict.rated.gig.gigKey < y.risked.verdict.rated.gig.gigKey ? -1 : 1)).map((r) => r.risked.verdict.rated.gig.gigKey);
-    for (const input of [[a, b, c], [c, b, a], [b, c, a]]) expect(rankGigs(input).contracts.map((r) => r.risked.verdict.rated.gig.gigKey)).toEqual(want);
+    for (const input of [[a, b, c], [c, b, a], [b, c, a]]) expect(rankGigs(input, 45).contracts.map((r) => r.risked.verdict.rated.gig.gigKey)).toEqual(want);
   });
 
-  it('drops fit < 60 from contracts and gigs, keeps it in review; 60 stays', () => {
-    const out = rankGigs([sc(1, { fit: 59 }), sc(2, { fit: 60 }), sc(3, { fit: 10, kind: 'gig' }), sc(4, { fit: 10, verdict: 'review' }), sc(5, { fit: 90, kind: 'gig' })]);
+  it('drops fit < the floor (45, the fixture pack floor) from contracts and gigs, keeps it in review; 45 stays', () => {
+    const out = rankGigs([sc(1, { fit: 44 }), sc(2, { fit: 45 }), sc(3, { fit: 10, kind: 'gig' }), sc(4, { fit: 10, verdict: 'review' }), sc(5, { fit: 90, kind: 'gig' })], full.freelance.fitFloor);
     expect(keys(out.contracts)).toEqual(['2']);
     expect(keys(out.gigs)).toEqual(['5']);
     expect(keys(out.review)).toEqual(['4']);
@@ -171,7 +172,7 @@ describe('rankGigs', () => {
   it('the same gigKey twice keeps the first by this order', () => {
     const worse = sc(1, { maxUsdH: 50 });
     const better = { ...sc(1, { maxUsdH: 70 }) };
-    const out = rankGigs([worse, better]).contracts;
+    const out = rankGigs([worse, better], 45).contracts;
     expect(out).toHaveLength(1);
     expect(out[0]!.risked.verdict.rated.rate.maxUsdH).toBe(70);
   });
@@ -179,9 +180,17 @@ describe('rankGigs', () => {
   it('does not mutate its input and is stable across runs', () => {
     const rows = [sc(3, {}), sc(1, {}), sc(2, { maxUsdH: 99 })];
     const copy = structuredClone(rows);
-    const once = rankGigs(rows);
+    const once = rankGigs(rows, 45);
     expect(rows).toEqual(copy);
-    expect(rankGigs(rows)).toEqual(once);
+    expect(rankGigs(rows, 45)).toEqual(once);
+  });
+});
+
+describe('fit floor', () => {
+  it('defaults to 45 for the freelance pack (the daily minFit stays 60)', () => {
+    expect(FreelanceFile.parse({}).fitFloor).toBe(45);
+    expect(full.freelance.fitFloor).toBe(45);
+    expect(full.targets.minFit).toBe(60);
   });
 });
 

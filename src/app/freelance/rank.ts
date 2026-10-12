@@ -8,12 +8,10 @@ import type { ScoredGig } from './types.js';
  * 4. `postedAt` descending, null last;
  * 5. `gigKey` ascending.
  *
- * A row with `fit` below `fitFloor` (the spec's 60) is left out of `contracts` and `gigs` but kept in `review`.
+ * A row with `fit` below `fitFloor` (`pack.freelance.fitFloor`, passed by the caller; 45 by default in the pack) is left out of `contracts` and `gigs` but kept in `review`.
  * Several rows with one `gigKey` in a list keep only the first by this order. The input is not changed.
  */
 const RED = new Set(['off-platform', 'unusual-payment', 'upfront-fee']);
-
-export const FIT_FLOOR = 60;
 
 export interface Ranked {
   contracts: ScoredGig[];
@@ -51,7 +49,7 @@ function compare(a: ScoredGig, b: ScoredGig): number {
   return ka < kb ? -1 : ka > kb ? 1 : 0;
 }
 
-export function rankGigs(rows: readonly ScoredGig[], fitFloor: number = FIT_FLOOR): Ranked {
+export function rankGigs(rows: readonly ScoredGig[], fitFloor: number): Ranked {
   const out: Ranked = { contracts: [], gigs: [], review: [] };
   for (const list of ['contracts', 'gigs', 'review'] as const) {
     const kept = rows.filter((r) => r.list === list && (list === 'review' || r.fit >= fitFloor)).sort(compare);

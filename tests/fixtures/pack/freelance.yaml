@@ -4,7 +4,7 @@ maxHoursPerWeek: 20
 istWindow: "18:00-00:00"
 derivedRateCountsForFloor: true
 fixedBudgetFloorUsd: 500
-fitFloor: 60
+fitFloor: 45
 kinds: [contract, gig, bounty]
 platforms:
   freelancer:
