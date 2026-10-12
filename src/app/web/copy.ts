@@ -199,8 +199,11 @@ export const platformName = (id: string): string => PLATFORM_NAME[id] ?? id;
 export const DISABLED_REASON: Readonly<Record<string, string>> = {
   upwork: 'API key pending approval',
   reddit: 'needs your OAuth script app',
-  gmail: 'not connected yet',
+  gmail: 'not connected - run jobpilot gmail connect',
 };
+
+/** Shown for Gmail when it is connected but no sender has an alert parser yet (Task 13). */
+export const GMAIL_NO_PARSERS = 'reads the label jobpilot/gigs; alert parsers: none yet - send one alert email per sender to enable';
 
 /** "covered 6/8 · missing: Kubernetes, Terraform" (display names); null when the gig has no plan on record. */
 export function coverageText(covered: readonly string[], missing: readonly string[], display: (k: string) => string): string {

@@ -60,6 +60,8 @@ export interface DashboardDeps {
   readonly port?: number | (() => number | undefined);
   /** How long a write waits for a run's lock before answering 503 (SQLite busy_timeout). Default 10 s. */
   readonly busyTimeoutMs?: number;
+  /** Whether Gmail is connected, for the freelance Sources page (the CLI checks the Keychain). Absent: not connected. */
+  readonly gmailConnected?: () => boolean;
 }
 
 /** Tests only (reached through `server-testing.ts`): runs just before an applied snapshot is recorded. */
@@ -648,6 +650,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   mountFreelance(app, {
     paths, now, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf, isHx, isBusy,
     ...(hooks.beforeSnapshot !== undefined ? { beforeSnapshot: hooks.beforeSnapshot } : {}),
+    ...(deps.gmailConnected !== undefined ? { gmailConnected: deps.gmailConnected } : {}),
   });
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));

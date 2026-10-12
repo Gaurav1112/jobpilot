@@ -352,7 +352,7 @@ export interface SourcesData {
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {
   failed: 'Failed', gone: 'Gone', input_rejected: 'Input rejected', quarantined: 'Quarantined', skipped: 'Skipped', 'commit-failed': 'Not written',
-  'docs-blocked': 'Documents blocked', 'source-dead': 'Source looks dead',
+  'docs-blocked': 'Documents blocked', 'source-dead': 'Source looks dead', 'mail-quarantined': 'Alert email set aside',
 };
 
 const HEALTH_COLUMNS = [

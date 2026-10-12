@@ -1,0 +1,50 @@
+Delivered-To: asha.rao@example.com
+Received: by 2002:a05:0000:0000 with SMTP id fictional;
+        Mon, 12 Oct 2026 01:00:00 -0700 (PDT)
+From: Example Board <alerts@example-board.test>
+To: Asha Rao <asha.rao@example.com>
+Subject: =?UTF-8?B?MiBuZXcgY29udHJhY3Qgam9icyDCtyBUeXBlU2NyaXB0LCBHbw==?=
+Date: Mon, 12 Oct 2026 08:00:00 +0000
+Message-ID: <fictional-0001@example-board.test>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+	boundary="==fictional-boundary=="
+
+This is a multi-part message in MIME format.
+--==fictional-boundary==
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+Example Board =C2=B7 contract alerts digest
+
+--- JOB 1 ---
+Title: Senior TypeScript Engineer (contract)
+Company: Fictional Widgets Ltd
+Pay: $55/hr
+Location: Remote, worldwide
+Link: https://jobs.example-board.test/j/1001
+Summary: Build a Node.js API for 15 hours per week over 8 weeks, with a lon=
+g sentence that wraps past the quoted-printable line limit.
+
+--- JOB 2 ---
+Title: Go Developer for a payments service
+Company: Imaginary Payments Co
+Pay: not stated
+Location: Remote, India
+Link: https://jobs.example-board.test/j/1002
+Summary: Part-time contract maintaining a Golang service.
+
+You receive this because you saved a search on Example Board.
+
+--==fictional-boundary==
+Content-Type: text/html; charset=UTF-8
+Content-Transfer-Encoding: base64
+
+PGh0bWw+PGJvZHk+PGgxPkV4YW1wbGUgQm9hcmQgJm1pZGRvdDsgY29udHJhY3QgYWxlcnRzIGRp
+Z2VzdDwvaDE+DQo8ZGl2IGNsYXNzPSJqb2IiPjxhIGhyZWY9Imh0dHBzOi8vam9icy5leGFtcGxl
+LWJvYXJkLnRlc3Qvai8xMDAxIj5TZW5pb3IgVHlwZVNjcmlwdCBFbmdpbmVlciAoY29udHJhY3Qp
+PC9hPjwvZGl2Pg0KPGRpdiBjbGFzcz0iam9iIj48YSBocmVmPSJodHRwczovL2pvYnMuZXhhbXBs
+ZS1ib2FyZC50ZXN0L2ovMTAwMiI+R28gRGV2ZWxvcGVyIGZvciBhIHBheW1lbnRzIHNlcnZpY2U8
+L2E+PC9kaXY+DQo8cD5Zb3UgcmVjZWl2ZSB0aGlzIGJlY2F1c2UgeW91IHNhdmVkIGEgc2VhcmNo
+IG9uIEV4YW1wbGUgQm9hcmQuPC9wPjwvYm9keT48L2h0bWw+DQo=
+--==fictional-boundary==--

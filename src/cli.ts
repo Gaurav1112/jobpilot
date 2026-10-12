@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline/promises';
 
 import { Command } from 'commander';
 import { checkDrift, exportContracts } from './kernel/contracts-export.js';
@@ -32,6 +33,10 @@ import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './ap
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
 import { probeCommand } from './app/freelance/probe.js';
+import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app/freelance/mail/connect.js';
+import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
+import { SECRET } from './app/freelance/mail/google.js';
+import { keychain } from './app/secrets.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -263,7 +268,7 @@ program
   .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runFreelanceCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain()) },
     );
   });
 
@@ -457,6 +462,43 @@ sources
     }),
   );
 
+/** A y/N question on the terminal; without one (piped input) the answer is the default, "". */
+async function askLine(question: string): Promise<string> {
+  if (!process.stdin.isTTY) return '';
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await rl.question(question);
+  } finally {
+    rl.close();
+  }
+}
+
+const gmail = program.command('gmail').description('Read-only Gmail alert ingest: jobpilot reads only the label jobpilot/gigs, with the gmail.readonly scope');
+gmail
+  .command('connect')
+  .description('Sign in to Google in your browser (gmail.readonly only) and keep the OAuth client and refresh token in the macOS Keychain; reads ~/.jobpilot/secrets/google-oauth-client.json once and offers to delete it')
+  .action(() =>
+    guarded(async () => {
+      await connectGmail({ home: jobpilotHome(), secrets: keychain(), post: realFormPost, open: openInBrowser, ask: askLine, out: (l) => console.log(l) });
+    }),
+  );
+gmail
+  .command('status')
+  .description('Whether Gmail is connected, the label read and the alert parsers; never shows a token')
+  .action(() =>
+    guarded(() => {
+      for (const l of gmailStatus({ home: jobpilotHome(), secrets: keychain() })) console.log(l);
+    }),
+  );
+gmail
+  .command('disconnect')
+  .description('Delete the Gmail items from the Keychain (the client and the refresh token)')
+  .action(() =>
+    guarded(() => {
+      for (const l of disconnectGmail({ home: jobpilotHome(), secrets: keychain() })) console.log(l);
+    }),
+  );
+
 const docs = program.command('docs').description('Document tools');
 docs
   .command('rebuild')
@@ -477,7 +519,15 @@ program
     guarded(() => {
       const port = /^\d{1,5}$/.test(o.port) ? Number(o.port) : Number.NaN;
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be a number from 1 to 65535');
-      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+      const secrets = keychain();
+      const gmailConnected = (): boolean => {
+        try {
+          return secrets.has(SECRET.refresh);
+        } catch {
+          return false;
+        }
+      };
+      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
       server.on('error', (e) => {
         console.error(`error: ${e.message}`);
         process.exit(1);

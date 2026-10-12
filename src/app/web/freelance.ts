@@ -2,6 +2,7 @@ import type { Context, Hono } from 'hono';
 import { termDisplay } from '../agents/writing/grounded.js';
 import { NETWORK_FILES } from '../freelance/networks-command.js';
 import { isoWeek } from '../freelance/health.js';
+import { ALERT_PARSERS } from '../freelance/mail/parsers/index.js';
 import { PLATFORM_AGENT } from '../freelance/pipeline.js';
 import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
@@ -14,7 +15,7 @@ import type { homePaths } from '../pack/paths.js';
 import { istDate } from '../run.js';
 import type { AppStore, GigDoc, GigStatus, GigView, NetworkStatus } from '../store/app-store.js';
 import { GIG_STATUSES, NETWORK_STATUSES } from '../store/schema.js';
-import { breakdownText, clientSignals, coverageText, DISABLED_REASON, flagText, gigDocsReason, hoursText, rateLabel, type GigRate } from './copy.js';
+import { breakdownText, clientSignals, coverageText, DISABLED_REASON, flagText, GMAIL_NO_PARSERS, gigDocsReason, hoursText, rateLabel, type GigRate } from './copy.js';
 import { readConfined, readRecorded, snapshotGigApplied, type ReadResult } from './files.js';
 import { ageText, istTimeText } from './format.js';
 import { html, type Html } from './html.js';
@@ -69,6 +70,8 @@ export interface FreelanceDeps {
   readonly isHx: (c: Context<Env>) => boolean;
   readonly isBusy: (e: unknown) => boolean;
   readonly beforeSnapshot?: () => void;
+  /** Whether Gmail is connected (a refresh token in the Keychain, checked without reading it). Absent: not connected. */
+  readonly gmailConnected?: () => boolean;
 }
 
 const GIG_KEY = /^[0-9a-f]{16}$/;
@@ -298,6 +301,8 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       if (known !== undefined && PLATFORM_AGENT[p] === undefined) return [{ platform: p, reason: known }];
       if (!rules.platforms[p].enabled) return [{ platform: p, reason: 'turned off in your freelance.yaml' }];
       if (PLATFORM_AGENT[p] === undefined) return [{ platform: p, reason: 'no source in this build yet' }];
+      if (p === 'gmail' && d.gmailConnected?.() !== true) return [{ platform: p, reason: DISABLED_REASON.gmail as string }];
+      if (p === 'gmail' && ALERT_PARSERS.length === 0) return [{ platform: p, reason: GMAIL_NO_PARSERS }];
       return [];
     });
     const problems = collapseProblems(data.run?.problems ?? []).map((p) => ({ kind: p.kind, line: r.text(p.line) }));

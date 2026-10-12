@@ -21,6 +21,9 @@ import { Gig, RawGig } from './types.js';
  *   `postedAt` is `created_at_i`. Pay is read from the text.
  * - boards: a daily Posting@1. `kind` is `contract` and the budget is `unknown`: an annual salary is not a freelance
  *   budget.
+ * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
+ *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
+ *   read from `pay` and the description by the same rule.
  *
  * Hours come from text only (HOURS_PER_WEEK). Pay in text counts only when exactly one distinct, unqualified figure
  * is stated (PAY): two different rates, "up to $90/h", "from $50/h" or "about $50/h" leave the budget `unknown`.
@@ -263,14 +266,39 @@ function boards(r: RawGig, o: unknown): Draft {
   };
 }
 
+const GMAIL_KINDS: readonly string[] = ['contract', 'gig', 'network-alert'];
+
+function gmail(r: RawGig, o: Rec): Draft {
+  const title = collapse(nonBlank(o.title) ?? '');
+  if (title === '') throw fail(r, 'missing title');
+  const url = nonBlank(o.url);
+  if (url === null) throw fail(r, 'missing url');
+  if (typeof o.kind !== 'string' || !GMAIL_KINDS.includes(o.kind)) throw fail(r, `unsupported kind ${JSON.stringify(o.kind ?? null)}`);
+  const description = collapse(typeof o.description === 'string' ? o.description : '');
+  const place = nonBlank(o.location);
+  return {
+    url,
+    title,
+    description,
+    clientName: nonBlank(o.company),
+    kind: o.kind as Gig['kind'],
+    budget: payOf(`${nonBlank(o.pay) ?? ''}\n${description}`),
+    location: { ...placesOf(place), text: place === null ? null : collapse(place) },
+    skills: [],
+    postedAt: postedAtOf(o.postedAt),
+    bids: null,
+  };
+}
+
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */
 export function normalizeGig(r: RawGig): Gig {
-  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards') {
+  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail') {
     throw new KernelError('invalid_output', `gig-normalizer: unsupported platform ${r.platform}`);
   }
   if (r.platform !== 'boards' && !isRec(r.raw)) throw fail(r, 'raw is not an object');
   const o = r.raw as Rec;
-  const d = r.platform === 'freelancer' ? freelancer(r, o) : r.platform === 'remotive' ? remotive(r, o) : r.platform === 'boards' ? boards(r, r.raw) : hn(r, o);
+  const d =
+    r.platform === 'freelancer' ? freelancer(r, o) : r.platform === 'remotive' ? remotive(r, o) : r.platform === 'boards' ? boards(r, r.raw) : r.platform === 'gmail' ? gmail(r, o) : hn(r, o);
   const text = `${d.title}\n${d.description}`;
   return {
     gigKey: gigKey(r.platform, r.sourceId),

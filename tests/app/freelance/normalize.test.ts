@@ -206,7 +206,7 @@ describe('golden evals', () => {
     expect(spec).toMatchObject({ metric: 'exactMatch', min: 1 });
     expect(spec.cases.length).toBeGreaterThanOrEqual(30);
     const platforms = new Set(spec.cases.map((c) => (c.input as RawGig).platform));
-    for (const p of ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards']) expect(platforms.has(p as RawGig['platform']), p).toBe(true);
+    for (const p of ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail']) expect(platforms.has(p as RawGig['platform']), p).toBe(true);
     expect(spec.cases.filter((c) => 'error' in (c.expected as object)).length).toBeGreaterThanOrEqual(5);
     const r = await runEval(spec, { providers, policy: PRODUCT_POLICY_V1 });
     expect(r.failures).toEqual([]);

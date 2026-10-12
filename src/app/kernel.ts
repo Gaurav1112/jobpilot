@@ -197,7 +197,7 @@ export function prepareFreelance(pack: Pick<Pack, 'policyUser' | 'freelance' | '
   const agents = freelanceAgents();
   const { registry, compiled } = compileDaily(agents, guardrails, freelancePipeline(agents));
   const policy = mergePolicy(PRODUCT_POLICY_V1, freelancePolicyUser(pack));
-  const pacing = freelancePacingProblems(policy);
+  const pacing = freelancePacingProblems(policy, { gmail: pack.freelance.platforms.gmail.enabled });
   if (pacing.length > 0) throw new Error(`refusing to start:\n- ${pacing.join('\n- ')}`);
   return { registry, compiled, guardrails, policy, policyHash: policyHash(policy) };
 }

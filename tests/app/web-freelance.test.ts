@@ -406,11 +406,18 @@ describe('freelance: sources', () => {
       expect(t).toContain('2026-W41');
       expect(t).toContain('Upwork API key pending approval');
       expect(t).toContain('Reddit needs your OAuth script app');
-      expect(t).toContain('Gmail not connected yet');
+      expect(t).toContain('Gmail not connected - run jobpilot gmail connect');
       expect(t).toContain('freelancer: 3 requests skipped after 5 failures');
       expect(t).not.toContain('freelancer q6');
       expect(t).toContain('source remotive looks dead');
     }
+  });
+
+  it('connected Gmail with no alert parser yet says to send one alert email per sender', async () => {
+    app = wrap(createDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)), gmailConnected: () => true }));
+    const t = text((await get('/freelance/sources')).body);
+    expect(t).not.toContain('Gmail not connected');
+    expect(t).toContain('Gmail reads the label jobpilot/gigs; alert parsers: none yet - send one alert email per sender to enable');
   });
 });
 

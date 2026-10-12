@@ -9,11 +9,12 @@ import type { Notifier } from '../notify.js';
 import { homePaths } from '../pack/paths.js';
 import { forbiddenTermStrict } from '../pack/rules.js';
 import type { Naming } from '../pack/schema.js';
-import { runProblems, safeLine, sourceSkipWarnings, type Problem } from '../problems.js';
+import { runProblems, safeLine, skipNoteProblems, sourceSkipWarnings, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
 import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
 import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
 import { foreignSourceStep, recordSourceHealth } from './health.js';
+import { GMAIL_OFF, type GmailRunAccess } from './mail/oauth.js';
 import { freelanceSeeds } from './pipeline.js';
 import { projectFreelanceRun, type GigProjectResult } from './project.js';
 import { rankGigs, RED } from './rank.js';
@@ -46,6 +47,11 @@ export interface FreelanceRunOptions {
   readonly afterProject?: () => void;
   readonly onLocked?: () => void;
   readonly codeHash?: string;
+  /**
+   * Gmail for this run (`gmailRunAccess` over the Keychain in the CLI): whether it is connected, and the authorised
+   * fetch layer. Absent: not connected, so the gmail source is not seeded (a warning names the reason).
+   */
+  readonly gmail?: GmailRunAccess;
 }
 
 export interface FreelanceSummary {
@@ -139,11 +145,11 @@ export const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g)
  * `jobpilot run-freelance`: one freelance run under the run lock (spec §3, §8), the freelance counterpart of `runDaily`:
  * 1. load the pack (overrides, `experience.asOf` = the IST month, the kept `render.nonce`) and wire
  *    `jobpilot-freelance@1.0.0` (`freelanceKernel`);
- * 2. seed (`freelanceSeeds`): Freelancer one request per query, Remotive one, HN two, and one `boards` request per
- *    stored daily contract posting seen in the last BOARD_SEED_DAYS (14) days and not skipped or rejected
+ * 2. seed (`freelanceSeeds`): Freelancer one request per query, Remotive one, HN two, Gmail one when connected (else
+ *    a warning names why it is off), and one `boards` request per stored daily contract posting seen in the last BOARD_SEED_DAYS (14) days and not skipped or rejected
  *    (`AppStore.contractPostings`), all dated with the IST date and half;
  * 3. run as `freelance-<date>-<am|pm>` (a completed one moves to `-2`, a crashed one is resumed), project into the gig
- *    tables, count source health and name every problem (a dead source included);
+ *    tables, count source health and name every problem (a dead source and each quarantined alert email included);
  * 4. notify once per newly shortlisted gig (`notified_at`; only a posted notification announces);
  * 5. record the run in `gig_runs_summary`.
  * A second run in the same half replays every step at $0 (the seeds carry the date and half).
@@ -161,7 +167,8 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const half = halfOf(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
       const rules = loaded.pack.freelance;
-      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
+      const gmail = o.gmail ?? GMAIL_OFF;
+      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`);
@@ -173,7 +180,8 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       );
       const boards = rules.platforms.boards.enabled ? app.contractPostings(new Date(Date.parse(now) - BOARD_SEED_DAYS * 86_400_000).toISOString()) : { postings: [], missing: [] };
       if (boards.missing.length > 0) warnings.push(`${plural(boards.missing.length, 'stored contract job has', 'stored contract jobs have')} no stored posting (a Desk import) and ${boards.missing.length === 1 ? 'is' : 'are'} not seeded`);
-      const seeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting));
+      if (rules.platforms.gmail.enabled && !gmail.connected) warnings.push(gmail.reason ?? GMAIL_OFF.reason ?? 'Gmail is off');
+      const seeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting), { gmailConnected: gmail.connected });
       if (seeds.length === 0) warnings.push('no gig platform is enabled: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       // One transaction: the gig rows and the run's source health are written together, or neither is.
@@ -184,9 +192,14 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const { rows: _rows, ...projection } = projected;
       const counts = runCounts(app.kernel, runId);
       if (sourcesAllReplayed(counts)) warnings.push(FREELANCE_REPLAY_HINT);
-      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
+      // The Gmail source's notes are quarantined alerts: listed as problems below, not as malformed postings.
+      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming, ['src-gig-mail']));
       const foreignSkip = (agent: string, input: { type: string; payload: unknown }, status: string) => status === 'skipped' && foreignSourceStep(agent, input);
-      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming, foreignSkip), ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) }))];
+      const problems = [
+        ...runProblems(app.kernel, runId, loaded.pack.naming, foreignSkip),
+        ...skipNoteProblems(app.kernel, runId, 'src-gig-mail', loaded.pack.naming),
+        ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) })),
+      ];
       o.afterProject?.();
       const fresh = freshGigs(app);
       const notification = gigNotificationFor(fresh, { rateFloor: rules.rateFloorUsdHour, half, naming: loaded.pack.naming, problems: problems.length });

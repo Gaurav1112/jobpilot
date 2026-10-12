@@ -24,8 +24,9 @@ export interface Problem {
    * the next run renders them again. `docs-blocked`: the qa-gate refused a job's documents (`cause` says whether the
    * content or the system failed). `docs-stale` (review I2): ready documents cite a fact the user has since rejected.
    * `source-dead` (freelance §4.5): a gig source with no yield for weeks or failing every fetch; never removed.
+   * `mail-quarantined` (freelance §4.3): an alert email no parser recognised, set aside whole; not a failure.
    */
-  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead';
+  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead' | 'mail-quarantined';
   readonly agent: string;
   /** What the step was working on: the board (company and ats:slug), the career link, the posting or the job. */
   readonly item: string;
@@ -297,7 +298,7 @@ export function staleProblems(
  * the executor puts in each step_done (and done step_replayed) event; each step counts once. A note holding a
  * forbidden term is replaced by a fixed notice.
  */
-export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): string[] {
+export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>, except: readonly string[] = []): string[] {
   const steps = new Set<string>();
   const byAgent = new Map<string, { postings: number; boards: number; first: string | undefined }>();
   for (const ev of kernel.events(runId)) {
@@ -307,7 +308,7 @@ export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Na
     const n = d['skipped'];
     const agent = d['agent'];
     const stepKey = d['stepKey'];
-    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1 || typeof agent !== 'string' || typeof stepKey !== 'string' || steps.has(stepKey)) continue;
+    if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1 || typeof agent !== 'string' || typeof stepKey !== 'string' || steps.has(stepKey) || except.includes(agent)) continue;
     steps.add(stepKey);
     const notes: unknown[] = Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : [];
     const a = byAgent.get(agent) ?? { postings: 0, boards: 0, first: undefined };
@@ -320,4 +321,29 @@ export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Na
       const first = a.first === undefined ? '' : `; first: ${safe(a.first)}`;
       return `${a.postings} ${a.postings === 1 ? 'posting' : 'postings'} skipped by ${agent} as malformed (${a.boards} ${a.boards === 1 ? 'board' : 'boards'}${first})`;
     });
+}
+
+/**
+ * Freelance §4.3: one `mail-quarantined` problem per note `agent` recorded with `ctx.skipped` in this run (each step
+ * once, executed or replayed done), in event order: an alert email no parser recognised, or one gone before it was
+ * read. The executor keeps the first SKIP_NOTES_KEPT notes of a step; the rest are counted in one more line. Not a
+ * failure: the exit code does not change.
+ */
+export function skipNoteProblems(kernel: Store, runId: string, agent: string, naming: Pick<Naming, 'forbiddenTerms'>): Problem[] {
+  const steps = new Set<string>();
+  const out: Problem[] = [];
+  const safe = (t: string): string => safeLine(t, naming);
+  for (const ev of kernel.events(runId)) {
+    if (ev.kind !== 'step_done' && ev.kind !== 'step_replayed') continue;
+    const d = JSON.parse(ev.data) as Record<string, unknown>;
+    if (d['agent'] !== agent || (ev.kind === 'step_replayed' && d['status'] !== 'done')) continue;
+    const stepKey = d['stepKey'];
+    const n = d['skipped'];
+    if (typeof stepKey !== 'string' || steps.has(stepKey) || typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1) continue;
+    steps.add(stepKey);
+    const notes = (Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : []).filter((x): x is string => typeof x === 'string');
+    for (const note of notes) out.push({ kind: 'mail-quarantined', agent, item: 'gmail alert', reason: safe(note) });
+    if (n > notes.length) out.push({ kind: 'mail-quarantined', agent, item: 'gmail alert', reason: `${n - notes.length} more alert emails were set aside (only the first ${notes.length} are listed)` });
+  }
+  return out;
 }

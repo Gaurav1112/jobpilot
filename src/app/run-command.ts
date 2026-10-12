@@ -6,6 +6,7 @@ import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { lookup } from 'node:dns/promises';
 import { attemptsFor, DAILY_DUE, due, FREELANCE_DUE, type DueSpec } from './due.js';
+import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
@@ -37,7 +38,15 @@ export interface RunCommandDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   /** `--if-due` asks this before a live run; default `dnsOnline`. */
   readonly online?: () => Promise<boolean>;
+  /**
+   * The freelance run's Gmail access (`gmailRunAccess` over the Keychain in the CLI), asked only when a live run
+   * starts. Absent, or an offline run: Gmail is not read.
+   */
+  readonly gmail?: () => GmailRunAccess;
 }
+
+/** An offline run never reads Gmail (the fixtures have no mailbox). */
+const GMAIL_OFFLINE: GmailRunAccess = { ...GMAIL_OFF, reason: 'Gmail is not read in an offline run' };
 
 /** Hosts every pack's sources depend on; one resolving means the network is up (Wi-Fi is often still down at wake). */
 const PROBE_HOSTS = ['boards-api.greenhouse.io', 'api.lever.co', 'api.ashbyhq.com'];
@@ -184,10 +193,12 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
 export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
   return runWithDue(FREELANCE_DUE, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+    const gmail = offline !== undefined ? GMAIL_OFFLINE : (d.gmail?.() ?? GMAIL_OFF);
     const summary = await runFreelance({
       home: d.home,
       clock: d.clock,
       fetch: offline?.fetch ?? nodeFetch,
+      gmail,
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),

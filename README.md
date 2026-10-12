@@ -108,6 +108,47 @@ employer's own site, then mark the job applied on the dashboard. The documents y
 sent are kept as they were, even if you rebuild documents later. jobpilot never submits an
 application for you.
 
+## Gmail alerts (freelance)
+
+The freelance run can read the job-alert emails platforms send you. It reads **one label**,
+`jobpilot/gigs`, with the `gmail.readonly` scope. It never changes, moves, deletes, sends or
+marks mail read.
+
+Connect once:
+
+1. In Google Cloud, enable the Gmail API, then create an OAuth client of type **Desktop app**.
+   Download its JSON and save it as `~/.jobpilot/secrets/google-oauth-client.json`
+   (`chmod 600`).
+2. In Gmail, add filters that apply the label `jobpilot/gigs` to each platform's alerts.
+3. Run `node --run jobpilot -- gmail connect`. Your browser opens Google's consent page. Allow
+   read-only access; the tab then says "You can close this tab". The client and the refresh
+   token go into the macOS Keychain (service `jobpilot`), and nothing is printed or written
+   anywhere else. Then it asks whether to delete the JSON (the default is to keep it).
+
+`gmail status` shows whether Gmail is connected (never the token), and `gmail disconnect`
+deletes the Keychain items. Until you connect, the Sources tab shows Gmail as "not connected -
+run jobpilot gmail connect", and the run carries on without it.
+
+### Alert parsers: one per sender, built from a real sample
+
+A parser is chosen by the sender's address and a layout fingerprint (a stable heading or
+footer from the sample email). An email nothing recognises is set aside whole and listed under
+the run's problems as `unrecognised alert: <sender domain> "<subject>"`. It is never half read.
+
+This build has **no parsers yet**. To add one: drop the .eml in
+`~/.jobpilot/secrets/alert-samples/`; a parser is built and tested from it, with the user's own
+details redacted. In practice:
+
+1. In Gmail, open one alert and use "Download message" to get the `.eml`.
+2. Copy it into the fixtures as `tests/fixtures/freelance/gmail/<sender>.eml`, with your own
+   name, email and phone replaced by the fixture pack's (Asha Rao). Run the forbidden-terms
+   test on it.
+3. Write `src/app/freelance/mail/parsers/<sender>.ts` (the `AlertParser` shape in
+   `parsers/index.ts`: the exact sender, the fingerprint, and a `parse` that throws on anything
+   it does not recognise). Then add it to `ALERT_PARSERS`.
+4. Add a test where the sample parses to its expected jobs and an altered fingerprint is set
+   aside, then run `node --run verify`.
+
 ## Guarantees
 
 - **No language model.** Every step is plain code with fixed rules.
