@@ -133,8 +133,11 @@ const MODAL = '(?:must|are required to|is required to|have to|has to|need to|nee
 const CLOSED_TAIL = '(?:(?:\\s*,\\s*|\\s+)(?:daily|every day|each weekday|every weekday|on weekdays|monday to friday|during the (?:contract|engagement|project)|during this (?:contract|engagement|project)|while engaged(?: with us)?|at all times|to apply|to be considered|for [a-z0-9-]+ (?:reasons|purposes)))*';
 /** A clause without its trailing punctuation and its lead-in words ("Note that", "Please be aware:"). */
 const LIST_MARKER = /^(?:[-*•]\s+|\d+[.)]\s+)/;
-/** A leading one- or two-word label ("Requirements:", "Location:", "Note:"); longer lead-ins ("Build a form that says:") are kept, so they stay no requirement. */
-const LABEL = /^[A-Za-z]+(?:\s+[A-Za-z]+)?:\s+/;
+/**
+ * A leading requirement label is stripped; any OTHER label ("Error text:", "Example:", "Popup:", "Old policy:", "Not required:",
+ * "Test case:", "Myth:") quotes or illustrates a requirement, so the clause stays unmatched and is no requirement.
+ */
+const LABEL = /^(?:requirements?|location|availability|eligibility|hours|working hours|schedule|must[- ]haves?|note|important|exclusivity|commitment|time ?zone):\s+/i;
 const clauseOf = (raw: string): string => raw.trim().replace(/[.!?:\s]+$/, '').replace(LIST_MARKER, '').replace(FILLER, '').replace(LABEL, '');
 
 /**
@@ -148,7 +151,7 @@ const PART_TIME_OK = /part[- ]time (?:is )?(?:possible|fine|ok|okay|welcome)/i;
 /** After an hours requirement: fewer hours would do. */
 const FEWER_HOURS_OK = /part[- ]time (?:is )?(?:possible|fine|ok|okay|welcome)|fewer hours|less hours|(?:10|15|20) hours (?:is )?(?:fine|ok|okay|possible)/i;
 function softenedAfter(following: readonly string[], widening?: RegExp): boolean {
-  const t = following.slice(0, 2).join(' ').replace(/\b(?:not negotiable|non-?negotiable)\b/gi, ' ');
+  const t = following.filter((c) => c.trim() !== '').slice(0, 2).join(' ').replace(/\b(?:not negotiable|non-?negotiable)\b/gi, ' ');
   return SOFTENS.test(t) || (widening?.test(t) ?? false);
 }
 const NOTE_SOFTENED = 'requirement softened nearby - verify';
