@@ -111,3 +111,27 @@ export function istTimeText(iso: string): string {
   const ist = new Date(t + 330 * 60_000).toISOString();
   return `${dateText(ist)}, ${ist.slice(11, 16)} IST`;
 }
+
+/** Western digit grouping (dollars, character counts): 1214 → "1,214". */
+export function groupWestern(n: number): string {
+  const s = String(Math.round(Math.abs(n)));
+  return `${n < 0 ? '-' : ''}${s.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}`;
+}
+
+/** US dollars as stored (2 decimals at most): whole dollars grouped ("$1,500"), else cents ("$43.80"). */
+export function usdText(n: number): string {
+  if (Number.isInteger(n)) return `$${groupWestern(n)}`;
+  const [whole, cents] = Math.abs(n).toFixed(2).split('.') as [string, string];
+  return `${n < 0 ? '-' : ''}$${groupWestern(Number(whole))}.${cents}`;
+}
+
+/** How long ago `iso` was at `now`: "posted 5 h ago", "posted 3 days ago", "posted just now"; null when unknown. */
+export function ageText(iso: string | null, now: string): string | null {
+  if (iso === null) return null;
+  const t = Date.parse(/T[0-9:.]+$/.test(iso) ? `${iso}Z` : iso);
+  if (Number.isNaN(t)) return null;
+  const hours = Math.max(0, (Date.parse(now) - t) / 3_600_000);
+  if (hours < 1) return 'posted just now';
+  if (hours < 48) return `posted ${Math.floor(hours)} h ago`;
+  return `posted ${Math.floor(hours / 24)} days ago`;
+}

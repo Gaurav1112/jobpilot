@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmodSync, closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { checkRelPath } from '../../kernel/files.js';
-import type { Doc, SnapshotFile } from '../store/app-store.js';
+import type { Doc, GigDoc, SnapshotFile } from '../store/app-store.js';
 
 /**
  * The dashboard's file access under the out root (Task 13), confined like the kernel's files layer:
@@ -11,7 +11,7 @@ import type { Doc, SnapshotFile } from '../store/app-store.js';
  * - a file is opened with O_NOFOLLOW (never through a symlink), must be a regular file with one hard link (a second
  *   link could alias a file outside the root), and must still have the sha256 the store recorded.
  *
- * `snapshotApplied` is the only writer: it copies (never links) a job's current documents into
+ * `snapshotApplied` (and `snapshotGigApplied`, the same for a gig) is the only writer: it copies (never links) a job's current documents into
  * `<jobKey>/applied-<day>/`, each file created exclusively and made read-only (0444), then the folder itself (0555). The kernel's files layer never
  * writes into an `applied-*` directory, so later renders cannot touch a snapshot.
  */
@@ -117,29 +117,68 @@ function writeReadOnly(abs: string, bytes: Uint8Array): void {
  */
 export function snapshotApplied(outDir: string, jobKey: string, docs: readonly Doc[], day: string): SnapshotFile[] {
   if (!JOB_KEY.test(jobKey)) throw new FileRefused('not a job key');
+  return snapshotInto(outDir, [jobKey], docs, day).map((d) => ({ kind: d.kind, format: d.format, path: d.path, sha256: d.sha256 }));
+}
+
+/**
+ * The same for a gig (Task 10): its current documents (the proposal or pitch `.txt` and the contract CV) are copied into
+ * `gigs/<gigKey>/applied-<day>/`, read-only, by the same confined helper. The gig renderer never writes into an
+ * `applied-*` directory.
+ */
+export function snapshotGigApplied(outDir: string, gigKey: string, docs: readonly GigDoc[], day: string): GigDoc[] {
+  if (!JOB_KEY.test(gigKey)) throw new FileRefused('not a gig key');
+  return snapshotInto(outDir, ['gigs', gigKey], docs, day).map((d) => ({ ...d, pages: null }));
+}
+
+interface Copyable {
+  readonly kind: string;
+  readonly format: string;
+  readonly path: string;
+  readonly sha256: string;
+}
+
+/** Copies `docs` (each exactly `<dir>/<kind>.<format>` with its recorded sha256) into `<dir>/applied-<day>/`, read-only. */
+function snapshotInto<D extends Copyable>(outDir: string, dirSegs: readonly string[], docs: readonly D[], day: string): (Copyable & Pick<D, 'kind' | 'format'>)[] {
   if (!DAY.test(day)) throw new FileRefused('not a date');
   const root = rootOf(outDir);
-  const jobDir = confinedDir(root, [jobKey]);
+  const ownerDir = confinedDir(root, dirSegs);
   const dirName = `applied-${day}`;
-  const snapDir = join(jobDir, dirName);
+  const snapDir = join(ownerDir, dirName);
   try {
     mkdirSync(snapDir, { mode: 0o700 });
   } catch (e) {
     if (code(e) !== 'EEXIST') throw e;
   }
-  const real = confinedDir(root, [jobKey, dirName]);
+  const real = confinedDir(root, [...dirSegs, dirName]);
   // An interrupted snapshot left the folder read-only: open it for the missing files, then close it again.
   chmodSync(real, 0o700);
-  const out: SnapshotFile[] = [];
-  const name = (d: Doc): string => `${d.kind}.${d.format}`;
+  const out: (Copyable & Pick<D, 'kind' | 'format'>)[] = [];
+  const name = (d: Copyable): string => `${d.kind}.${d.format}`;
+  const prefix = dirSegs.join('/');
   for (const d of [...docs].sort((a, b) => (name(a) < name(b) ? -1 : name(a) > name(b) ? 1 : 0))) {
-    const file = `${d.kind}.${d.format}`;
-    if (d.path !== `${jobKey}/${file}`) throw new FileRefused(`unexpected document path ${d.path}`);
+    const file = name(d);
+    if (d.path !== `${prefix}/${file}`) throw new FileRefused(`unexpected document path ${d.path}`);
     const src = readRecorded(outDir, d.path, d.sha256);
     if (!src.ok) throw new FileRefused(`${file} ${src.detail}`);
     writeReadOnly(join(real, file), src.bytes);
-    out.push({ kind: d.kind, format: d.format, path: `${jobKey}/${dirName}/${file}`, sha256: d.sha256 });
+    out.push({ kind: d.kind, format: d.format, path: `${prefix}/${dirName}/${file}`, sha256: d.sha256 });
   }
   chmodSync(real, 0o555);
   return out;
+}
+
+/**
+ * Reads `relPath` under `outDir` with the same confinement as `readRecorded` but no recorded sha256 to compare: for the
+ * network packs (`networks/<id>/<file>`), which no table records. Never throws.
+ */
+export function readConfined(outDir: string, relPath: string): ReadResult {
+  try {
+    const segs = checkRelPath(relPath, (m) => new FileRefused(m) as never);
+    const root = rootOf(outDir);
+    const dir = confinedDir(root, segs.slice(0, -1));
+    return { ok: true, bytes: readNoFollow(join(dir, segs[segs.length - 1] as string)) };
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : String(e);
+    return { ok: false, why: detail === 'not on disk' ? 'absent' : 'refused', detail };
+  }
 }

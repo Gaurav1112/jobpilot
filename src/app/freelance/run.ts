@@ -93,14 +93,15 @@ type RateLike = { maxUsdH: number | null; minUsdH: number | null; budgetUsd: num
 
 /**
  * A ranking stand-in for a stored row: exactly the fields `rankGigs` orders by (red flags, maxUsdH, fit, postedAt,
- * gigKey), so the notification picks its top with the dashboard's order. Cast: rankGigs reads nothing else.
+ * gigKey) and the list it is in, so the notification and the dashboard order rows the same way. Cast: rankGigs reads
+ * nothing else.
  */
-function rankable(g: GigView): ScoredGig {
+export function rankable(g: GigView, list: ScoredGig['list'] = 'gigs'): ScoredGig {
   const rate = (g.rate ?? { maxUsdH: null }) as RateLike;
   return {
     risked: { flags: g.flags, verdict: { rated: { rate, gig: { gigKey: g.gigKey, postedAt: g.postedAt } } } },
     fit: g.fit ?? 0,
-    list: 'gigs',
+    list,
     breakdown: {},
   } as unknown as ScoredGig;
 }
@@ -121,7 +122,7 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
   if (fresh.length === 0) return clean(`No new gigs this ${o.half === 'am' ? 'morning' : 'evening'}${tail}`) ?? fallback;
   const count = `${plural(fresh.length, 'new gig', 'new gigs')} ≥$${dollars(o.rateFloor)}/h`;
   const byKey = new Map(fresh.map((g) => [g.gigKey, g]));
-  const candidates = rankGigs(fresh.map(rankable), 0).gigs.filter((s) => s.risked.flags.every((f) => !RED.has(f.id)));
+  const candidates = rankGigs(fresh.map((g) => rankable(g)), 0).gigs.filter((s) => s.risked.flags.every((f) => !RED.has(f.id)));
   const topRow = candidates[0];
   const top = topRow === undefined ? undefined : byKey.get(topRow.risked.verdict.rated.gig.gigKey);
   if (top === undefined) return clean(`${count}${tail}`) ?? fallback;

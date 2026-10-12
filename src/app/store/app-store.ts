@@ -4,7 +4,7 @@ import type { Posting } from '../types.js';
 import { dirname } from 'node:path';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
-import { APP_MIGRATIONS, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES } from './schema.js';
+import { APP_MIGRATIONS, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
 /**
@@ -866,6 +866,114 @@ export class AppStore {
     }));
   }
 
+  // ---- Freelance (Task 10): the dashboard's user-owned writes and its reads of the run's envelopes. ----------------
+
+  /**
+   * Sets a gig's status (the user's, never a run's) and logs the transition in `gig_status_history`. The first time it
+   * becomes `applied` stamps `applied_at`. Status lives on each row: a duplicate listing keeps its own. Returns
+   * undefined when there is no such gig, `changed: false` (and logs nothing) when it already has `to`.
+   */
+  setGigStatus(gigKey: string, to: GigStatus, at: string): { changed: boolean; from: GigStatus } | undefined {
+    if (!(GIG_STATUSES as readonly string[]).includes(to)) throw new Error(`not a gig status: ${String(to)}`);
+    return this.tx(() => {
+      const cur = this.db.prepare(`SELECT status, applied_at FROM gigs WHERE gig_key = ?`).get(gigKey) as { status: GigStatus; applied_at: string | null } | undefined;
+      if (!cur) return undefined;
+      if (cur.status === to) return { changed: false, from: cur.status };
+      this.db.prepare(`UPDATE gigs SET status = ? WHERE gig_key = ?`).run(to, gigKey);
+      if (to === 'applied' && cur.applied_at === null) this.db.prepare(`UPDATE gigs SET applied_at = ? WHERE gig_key = ?`).run(at, gigKey);
+      this.db.prepare(`INSERT INTO gig_status_history (gig_key, "from", "to", at, by) VALUES (?, ?, ?, ?, 'user')`).run(gigKey, cur.status, to, at);
+      return { changed: true, from: cur.status };
+    });
+  }
+
+  /** A gig's status history, oldest first. */
+  gigHistory(gigKey: string): GigHistoryEntry[] {
+    return this.db.prepare(`SELECT "from", "to", at, by FROM gig_status_history WHERE gig_key = ? ORDER BY seq`).all(gigKey) as GigHistoryEntry[];
+  }
+
+  /** Every gig status transition with the gig's platform, oldest first (the Sources tab counts the user's outcomes). */
+  gigTransitions(): { gigKey: string; platform: string; to: GigStatus; at: string }[] {
+    return this.db
+      .prepare(`SELECT h.gig_key AS gigKey, g.platform AS platform, h."to" AS "to", h.at AS at FROM gig_status_history h JOIN gigs g ON g.gig_key = h.gig_key ORDER BY h.seq`)
+      .all() as { gigKey: string; platform: string; to: GigStatus; at: string }[];
+  }
+
+  /** Records one applied snapshot of a gig (its files are already on disk, read-only). Append-only. */
+  putGigSnapshot(gigKey: string, day: string, files: readonly GigDoc[], at: string): void {
+    this.tx(() => {
+      const ins = this.db.prepare(`INSERT INTO gig_snapshots (gig_key, day, kind, format, path, sha256, at) VALUES (?, ?, ?, ?, ?, ?, ?)`);
+      for (const f of files) ins.run(gigKey, day, f.kind, f.format, f.path, f.sha256, at);
+    });
+  }
+
+  /** A gig's applied snapshots, newest day first; files by path. */
+  gigSnapshots(gigKey: string): GigSnapshot[] {
+    const rows = this.db
+      .prepare(`SELECT day, kind, format, path, sha256, at FROM gig_snapshots WHERE gig_key = ? ORDER BY day DESC, path`)
+      .all(gigKey) as (Omit<GigDoc, 'pages'> & { day: string; at: string })[];
+    const out: GigSnapshot[] = [];
+    for (const r of rows) {
+      let s = out.at(-1);
+      if (s?.day !== r.day) out.push((s = { day: r.day, at: r.at, files: [] }));
+      s.files.push({ kind: r.kind, format: r.format, path: r.path, sha256: r.sha256, pages: null });
+    }
+    return out;
+  }
+
+  /**
+   * What a run knew about each gig that the gig row does not keep, from the kernel's stored envelopes (same connection,
+   * read only): the newest `Gig@1` (duration, time zone, skills) and the `GigRendered@1` whose files are exactly the
+   * gig's recorded documents (path and sha256), so its plan (coverage, the facts behind each line) is the one behind
+   * the files. Both are `undefined` when not on record. Read in batches of at most 500 keys.
+   */
+  gigExtras(gigKeys: readonly string[]): Record<string, { gig: unknown; rendered: unknown }> {
+    const out: Record<string, { gig: unknown; rendered: unknown }> = {};
+    for (const k of gigKeys) out[k] = { gig: undefined, rendered: undefined };
+    for (let i = 0; i < gigKeys.length; i += POSTING_BATCH) {
+      const batch = gigKeys.slice(i, i + POSTING_BATCH);
+      const marks = batch.map(() => '?').join(', ');
+      const gigs = this.db
+        .prepare(
+          `SELECT k, body FROM (
+             SELECT json_extract(body, '$.payload.gigKey') AS k, max(rowid) AS r FROM envelopes
+             WHERE type = 'Gig@1' AND json_extract(body, '$.payload.gigKey') IN (${marks}) GROUP BY k
+           ) JOIN envelopes ON envelopes.rowid = r`,
+        )
+        .all(...batch) as { k: string; body: string }[];
+      for (const r of gigs) (out[r.k] as { gig: unknown }).gig = (JSON.parse(r.body) as { payload: unknown }).payload;
+      const docs = this.db.prepare(`SELECT gig_key, path, sha256 FROM gig_docs WHERE gig_key IN (${marks}) ORDER BY gig_key, path`).all(...batch) as { gig_key: string; path: string; sha256: string }[];
+      const want = new Map<string, string>();
+      for (const d of docs) want.set(d.gig_key, `${want.has(d.gig_key) ? `${want.get(d.gig_key) as string}\n` : ''}${d.path}\u0000${d.sha256}`);
+      const keyed = [...want.keys()];
+      if (keyed.length === 0) continue;
+      const rendered = this.db
+        .prepare(`SELECT json_extract(body, '$.payload.gigKey') AS k, body FROM envelopes WHERE type = 'GigRendered@1' AND json_extract(body, '$.payload.gigKey') IN (${keyed.map(() => '?').join(', ')}) ORDER BY rowid DESC`)
+        .all(...keyed) as { k: string; body: string }[];
+      for (const r of rendered) {
+        const slot = out[r.k] as { rendered: unknown };
+        if (slot.rendered !== undefined) continue;
+        const p = (JSON.parse(r.body) as { payload?: { files?: { path: string; sha256: string }[] } }).payload;
+        const got = (p?.files ?? []).map((f) => `${f.path}\u0000${f.sha256}`).sort().join('\n');
+        if (got === want.get(r.k)) slot.rendered = p;
+      }
+    }
+    return out;
+  }
+
+  /** The user's status of each network that has one. */
+  networkStatuses(): Record<string, { status: NetworkStatus; updatedAt: string }> {
+    const rows = this.db.prepare(`SELECT network_id, status, updated_at FROM network_status ORDER BY network_id`).all() as { network_id: string; status: NetworkStatus; updated_at: string }[];
+    return Object.fromEntries(rows.map((r) => [r.network_id, { status: r.status, updatedAt: r.updated_at }]));
+  }
+
+  /** Sets a network's status (the user's). */
+  setNetworkStatus(networkId: string, status: NetworkStatus, at: string): void {
+    if (!(NETWORK_STATUSES as readonly string[]).includes(status)) throw new Error(`not a network status: ${String(status)}`);
+    this.db
+      .prepare(`INSERT INTO network_status (network_id, status, updated_at) VALUES (?, ?, ?) ON CONFLICT (network_id) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at`)
+      .run(networkId, status, at);
+  }
+
   /** Replaces a job's documents and their state (docs rebuild): no other column is touched. False when there is no such job. */
   setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[], citedFacts: readonly string[] | null = null): boolean {
     return this.tx(() => {
@@ -880,6 +988,21 @@ export class AppStore {
 export type GigStatus = (typeof GIG_STATUSES)[number];
 export type GigDocsState = (typeof GIG_DOCS_STATES)[number];
 export type GigList = (typeof GIG_LISTS)[number];
+export type NetworkStatus = (typeof NETWORK_STATUSES)[number];
+
+export interface GigHistoryEntry {
+  readonly from: GigStatus | null;
+  readonly to: GigStatus;
+  readonly at: string;
+  readonly by: 'user' | 'migration';
+}
+
+/** One applied snapshot of a gig: the exact files the user sent, kept read-only under `gigs/<gigKey>/applied-<day>/`. */
+export interface GigSnapshot {
+  readonly day: string;
+  readonly at: string;
+  readonly files: GigDoc[];
+}
 
 export interface GigDoc {
   readonly kind: 'proposal' | 'pitch' | 'resume';

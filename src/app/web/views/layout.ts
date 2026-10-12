@@ -1,6 +1,6 @@
 import { html, type Html } from '../html.js';
 
-export type Nav = 'jobs' | 'facts' | 'runs';
+export type Nav = 'jobs' | 'freelance' | 'facts' | 'runs';
 
 export interface Banner {
   readonly tone: 'warn' | 'critical' | 'info';
@@ -40,7 +40,7 @@ export function layout(d: LayoutData): Html {
 <header class="top">
 <div class="top-inner">
 <a class="brand" href="/">jobpilot</a>
-<nav aria-label="Main">${navLink('/', 'Jobs', d.nav === 'jobs')}${navLink('/facts', 'Your facts', d.nav === 'facts')}${navLink('/runs', 'Runs', d.nav === 'runs')}</nav>
+<nav aria-label="Main">${navLink('/', 'Jobs', d.nav === 'jobs')}${navLink('/freelance', 'Freelance', d.nav === 'freelance')}${navLink('/facts', 'Your facts', d.nav === 'facts')}${navLink('/runs', 'Runs', d.nav === 'runs')}</nav>
 </div>
 </header>
 <main id="main">

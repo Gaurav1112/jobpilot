@@ -1,4 +1,7 @@
+import { RED } from '../freelance/rank.js';
+import { totalHours } from '../freelance/rate.js';
 import type { JobView } from '../store/app-store.js';
+import { usdText } from './format.js';
 
 /**
  * Plain-language copy for the dashboard (Task 13), as strings: the views escape them through `html`. Written from the
@@ -92,4 +95,152 @@ export function breakdownText(label: string, display: (key: string) => string): 
     return m[1] === 'strong' ? `Core skill: ${term}` : m[1] === 'medium' ? `Skill: ${term}` : `Asks for ${term}, which you don't list`;
   }
   return label;
+}
+
+// ---- Freelance (Task 10) ------------------------------------------------------------------------------------------
+
+/** A stored gig rate (RatedGig `rate`), as the dashboard reads it from the row. */
+export interface GigRate {
+  readonly minUsdH: number | null;
+  readonly maxUsdH: number | null;
+  readonly method: string;
+  readonly fxDate: string | null;
+  readonly fxSource: string | null;
+  readonly budgetUsd: number | null;
+}
+
+/** What a rate label needs besides the rate: the gig's text, duration, stated hours per week and budget type. */
+export interface RateBasis {
+  readonly description: string;
+  readonly weeks: number | null;
+  readonly hours: number | null;
+  readonly budgetType: string;
+}
+
+const num1 = (n: number): string => n.toFixed(1).replace(/\.0$/, '');
+const plural = (n: number, one: string, many: string): string => `${num1(n)} ${n === 1 ? one : many}`;
+
+/** "$50/h", "$43.80–49.64/h": the minimum and maximum in US dollars per hour, one figure when they agree. */
+function perHour(r: GigRate): string {
+  const lo = r.minUsdH;
+  const hi = r.maxUsdH;
+  if (lo !== null && hi !== null && lo !== hi) return `${usdText(lo)}–${usdText(hi).slice(1)}/h`;
+  return `${usdText((hi ?? lo) as number)}/h`;
+}
+
+/**
+ * The rate as the user reads it, always with how it was reached (spec §5: a derived rate is never shown without its
+ * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks × 20 h"; `fixed÷stated-hours`:
+ * "$50/h from ~60 hours stated" or "$25/h from 3 weeks × 20 h stated"; `monthly÷hours`: "$46.19/h from a monthly
+ * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"). A rate the
+ * platform's own exchange rate converted ends with " · via platform FX". When a derived rate's basis is not on record
+ * the label says so instead of guessing it.
+ */
+export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
+  const fx = rate?.fxSource === 'platform' ? ' · via platform FX' : '';
+  if (rate === null || rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
+    const b = rate?.budgetUsd ?? null;
+    const kind = basis.budgetType === 'monthly' ? 'monthly' : basis.budgetType === 'fixed' ? 'fixed' : null;
+    return b !== null && kind !== null ? `rate unknown - ${kind} budget ${usdText(b)}${fx}` : `rate unknown${fx}`;
+  }
+  const pay = perHour(rate);
+  const missing = ' (the basis is not on record)';
+  switch (rate.method) {
+    case 'stated':
+      return `${pay} stated${fx}`;
+    case 'derived-from-duration': {
+      const w = basis.weeks;
+      const top = rate.maxUsdH ?? rate.minUsdH;
+      if (w === null || w <= 0 || rate.budgetUsd === null || top === null || top <= 0) return `${pay} derived from the duration${missing}${fx}`;
+      return `${pay} derived from ${plural(w, 'week', 'weeks')} × ${num1(Math.round(rate.budgetUsd / (top * w)))} h${fx}`;
+    }
+    case 'fixed÷stated-hours': {
+      if (basis.hours !== null && basis.hours > 0 && basis.weeks !== null && basis.weeks > 0) return `${pay} from ${plural(basis.weeks, 'week', 'weeks')} × ${num1(basis.hours)} h stated${fx}`;
+      const t = totalHours(basis.description);
+      if (t === null || t === 'refused') return `${pay} from stated hours${missing}${fx}`;
+      return `${pay} from ~${t.lo === t.hi ? String(t.hi) : `${t.lo}–${t.hi}`} hours stated${fx}`;
+    }
+    case 'monthly÷hours':
+      if (rate.budgetUsd === null || basis.hours === null) return `${pay} from a monthly budget${missing}${fx}`;
+      return `${pay} from a monthly ${usdText(rate.budgetUsd)} at ${num1(basis.hours)} h/week stated${fx}`;
+    default:
+      return `${pay} (${rate.method})${fx}`;
+  }
+}
+
+const FLAG_TEXT: Readonly<Record<string, string>> = {
+  'off-platform': 'asks to move off the platform',
+  'unusual-payment': 'asks to pay in crypto, gift cards or a money transfer',
+  'upfront-fee': 'asks you to pay a fee first',
+  'payment-unverified': "client's payment method is not verified",
+  'thin-brief': 'very short brief, client has no history',
+  'unpaid-test': 'asks for free or long unpaid test work',
+  'duplicate-text': 'same text as another post',
+  repeat: 'your proposal opens like another one',
+};
+
+/** A risk flag in plain words, red for the RED ids (rank.ts), amber for every other; its detail is the tooltip. */
+export function flagText(f: { readonly id: string; readonly detail: string }): { label: string; tone: Tone; title: string } {
+  return { label: FLAG_TEXT[f.id] ?? f.id, tone: RED.has(f.id) ? 'critical' : 'warn', title: f.detail };
+}
+
+const PLATFORM_NAME: Readonly<Record<string, string>> = {
+  freelancer: 'Freelancer.com', remotive: 'Remotive', 'hn-freelancer': 'HN freelancer thread', 'hn-hiring': 'HN who is hiring', boards: 'Job boards (contract roles)',
+  gmail: 'Gmail', upwork: 'Upwork', reddit: 'Reddit',
+};
+/** A gig platform id as the user reads it. */
+export const platformName = (id: string): string => PLATFORM_NAME[id] ?? id;
+
+/**
+ * The platforms with no working source in this build, and why (spec §9): shown on the Sources tab. A platform the
+ * user turned off in freelance.yaml says so.
+ */
+export const DISABLED_REASON: Readonly<Record<string, string>> = {
+  upwork: 'API key pending approval',
+  reddit: 'needs your OAuth script app',
+  gmail: 'not connected yet',
+};
+
+/** "covered 6/8 · missing: Kubernetes, Terraform" (display names); null when the gig has no plan on record. */
+export function coverageText(covered: readonly string[], missing: readonly string[], display: (k: string) => string): string {
+  const total = covered.length + missing.length;
+  return `covered ${covered.length}/${total}${missing.length > 0 ? ` · missing: ${missing.map(display).join(', ')}` : ''}`;
+}
+
+/** Stated hours per week ("15 h/week", "10–20 h/week") or "hours not stated". */
+export function hoursText(h: { readonly min: number | null; readonly max: number | null } | null): string {
+  if (h === null || (h.min === null && h.max === null)) return 'hours not stated';
+  if (h.min !== null && h.max !== null && h.min !== h.max) return `${num1(h.min)}–${num1(h.max)} h/week`;
+  return `${num1((h.max ?? h.min) as number)} h/week`;
+}
+
+/** The client's signals, each only when the platform states it. */
+export function clientSignals(c: Record<string, unknown> | null): string[] {
+  if (c === null) return [];
+  const out: string[] = [];
+  if (c['paymentVerified'] === true) out.push('Payment verified');
+  if (c['paymentVerified'] === false) out.push('Payment not verified');
+  if (typeof c['hireRate'] === 'number') out.push(`hires ${Math.round(c['hireRate'] * 100)}% of the time`);
+  if (typeof c['spendUsd'] === 'number') out.push(`spent ${usdText(Math.round(c['spendUsd']))}`);
+  if (typeof c['reviews'] === 'number') out.push(`${c['reviews']} review${c['reviews'] === 1 ? '' : 's'}`);
+  if (typeof c['country'] === 'string' && c['country'] !== '') out.push(c['country']);
+  if (typeof c['since'] === 'string' && /^\d{4}/.test(c['since'])) out.push(`member since ${c['since'].slice(0, 4)}`);
+  return out;
+}
+
+/** Why a gig has no documents to paste, in plain words; null when they are ready. */
+export function gigDocsReason(state: string, detail: string | null, list: string | null): string | null {
+  const d = detail ?? '';
+  switch (state) {
+    case 'ready':
+      return null;
+    case 'missing':
+      return `Documents are missing on disk (${d.replace(/^documents missing:\s*/, '')}). The next run makes them again.`;
+    case 'blocked':
+      return d.startsWith('qa failed: ') ? `Documents blocked: a quality check failed (${d.slice('qa failed: '.length)})` : `Documents blocked${d === '' ? '' : `: ${d}`}`;
+    default:
+      if (d === 'below the fit floor' || list === 'below-floor') return 'No documents: this gig scored under your minimum fit, so none were made.';
+      if (list === null) return 'No documents: this gig is not eligible.';
+      return d === '' ? 'No documents yet: the next run makes them if this gig qualifies.' : `No documents yet: ${d}`;
+  }
 }

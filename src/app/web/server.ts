@@ -24,6 +24,7 @@ import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } fr
 import { JOB_STATUSES } from '../store/schema.js';
 import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
+import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
 import { factRow, factsBody, type FactRow } from './views/facts.js';
@@ -39,7 +40,8 @@ import { runsBody } from './views/runs.js';
  *
  * Routes: `GET /` jobs, `GET /jobs/:key` one job, `POST /jobs/:key/status`, `POST /jobs/:key/note`,
  * `GET /jobs/:key/files/:name` a current document, `GET /jobs/:key/sent/:day/:name` an applied snapshot file,
- * `GET /facts`, `POST /facts/:id/verify|reject`, `GET /runs`, `GET /static/*`. Security rules: `security.ts`.
+ * `GET /facts`, `POST /facts/:id/verify|reject`, `GET /runs`, `GET /static/*`, and the freelance tab under `/freelance`
+ * (`freelance.ts`, Task 10). Security rules: `security.ts`.
  *
  * Forbidden terms: the dashboard is generated output, so every text it shows from the store or the pack is checked
  * against the pack's `naming.forbiddenTerms` and replaced with "[hidden]" when it names one.
@@ -640,6 +642,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       };
     });
     return page(c, 'runs', 'Runs', commonBanners(ps, istDate(at), overrides), runsBody({ runs: r.deep(runs), chain, istTime: istTimeText }));
+  });
+
+  // --- freelance (Task 10): same middleware, same helpers ----------------------------------------------------------------
+  mountFreelance(app, {
+    paths, now, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf, isHx, isBusy,
+    ...(hooks.beforeSnapshot !== undefined ? { beforeSnapshot: hooks.beforeSnapshot } : {}),
   });
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));

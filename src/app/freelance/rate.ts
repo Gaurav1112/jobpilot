@@ -103,7 +103,7 @@ function clauseBefore(window: string): string {
  * Refused: no confirmed figure left, more than one confirmed figure, or a confirmed figure beside an unconfirmed
  * different one ("About 50 hours, maybe 80 hours").
  */
-function totalHours(description: string): { lo: number; hi: number } | 'refused' | null {
+export function totalHours(description: string): { lo: number; hi: number } | 'refused' | null {
   const confirmed = new Map<string, { lo: number; hi: number }>();
   const unconfirmed = new Set<string>();
   const denied = new Set<string>();
