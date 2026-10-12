@@ -40,28 +40,45 @@ const PackView = z.object({
 });
 export type ScorerPack = z.infer<typeof PackView>;
 
-/** The score of one eligible or review verdict. Pure. */
-export function scorePosting(v: EligibilityVerdict, pack: ScorerPack): Scored {
-  if (v.verdict === 'rejected') throw new Error('scorePosting: a rejected verdict is not scored');
-  const { posting } = v;
+/** The formula's result on plain text: the score, its rows in table order, and the lexicon keys found per tier. */
+export interface TextScore {
+  readonly score: number;
+  readonly breakdown: Scored['breakdown'];
+  readonly jdTerms: Scored['jdTerms'];
+}
+
+/**
+ * The v2 §6 formula on plain text. Pure. `title` feeds the title rows; `text` is read for the skill groups (the
+ * description, plus any skill list the caller appends). `yearsRequired` is the posting's, or null when the source has none
+ * (a gig). `scorePosting` and the gig scorer both call this, so there is one copy of the formula.
+ */
+export function scoreText(title: string, text: string, yearsRequired: number | null, pack: ScorerPack): TextScore {
   const breakdown: Scored['breakdown'] = [{ label: 'base', points: BASE }];
-  const seniority = pack.targets.seniority.find((g) => anyTermIn(posting.title, g.words));
+  const seniority = pack.targets.seniority.find((g) => anyTermIn(title, g.words));
   if (seniority !== undefined) breakdown.push({ label: 'title:seniority', points: seniority.points });
-  if (anyTermIn(posting.title, pack.targets.titleBonusWords)) breakdown.push({ label: 'title:family', points: pack.targets.titleBonusPoints });
+  if (anyTermIn(title, pack.targets.titleBonusWords)) breakdown.push({ label: 'title:family', points: pack.targets.titleBonusPoints });
   const all = [...pack.lexicon.strong, ...pack.lexicon.medium, ...pack.lexicon.gap];
   const jdTerms = {
-    strong: termsIn(posting.descriptionText, pack.lexicon.strong, all),
-    medium: termsIn(posting.descriptionText, pack.lexicon.medium, all),
-    gap: termsIn(posting.descriptionText, pack.lexicon.gap, all),
+    strong: termsIn(text, pack.lexicon.strong, all),
+    medium: termsIn(text, pack.lexicon.medium, all),
+    gap: termsIn(text, pack.lexicon.gap, all),
   };
   for (const kind of ['strong', 'medium', 'gap'] as const) {
     for (const key of jdTerms[kind]) breakdown.push({ label: `${kind}:${key}`, points: POINTS[kind] });
   }
-  if (posting.yearsRequired !== null && posting.yearsRequired > pack.targets.maxYearsRequired) {
+  if (yearsRequired !== null && yearsRequired > pack.targets.maxYearsRequired) {
     breakdown.push({ label: 'years>max', points: -pack.targets.yearsPenalty });
   }
   const sum = breakdown.reduce((s, b) => s + b.points, 0);
   const score = Math.min(100, Math.max(0, Math.floor(sum + 0.5)));
+  return { score, breakdown, jdTerms };
+}
+
+/** The score of one eligible or review verdict. Pure. */
+export function scorePosting(v: EligibilityVerdict, pack: ScorerPack): Scored {
+  if (v.verdict === 'rejected') throw new Error('scorePosting: a rejected verdict is not scored');
+  const { posting } = v;
+  const { score, breakdown, jdTerms } = scoreText(posting.title, posting.descriptionText, posting.yearsRequired, pack);
   return { posting, verdict: v.verdict, notes: [...v.notes], score, breakdown, jdTerms };
 }
 

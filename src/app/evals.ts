@@ -15,10 +15,11 @@ import { resumePlanner } from './agents/writing/resume-planner.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
 import { gigRisk } from './freelance/gig-risk.js';
+import { gigScorer } from './freelance/gig-scorer.js';
 import { rateNormalizer } from './freelance/rate.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
-import type { GigVerdict, RatedGig, RiskedGig } from './freelance/types.js';
+import type { GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -149,6 +150,17 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: gigRisk,
       cases: loadJsonl(join(datasetDir, 'gig-risk.jsonl')),
       project: (outs) => one(outs, (o: RiskedGig) => ({ flags: o.flags.map((f) => f.id) })),
+      metric: 'exactMatch',
+      min: 1,
+      pack,
+      packHash: hash,
+    },
+    {
+      // RiskedGig@1 to fit, breakdown and list, on the fixture pack's lexicon; the eval clock is 2026-01-01T00:00:00Z.
+      name: 'gig-scorer',
+      agent: gigScorer,
+      cases: loadJsonl(join(datasetDir, 'gig-scorer.jsonl')),
+      project: (outs) => (outs.length === 0 ? { outputs: 0 } : one(outs, (o: ScoredGig) => ({ fit: o.fit, breakdown: o.breakdown, list: o.list }))),
       metric: 'exactMatch',
       min: 1,
       pack,
