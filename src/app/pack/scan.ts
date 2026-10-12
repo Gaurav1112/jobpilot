@@ -122,7 +122,8 @@ export function packTextProblems(pack: ScannedPack): string[] {
   // strict term check and the glyph check as document text.
   const freelanceFiles: readonly (readonly [string, unknown])[] = [
     ['freelance.yaml', pack.freelance], ['platform-rules.yaml', pack.platformRules],
-    ...pack.networks.map((n) => [`networks/${n.id}.yaml`, n] as const),
+    // An id that itself holds a forbidden term is named by position, never by the id.
+    ...pack.networks.map((n, i) => [forbiddenTermIn(n.id, pack.naming) === undefined ? `networks/${n.id}.yaml` : `networks #${i + 1}`, n] as const),
   ];
   for (const [file, value] of freelanceFiles) {
     for (const s of stringsIn(value, '')) {

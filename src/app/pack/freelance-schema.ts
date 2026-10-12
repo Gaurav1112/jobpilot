@@ -3,8 +3,9 @@ import { Platform } from '../freelance/types.js';
 
 const FREELANCER_QUERIES = ['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm'];
 
-const PlatformConfig = z.strictObject({ enabled: z.boolean().default(true), queries: z.array(z.string()).default([]) });
-export type PlatformConfig = z.infer<typeof PlatformConfig>;
+const PlatformConfig = (enabledByDefault: boolean) =>
+  z.strictObject({ enabled: z.boolean().default(enabledByDefault), queries: z.array(z.string()).default([]) });
+export type PlatformConfig = z.infer<ReturnType<typeof PlatformConfig>>;
 
 /** Sources without a query list are on by default; upwork and reddit have no source in this build, so they start off. */
 const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
@@ -19,8 +20,8 @@ const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
 };
 
 /** One entry per platform; a platform the file leaves out takes its default, one it names is replaced whole. */
-function perPlatform<T>(item: z.ZodType<T>, defaults: Record<Platform, T>) {
-  const shape = Object.fromEntries(Platform.options.map((p) => [p, item.default(defaults[p] as never)])) as Record<Platform, z.ZodDefault<z.ZodType<T>>>;
+function perPlatform<T>(item: (p: Platform) => z.ZodType<T>, defaults: Record<Platform, T>) {
+  const shape = Object.fromEntries(Platform.options.map((p) => [p, item(p).default(defaults[p] as never)])) as Record<Platform, z.ZodDefault<z.ZodType<T>>>;
   return z.strictObject(shape);
 }
 
@@ -36,7 +37,7 @@ export const FreelanceFile = z.strictObject({
   fixedBudgetFloorUsd: Money.default(500),
   fitFloor: z.number().min(0).max(100).default(60),
   kinds: z.array(z.enum(['contract', 'gig', 'bounty'])).min(1, 'at least one kind is required').default(['contract', 'gig', 'bounty']),
-  platforms: perPlatform(PlatformConfig, DEFAULT_PLATFORMS).prefault({}),
+  platforms: perPlatform((p) => PlatformConfig(DEFAULT_PLATFORMS[p].enabled), DEFAULT_PLATFORMS).prefault({}),
 });
 export type FreelanceRules = z.infer<typeof FreelanceFile>;
 
@@ -61,7 +62,7 @@ const DEFAULT_RULES: Record<Platform, PlatformRule> = {
   reddit: PLAIN,
 };
 
-export const PlatformRulesFile = perPlatform(PlatformRule, DEFAULT_RULES);
+export const PlatformRulesFile = perPlatform(() => PlatformRule, DEFAULT_RULES);
 export type PlatformRules = z.infer<typeof PlatformRulesFile>;
 
 /** The user is expected to check a shipped starter against the network's live page before relying on it. */

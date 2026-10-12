@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -556,6 +556,8 @@ describe('freelance pack files', () => {
   });
 });
 
+const DAILY_FULL_HASH = '55a2636155f823877511bb9b51f2e7f880b97bb0f92e6cbcf45a407b17a7fee2';
+const DAILY_FULL_HASH_NONCE7 = 'fa409c3285c09bdc363499abc3362aa244d247c7ebb328197d52722df82c99a1';
 const DAILY_HASH = '900420850a1aaf46edd002e793fcee1d80cd16e2edb08e0fa37f76a3e7d2c820';
 const edit = (d: string, file: string, from: string, to: string): void => {
   const p = join(d, file);
@@ -584,6 +586,23 @@ describe('freelance pack: defaults and partial files', () => {
     writeFileSync(join(d, 'freelance.yaml'), 'kinds: []\n');
     expect(() => loadPack(d)).toThrow(/freelance\.yaml.*kinds.*at least one/s);
   });
+  it('.DS_Store and editor leftovers in networks/ are ignored', () => {
+    const d = copyFixture();
+    for (const f of ['.DS_Store', '.arc.yaml.swp', 'arc.yaml~', 'x.swp']) writeFileSync(join(d, 'networks', f), 'x');
+    expect(loadPack(d).pack.networks).toHaveLength(8);
+  });
+  it('a subdirectory in networks/ gets a clear message', () => {
+    const d = copyFixture();
+    mkdirSync(join(d, 'networks', 'old'));
+    expect(() => loadPack(d)).toThrow(/networks\/old: a folder cannot be a network file/);
+  });
+  it('naming only upwork queries does not switch upwork on', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'freelance.yaml'), 'platforms:\n  upwork: { queries: [java] }\n  remotive: { queries: [java] }\n');
+    const p = loadPack(d).pack.freelance.platforms;
+    expect(p['upwork']).toEqual({ enabled: false, queries: ['java'] });
+    expect(p['remotive']).toEqual({ enabled: true, queries: ['java'] });
+  });
   it('a non-yaml file in networks/ is refused by name', () => {
     const d = copyFixture();
     writeFileSync(join(d, 'networks', 'notes.txt'), 'x');
@@ -611,6 +630,22 @@ describe('freelance pack: hashes', () => {
     expect(b.freelancePackHash).not.toBe(a.freelancePackHash);
     expect(c.freelancePackHash).not.toBe(b.freelancePackHash);
   });
+  it('fullPackHash keeps its pre-freelance value (pinned from base e65761d), with and without a nonce', () => {
+    expect(loadRunPack(FIXTURE, {}, '2026-10').fullPackHash).toBe(DAILY_FULL_HASH);
+    expect(loadRunPack(FIXTURE, {}, '2026-10', 7).fullPackHash).toBe(DAILY_FULL_HASH_NONCE7);
+  });
+  it('freelanceFullPackHash changes on a freelance.yaml edit and on a contact edit, and fullPackHash does not on the first', () => {
+    const d = copyFixture();
+    const a = loadRunPack(d, {}, '2026-10');
+    writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
+    const b = loadRunPack(d, {}, '2026-10');
+    expect(b.freelanceFullPackHash).not.toBe(a.freelanceFullPackHash);
+    edit(d, 'contact.yaml', 'Asha Rao', 'Asha R Rao');
+    const c = loadRunPack(d, {}, '2026-10');
+    expect(c.freelanceFullPackHash).not.toBe(b.freelanceFullPackHash);
+    expect(c.freelancePackHash).toBe(b.freelancePackHash);
+    expect(loadRunPack(d, {}, '2026-10', 3).freelanceFullPackHash).not.toBe(c.freelanceFullPackHash);
+  });
   it('loadRunPack exposes both and keeps fullPackHash independent of the freelance files', () => {
     const d = copyFixture();
     const a = loadRunPack(d, {}, '2026-10');
@@ -632,6 +667,19 @@ describe('freelance pack: naming guard (loadRunPack, which jobpilot pack check u
     const d = copyFixture();
     edit(d, 'freelance.yaml', 'queries: [java,', 'queries: [Initech, java,');
     expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/freelance\.yaml: platforms\.freelancer\.queries\[0\] holds forbidden term #1/);
+  });
+  it('labels a network whose id holds a forbidden term by position, never by id', () => {
+    const d = copyFixture();
+    cpSync(join(d, 'networks', 'toptal.yaml'), join(d, 'networks', 'initech-net.yaml'));
+    edit(d, 'networks/initech-net.yaml', 'id: toptal', 'id: initech-net');
+    let msg = '';
+    try {
+      loadRunPack(d, {}, '2026-10');
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e);
+    }
+    expect(msg).toMatch(/networks #\d+: id holds forbidden term #1/);
+    expect(msg).not.toMatch(/initech/i);
   });
   it('refuses an undrawable glyph in a network screening prep line', () => {
     const d = copyFixture();

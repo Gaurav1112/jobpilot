@@ -60,6 +60,8 @@ export interface RunPack {
   readonly fullPackHash: string;
   /** Hash of the public pack including the freelance files; the freelance supervisor's pack hash. */
   readonly freelancePackHash: string;
+  /** Hash of the full pack (contact, answers, render.nonce) including the freelance files; the freelance renderer's key. */
+  readonly freelanceFullPackHash: string;
   readonly asOf: string;
   readonly nonce: number | undefined;
 }
@@ -82,7 +84,7 @@ export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact
   }
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
-  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, asOf, nonce };
+  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), asOf, nonce };
 }
 
 export interface AppKernelOptions {

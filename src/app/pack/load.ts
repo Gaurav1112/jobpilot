@@ -79,8 +79,13 @@ export function withoutFreelance<T extends object>(pack: T): Omit<T, 'freelance'
 function readNetworks(dir: string): Network[] {
   const nd = join(dir, 'networks');
   if (!existsSync(nd)) return [];
-  const files = readdirSync(nd).sort();
-  return files.map((f) => {
+  // Dotfiles (.DS_Store) and editor leftovers (foo.yaml~, .foo.swp) are not the user's network files.
+  const entries = readdirSync(nd, { withFileTypes: true })
+    .filter((e) => !e.name.startsWith('.') && !e.name.endsWith('~') && !e.name.endsWith('.swp'))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return entries.map((e) => {
+    const f = e.name;
+    if (e.isDirectory()) throw new PackError(`networks/${f}: a folder cannot be a network file; only .yaml files belong in networks/`);
     if (!f.endsWith('.yaml')) throw new PackError(`networks/${f}: only .yaml files belong in networks/`);
     const n = readYaml(dir, `networks/${f}`, NetworkFile);
     if (n.id !== f.slice(0, -'.yaml'.length)) throw new PackError(`networks/${f}: id: ${n.id} must match the file name`);
