@@ -13,7 +13,7 @@ import { Gig, RawGig } from './types.js';
  *
  * - freelancer: `type` hourly is `contract`, fixed is `gig` (any other type is a `gig` with an `unknown` budget);
  *   `budget` is `budget.minimum/maximum` with `currency.code` (a code outside GigCurrency is null); `worldwide` is
- *   `!local`; `bids` is `bid_stats.bid_count`; `skills` are `jobs[].name`; `postedAt` is `time_submitted` (epoch
+ *   `!local`; `usdPerUnit` is `currency.exchange_rate` copied (Freelancer's own rate; null elsewhere); `bids` is `bid_stats.bid_count`; `skills` are `jobs[].name`; `postedAt` is `time_submitted` (epoch
  *   seconds). `hourly_project_info.commitment` is Freelancer's default and is never read.
  * - remotive: `contract` or `part_time` is a `contract`, `freelance` a `gig`, anything else is `invalid_output`.
  *   `publication_date` carries no zone and is read as UTC. Pay is read from `salary` and the description.
@@ -33,34 +33,44 @@ type Budget = Gig['budget'];
 type Currency = NonNullable<Budget['currency']>;
 
 const isRec = (v: unknown): v is Rec => typeof v === 'object' && v !== null && !Array.isArray(v);
+const positive = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null);
 const nonBlank = (v: unknown): string | null => (typeof v === 'string' && v.trim() !== '' ? v : null);
 const finite = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
-const CURRENCIES: readonly string[] = ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD'];
+const CURRENCIES: readonly string[] = ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD', 'SGD', 'NZD', 'HKD'];
 const currencyOf = (v: unknown): Currency | null => (typeof v === 'string' && CURRENCIES.includes(v.toUpperCase()) ? (v.toUpperCase() as Currency) : null);
 const stripped = (v: unknown): string => (typeof v === 'string' ? collapse(htmlToText(v)) : '');
 
 const fail = (r: RawGig, why: string): KernelError => new KernelError('invalid_output', `gig-normalizer: ${r.platform} ${r.sourceId}: ${why}`);
 
-/** "10 hours per week", "15-30 hrs/week", "20h a wk". A phrase without a per-week unit is not hours per week. */
-const HOURS_PER_WEEK = /\b(\d{1,2})(?:\s?-\s?(\d{1,2}))?\s?(?:h|hrs|hours)\s?(?:\/|per|a)\s?(?:week|wk)\b/i;
+/**
+ * "10 hours per week", "15-30 hrs/week", "20h a wk", "between 10 and 20 hours a week". A phrase without a per-week unit
+ * is not hours per week.
+ */
+const HOURS_PER_WEEK = /\b(?:between\s+(\d{1,2})\s+and\s+(\d{1,2})|(\d{1,2})(?:\s?-\s?(\d{1,2}))?)\s?(?:h|hrs|hours)\s?(?:\/|per|a)\s?(?:week|wk)\b/gi;
 
+/** The stated hours per week; several distinct figures ("not 40 h/week, just 10 h/week") are ambiguous, so null. */
 function hoursOf(text: string): Gig['hoursPerWeek'] {
-  const m = HOURS_PER_WEEK.exec(text);
   const none = { min: null, max: null, source: null } as const;
-  if (m === null) return none;
-  const min = Number(m[1]);
-  const max = m[2] === undefined ? min : Number(m[2]);
-  return min > 0 && max >= min ? { min, max, source: 'text' } : none;
+  const found = new Map<string, { min: number; max: number }>();
+  for (const m of text.matchAll(HOURS_PER_WEEK)) {
+    const min = Number(m[1] ?? m[3]);
+    const max = Number(m[2] ?? m[4] ?? min);
+    if (!(min > 0 && max >= min)) return none;
+    found.set(`${min}-${max}`, { min, max });
+  }
+  const only = found.size === 1 ? [...found.values()][0] : undefined;
+  return only === undefined ? none : { ...only, source: 'text' };
 }
 
 /**
  * A duration in weeks: "2 weeks", "6-week". A range ("2-4 weeks") keeps its text and leaves `weeks` null, and so does
- * more than one distinct phrase. "every/each/per/after/past/last N weeks" and "N weeks after/ago/later/notice" are not a
- * project length.
+ * more than one distinct phrase. These are not a project length: "every/each/per/after/past/last/first N weeks",
+ * "N weeks after/ago/later/notice", and N weeks of support, warranty, training, vacation or notice, or a sprint,
+ * cycle, trial or probation.
  */
 const WEEKS =
-  /(?<!\b(?:every|each|per|after|past|last)\s)\b(?:(\d{1,2})\s?(?:-|–|—|to)\s?)?(\d{1,2})[\s-]?(?:weeks?|wks?)\b(?!\s+(?:after|ago|later|old|notice|before|prior)\b)/gi;
+  /(?<!\b(?:every|each|per|after|past|last|first)\s)\b(?:(\d{1,2})\s?(?:-|–|—|to)\s?)?(\d{1,2})[\s-]?(?:weeks?|wks?)\b(?!(?:['’]s?)?\s+(?:after|ago|later|old|notice|before|prior|sprints?|cycles?|trials?|probation|vacation|leave|of\s+(?:support|hypercare|bug|warranty|maintenance|training|vacation|notice))\b)/gi;
 
 function durationOf(text: string): Gig['duration'] {
   const found = [...text.matchAll(WEEKS)].filter((m) => Number(m[2]) > 0);
@@ -70,30 +80,45 @@ function durationOf(text: string): Gig['duration'] {
   return { weeks: first[1] === undefined ? Number(first[2]) : null, text: first[0] };
 }
 
-const SYMBOL: Readonly<Record<string, Currency>> = { $: 'USD', '€': 'EUR', '£': 'GBP', '₹': 'INR', USD: 'USD', EUR: 'EUR', GBP: 'GBP', INR: 'INR' };
-/** A stated pay: a currency sign or code, one figure or a range, then a per-hour or per-month unit. "$" is read as USD. */
+const SYMBOL: Readonly<Record<string, Currency>> = {
+  $: 'USD', 'US$': 'USD', 'C$': 'CAD', 'CA$': 'CAD', 'A$': 'AUD', 'AU$': 'AUD', 'NZ$': 'NZD', 'HK$': 'HKD', 'S$': 'SGD', 'SG$': 'SGD',
+  '€': 'EUR', '£': 'GBP', '₹': 'INR', USD: 'USD', EUR: 'EUR', GBP: 'GBP', INR: 'INR', CAD: 'CAD', AUD: 'AUD', NZD: 'NZD', SGD: 'SGD', HKD: 'HKD',
+};
+/**
+ * A stated pay: a currency sign or code, one figure or a range, then a per-hour or per-month unit. A bare "$" is USD; a
+ * prefixed one (C$, CA$, A$, AU$, NZ$, HK$, S$, SG$, US$) names its currency, and a letter glued before the sign
+ * ("XC$90") is no currency at all.
+ */
 const PAY =
-  /(?<sym>[$€£₹]|\b(?:USD|EUR|GBP|INR)\b)\s?(?<lo>\d[\d,]*(?:\.\d+)?)(?<klo>k)?(?:\s?[-–]\s?(?:[$€£₹]\s?|(?:USD|EUR|GBP|INR)\s?)?(?<hi>\d[\d,]*(?:\.\d+)?)(?<khi>k)?)?\s?(?:\/|per\s|an?\s)\s?(?<unit>hours?|hrs?|h|months?|mo)\b/giu;
+  /(?<![A-Za-z])(?<sym>(?:US|CA|AU|NZ|HK|SG|C|A|S)?\$|[€£₹]|\b(?:USD|EUR|GBP|INR|CAD|AUD|NZD|SGD|HKD)\b)\s?(?<lo>\d[\d,]*(?:\.\d+)?)(?<klo>k)?(?:\s?[-–]\s?(?:(?:(?:US|CA|AU|NZ|HK|SG|C|A|S)?\$|[€£₹])\s?|(?:USD|EUR|GBP|INR|CAD|AUD|NZD|SGD|HKD)\s?)?(?<hi>\d[\d,]*(?:\.\d+)?)(?<khi>k)?)?\s?(?:\/|per\s|an?\s)\s?(?<unit>hours?|hrs?|h|months?|mo)\b/giu;
 /** Words just before a figure that make it a bound or one end of a range, not the rate. */
 const QUALIFIED =
   /\b(?:up\s?to|from|starting(?:\s+at)?|at\s+least|min(?:imum)?|max(?:imum)?|over|under|below|above|less\s+than|more\s+than|estimated|approx(?:imately|\.)?|about|around|roughly|potential(?:\s+of)?|\d\s*(?:to|-|–))\s*$/i;
+/** A monthly figure is pay only next to a pay word; near one of these it is a perk or a price, never pay. */
+const PAY_WORD = /\b(?:rate|pay|paid|paying|salary|compensation|budget|retainer|fee)\b/i;
+const NOT_PAY_WORD = /\b(?:stipend|allowance|subscription|internet|per\s+seat|wellness|benefits?|costs?|price[sd]?|plans?)\b/i;
 
-const UNKNOWN_BUDGET: Budget = { type: 'unknown', min: null, max: null, currency: null };
+const UNKNOWN_BUDGET: Budget = { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null };
 
 function payOf(text: string): Budget {
   const seen = new Map<string, Budget>();
   for (const m of text.matchAll(PAY)) {
     const g = m.groups ?? {};
-    if (QUALIFIED.test(text.slice(Math.max(0, (m.index ?? 0) - 40), m.index ?? 0))) return UNKNOWN_BUDGET;
+    const at = m.index ?? 0;
+    const unit = (g.unit ?? '').toLowerCase();
+    const type = unit.startsWith('mo') ? 'monthly' : 'hourly';
+    if (type === 'monthly') {
+      const around = text.slice(Math.max(0, at - 40), at + m[0].length + 40);
+      if (NOT_PAY_WORD.test(around) || !PAY_WORD.test(around)) continue;
+    }
+    if (QUALIFIED.test(text.slice(Math.max(0, at - 40), at))) return UNKNOWN_BUDGET;
     const k = (s: string | undefined): number => (s === undefined ? 1 : 1000);
     if (g.hi !== undefined && (g.klo === undefined) !== (g.khi === undefined)) return UNKNOWN_BUDGET;
     const lo = Number((g.lo ?? '').replace(/,/g, '')) * k(g.klo);
     const hi = g.hi === undefined ? lo : Number(g.hi.replace(/,/g, '')) * k(g.khi);
     const currency = SYMBOL[(g.sym ?? '').toUpperCase()];
     if (currency === undefined || !Number.isFinite(lo) || !Number.isFinite(hi)) return UNKNOWN_BUDGET;
-    const unit = (g.unit ?? '').toLowerCase();
-    const type = unit.startsWith('mo') ? 'monthly' : 'hourly';
-    seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency });
+    seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
   }
   return seen.size === 1 ? ([...seen.values()][0] ?? UNKNOWN_BUDGET) : UNKNOWN_BUDGET;
 }
@@ -124,6 +149,7 @@ function freelancer(r: RawGig, o: Rec): Draft {
   if (seo === null) throw fail(r, 'missing url');
   const budget = isRec(o.budget) ? o.budget : {};
   const code = isRec(o.currency) ? currencyOf(o.currency.code) : null;
+  const rateOfCurrency = isRec(o.currency) ? o.currency.exchange_rate : null;
   const known = o.type === 'hourly' || o.type === 'fixed';
   const description = nonBlank(o.description) ?? nonBlank(o.preview_description) ?? '';
   return {
@@ -132,7 +158,7 @@ function freelancer(r: RawGig, o: Rec): Draft {
     description: stripped(description),
     clientName: null,
     kind: o.type === 'hourly' ? 'contract' : 'gig',
-    budget: known ? { type: o.type as 'hourly' | 'fixed', min: finite(budget.minimum), max: finite(budget.maximum), currency: code } : UNKNOWN_BUDGET,
+    budget: known ? { type: o.type as 'hourly' | 'fixed', min: finite(budget.minimum), max: finite(budget.maximum), currency: code, usdPerUnit: code === null ? null : positive(rateOfCurrency) } : UNKNOWN_BUDGET,
     location: { countries: [], worldwide: !o.local, text: null },
     skills: Array.isArray(o.jobs) ? o.jobs.flatMap((j: unknown) => (isRec(j) && typeof j.name === 'string' ? [j.name] : [])) : [],
     postedAt: postedAtOf(o.time_submitted, 's'),

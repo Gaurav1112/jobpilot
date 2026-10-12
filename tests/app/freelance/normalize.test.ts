@@ -30,7 +30,7 @@ const baseGig = (over: Partial<Gig> = {}): Gig => ({
   description: '',
   client: { name: null, country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null },
   kind: 'gig',
-  budget: { type: 'unknown', min: null, max: null, currency: null },
+  budget: { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null },
   hoursPerWeek: { min: null, max: null, source: null },
   duration: { weeks: null, text: null },
   timezone: { required: null, overlapText: null },
@@ -112,37 +112,52 @@ describe('gig-normalizer', () => {
 
 describe('rateOf', () => {
   it('converts with the pack table: INR 750-1250 an hour is $8.98-14.97', () => {
-    const r = rateOf(baseGig({ budget: { type: 'hourly', min: 750, max: 1250, currency: 'INR' } }), FX, 20);
-    expect(r).toEqual({ minUsdH: 8.98, maxUsdH: 14.97, method: 'stated', fxDate: '2026-10-01', budgetUsd: null });
+    const r = rateOf(baseGig({ budget: { type: 'hourly', min: 750, max: 1250, currency: 'INR', usdPerUnit: null } }), FX, 20);
+    expect(r).toEqual({ minUsdH: 8.98, maxUsdH: 14.97, method: 'stated', fxDate: '2026-10-01', fxSource: 'pack', budgetUsd: null });
   });
 
   it('GBP 36 an hour is 36 x 106.4 / 83.5 = $45.87', () => {
-    expect(rateOf(baseGig({ budget: { type: 'hourly', min: 36, max: null, currency: 'GBP' } }), FX, 20)).toMatchObject({ minUsdH: 45.87, maxUsdH: null, method: 'stated' });
+    expect(rateOf(baseGig({ budget: { type: 'hourly', min: 36, max: null, currency: 'GBP', usdPerUnit: null } }), FX, 20)).toMatchObject({ minUsdH: 45.87, maxUsdH: null, method: 'stated' });
   });
 
-  it('rounds half up to 2 decimals', () => {
-    expect(rateOf(baseGig({ budget: { type: 'hourly', min: 0.125, max: 8.375, currency: 'USD' } }), FX, 20)).toMatchObject({ minUsdH: 0.13, maxUsdH: 8.38 });
+  it('rounds half up to 2 decimals, including values a float holds just below the tie', () => {
+    const at = (v: number) => rateOf(baseGig({ budget: { type: 'hourly', min: v, max: null, currency: 'USD', usdPerUnit: null } }), FX, 20).minUsdH;
+    expect([1.005, 1.255, 10.075, 39.995, 0.125, 8.375, 1e-7].map(at)).toEqual([1.01, 1.26, 10.08, 40, 0.13, 8.38, 0]);
   });
 
-  it('a CAD or AUD budget is unknown: Gig@1 carries no platform rate', () => {
-    for (const currency of ['CAD', 'AUD'] as const) {
-      expect(rateOf(baseGig({ budget: { type: 'fixed', min: 100, max: 200, currency }, duration: { weeks: 2, text: '2 weeks' } }), FX, 20)).toEqual({ minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, budgetUsd: null });
+  it('uses the platform rate only when the currency is not in the pack table, and labels it', () => {
+    const g = (currency: 'CAD' | 'EUR', usdPerUnit: number | null) => baseGig({ budget: { type: 'hourly', min: 100, max: 100, currency, usdPerUnit } });
+    expect(rateOf(g('CAD', 0.72), FX, 20)).toEqual({ minUsdH: 72, maxUsdH: 72, method: 'stated', fxDate: null, fxSource: 'platform', budgetUsd: null });
+    expect(rateOf(g('EUR', 5), FX, 20)).toMatchObject({ minUsdH: 108.02, fxDate: '2026-10-01', fxSource: 'pack' });
+    for (const bad of [0, -1, Number.NaN, null]) expect(rateOf(g('CAD', bad), FX, 20).method).toBe('unknown');
+  });
+
+  it('a deadline, a per-period figure or an unbounded figure is not total work hours', () => {
+    const m = (d: string) => rateOf(baseGig({ budget: { type: 'fixed', min: 1000, max: 1000, currency: 'USD', usdPerUnit: null }, description: d }), FX, 20);
+    for (const d of ['Turnaround: 24 hours or less.', 'audit within 24–48 hours', 'Available 24 hours a day', '10 hours per day', '40 hours weekly', '100 hours of video', '12345 hours', '20 hrs/wk', 'Up to 50 hours']) expect(m(d).method, d).toBe('unknown');
+    expect(m('about 27 hours')).toMatchObject({ method: 'fixed÷stated-hours', minUsdH: 37.04 });
+    expect(m('roughly 15–25 hours')).toMatchObject({ method: 'fixed÷stated-hours', minUsdH: 40, maxUsdH: 66.67 });
+  });
+
+  it('a CAD or AUD budget without a platform rate is unknown', () => {
+    for (const currency of ['CAD', 'AUD', 'SGD', 'NZD', 'HKD'] as const) {
+      expect(rateOf(baseGig({ budget: { type: 'fixed', min: 100, max: 200, currency, usdPerUnit: null }, duration: { weeks: 2, text: '2 weeks' } }), FX, 20)).toEqual({ minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null });
     }
   });
 
   it('a derived rate takes the pack maxHoursPerWeek, not a constant', () => {
-    const g = baseGig({ budget: { type: 'fixed', min: 2000, max: 2000, currency: 'USD' }, duration: { weeks: 2, text: '2 weeks' } });
+    const g = baseGig({ budget: { type: 'fixed', min: 2000, max: 2000, currency: 'USD', usdPerUnit: null }, duration: { weeks: 2, text: '2 weeks' } });
     expect(rateOf(g, FX, 20)).toMatchObject({ minUsdH: 50, method: 'derived-from-duration' });
     expect(rateOf(g, FX, 10)).toMatchObject({ minUsdH: 100, method: 'derived-from-duration' });
   });
 
   it('an hours-per-week phrase in the description is not total hours', () => {
-    const g = baseGig({ budget: { type: 'fixed', min: 1000, max: 1000, currency: 'USD' }, description: 'Needs 40 hours per week and 20 hours a week.' });
+    const g = baseGig({ budget: { type: 'fixed', min: 1000, max: 1000, currency: 'USD', usdPerUnit: null }, description: 'Needs 40 hours per week and 20 hours a week.' });
     expect(rateOf(g, FX, 20)).toMatchObject({ method: 'unknown', budgetUsd: 1000 });
   });
 
   it('two different total-hours figures are ambiguous, so not used', () => {
-    const g = baseGig({ budget: { type: 'fixed', min: 1000, max: 1000, currency: 'USD' }, description: 'About 50 hours, maybe 80 hours.' });
+    const g = baseGig({ budget: { type: 'fixed', min: 1000, max: 1000, currency: 'USD', usdPerUnit: null }, description: 'About 50 hours, maybe 80 hours.' });
     expect(rateOf(g, FX, 20).method).toBe('unknown');
   });
 
@@ -155,9 +170,9 @@ describe('rateOf', () => {
       { type: 'fixed', min: 1, max: Number.POSITIVE_INFINITY, currency: 'USD' },
     ] as const;
     for (const budget of bad) {
-      const g = baseGig({ budget: { ...budget }, duration: { weeks: 2, text: null } });
+      const g = baseGig({ budget: { ...budget, usdPerUnit: null }, duration: { weeks: 2, text: null } });
       const copy = structuredClone(g);
-      expect(rateOf(g, FX, 20)).toEqual({ minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, budgetUsd: null });
+      expect(rateOf(g, FX, 20)).toEqual({ minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null });
       expect(g).toEqual(copy);
     }
   });
@@ -169,9 +184,9 @@ describe('rateOf', () => {
 
 describe('rate-normalizer agent', () => {
   it('reads fx and maxHoursPerWeek from the pack and emits a RatedGig', async () => {
-    const g = baseGig({ budget: { type: 'fixed', min: 3000, max: 3000, currency: 'USD' }, duration: { weeks: 2, text: '2 weeks' } });
+    const g = baseGig({ budget: { type: 'fixed', min: 3000, max: 3000, currency: 'USD', usdPerUnit: null }, duration: { weeks: 2, text: '2 weeks' } });
     const [out] = await runAgent(rateNormalizer, g, pack);
-    expect(out).toEqual({ gig: g, rate: { minUsdH: 75, maxUsdH: 75, method: 'derived-from-duration', fxDate: null, budgetUsd: 3000 } });
+    expect(out).toEqual({ gig: g, rate: { minUsdH: 75, maxUsdH: 75, method: 'derived-from-duration', fxDate: null, fxSource: null, budgetUsd: 3000 } });
     const tweaked = freezePack({ ...publicPack, freelance: { ...publicPack.freelance, maxHoursPerWeek: 10 } });
     const [out10] = await runAgent(rateNormalizer, g, tweaked);
     expect(out10?.rate.minUsdH).toBe(150);
@@ -206,7 +221,8 @@ describe('golden evals', () => {
     const methods = new Set(spec.cases.map((c) => (c.expected as { method: string }).method));
     for (const m of ['stated', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']) expect(methods.has(m), m).toBe(true);
     const currencies = new Set(spec.cases.map((c) => (c.input as Gig).budget.currency));
-    for (const c of ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']) expect(currencies.has(c as never), c).toBe(true);
+    for (const c of ['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD', 'SGD', 'NZD', 'HKD']) expect(currencies.has(c as never), c).toBe(true);
+    expect(new Set(spec.cases.map((c) => (c.expected as { fxSource: string | null }).fxSource))).toEqual(new Set([null, 'pack', 'platform']));
     const inr = spec.cases.find((c) => c.id === 'stated-inr-750-1250')!;
     expect(inr.expected).toMatchObject({ minUsdH: 8.98, maxUsdH: 14.97 });
     const gbp = spec.cases.find((c) => c.id === 'stated-gbp-36-min-only')!;

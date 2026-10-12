@@ -1,5 +1,5 @@
 {
-  "hash": "ac1a38c3d6421f6e875299b76bb59c009436c46e57710c1cf52f3b4569658bf5",
+  "hash": "7332447ece166a2d3110a6a69bbb3bbfe3560892945762a186fce20812e4a217",
   "shape": {
     "breaker": {
       "consecutiveFailures": 10000
@@ -84,7 +84,10 @@
                       "EUR",
                       "GBP",
                       "CAD",
-                      "AUD"
+                      "AUD",
+                      "SGD",
+                      "NZD",
+                      "HKD"
                     ],
                     "type": "string"
                   },
@@ -113,13 +116,20 @@
                   "unknown"
                 ],
                 "type": "string"
+              },
+              "usdPerUnit": {
+                "type": [
+                  "number",
+                  "null"
+                ]
               }
             },
             "required": [
               "type",
               "min",
               "max",
-              "currency"
+              "currency",
+              "usdPerUnit"
             ],
             "type": "object"
           },

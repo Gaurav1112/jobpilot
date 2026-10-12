@@ -10,62 +10,106 @@ import { Gig, RatedGig } from './types.js';
  *
  * - `hourly` with a minimum or maximum: `stated`.
  * - `fixed`: with `hoursPerWeek.max` and `duration.weeks`, budget / (hours x weeks), `fixed÷stated-hours`; else with
- *   exactly one total-hours figure in the description (TOTAL_HOURS), budget / hours, `fixed÷stated-hours`; else with
- *   `duration.weeks` only, budget / (weeks x maxHoursPerWeek), `derived-from-duration`; else `unknown`.
+ *   exactly one total-hours figure or range in the description (see `totalHours`), budget / hours, `fixed÷stated-hours`
+ *   (a range "N-M hours" gives minUsdH = min budget / M and maxUsdH = max budget / N); else with `duration.weeks` only,
+ *   budget / (weeks x maxHoursPerWeek), `derived-from-duration`; else `unknown`.
  * - `monthly` with `hoursPerWeek.max`: monthly / (hours x 4.33), `monthly÷hours`; else `unknown`.
  * - A budget of type `unknown` (every boards gig, whose pay is an annual salary) is `unknown`.
  * - A bound that is not a finite number above zero, or min above max, makes the whole rate `unknown` with no budget.
- * - Money converts with the pack table: USD per unit is `toINR[c] / toINR.USD`. CAD and AUD are not in the table and
- *   Gig@1 does not carry the platform's own rate, so they are `unknown` with no budget.
- * - `fxDate` is the table's `asOf` whenever a converted (non-USD) figure is returned, else null.
+ * - Money converts with the pack table first (USD per unit is `toINR[c] / toINR.USD`, `fxSource: 'pack'`, `fxDate` the
+ *   table's `asOf`). A currency the table lacks (CAD, AUD, SGD, NZD, HKD) converts with the platform's own
+ *   `budget.usdPerUnit` when it is a finite number above zero (`fxSource: 'platform'`, no `fxDate`), else it is
+ *   `unknown` with no budget. USD needs no conversion (`fxSource` null).
  * - `budgetUsd` is the fixed or monthly budget's maximum (its minimum when there is no maximum) in USD; hourly pay has
  *   none. It is set even when the rate is `unknown`, as long as the money converted.
- * - Every figure is rounded to 2 decimals, half up.
+ * - Every figure is rounded to 2 decimals, half up (`round2`).
  */
 
 type Rate = RatedGig['rate'];
 
-const UNKNOWN: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, budgetUsd: null };
+const UNKNOWN: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null };
 const WEEKS_PER_MONTH = 4.33;
 
-/** A total-hours phrase: "~60 hours", "80 hrs". "40 hours per week" and "20 hrs/week" are rates of work, not totals. */
-const TOTAL_HOURS = /~?\s?(\d{2,4})\s?(?:hours|hrs)\b(?!\s?(?:\/|per|a)\s?week)/gi;
+/**
+ * Every "N hours" or "N-M hours" figure (two to four digits, not part of a longer number). Which of them are work scope
+ * is decided in `totalHours`.
+ */
+const TOTAL_HOURS = /(?<![\w.,])~?\s?(\d{2,4})(?:\s?(?:-|–|—|to)\s?(\d{2,4}))?\s?(?:hours|hrs)\b/gi;
+/** After the figure: a per-period rate of work ("per week", "/day", "weekly", "a day"), a cap, or an amount of material. */
+const NOT_SCOPE_AFTER =
+  /^(?:\s?(?:\/|per|a|an|each|every)\s?(?:week|wk|day|month|mo)\b|\s?(?:weekly|daily|monthly)\b|\s?\/\s?(?:wk|day|mo)\b|\s+(?:or\s+less|max(?:imum)?\b|of\s+(?:video|footage|audio|content|recordings?|support)\b))/i;
+/** Within about 25 characters before the figure: a deadline, response time, uptime, support or a bound, not work scope. */
+const NOT_SCOPE_BEFORE =
+  /\b(?:within|in under|under|turnaround|respond(?:s|ing)?|response|reply|resolution|resolve|deadline|available|availability|uptime|support|sla|deliver(?:y|ed)?|up to|at most|at least|minimum|maximum|max|over|more than|less than|no more than|every|each)\b/i;
 
-const round2 = (x: number): number => Math.round(x * 100 + Number.EPSILON) / 100;
+const round2 = (x: number): number => Math.round(Number((x * 100).toPrecision(15))) / 100;
 const valid = (x: number | null): boolean => x === null || (Number.isFinite(x) && x > 0);
 
-function usdPerUnit(currency: string | null, fx: Fx): number | null {
-  if (currency === 'USD' || currency === 'EUR' || currency === 'GBP' || currency === 'INR') return fx.toINR[currency] / fx.toINR.USD;
+interface Unit {
+  readonly perUsd: number;
+  readonly source: 'pack' | null | 'platform';
+}
+
+function unitOf(gig: Gig, fx: Fx): Unit | null {
+  const { currency, usdPerUnit } = gig.budget;
+  if (currency === 'USD') return { perUsd: 1, source: null };
+  if (currency === 'EUR' || currency === 'GBP' || currency === 'INR') return { perUsd: fx.toINR[currency] / fx.toINR.USD, source: 'pack' };
+  if (currency !== null && usdPerUnit !== null && Number.isFinite(usdPerUnit) && usdPerUnit > 0) return { perUsd: usdPerUnit, source: 'platform' };
   return null;
 }
 
-/** The one total-hours figure the description states, or null when it states none or several. */
-function totalHours(description: string): number | null {
-  const figures = new Set([...description.matchAll(TOTAL_HOURS)].map((m) => Number(m[1])).filter((n) => n > 0));
-  return figures.size === 1 ? ([...figures][0] ?? null) : null;
+/**
+ * The work hours a description states for the whole job: `{lo, hi}` for "about 27 hours" (lo = hi) or "15-25 hours",
+ * `null` when it states none, `'ambiguous'` when it states more than one distinct figure. Not counted: a figure
+ * before which (within 25 characters) a deadline or bound word stands, or after which a per-period unit, "or less",
+ * "max" or an amount of material follows; a figure that is not scope anywhere is not scope in any other place either.
+ * A reversed range ("25-15 hours") is ignored.
+ */
+function totalHours(description: string): { lo: number; hi: number } | 'ambiguous' | null {
+  const scope = new Map<string, { lo: number; hi: number }>();
+  const notScope = new Set<string>();
+  for (const m of description.matchAll(TOTAL_HOURS)) {
+    const lo = Number(m[1]);
+    const hi = m[2] === undefined ? lo : Number(m[2]);
+    const start = m.index ?? 0;
+    const key = `${lo}-${hi}`;
+    if (NOT_SCOPE_AFTER.test(description.slice(start + m[0].length)) || NOT_SCOPE_BEFORE.test(description.slice(Math.max(0, start - 25), start))) notScope.add(key);
+    else if (lo > 0 && hi >= lo) scope.set(key, { lo, hi });
+  }
+  const found = [...scope.entries()].filter(([k]) => !notScope.has(k)).map(([, v]) => v);
+  if (found.length > 1) return 'ambiguous';
+  return found[0] ?? null;
 }
 
 export function rateOf(gig: Gig, fx: Fx, maxHoursPerWeek: number): Rate {
-  const { type, min, max, currency } = gig.budget;
+  const { type, min, max } = gig.budget;
   if (type === 'unknown') return UNKNOWN;
   if (!valid(min) || !valid(max) || (min === null && max === null) || (min !== null && max !== null && min > max)) return UNKNOWN;
-  const per = usdPerUnit(currency, fx);
-  if (per === null) return UNKNOWN;
-  const fxDate = currency === 'USD' ? null : fx.asOf;
-  const usd = (v: number | null, divisor = 1): number | null => (v === null ? null : round2((v * per) / divisor));
-  const make = (method: Rate['method'], divisor: number, budgetUsd: number | null): Rate => ({ minUsdH: usd(min, divisor), maxUsdH: usd(max, divisor), method, fxDate, budgetUsd });
-  if (type === 'hourly') return make('stated', 1, null);
+  const unit = unitOf(gig, fx);
+  if (unit === null) return UNKNOWN;
+  const fxDate = unit.source === 'pack' ? fx.asOf : null;
+  const usd = (v: number | null, divisor = 1): number | null => (v === null ? null : round2((v * unit.perUsd) / divisor));
+  const make = (method: Rate['method'], divisorForMin: number, divisorForMax: number, budgetUsd: number | null): Rate => ({
+    minUsdH: usd(min, divisorForMin),
+    maxUsdH: usd(max, divisorForMax),
+    method,
+    fxDate,
+    fxSource: unit.source,
+    budgetUsd,
+  });
+  if (type === 'hourly') return make('stated', 1, 1, null);
 
   const top = usd(max ?? min);
-  const noRate: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate, budgetUsd: top };
+  const noRate: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate, fxSource: unit.source, budgetUsd: top };
   const hours = gig.hoursPerWeek.max;
   const weeks = gig.duration.weeks;
-  if (type === 'monthly') return hours !== null && hours > 0 ? make('monthly÷hours', hours * WEEKS_PER_MONTH, top) : noRate;
+  if (type === 'monthly') return hours !== null && hours > 0 ? make('monthly÷hours', hours * WEEKS_PER_MONTH, hours * WEEKS_PER_MONTH, top) : noRate;
 
-  if (hours !== null && hours > 0 && weeks !== null && weeks > 0) return make('fixed÷stated-hours', hours * weeks, top);
+  if (hours !== null && hours > 0 && weeks !== null && weeks > 0) return make('fixed÷stated-hours', hours * weeks, hours * weeks, top);
   const total = totalHours(gig.description);
-  if (total !== null) return make('fixed÷stated-hours', total, top);
-  if (weeks !== null && weeks > 0 && Number.isFinite(maxHoursPerWeek) && maxHoursPerWeek > 0) return make('derived-from-duration', weeks * maxHoursPerWeek, top);
+  if (total === 'ambiguous') return noRate;
+  if (total !== null) return make('fixed÷stated-hours', total.hi, total.lo, top);
+  if (weeks !== null && weeks > 0 && Number.isFinite(maxHoursPerWeek) && maxHoursPerWeek > 0) return make('derived-from-duration', weeks * maxHoursPerWeek, weeks * maxHoursPerWeek, top);
   return noRate;
 }
 

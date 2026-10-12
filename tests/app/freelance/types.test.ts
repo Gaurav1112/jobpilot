@@ -13,7 +13,7 @@ const gig = {
   description: 'Build an API',
   client: { name: null, country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null },
   kind: 'gig',
-  budget: { type: 'unknown', min: null, max: null, currency: null },
+  budget: { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null },
   hoursPerWeek: { min: null, max: null, source: null },
   duration: { weeks: null, text: null },
   timezone: { required: null, overlapText: null },
@@ -22,7 +22,7 @@ const gig = {
   postedAt: null,
   bids: null,
 };
-const rated = { gig, rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, budgetUsd: null } };
+const rated = { gig, rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null } };
 const verdict = { rated, verdict: 'review', reasons: [], notes: [] };
 const risked = { verdict, flags: [{ id: 'x', detail: 'y' }] };
 const scored = { risked, fit: 70, breakdown: { skills: 70 }, list: 'review' };

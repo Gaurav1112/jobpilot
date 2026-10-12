@@ -5,7 +5,7 @@ import { IsoDate, IsoDateOrDateTime, JobKey } from '../types.js';
 export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit']);
 export type Platform = z.infer<typeof Platform>;
 
-const GigCurrency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']);
+const GigCurrency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD', 'SGD', 'NZD', 'HKD']);
 
 export const GigRequest = defineType(
   'GigRequest',
@@ -57,6 +57,8 @@ export const Gig = defineType(
           min: z.number().nullable(),
           max: z.number().nullable(),
           currency: GigCurrency.nullable(),
+          /** USD per unit of `currency` as the platform states it (Freelancer `currency.exchange_rate`, copied); null elsewhere. Used only for a currency the pack fx table lacks. */
+          usdPerUnit: z.number().nullable(),
         })
         .strict(),
       hoursPerWeek: z.object({ min: z.number().nullable(), max: z.number().nullable(), source: z.literal('text').nullable() }).strict(),
@@ -84,6 +86,8 @@ export const RatedGig = defineType(
           maxUsdH: z.number().nullable(),
           method: z.enum(['stated', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']),
           fxDate: IsoDate.nullable(),
+          /** Which table converted the money: the pack's, the platform's own rate, or none (USD, or nothing converted). */
+          fxSource: z.enum(['pack', 'platform']).nullable(),
           budgetUsd: z.number().nullable(),
         })
         .strict(),

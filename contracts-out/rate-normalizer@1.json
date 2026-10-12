@@ -1,5 +1,5 @@
 {
-  "hash": "7a62ca29b706f024205fa9f260f1b49cf1530ca40f6b61c54800a50d1549c1c4",
+  "hash": "096f874f73f908be739be25d07edf9d492da014019609d0959d9af83938659d3",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -34,7 +34,10 @@
                       "EUR",
                       "GBP",
                       "CAD",
-                      "AUD"
+                      "AUD",
+                      "SGD",
+                      "NZD",
+                      "HKD"
                     ],
                     "type": "string"
                   },
@@ -63,13 +66,20 @@
                   "unknown"
                 ],
                 "type": "string"
+              },
+              "usdPerUnit": {
+                "type": [
+                  "number",
+                  "null"
+                ]
               }
             },
             "required": [
               "type",
               "min",
               "max",
-              "currency"
+              "currency",
+              "usdPerUnit"
             ],
             "type": "object"
           },
@@ -363,7 +373,10 @@
                           "EUR",
                           "GBP",
                           "CAD",
-                          "AUD"
+                          "AUD",
+                          "SGD",
+                          "NZD",
+                          "HKD"
                         ],
                         "type": "string"
                       },
@@ -392,13 +405,20 @@
                       "unknown"
                     ],
                     "type": "string"
+                  },
+                  "usdPerUnit": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
                   }
                 },
                 "required": [
                   "type",
                   "min",
                   "max",
-                  "currency"
+                  "currency",
+                  "usdPerUnit"
                 ],
                 "type": "object"
               },
@@ -664,6 +684,20 @@
                   }
                 ]
               },
+              "fxSource": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pack",
+                      "platform"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "maxUsdH": {
                 "type": [
                   "number",
@@ -692,6 +726,7 @@
               "maxUsdH",
               "method",
               "fxDate",
+              "fxSource",
               "budgetUsd"
             ],
             "type": "object"
