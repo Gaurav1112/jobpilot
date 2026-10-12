@@ -2,11 +2,10 @@ import { z } from 'zod';
 import { defineAgent } from '../../../kernel/agent.js';
 import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
-import { forbiddenTermStrict } from '../../pack/rules.js';
-import { docxText } from '../../render/docx.js';
 import { htmlAttributeText, htmlText } from '../../render/html.js';
-import { contactLineOf, contactTokens, normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
+import { normText, PAGE_LIMITS, RENDER_FILES, renderedPath } from '../../render/model.js';
 import { QaReport, qaRan, Rendered } from '../../types.js';
+import { check, type Check, contactProblems, hasTerm, hyphenProblems, namingProblem, pdfPages, readDocxText, sameText } from './qa-checks.js';
 
 /**
  * qa-gate (spec §5.4, Task 10): checks the files the renderer wrote, from their bytes, never from the renderer's word.
@@ -59,49 +58,7 @@ export interface QaInputs {
   readonly pdfText: ReadonlyMap<string, string>;
 }
 
-type Check = QaReport['checks'][number];
-const check = (id: string, problems: readonly string[]): Check => ({ id, ok: problems.length === 0, detail: problems.length === 0 ? 'ok' : problems.join('; ') });
-
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** The display name stands alone: not inside a longer word ("Java" is not in "JavaScript"). */
-const hasTerm = (text: string, display: string): boolean => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(display)}(?![\\p{L}\\p{N}])`, 'u').test(text);
-
-/**
- * Lines of the PDF text layer that end in "-" where the source text has no hyphen at that point, as "line N".
- * pdfkit never hyphenates (it breaks only at spaces and after hyphens already in the text), so each PDF line is
- * matched, in reading order, against the normalised document text: a line found there carries the source's own
- * hyphen ("event-" before "driven", or "Architect -" before "Associate"), and a line-end "-" on a line the source
- * does not contain was inserted, which is the problem this check exists for.
- */
-export function hyphenProblems(pdf: string, source: string): string[] {
-  const src = normText(source);
-  const problems: string[] = [];
-  let at = 0;
-  pdf.split(/\n|\f/).forEach((raw, i) => {
-    const line = raw.replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' ').trim();
-    if (line === '') return;
-    const pos = src.startsWith(line, at) ? at : src.indexOf(line, at);
-    if (pos < 0) {
-      if (line.endsWith('-')) problems.push(`line ${i + 1} ends in "-"`);
-      return;
-    }
-    at = pos + line.length;
-  });
-  return problems;
-}
-
-/**
- * Contact tokens of `source` (its second line, split at " | ") that no single line of the PDF text layer holds whole,
- * as "contact item N is broken across lines" (1-based; the token itself is P1 and never named). Whitespace inside a
- * line is collapsed first, since pdftotext -layout may widen it.
- */
-export function contactProblems(pdf: string, source: string): string[] {
-  const lines = pdf.split(/\n|\f/).map((l) => l.replace(/\p{Cf}/gu, '').replace(/\s+/gu, ' '));
-  return contactTokens(contactLineOf(source)).flatMap((t, i) => {
-    const token = t.replace(/\s+/gu, ' ');
-    return lines.some((l) => l.includes(token)) ? [] : [`contact item ${i + 1} is broken across lines`];
-  });
-}
+export { contactProblems, hyphenProblems } from './qa-checks.js';
 
 /** The QA checks of one Rendered, from what was read. Pure, so tests can drive every branch. */
 export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Check[] {
@@ -134,9 +91,8 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
   const docxProblems: string[] = [];
   const contact: string[] = [];
   const scan = (where: string, text: string) => {
-    // final I8: the strict check (glued, split, plural, look-alike) on the raw and the normalised text
-    const t = forbiddenTermStrict(text, pack.naming) ?? forbiddenTermStrict(normText(text), pack.naming);
-    if (t !== undefined) naming.push(`forbidden term #${pack.naming.forbiddenTerms.indexOf(t) + 1} appears in ${where}`);
+    const p = namingProblem(where, text, pack.naming);
+    if (p !== undefined) naming.push(p);
   };
   for (const kind of ['resume', 'cover'] as const) {
     const pdfPath = renderedPath(rendered.jobKey, kind, 'pdf');
@@ -148,12 +104,12 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
       pdfTextProblems.push(`${pdfPath} has no text layer`);
       contact.push(`${pdfPath} has no text layer`);
     } else {
-      const pages = (pdf.match(/\f/g) ?? []).length;
+      const pages = pdfPages(pdf);
       if (pages > PAGE_LIMITS[kind]) pageProblems.push(`${kind} has ${pages} pages, the limit is ${PAGE_LIMITS[kind]}`);
       const recorded = byPath.get(pdfPath)?.pages;
       if (recorded !== pages) pageProblems.push(`${pdfPath} has ${pages} pages, the renderer recorded ${String(recorded)}`);
       hyphen.push(...hyphenProblems(pdf, source).map((p) => `${pdfPath} ${p}`));
-      if (normText(pdf) !== normText(source)) pdfTextProblems.push(`${pdfPath} text differs from the document text`);
+      if (!sameText(pdf, source)) pdfTextProblems.push(`${pdfPath} text differs from the document text`);
       contact.push(...contactProblems(pdf, source).map((p) => `${pdfPath}: ${p}`));
       scan(pdfPath, pdf);
     }
@@ -167,15 +123,11 @@ export function qaChecks(rendered: Rendered, pack: QaPack, read: QaInputs): Chec
     const docx = bytesOf(docxPath);
     if (docx === undefined) docxProblems.push(`${docxPath} cannot be read`);
     else {
-      let text: string | undefined;
-      try {
-        text = docxText(docx);
-      } catch (e) {
-        docxProblems.push(`${docxPath} is not a readable DOCX (${e instanceof Error ? e.message : String(e)})`);
-      }
-      if (text !== undefined) {
-        if (normText(text) !== normText(source)) docxProblems.push(`${docxPath} text differs from the document text`);
-        scan(docxPath, text);
+      const read = readDocxText(docxPath, docx);
+      if ('problem' in read) docxProblems.push(read.problem);
+      else {
+        if (!sameText(read.text, source)) docxProblems.push(`${docxPath} text differs from the document text`);
+        scan(docxPath, read.text);
       }
     }
   }
