@@ -3,6 +3,7 @@ import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, rmSyn
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
+import { DAILY_HOUR_IST } from './due.js';
 import { checkHome, fileWarning, warnOnce } from './home.js';
 import { homePaths } from './pack/paths.js';
 
@@ -28,10 +29,6 @@ export interface PlistOpts {
   readonly node: string;
   readonly repo: string;
   readonly home: string;
-}
-export interface DailyPlistOpts extends PlistOpts {
-  readonly hour: number;
-  readonly minute: number;
 }
 
 const str = (v: string, pad: string): string => `${pad}<string>${escapeXml(v)}</string>`;
@@ -60,13 +57,17 @@ function plist(label: string, o: PlistOpts, args: readonly string[], logName: st
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${parts.join('\n')}\n</dict>\n</plist>\n`;
 }
 
-/** The daily run. `hour`/`minute` are the Mac's LOCAL clock (launchd has no time zone of its own). */
-export function plistDaily(o: DailyPlistOpts): string {
-  if (!Number.isInteger(o.hour) || o.hour < 0 || o.hour > 23) throw new Error(`hour must be 0-23 (got ${o.hour})`);
-  if (!Number.isInteger(o.minute) || o.minute < 0 || o.minute > 59) throw new Error(`minute must be 0-59 (got ${o.minute})`);
-  return plist(DAILY_LABEL, o, ['run'], 'daily.log', [
-    entry('StartCalendarInterval', `  <dict>\n${entry('Hour', `    <integer>${o.hour}</integer>`, '    ')}\n${entry('Minute', `    <integer>${o.minute}</integer>`, '    ')}\n  </dict>`),
-    entry('RunAtLoad', '  <false/>'),
+/**
+ * The daily job: `run --if-due` at load (login) and at every :00 and :30 of the Mac's clock. Most starts find nothing
+ * owed and exit at once (`app/due.ts`); the first start at or after 07:00 IST, or the first after the Mac wakes from a
+ * sleep that spanned it, does the day's run. A single 07:00 calendar slot lost whole days: launchd did not make up a
+ * slot missed in sleep (2026-10-11, -12).
+ */
+export function plistDaily(o: PlistOpts): string {
+  const slot = (minute: number): string => `    <dict>\n${entry('Minute', `      <integer>${minute}</integer>`, '      ')}\n    </dict>`;
+  return plist(DAILY_LABEL, o, ['run', '--if-due'], 'daily.log', [
+    entry('StartCalendarInterval', `  <array>\n${[0, 30].map(slot).join('\n')}\n  </array>`),
+    entry('RunAtLoad', '  <true/>'),
     entry('ProcessType', str('Background', '  ')),
     entry('LowPriorityIO', '  <true/>'),
     entry('ExitTimeOut', '  <integer>120</integer>'),
@@ -81,12 +82,6 @@ export function plistDashboard(o: PlistOpts): string {
     entry('ThrottleInterval', '  <integer>30</integer>'),
     entry('ExitTimeOut', '  <integer>30</integer>'),
   ]);
-}
-
-/** The Mac-local clock time that equals `hour:minute` IST, given the Mac's UTC offset in minutes. */
-export function istToLocal(hour: number, minute: number, localOffsetMinutes: number): { hour: number; minute: number } {
-  const t = (((hour * 60 + minute - IST_OFFSET_MINUTES + localOffsetMinutes) % 1440) + 1440) % 1440;
-  return { hour: Math.floor(t / 60), minute: t % 60 };
 }
 
 /** The next occurrence of `hour:minute` IST after `now`, as "YYYY-MM-DD HH:MM IST". */
@@ -105,7 +100,6 @@ export interface ScheduleOpts extends PlistOpts {
   readonly agentsDir?: string;
 }
 export interface InstallOpts extends ScheduleOpts {
-  readonly localOffsetMinutes?: number;
   readonly now?: Date;
 }
 
@@ -148,7 +142,6 @@ function prepareLogFile(file: string): void {
 export interface InstallResult {
   readonly plists: readonly string[];
   readonly logs: readonly string[];
-  readonly localTime: { hour: number; minute: number };
   readonly nextRun: string;
 }
 
@@ -159,9 +152,7 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   if (v.status !== 0 || nodeVersion === undefined) throw new Error(`could not run "${o.node} --version": ${(v.stderr || v.stdout).trim() || `exit ${v.status}`}`);
   if (Number(nodeVersion.split('.')[0]) < 24) throw new Error(`jobpilot needs Node 24 or newer; ${o.node} is ${nodeVersion}. Install it with a Node 24 binary (not the Volta shim) and run again`);
   const now = o.now ?? new Date();
-  const offset = o.localOffsetMinutes ?? -now.getTimezoneOffset();
-  const localTime = istToLocal(7, 0, offset);
-  const daily = plistDaily({ ...o, ...localTime });
+  const daily = plistDaily(o);
   const dash = plistDashboard(o);
 
   const logsDir = homePaths(o.home).logs;
@@ -183,7 +174,7 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
     const e = run('launchctl', ['enable', `${domain}/${label}`]);
     if (e.status !== 0) throw new Error(`launchctl enable ${label} failed (${e.status}): ${(e.stderr || e.stdout).trim()}`);
   }
-  return { plists, logs, localTime, nextRun: nextRunIst(now, 7, 0) };
+  return { plists, logs, nextRun: nextRunIst(now, DAILY_HOUR_IST, 0) };
 }
 
 /** True when a failed bootout only means the job was not loaded. */

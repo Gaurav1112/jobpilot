@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setWarningSink } from '../../src/app/home.js';
 import {
-  DAILY_LABEL, DASHBOARD_LABEL, escapeXml, installSchedule, istToLocal, nextRunIst, plistDaily, plistDashboard,
+  DAILY_LABEL, DASHBOARD_LABEL, escapeXml, installSchedule, nextRunIst, plistDaily, plistDashboard,
   runNow, scheduleStatus, uninstallSchedule, type Runner,
 } from '../../src/app/schedule.js';
 
@@ -33,15 +33,17 @@ function fake(replies: Record<string, { status: number; stdout?: string; stderr?
 
 describe('plist text', () => {
   it('daily plist has the exact keys', () => {
-    const x = plistDaily({ ...base, hour: 7, minute: 0 });
+    const x = plistDaily(base);
     expect(x).toContain(`<key>Label</key>\n  <string>${DAILY_LABEL}</string>`);
-    expect(x).toMatch(/<key>ProgramArguments<\/key>\s*<array>\s*<string>\/opt\/homebrew\/Cellar\/node\/24\.15\.0\/bin\/node<\/string>\s*<string>--import<\/string>\s*<string>tsx<\/string>\s*<string>\/Users\/x\/jobpilot\/src\/bin\.ts<\/string>\s*<string>run<\/string>\s*<\/array>/);
+    expect(x).toMatch(/<key>ProgramArguments<\/key>\s*<array>\s*<string>\/opt\/homebrew\/Cellar\/node\/24\.15\.0\/bin\/node<\/string>\s*<string>--import<\/string>\s*<string>tsx<\/string>\s*<string>\/Users\/x\/jobpilot\/src\/bin\.ts<\/string>\s*<string>run<\/string>\s*<string>--if-due<\/string>\s*<\/array>/);
     expect(x).toContain('<key>WorkingDirectory</key>\n  <string>/Users/x/jobpilot</string>');
     for (const [k, v] of [['JOBPILOT_HOME', '/Users/x/.jobpilot'], ['PATH', '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin'], ['TZ', 'Asia/Kolkata'], ['LANG', 'en_US.UTF-8']]) {
       expect(x).toContain(`<key>${k}</key>\n    <string>${v}</string>`);
     }
-    expect(x).toMatch(/<key>StartCalendarInterval<\/key>\s*<dict>\s*<key>Hour<\/key>\s*<integer>7<\/integer>\s*<key>Minute<\/key>\s*<integer>0<\/integer>/);
-    expect(x).toMatch(/<key>RunAtLoad<\/key>\s*<false\/>/);
+    // every :00 and :30 and at load: the due check (app/due.ts) decides, so a slot missed in sleep loses no day
+    expect(x).toMatch(/<key>StartCalendarInterval<\/key>\s*<array>\s*<dict>\s*<key>Minute<\/key>\s*<integer>0<\/integer>\s*<\/dict>\s*<dict>\s*<key>Minute<\/key>\s*<integer>30<\/integer>\s*<\/dict>\s*<\/array>/);
+    expect(x).not.toContain('<key>Hour</key>');
+    expect(x).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
     expect(x).toMatch(/<key>ProcessType<\/key>\s*<string>Background<\/string>/);
     expect(x).toMatch(/<key>LowPriorityIO<\/key>\s*<true\/>/);
     expect(x).toMatch(/<key>ExitTimeOut<\/key>\s*<integer>\d+<\/integer>/);
@@ -62,35 +64,25 @@ describe('plist text', () => {
 
   it('escapes XML in every value', () => {
     expect(escapeXml(`a&b<c>"d'`)).toBe('a&amp;b&lt;c&gt;&quot;d&apos;');
-    const x = plistDaily({ ...base, repo: '/Users/a&b/<repo>', hour: 7, minute: 0 });
+    const x = plistDaily({ ...base, repo: '/Users/a&b/<repo>' });
     expect(x).toContain('/Users/a&amp;b/&lt;repo&gt;/src/bin.ts');
     expect(x).not.toContain('a&b');
   });
 
   const hasPlutil = spawnSync('/bin/sh', ['-c', 'command -v plutil']).status === 0;
   it.skipIf(!hasPlutil)('is valid per plutil', () => {
-    for (const x of [plistDaily({ ...base, hour: 7, minute: 0 }), plistDashboard(base)]) {
+    for (const x of [plistDaily(base), plistDashboard(base)]) {
       const r = spawnSync('plutil', ['-lint', '-'], { input: x, encoding: 'utf8' });
       expect(r.status, r.stdout + r.stderr).toBe(0);
     }
   });
 
-  it('rejects relative paths and bad times', () => {
-    expect(() => plistDaily({ ...base, repo: 'rel', hour: 7, minute: 0 })).toThrow(/absolute/);
-    expect(() => plistDaily({ ...base, hour: 24, minute: 0 })).toThrow(/hour/);
-    expect(() => plistDaily({ ...base, hour: 7, minute: 60 })).toThrow(/minute/);
+  it('rejects relative paths', () => {
+    expect(() => plistDaily({ ...base, repo: 'rel' })).toThrow(/absolute/);
   });
 });
 
 describe('time zone', () => {
-  it('maps 07:00 IST to the local clock', () => {
-    expect(istToLocal(7, 0, 330)).toEqual({ hour: 7, minute: 0 });
-    expect(istToLocal(7, 0, 0)).toEqual({ hour: 1, minute: 30 });
-    expect(istToLocal(7, 0, -300)).toEqual({ hour: 20, minute: 30 });
-    expect(istToLocal(7, 0, 540)).toEqual({ hour: 10, minute: 30 });
-    expect(istToLocal(7, 0, -240)).toEqual({ hour: 21, minute: 30 });
-    expect(istToLocal(7, 0, 345)).toEqual({ hour: 7, minute: 15 });
-  });
   it('next run is the next 07:00 IST instant', () => {
     expect(nextRunIst(new Date('2026-10-09T01:29:00Z'), 7, 0)).toBe('2026-10-09 07:00 IST');
     expect(nextRunIst(new Date('2026-10-09T01:31:00Z'), 7, 0)).toBe('2026-10-10 07:00 IST');
@@ -98,7 +90,7 @@ describe('time zone', () => {
 });
 
 describe('install / uninstall / status', () => {
-  const opts = () => ({ ...base, home: join(tmp, 'home'), agentsDir: join(tmp, 'LaunchAgents'), uid: 501, localOffsetMinutes: 330, now: new Date('2026-10-09T00:00:00Z') });
+  const opts = () => ({ ...base, home: join(tmp, 'home'), agentsDir: join(tmp, 'LaunchAgents'), uid: 501, now: new Date('2026-10-09T00:00:00Z') });
 
   it('refuses node below 24 and writes nothing', () => {
     const f = fake({ '--version': { status: 0, stdout: 'v20.19.0\n' } });
@@ -122,23 +114,7 @@ describe('install / uninstall / status', () => {
       ['launchctl', 'bootout', 'gui/501', s], ['launchctl', 'bootstrap', 'gui/501', s], ['launchctl', 'enable', `gui/501/${DASHBOARD_LABEL}`],
     ]);
     expect(r.nextRun).toBe('2026-10-09 07:00 IST');
-    expect(readFileSync(d, 'utf8')).toContain('<integer>7</integer>');
-  });
-
-  it('uses the local hour that equals 07:00 IST on a non-IST Mac', () => {
-    const f = fake();
-    const o = { ...opts(), localOffsetMinutes: 0 };
-    const r = installSchedule(o, f.run);
-    const x = readFileSync(join(o.agentsDir, `${DAILY_LABEL}.plist`), 'utf8');
-    expect(x).toMatch(/<key>Hour<\/key>\s*<integer>1<\/integer>\s*<key>Minute<\/key>\s*<integer>30<\/integer>/);
-    expect(r.localTime).toEqual({ hour: 1, minute: 30 });
-  });
-
-  it.each([[-300, 20, 30], [345, 7, 15]])('local hour for UTC offset %i minutes is %i:%i', (offset, hour, minute) => {
-    const o = { ...opts(), localOffsetMinutes: offset };
-    installSchedule(o, fake().run);
-    const x = readFileSync(join(o.agentsDir, `${DAILY_LABEL}.plist`), 'utf8');
-    expect(x).toMatch(new RegExp(`<key>Hour</key>\\s*<integer>${hour}</integer>\\s*<key>Minute</key>\\s*<integer>${minute}</integer>`));
+    expect(readFileSync(d, 'utf8')).toContain('<string>--if-due</string>');
   });
 
   it('never chmods an existing home (one warning), tightens an existing logs dir and log files', () => {

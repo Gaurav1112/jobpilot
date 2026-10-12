@@ -4,6 +4,8 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
+import { dailyDue, recordFailedAttempt } from './due.js';
+import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
@@ -15,6 +17,11 @@ export interface RunCommandOptions {
   readonly refresh?: boolean;
   /** False for `--no-notify`: nothing is posted and nothing is marked announced. */
   readonly notify: boolean;
+  /**
+   * `--if-due` (the scheduled start): run only when today's run is owed (`dailyDue`), say why not otherwise and exit
+   * 0; another jobpilot holding the lock is also a quiet 0. A run that could not run is recorded for the retry rule.
+   */
+  readonly ifDue?: boolean;
 }
 
 export interface RunCommandDeps {
@@ -58,7 +65,15 @@ export function redactedError(e: unknown, terms: readonly string[] | undefined):
  */
 export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promise<0 | 1 | 2> {
   let live: PlaywrightBrowserProvider | undefined;
+  const startedAt = d.clock.now();
   try {
+    if (o.ifDue === true) {
+      const due = dailyDue(d.home, startedAt);
+      if (!due.due) {
+        d.out(`not due: ${due.reason}`);
+        return 0;
+      }
+    }
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
     // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
     live = offline === undefined ? new (await import('./browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
@@ -75,10 +90,21 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
     d.out(formatSummary(summary));
     return summary.exitCode;
   } catch (e) {
+    if (o.ifDue === true && e instanceof LockError && /^another jobpilot process \(pid /.test(e.message)) {
+      d.out(`not due: ${e.message}`);
+      return 0;
+    }
     const terms = forbiddenTermsAt(homePaths(d.home).pack);
     d.err(`error: ${redactedError(e, terms)}`);
     if (o.notify) {
       await d.notifier(failureNotification(e, terms)).catch((n: unknown) => d.err(`error: the failure notification could not be posted: ${redactedError(n, terms)}`));
+    }
+    if (o.ifDue === true) {
+      try {
+        recordFailedAttempt(d.home, startedAt);
+      } catch (r) {
+        d.err(`error: the failed attempt could not be recorded, so the next start retries at once: ${redactedError(r, terms)}`);
+      }
     }
     return 2;
   } finally {

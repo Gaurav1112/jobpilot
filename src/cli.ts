@@ -27,6 +27,7 @@ import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { forbiddenTermsAt, redactedError, runCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
+import { dailyDue } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 
@@ -243,9 +244,10 @@ program
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--refresh', 'fetch every source again even if today\'s run already did (career listings are re-read; unchanged career job pages still replay)')
   .option('--no-notify', 'do not post the macOS notification (nothing is marked announced)')
-  .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean }) => {
+  .option('--if-due', "run only if today's run is owed (from 07:00 IST, none completed today, failed attempts spaced an hour and at most 3); else print why and exit 0. The scheduled job uses this")
+  .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runCommand(
-      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify },
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });
@@ -440,7 +442,7 @@ schedule
     guarded(() => {
       const r = installSchedule(scheduleOpts());
       for (const p of r.plists) console.log(`wrote ${p}`);
-      console.log(`daily run: 07:00 IST (Mac local ${String(r.localTime.hour).padStart(2, '0')}:${String(r.localTime.minute).padStart(2, '0')}); next run ${r.nextRun}`);
+      console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${r.nextRun}`);
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
@@ -463,6 +465,8 @@ schedule
         console.log(`  plist ${s.plistPath}`);
         console.log(`  log   ${s.logPath}`);
       }
+      const due = dailyDue(jobpilotHome(), new Date().toISOString());
+      console.log(`today's daily run: ${due.due ? `owed: ${due.reason}` : due.reason}`);
     }),
   );
 schedule

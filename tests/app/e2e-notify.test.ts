@@ -1,8 +1,9 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolvePdftotext } from '../../src/app/kernel.js';
+import { withLock } from '../../src/app/lock.js';
 import { offlineProviders } from '../../src/app/offline.js';
 import { loadPack } from '../../src/app/pack/load.js';
 import { runCommand } from '../../src/app/run-command.js';
@@ -181,5 +182,72 @@ describe('the failure notification path (exit 2)', () => {
     expect(code).toBe(2);
     expect(err.join('\n')).toBe('error: facts.yaml: duplicate fact id [hidden]');
     expect(ok.posted).toEqual(['jobpilot run failed; see the log']);
+  });
+});
+
+describe('run --if-due (the half-hourly launchd start)', () => {
+  const deps = (home: string, at: string, posted: string[], out: string[]) => ({
+    home, clock: { now: () => at }, notifier: async (t: string) => void posted.push(t), out: (l: string) => out.push(l), err: () => {},
+    ...(pdftotext ? { pdftotext } : {}), sleep: async () => {},
+  });
+
+  it('before 07:00 IST does nothing: exit 0, one line, no notification, no DB', async () => {
+    const home = newHome();
+    const posted: string[] = [];
+    const out: string[] = [];
+    const code = await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T01:29:00.000Z', posted, out));
+    expect(code).toBe(0);
+    expect(out).toEqual(['not due: before 07:00 IST']);
+    expect(posted).toEqual([]);
+    expect(existsSync(join(home, 'jobpilot.db'))).toBe(false);
+  });
+
+  it('a run that could not run is recorded, so the next half-hourly start waits an hour before retrying', async () => {
+    const home = newHome();
+    writeFileSync(join(home, 'pack/policy.user.yaml'), 'minHostIntervalMs: 40000\n');
+    const posted: string[] = [];
+    const out: string[] = [];
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T01:30:00.000Z', posted, out))).toBe(2);
+    expect(posted).toHaveLength(1);
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T02:00:00.000Z', posted, out))).toBe(0);
+    expect(out.at(-1)).toBe('not due: the last attempt failed at 07:00 IST; retrying from 08:00 IST');
+    expect(posted).toHaveLength(1);
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T02:30:00.000Z', posted, out))).toBe(2);
+    expect(posted).toHaveLength(2);
+  });
+
+  it('a plain run (no --if-due) that fails records nothing', async () => {
+    const home = newHome();
+    writeFileSync(join(home, 'pack/policy.user.yaml'), 'minHostIntervalMs: 40000\n');
+    const posted: string[] = [];
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true }, deps(home, '2026-10-09T01:30:00.000Z', posted, []))).toBe(2);
+    const out: string[] = [];
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T01:40:00.000Z', posted, out))).toBe(2);
+    expect(out).toEqual([]);
+  });
+
+  it('another jobpilot holding the lock is a quiet no-op, not a failure', async () => {
+    const home = newHome();
+    const posted: string[] = [];
+    const out: string[] = [];
+    const code = await withLock(home, 'run', () => runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T03:59:00.000Z', posted, out)));
+    expect(code).toBe(0);
+    expect(out).toEqual([expect.stringMatching(/^not due: another jobpilot process \(pid \d+, run\) holds .*jobpilot\.lock since /)]);
+    expect(posted).toEqual([]);
+  });
+
+  it('after a completed run the rest of the day does nothing', async () => {
+    if (pdftotext === undefined) return;
+    const home = newHome();
+    const posted: string[] = [];
+    const out: string[] = [];
+    // the Mac slept through 07:00 IST and woke at 09:29
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T03:59:00.000Z', posted, out))).toBe(0);
+    expect(out.join('\n')).toMatch(/^run daily-2026-10-09 for 2026-10-09/);
+    expect(posted).toHaveLength(1);
+    out.length = 0;
+    expect(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T04:30:00.000Z', posted, out))).toBe(0);
+    expect(out).toEqual(["not due: today's run completed"]);
+    expect(posted).toHaveLength(1);
   });
 });
