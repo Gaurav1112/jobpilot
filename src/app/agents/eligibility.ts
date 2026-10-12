@@ -207,8 +207,14 @@ const SHORT_TERM: readonly RegExp[] = [
   /\bshort[\s-]term\b/i,
   /\bpart[\s-]?time\b/i,
   /\bper hour\b|\/\s?h(?:ou)?r\b|\bhourly\b/i,
+  /\bduration:?\s*\d{1,2}\s*(?:months?|weeks?)\b/i,
+  /\b\d{1,2}[\s-]?(?:months?|weeks?)\s+(?:project|engagement|assignment)\b/i,
+  // under 30 hours a week is not full-time ("~15 hrs a week")
+  /\b(?:[1-9]|[12]\d)\s*(?:hrs?|hours?)\s*(?:a|per|\/)\s*week\b/i,
 ];
+/** One window for the trigger and for the other-kind scan: a blocking phrase anywhere the trigger can see must block. */
 const B2B_HEAD = 3000;
+const INTERN_TITLE = /\binterns?(?:hips?)?\b/i;
 
 /**
  * Freelance spec D2: a full-time B2B contractor role. True when the title or the first 3,000 characters of the
@@ -225,8 +231,8 @@ export function fullTimeContract(p: Posting): boolean {
 function onlyContractKind(p: Posting): boolean {
   const known = (p.employmentType ?? '').split(/[,;/|]/).map((s) => canonicalEmployment(s.trim())).filter((c): c is string => c !== null);
   if (known.some((c) => c !== 'contract')) return false;
-  if (/\binterns?(?:hips?)?\b/i.test(p.title)) return false;
-  const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, HEAD)].join('\n');
+  if (INTERN_TITLE.test(p.title)) return false;
+  const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, B2B_HEAD)].join('\n');
   return EMPLOYMENT_PHRASES.every(([label, re]) => {
     const m = re.exec(text);
     return m === null || (label !== '' ? label : (m[1] ?? '').toLowerCase()) === 'contract';
@@ -250,7 +256,7 @@ function rawEmploymentReason(p: Posting, pack: EligibilityPack): string | null {
   if (known.length > 0) return `employment:${known[0]}`;
   const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, HEAD)].join('\n');
   if (FULL_TIME_TEXT.test(text)) return null;
-  if (/\binterns?(?:hips?)?\b/i.test(p.title)) return 'employment:intern';
+  if (INTERN_TITLE.test(p.title)) return 'employment:intern';
   for (const [label, re] of EMPLOYMENT_PHRASES) {
     const m = re.exec(text);
     if (m !== null) return `employment:${label !== '' ? label : (m[1] ?? '').toLowerCase()}`;

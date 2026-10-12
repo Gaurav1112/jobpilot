@@ -670,6 +670,12 @@ describe('D2 full-time B2B', () => {
     expect(decide(b2b({ employmentType: 'Contract, Temporary' }))).toEqual(rejected('employment:contract'));
   });
 
+  it('a non-contract kind anywhere in the 3,000-character window blocks the pass', () => {
+    const pad = `${B2B_DESC} ${'filler '.repeat(280)}`; // c2h lands near character 2,000
+    expect(pad.length).toBeGreaterThan(1900);
+    expect(decide(b2b({ descriptionText: `${pad}This is a c2h role.` }))).toEqual(rejected('employment:contract'));
+  });
+
   it('a title word Contractor counts as contract', () => {
     expect(decide(b2b({ employmentType: null, title: 'Contractor Java Developer' }))).toEqual({ verdict: 'eligible', reasons: [], notes: [NOTE_B2B] });
   });
@@ -685,6 +691,10 @@ describe('D2 full-time B2B', () => {
     expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Part-time.' }))).toBe(false);
     expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. A short-term engagement.' }))).toBe(false);
     expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Pay $50/hr.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Duration: 6 Months.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. A 6-month project.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Expect ~15 hrs a week.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. 40 hours per week.' }))).toBe(true);
     expect(fullTimeContract(p({ descriptionText: `${'x '.repeat(1600)}Contract type: B2B.` }))).toBe(false); // past 3,000 characters
   });
 });

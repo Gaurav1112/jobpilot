@@ -272,10 +272,10 @@ describe('dashboard: jobs list', () => {
 
   it('shows the B2B contractor badge on the row and on the job page, only where the note is set', async () => {
     const list = (await get('/')).body;
-    expect(list).toContain('<span class="pill pill-accent" title="B2B contractor: no PF/benefits">B2B contractor</span>');
-    expect(list.match(/B2B contractor<\/span>/g)?.length).toBe(1);
-    expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor</span>');
-    expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor</span>');
+    expect(list).toContain('<span class="pill pill-accent">B2B contractor: no PF/benefits</span>');
+    expect(list.match(/B2B contractor: no PF\/benefits<\/span>/g)?.length).toBe(1);
+    expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor: no PF/benefits</span>');
+    expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor: no PF/benefits</span>');
   });
 
   it('marks rows first seen since the previous visit as new', async () => {
