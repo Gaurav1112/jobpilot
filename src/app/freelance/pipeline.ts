@@ -1,0 +1,104 @@
+import type { AnyAgent } from '../../kernel/agent.js';
+import type { Policy } from '../../kernel/policy.js';
+import type { Pipeline, Team } from '../../kernel/wiring.js';
+import { SOURCE_TIMEOUT_MS } from '../agents/sources/common.js';
+import type { FreelanceRules } from '../pack/freelance-schema.js';
+import { gigEligibility } from './gig-eligibility.js';
+import { gigNormalizer } from './gig-normalizer.js';
+import { gigRisk } from './gig-risk.js';
+import { gigScorer } from './gig-scorer.js';
+import { rateNormalizer } from './rate.js';
+import { gigSources } from './sources/index.js';
+import { GigRequest, type Platform } from './types.js';
+import { gigQa } from './writing/gig-qa.js';
+import { gigRenderer } from './writing/gig-renderer.js';
+import { proposalPlanner } from './writing/proposal-planner.js';
+
+/**
+ * The freelance pipeline (spec §3), `jobpilot-freelance@1.0.0`, run as `freelance-<IST date>-<am|pm>`:
+ *
+ *   GigRequest@1 ─► src-freelancer | src-remotive | src-hn | src-board-contracts ─► RawGig@1 ─► gig-normalizer ─► Gig@1
+ *   ─► rate-normalizer ─► RatedGig@1 ─► gig-eligibility ─► GigVerdict@1 ─► gig-risk ─► RiskedGig@1 ─► gig-scorer
+ *   ─► ScoredGig@1 ─► proposal-planner ─► GigDocsPlan@1 ─► gig-renderer ─► GigRendered@1 ─► gig-qa ─► GigQaReport@1
+ *
+ * Every source gets every request and answers only its own platform (an empty list otherwise). A rejected verdict ends
+ * at the scorer (it returns nothing for it). Writing runs only for a scored gig with fit at or above
+ * `freelance.fitFloor` in any list (contracts, gigs and review): proposal-planner returns nothing below it, as the
+ * daily evidence-matcher does below `minFit`. Cross-query duplicates (one Freelancer project found by two queries)
+ * travel as separate items with one gigKey; the projector keeps one row per gigKey.
+ */
+export const FREELANCE_PIPELINE = { id: 'jobpilot-freelance', version: '1.0.0' } as const;
+
+const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as const;
+
+/** Every agent of the freelance run, in a stable order. */
+export const freelanceAgents = (): AnyAgent[] => [...gigSources, gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa];
+
+/** The wiring for `agents`, with the daily rule for teams and breakers (a team breaker follows its most tolerant member). */
+export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
+  const teams: Team[] = TEAM_ORDER.map((id) => {
+    const members = agents.filter((a) => a.contract.team === id);
+    return {
+      id,
+      lead: `${id}-lead`,
+      members: members.map((a) => a.contract.id),
+      exitGuarantees: [],
+      breaker: { consecutiveFailures: Math.max(1, ...members.map((a) => a.contract.breaker.consecutiveFailures)) },
+    };
+  }).filter((t) => t.members.length > 0);
+  return {
+    id: FREELANCE_PIPELINE.id,
+    version: FREELANCE_PIPELINE.version,
+    seed: { type: GigRequest, guarantees: [] },
+    teams,
+    edges: [
+      ...gigSources.map((a) => ({ type: 'GigRequest@1', to: a.contract.id })),
+      { type: 'RawGig@1', to: 'gig-normalizer' },
+      { type: 'Gig@1', to: 'rate-normalizer' },
+      { type: 'RatedGig@1', to: 'gig-eligibility' },
+      { type: 'GigVerdict@1', to: 'gig-risk' },
+      { type: 'RiskedGig@1', to: 'gig-scorer' },
+      { type: 'ScoredGig@1', to: 'proposal-planner' },
+      { type: 'GigDocsPlan@1', to: 'gig-renderer' },
+      { type: 'GigRendered@1', to: 'gig-qa' },
+    ],
+  };
+}
+
+/** The platforms this build has a source agent for, and the agent that answers each. */
+export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
+  freelancer: 'src-freelancer',
+  remotive: 'src-remotive',
+  'hn-freelancer': 'src-hn',
+  'hn-hiring': 'src-hn',
+  boards: 'src-board-contracts',
+};
+
+/**
+ * The run's seeds, all dated `runDate` and `half`, in this order: Freelancer one request per pack query (each query
+ * once), Remotive one, HN two (hn-freelancer, hn-hiring), then one `boards` request per stored daily contract posting.
+ * Only enabled platforms with a source agent in this build are seeded (gmail, upwork and reddit have none yet).
+ */
+export function freelanceSeeds(rules: Pick<FreelanceRules, 'platforms'>, runDate: string, half: 'am' | 'pm', boardPostings: readonly unknown[]): GigRequest[] {
+  const on = (p: Platform) => rules.platforms[p].enabled;
+  const seeds: GigRequest[] = [];
+  const at = { runDate, half };
+  if (on('freelancer')) for (const query of [...new Set(rules.platforms.freelancer.queries)]) seeds.push({ platform: 'freelancer', query, ...at });
+  if (on('remotive')) seeds.push({ platform: 'remotive', query: '', ...at });
+  if (on('hn-freelancer')) seeds.push({ platform: 'hn-freelancer', query: '', ...at });
+  if (on('hn-hiring')) seeds.push({ platform: 'hn-hiring', query: '', ...at });
+  if (on('boards')) for (const item of boardPostings) seeds.push({ platform: 'boards', query: '', ...at, item });
+  return seeds;
+}
+
+/**
+ * M5 for the freelance sources: every fetching source makes at most two requests to its one host per step (HN: the
+ * thread search, then the thread), each sized for SOURCE_TIMEOUT_MS / 2 or more, so a host interval above that would
+ * time a step out instead of pacing it. Empty when the run may start.
+ */
+export function freelancePacingProblems(policy: Pick<Policy, 'minHostIntervalMs'>): string[] {
+  const perRequest = SOURCE_TIMEOUT_MS / 2;
+  return policy.minHostIntervalMs > perRequest
+    ? [`minHostIntervalMs ${policy.minHostIntervalMs} ms breaks the src-hn timeout arithmetic (at most ${perRequest} ms per request); lower it in policy.user.yaml`]
+    : [];
+}

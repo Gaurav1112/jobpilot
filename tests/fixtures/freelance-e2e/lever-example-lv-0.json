@@ -1,0 +1,52 @@
+[
+ {
+  "id": "lv-7001",
+  "text": "Staff Platform Engineer",
+  "hostedUrl": "https://jobs.example-lv.test/lv-7001",
+  "applyUrl": "https://jobs.example-lv.test/lv-7001/apply",
+  "createdAt": 1790928000000,
+  "workplaceType": "remote",
+  "country": "IN",
+  "categories": {
+   "commitment": "Full-time",
+   "location": "Remote - India",
+   "allLocations": [
+    "Remote - India"
+   ],
+   "team": "Platform"
+  },
+  "descriptionPlain": "We run a multi-tenant SaaS platform on AWS and Kubernetes. You will lead event-driven microservices in Java and Spring, with Kafka between services and PostgreSQL behind them.",
+  "lists": [
+   {
+    "text": "What you will do",
+    "content": "<li>Own the platform roadmap for distributed systems</li><li>Mentor engineers</li>"
+   }
+  ],
+  "additionalPlain": "This is a remote role open to candidates in India."
+ },
+ {
+  "id": "lv-7002",
+  "text": "Backend Contractor (Go, TypeScript)",
+  "hostedUrl": "https://jobs.example-lv.test/lv-7002",
+  "applyUrl": "https://jobs.example-lv.test/lv-7002/apply",
+  "createdAt": 1790928000000,
+  "workplaceType": "remote",
+  "country": "IN",
+  "categories": {
+   "commitment": "Contract",
+   "location": "Remote - India",
+   "allLocations": [
+    "Remote - India"
+   ],
+   "team": "Platform"
+  },
+  "descriptionPlain": "A three-month contract to build Go and TypeScript services on AWS with PostgreSQL and Kafka. About 15 hours per week, async, overlap with Indian evenings is fine.",
+  "lists": [
+   {
+    "text": "What you will do",
+    "content": "<li>Build Go APIs on PostgreSQL</li><li>Ship TypeScript services on AWS</li>"
+   }
+  ],
+  "additionalPlain": "This is a remote contract open to candidates in India."
+ }
+]

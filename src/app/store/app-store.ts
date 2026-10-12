@@ -4,7 +4,7 @@ import type { Posting } from '../types.js';
 import { dirname } from 'node:path';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
-import { APP_MIGRATIONS, DOCS_STATES, JOB_STATUSES } from './schema.js';
+import { APP_MIGRATIONS, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
 /**
@@ -687,6 +687,167 @@ export class AppStore {
     return row ? runOf(row) : undefined;
   }
 
+  // ---- Freelance (Task 9): gigs, their documents, run summaries and source health. -------------------------------
+
+  /**
+   * Inserts the gig, or updates its run-owned columns and `last_seen` (never status, note, applied_at, notified_at or
+   * first_seen), then re-links its dedupe group (and the old one when the key changed). An observation older than the
+   * row's `last_seen` is `stale` and changes nothing, as `upsertJob`.
+   */
+  upsertGig(r: GigUpsert): { gigKey: string; inserted: boolean; stale: boolean } {
+    return this.tx(() => {
+      const cur = this.db.prepare(`SELECT platform, source_id, dedupe_key, last_seen FROM gigs WHERE gig_key = ?`).get(r.gigKey) as
+        | { platform: string; source_id: string; dedupe_key: string; last_seen: string }
+        | undefined;
+      if (cur && (cur.platform !== r.platform || cur.source_id !== r.sourceId)) throw new Error(`gig ${r.gigKey} is ${cur.platform}:${cur.source_id}, not ${r.platform}:${r.sourceId}`);
+      if (cur && r.at < cur.last_seen) return { gigKey: r.gigKey, inserted: false, stale: true };
+      const params = gigParams(r);
+      if (cur) {
+        this.db.prepare(`UPDATE gigs SET ${GIG_RUN_COLUMNS.map((c) => `${c} = ?`).join(', ')}, last_seen = ? WHERE gig_key = ?`).run(...params, r.at, r.gigKey);
+        if (cur.dedupe_key !== r.dedupeKey) this.relinkGigs(cur.dedupe_key);
+      } else {
+        this.db
+          .prepare(`INSERT INTO gigs (gig_key, platform, source_id, ${GIG_RUN_COLUMNS.join(', ')}, first_seen, last_seen) VALUES (?, ?, ?, ${GIG_RUN_COLUMNS.map(() => '?').join(', ')}, ?, ?)`)
+          .run(r.gigKey, r.platform, r.sourceId, ...params, r.at, r.at);
+      }
+      this.relinkGigs(r.dedupeKey);
+      return { gigKey: r.gigKey, inserted: !cur, stale: false };
+    });
+  }
+
+  /**
+   * `duplicate_of` for one gig dedupe group, the v1 rule: the earliest first_seen row (then gig key) is the group's
+   * row; every row from another platform points at it, and rows from its own platform stay separate gigs.
+   */
+  private relinkGigs(dedupeKey: string): void {
+    const rows = (this.db.prepare(`SELECT gig_key, platform, first_seen, duplicate_of FROM gigs WHERE dedupe_key = ?`).all(dedupeKey) as {
+      gig_key: string;
+      platform: string;
+      first_seen: string;
+      duplicate_of: string | null;
+    }[]).sort((a, b) => cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
+    const top = rows[0];
+    if (!top) return;
+    const set = this.db.prepare(`UPDATE gigs SET duplicate_of = ? WHERE gig_key = ?`);
+    for (const r of rows) {
+      const dup = r !== top && r.platform !== top.platform ? top.gig_key : null;
+      if (dup !== r.duplicate_of) set.run(dup, r.gig_key);
+    }
+  }
+
+  /** Replaces a gig's documents (an empty list clears them). */
+  putGigDocs(gigKey: string, docs: readonly GigDoc[]): void {
+    this.tx(() => {
+      this.db.prepare(`DELETE FROM gig_docs WHERE gig_key = ?`).run(gigKey);
+      const ins = this.db.prepare(`INSERT INTO gig_docs (gig_key, kind, format, path, sha256, pages) VALUES (?, ?, ?, ?, ?, ?)`);
+      for (const d of docs) ins.run(gigKey, d.kind, d.format, d.path, d.sha256, d.pages);
+    });
+  }
+
+  getGig(gigKey: string): (GigView & { readonly docs: GigDoc[] }) | undefined {
+    const row = this.db.prepare(`SELECT * FROM gigs WHERE gig_key = ?`).get(gigKey) as GigRowDb | undefined;
+    if (!row) return undefined;
+    const docs = this.db.prepare(`SELECT kind, format, path, sha256, pages FROM gig_docs WHERE gig_key = ? ORDER BY kind, format`).all(gigKey) as GigDoc[];
+    return { ...gigView(row), docs };
+  }
+
+  /** Every gig by gig key; duplicate listings only with `duplicates`. */
+  listGigs(o: { readonly duplicates?: boolean } = {}): GigView[] {
+    const rows = this.db.prepare(`SELECT * FROM gigs ${o.duplicates === true ? '' : 'WHERE duplicate_of IS NULL'} ORDER BY gig_key`).all() as GigRowDb[];
+    return rows.map(gigView);
+  }
+
+  /** Marks the gigs a notification announced, once: an already announced gig keeps its first time. */
+  markGigsNotified(gigKeys: readonly string[], at: string): void {
+    this.tx(() => {
+      const upd = this.db.prepare(`UPDATE gigs SET notified_at = ? WHERE gig_key = ? AND notified_at IS NULL`);
+      for (const k of gigKeys) upd.run(at, k);
+    });
+  }
+
+  /** Records (or re-records) one freelance run's summary. */
+  recordGigRun(s: RunSummary): void {
+    this.db
+      .prepare(
+        `INSERT INTO gig_runs_summary (run_id, at, counts, pack_hash, policy_hash, warnings, problems) VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (run_id) DO UPDATE SET at = excluded.at, counts = excluded.counts, pack_hash = excluded.pack_hash,
+           policy_hash = excluded.policy_hash, warnings = excluded.warnings, problems = excluded.problems`,
+      )
+      .run(s.runId, s.at, JSON.stringify(s.counts), s.packHash, s.policyHash, JSON.stringify(s.warnings ?? []), JSON.stringify(s.problems ?? []));
+  }
+
+  /** The newest recorded freelance run, if any. */
+  latestGigRun(): RunSummary | undefined {
+    const row = this.db.prepare(`SELECT * FROM gig_runs_summary ORDER BY at DESC, run_id DESC LIMIT 1`).get() as RunRowDb | undefined;
+    return row ? runOf(row) : undefined;
+  }
+
+  /**
+   * The stored daily jobs that are contract, freelance or part-time (their reasons include `employment:contract`,
+   * `employment:freelance` or `employment:part-time`), duplicate listings left out, by job key, each with the
+   * Posting@1 the daily normalizer emitted for it: the newest stored Posting@1 envelope with that job key (same
+   * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
+   * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. `missing` lists the job keys with
+   * no stored posting (a Desk import): they are not seeded.
+   */
+  contractPostings(): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
+    const keys = (
+      this.db
+        .prepare(
+          `SELECT job_key FROM jobs WHERE duplicate_of IS NULL AND EXISTS (
+             SELECT 1 FROM json_each(jobs.reasons) WHERE value IN ('employment:contract', 'employment:freelance', 'employment:part-time')
+           ) ORDER BY job_key`,
+        )
+        .all() as { job_key: string }[]
+    ).map((r) => r.job_key);
+    const latest = this.db.prepare(
+      `SELECT body FROM envelopes WHERE type = 'Posting@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY rowid DESC LIMIT 1`,
+    );
+    const postings: { jobKey: string; posting: unknown }[] = [];
+    const missing: string[] = [];
+    for (const jobKey of keys) {
+      const row = latest.get(jobKey) as { body: string } | undefined;
+      if (row === undefined) missing.push(jobKey);
+      else postings.push({ jobKey, posting: (JSON.parse(row.body) as { payload: unknown }).payload });
+    }
+    return { postings, missing };
+  }
+
+  /**
+   * Adds one run's counts to `source_health` for (platform, week), once per run and platform: false (nothing added)
+   * when this run was already counted for the platform. `probeFailures` is the platform's new streak of runs whose
+   * every fetch failed (it replaces the stored value; the caller carries it across weeks).
+   */
+  addSourceHealth(runId: string, platform: string, week: string, d: SourceHealthDelta): boolean {
+    return this.tx(() => {
+      const fresh = this.db.prepare(`INSERT OR IGNORE INTO source_health_runs (run_id, platform) VALUES (?, ?)`).run(runId, platform).changes === 1;
+      if (!fresh) return false;
+      this.db
+        .prepare(
+          `INSERT INTO source_health (platform, week, fetched, eligible, above_floor, shortlisted, runs, failed_runs, probe_failures)
+           VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+           ON CONFLICT (platform, week) DO UPDATE SET fetched = fetched + excluded.fetched, eligible = eligible + excluded.eligible,
+             above_floor = above_floor + excluded.above_floor, shortlisted = shortlisted + excluded.shortlisted, runs = runs + 1,
+             failed_runs = failed_runs + excluded.failed_runs, probe_failures = excluded.probe_failures`,
+        )
+        .run(platform, week, d.fetched, d.eligible, d.aboveFloor, d.shortlisted, d.failed ? 1 : 0, d.probeFailures);
+      return true;
+    });
+  }
+
+  /** The source health rows, by platform then week. */
+  sourceHealth(platform?: string): SourceHealthRow[] {
+    const rows = (
+      platform === undefined
+        ? this.db.prepare(`SELECT * FROM source_health ORDER BY platform, week`).all()
+        : this.db.prepare(`SELECT * FROM source_health WHERE platform = ? ORDER BY week`).all(platform)
+    ) as SourceHealthDb[];
+    return rows.map((r) => ({
+      platform: r.platform, week: r.week, fetched: r.fetched, eligible: r.eligible, aboveFloor: r.above_floor, shortlisted: r.shortlisted,
+      applied: r.applied, replied: r.replied, won: r.won, runs: r.runs, failedRuns: r.failed_runs, probeFailures: r.probe_failures,
+    }));
+  }
+
   /** Replaces a job's documents and their state (docs rebuild): no other column is touched. False when there is no such job. */
   setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[], citedFacts: readonly string[] | null = null): boolean {
     return this.tx(() => {
@@ -697,6 +858,176 @@ export class AppStore {
     });
   }
 }
+
+export type GigStatus = (typeof GIG_STATUSES)[number];
+export type GigDocsState = (typeof GIG_DOCS_STATES)[number];
+export type GigList = (typeof GIG_LISTS)[number];
+
+export interface GigDoc {
+  readonly kind: 'proposal' | 'pitch' | 'resume';
+  readonly format: 'txt' | 'pdf' | 'docx';
+  readonly path: string;
+  readonly sha256: string;
+  readonly pages: number | null;
+}
+
+/** The run-owned columns of a gig, its identity and the time it was seen. Never status, note or notified_at. */
+export interface GigUpsert {
+  readonly gigKey: string;
+  readonly dedupeKey: string;
+  readonly platform: string;
+  readonly sourceId: string;
+  readonly url: string;
+  readonly title: string;
+  readonly description: string;
+  readonly client: unknown;
+  readonly kind: (typeof GIG_KINDS)[number];
+  readonly budget: unknown;
+  /** The RatedGig rate, or null when the gig was not rated. */
+  readonly rate: unknown;
+  readonly hours: unknown;
+  readonly verdict: Verdict | null;
+  readonly reasons: readonly string[];
+  readonly notes: readonly string[];
+  readonly flags: readonly { readonly id: string; readonly detail: string }[];
+  readonly fit: number | null;
+  readonly breakdown: Readonly<Record<string, number>> | null;
+  readonly list: GigList | null;
+  readonly docsState: GigDocsState;
+  readonly docsDetail: string | null;
+  readonly postedAt: string | null;
+  readonly at: string;
+}
+
+export interface GigView extends Omit<GigUpsert, 'at' | 'flags' | 'reasons' | 'notes' | 'breakdown'> {
+  readonly duplicateOf: string | null;
+  readonly flags: { id: string; detail: string }[];
+  readonly reasons: string[];
+  readonly notes: string[];
+  readonly breakdown: Record<string, number> | null;
+  readonly firstSeen: string;
+  readonly lastSeen: string;
+  readonly status: GigStatus;
+  readonly note: string;
+  readonly appliedAt: string | null;
+  readonly notifiedAt: string | null;
+}
+
+export interface SourceHealthDelta {
+  readonly fetched: number;
+  readonly eligible: number;
+  readonly aboveFloor: number;
+  readonly shortlisted: number;
+  /** Whether any of the platform's fetches failed in the run (adds 1 to `failed_runs`). */
+  readonly failed: boolean;
+  readonly probeFailures: number;
+}
+
+export interface SourceHealthRow {
+  readonly platform: string;
+  readonly week: string;
+  readonly fetched: number;
+  readonly eligible: number;
+  readonly aboveFloor: number;
+  readonly shortlisted: number;
+  readonly applied: number;
+  readonly replied: number;
+  readonly won: number;
+  /** Runs counted into this row. */
+  readonly runs: number;
+  readonly failedRuns: number;
+  readonly probeFailures: number;
+}
+
+interface SourceHealthDb {
+  platform: string;
+  week: string;
+  fetched: number;
+  eligible: number;
+  above_floor: number;
+  shortlisted: number;
+  applied: number;
+  replied: number;
+  won: number;
+  runs: number;
+  failed_runs: number;
+  probe_failures: number;
+}
+
+interface GigRowDb {
+  gig_key: string;
+  dedupe_key: string;
+  duplicate_of: string | null;
+  platform: string;
+  source_id: string;
+  url: string;
+  title: string;
+  description: string;
+  client: string;
+  kind: GigUpsert['kind'];
+  budget: string;
+  rate: string | null;
+  hours: string;
+  verdict: Verdict | null;
+  reasons: string;
+  notes: string;
+  flags: string;
+  fit: number | null;
+  breakdown: string | null;
+  list: GigList | null;
+  docs_state: GigDocsState;
+  docs_detail: string | null;
+  posted_at: string | null;
+  first_seen: string;
+  last_seen: string;
+  status: GigStatus;
+  note: string;
+  applied_at: string | null;
+  notified_at: string | null;
+}
+
+/** Run-owned gig columns, in the order `gigParams` binds them. */
+const GIG_RUN_COLUMNS = [
+  'dedupe_key', 'url', 'title', 'description', 'client', 'kind', 'budget', 'rate', 'hours', 'verdict', 'reasons', 'notes', 'flags', 'fit', 'breakdown',
+  'list', 'docs_state', 'docs_detail', 'posted_at',
+] as const;
+
+const gigParams = (r: GigUpsert): unknown[] => [
+  r.dedupeKey, r.url, r.title, r.description, JSON.stringify(r.client), r.kind, JSON.stringify(r.budget), json(r.rate), JSON.stringify(r.hours), r.verdict,
+  JSON.stringify(r.reasons), JSON.stringify(r.notes), JSON.stringify(r.flags), r.fit, json(r.breakdown), r.list, r.docsState, r.docsDetail, r.postedAt,
+];
+
+const gigView = (r: GigRowDb): GigView => ({
+  gigKey: r.gig_key,
+  dedupeKey: r.dedupe_key,
+  duplicateOf: r.duplicate_of,
+  platform: r.platform,
+  sourceId: r.source_id,
+  url: r.url,
+  title: r.title,
+  description: r.description,
+  client: JSON.parse(r.client) as unknown,
+  kind: r.kind,
+  budget: JSON.parse(r.budget) as unknown,
+  rate: parse(r.rate),
+  hours: JSON.parse(r.hours) as unknown,
+  verdict: r.verdict,
+  reasons: JSON.parse(r.reasons) as string[],
+  notes: JSON.parse(r.notes) as string[],
+  flags: JSON.parse(r.flags) as { id: string; detail: string }[],
+  fit: r.fit,
+  breakdown: parse(r.breakdown),
+  list: r.list,
+  docsState: r.docs_state,
+  docsDetail: r.docs_detail,
+  postedAt: r.posted_at,
+  firstSeen: r.first_seen,
+  lastSeen: r.last_seen,
+  status: r.status,
+  note: r.note,
+  appliedAt: r.applied_at,
+  notifiedAt: r.notified_at,
+});
 
 interface RunRowDb {
   run_id: string;

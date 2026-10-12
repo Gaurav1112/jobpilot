@@ -3,6 +3,7 @@ import { loadJsonl, type EvalSpec } from '../evals/runner.js';
 import type { AnyAgent } from '../kernel/agent.js';
 import { freezePack, issueContext } from '../kernel/broker.js';
 import { fixedClock } from '../kernel/clock.js';
+import { hashOf } from '../kernel/canonical.js';
 import { contractHash } from '../kernel/contract.js';
 import { KernelError } from '../kernel/errors.js';
 import { ZERO_COST, type Envelope } from '../kernel/envelope.js';
@@ -106,6 +107,10 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
   const { pack: full, hash } = loadPack(packDir);
   const { contact: _contact, answers: _answers, ...publicPack } = full;
   const pack = freezePack(publicPack);
+  // The gig-grounding gate measures grounding on every scored fixture gig, so it runs with the shortlist floor off:
+  // proposal-planner plans nothing under `freelance.fitFloor` (Task 9), which its unit tests cover.
+  const unfloored = { ...publicPack, freelance: { ...publicPack.freelance, fitFloor: 0 } };
+  const gigPack = freezePack(unfloored);
   return [
     {
       agent: eligibility,
@@ -141,11 +146,11 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       name: 'gig-grounding',
       agent: proposalPlanner,
       cases: loadJsonl(join(datasetDir, 'gig-grounding.jsonl')),
-      project: async (outs) => (outs.length === 1 ? gigGrounding((outs[0] as GigDocsPlan).scored, pack) : { plans: outs.length }),
+      project: async (outs) => (outs.length === 1 ? gigGrounding((outs[0] as GigDocsPlan).scored, gigPack) : { plans: outs.length }),
       metric: 'exactMatch',
       min: 1,
-      pack,
-      packHash: hash,
+      pack: gigPack,
+      packHash: hashOf(unfloored),
     },
     {
       // RawGig@1 to Gig@1: the whole Gig, or the error message of a raw the normalizer refuses.

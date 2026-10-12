@@ -172,7 +172,7 @@ describe('due (per-pipeline windows)', () => {
   it('3 failures in am cap am only; pm is due; the cap and the alert reset per window', () => {
     for (const t of ['07:30', '08:30', '09:30']) fl.finish(home, at(t), 'failed');
     fl.markAlerted(home, at('10:00'));
-    expect(due(FREELANCE_DUE, home, at('10:00'))).toMatchObject({ due: false, capped: true, window: 'am', reason: '3 attempts failed in the am window; run "jobpilot run" by hand after fixing the cause' });
+    expect(due(FREELANCE_DUE, home, at('10:00'))).toMatchObject({ due: false, capped: true, window: 'am', reason: '3 attempts failed in the am window; run "jobpilot run-freelance" by hand after fixing the cause' });
     expect(fl.alerted(home, at('10:00'))).toBe(true);
     expect(due(FREELANCE_DUE, home, at('19:30'))).toMatchObject({ due: true, window: 'pm' });
     expect(fl.alerted(home, at('19:30'))).toBe(false);

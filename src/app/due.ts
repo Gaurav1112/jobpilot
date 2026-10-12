@@ -61,10 +61,13 @@ export interface DueSpec {
   readonly attemptsFile: string;
   /** Run ids are `<runPrefix><IST date>[-<window id>][-<ordinal>]`. */
   readonly runPrefix: string;
+  /** The CLI command that runs this pipeline by hand (named in the give-up reason). */
+  readonly command: 'run' | 'run-freelance';
 }
-export const DAILY_DUE: DueSpec = { pipeline: 'daily', windows: [{ fromIst: '07:00', id: '' }], attemptsFile: ATTEMPTS_FILE, runPrefix: 'daily-' };
+export const DAILY_DUE: DueSpec = { pipeline: 'daily', windows: [{ fromIst: '07:00', id: '' }], attemptsFile: ATTEMPTS_FILE, runPrefix: 'daily-', command: 'run' };
 export const FREELANCE_DUE: DueSpec = {
   pipeline: 'freelance',
+  command: 'run-freelance',
   windows: [
     { fromIst: '07:30', id: 'am' },
     { fromIst: '19:30', id: 'pm' },
@@ -82,6 +85,8 @@ interface Wording {
   readonly span: string;
   /** "today's run" or "the <id> window's run". */
   readonly run: string;
+  /** The CLI command to run by hand; default `run`. */
+  readonly command?: string;
 }
 
 function decide(i: DueInput, startOfWindow: number, w: Wording): Due {
@@ -89,7 +94,7 @@ function decide(i: DueInput, startOfWindow: number, w: Wording): Due {
   if (t < startOfWindow) return { due: false, reason: `before ${w.from} IST` };
   if (i.completedToday) return { due: false, reason: `${w.run} completed` };
   const n = i.failuresToday.length;
-  if (n >= MAX_FAILED_ATTEMPTS) return { due: false, capped: true, reason: `${n} attempts failed ${w.span}; run "jobpilot run" by hand after fixing the cause` };
+  if (n >= MAX_FAILED_ATTEMPTS) return { due: false, capped: true, reason: `${n} attempts failed ${w.span}; run "jobpilot ${w.command ?? 'run'}" by hand after fixing the cause` };
   const last = Math.max(...i.failuresToday.map((f) => Date.parse(f)));
   if (n > 0 && t < last + RETRY_AFTER_MS) {
     return { due: false, reason: `the last attempt failed at ${istClock(last)} IST; retrying from ${istClock(last + RETRY_AFTER_MS)} IST` };
@@ -203,7 +208,9 @@ export function due(spec: DueSpec, home: string, now: string): Due & { window: s
   const first = spec.windows[0]!;
   const w = win ?? first;
   const wording: Wording =
-    w.id === '' ? { from: w.fromIst, span: 'today', run: "today's run" } : { from: w.fromIst, span: `in the ${w.id} window`, run: `the ${w.id} window's run` };
+    w.id === ''
+      ? { from: w.fromIst, span: 'today', run: "today's run", command: spec.command }
+      : { from: w.fromIst, span: `in the ${w.id} window`, run: `the ${w.id} window's run`, command: spec.command };
   const start = startOfIstDay(now) + minutesOf(w.fromIst) * 60_000;
   const failuresToday = failuresOf(read(spec, home, now));
   const early = { ...decide({ now, completedToday: false, failuresToday }, start, wording), window };

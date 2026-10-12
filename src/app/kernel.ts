@@ -16,6 +16,8 @@ import { loadPack, PackError, withoutFreelance } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
+import { freelanceAgents, freelancePacingProblems, freelancePipeline } from './freelance/pipeline.js';
+import { freelanceDocsPacks } from './freelance/writing/gig-renderer.js';
 import { makeJobTracker } from './tracker.js';
 
 /** Where poppler's pdftotext usually lives when PATH does not say (a launchd job has a bare PATH). */
@@ -166,6 +168,51 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     fullPack: o.loaded.fullPack,
     fullPackHash: o.loaded.fullPackHash,
     egressSets: careersEgressSets(pack.watchlist),
+    codeHash: o.codeHash ?? codeHash(),
+    ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+  });
+  return { registry, compiled, supervisor, policy, policyHash: pHash };
+}
+
+/**
+ * The freelance counterpart of `preparePipeline`: the freelance agents through the same capability allow-list and
+ * wiring proof (`jobpilot-freelance@1.0.0`), the same effective policy (so the same policy hash) and the freelance
+ * pacing check. Throws on any problem.
+ */
+export function prepareFreelance(pack: Pick<Pack, 'policyUser'>): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
+  const guardrails = appGuardrails();
+  const agents = freelanceAgents();
+  const { registry, compiled } = compileDaily(agents, guardrails, freelancePipeline(agents));
+  const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
+  const pacing = freelancePacingProblems(policy);
+  if (pacing.length > 0) throw new Error(`refusing to start:\n- ${pacing.join('\n- ')}`);
+  return { registry, compiled, guardrails, policy, policyHash: policyHash(policy) };
+}
+
+/**
+ * Wires the freelance pipeline for one run: `prepareFreelance`, then a supervisor with the freelance packs and hashes
+ * (`freelanceDocsPacks`: the public pack keyed by `freelancePackHash`, the full pack by `freelanceFullPackHash`, so a
+ * freelance file edit re-runs the steps that read it), the out root, the absolute pdftotext and the injected sleep. No
+ * tracker (the job tracker follows daily postings) and no browser (no freelance source renders a page).
+ */
+export function freelanceKernel(o: Omit<AppKernelOptions, 'browser' | 'mode'>): AppKernel {
+  if (!isAbsolute(o.pdftotext)) throw new Error(`pdftotext must be an absolute path, not ${o.pdftotext}`);
+  const { registry, compiled, guardrails, policy, policyHash: pHash } = prepareFreelance(o.loaded.pack);
+  const packs = freelanceDocsPacks(o.loaded);
+  const supervisor = new Supervisor({
+    store: o.store,
+    registry,
+    compiled,
+    guardrails,
+    policy,
+    policyHash: pHash,
+    providers: { fetch: o.fetch, fileRoots: { out: o.outDir }, pdfText: pdftotextProvider(o.pdftotext) },
+    clock: o.clock,
+    sleep: o.sleep,
+    pack: packs.pack,
+    packHash: packs.packHash,
+    fullPack: packs.fullPack,
+    fullPackHash: packs.fullPackHash,
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
   });

@@ -45,10 +45,12 @@ import { pitchOf } from './pitch-planner.js';
  *   else `PHRASES.question`; with nothing missing, a scope question.
  * - **Variant** of every slot: `variantOf(gigKey, n)` (`phrases.ts`).
  * - Kind `gig` gets a proposal, kind `contract` a pitch (`pitch-planner.ts`); a bounty or network alert gets no plan.
+ * - **Shortlist (Task 9).** The agent plans nothing for a gig whose fit is under `freelance.fitFloor` (`belowFitFloor`);
+ *   `planGigDocs` itself plans any scored gig (the gig-grounding eval runs it on every fixture gig).
  */
 
 const GigRules = z.object({
-  freelance: z.object({ maxHoursPerWeek: z.number(), istWindow: z.string() }),
+  freelance: z.object({ maxHoursPerWeek: z.number(), istWindow: z.string(), fitFloor: z.number() }),
   platformRules: z.record(z.string(), z.object({ maxChars: z.number().nullable(), hookChars: z.number().nullable() })),
 });
 
@@ -435,7 +437,14 @@ export const proposalPlannerContract = defineContract({
   guardrails: { in: [], out: ['G-GROUND', 'G-NAMING', 'G-NO-GAP-CLAIM'] },
 });
 
+/**
+ * The shortlist rule of the freelance wiring (Task 9): a gig scored below `freelance.fitFloor` gets no documents, in
+ * any list, so the planner returns nothing for it (as the daily evidence-matcher does below `minFit`).
+ */
+export const belowFitFloor = (scored: ScoredGig, rawPack: unknown): boolean => scored.fit < GigRules.parse(rawPack).freelance.fitFloor;
+
 export const proposalPlanner = defineAgent(proposalPlannerContract, async (scored, ctx) => {
+  if (failLoud('proposal-planner', () => belowFitFloor(scored, ctx.pack))) return [];
   const plan = failLoud('proposal-planner', () => planGigDocs(scored, ctx.pack));
   return plan === undefined ? [] : [plan];
 });

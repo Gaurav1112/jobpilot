@@ -5,7 +5,8 @@ import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { lookup } from 'node:dns/promises';
-import { alerted, dailyDue, finishAttempt, markAlerted, startAttempt } from './due.js';
+import { attemptsFor, DAILY_DUE, due, FREELANCE_DUE, type DueSpec } from './due.js';
+import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
 import { offlineProviders } from './offline.js';
@@ -40,9 +41,9 @@ export interface RunCommandDeps {
 
 /** Hosts every pack's sources depend on; one resolving means the network is up (Wi-Fi is often still down at wake). */
 const PROBE_HOSTS = ['boards-api.greenhouse.io', 'api.lever.co', 'api.ashbyhq.com'];
-export async function dnsOnline(): Promise<boolean> {
+export async function dnsOnline(hosts: readonly string[] = PROBE_HOSTS): Promise<boolean> {
   const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
-  return (await Promise.all(PROBE_HOSTS.map(one))).some(Boolean);
+  return (await Promise.all(hosts.map(one))).some(Boolean);
 }
 
 /**
@@ -68,50 +69,57 @@ export function redactedError(e: unknown, terms: readonly string[] | undefined):
   return terms === undefined ? message : redactText(message, { forbiddenTerms: terms });
 }
 
+/** What a pipeline's run callback reports: the printed summary and the run's exit code. */
+export interface DueRunResult {
+  readonly text: string;
+  readonly exitCode: 0 | 1;
+}
+
+/** Hosts each pipeline's sources depend on; one resolving means the network is up. */
+const PROBE_HOSTS_OF: Readonly<Record<DueSpec['pipeline'], readonly string[]>> = {
+  daily: PROBE_HOSTS,
+  freelance: ['www.freelancer.com', 'remotive.com', 'hn.algolia.com'],
+};
+
 /**
- * `jobpilot run` as a function returning the exit code: 0 clean; 1 when a step failed (other than gone or
- * input-rejected) or was quarantined; 2 when the run could not run (pack, pacing, lock, pdftotext, fixtures), in which
- * case `jobpilot run failed: <reason>` is posted (unless `--no-notify`).
+ * The part of `jobpilot run` and `jobpilot run-freelance` that is the same for both (no behaviour change for daily):
+ * with `--if-due`, run only when `spec`'s window is owed (`due`), say why not and exit 0 otherwise, post the give-up
+ * notice once per window when the failures are capped, and wait quietly while the network is down; another jobpilot
+ * holding the lock is a quiet 0. The attempt is recorded when the lock is held (`onLocked`) and finished as done or
+ * failed. A run that could not run (it threw) prints the redacted error, posts `jobpilot <command> failed: <reason>`
+ * (unless `--no-notify`) and returns 2.
  */
-export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promise<0 | 1 | 2> {
-  let live: PlaywrightBrowserProvider | undefined;
+export async function runWithDue(
+  spec: DueSpec,
+  o: Pick<RunCommandOptions, 'ifDue' | 'notify' | 'offlineFixtures'>,
+  d: RunCommandDeps,
+  run: (hooks: { readonly onLocked?: () => void }) => Promise<DueRunResult>,
+): Promise<0 | 1 | 2> {
+  const attempts = attemptsFor(spec);
   const startedAt = d.clock.now();
   let attempt: number | undefined;
   try {
     if (o.ifDue === true) {
-      const due = dailyDue(d.home, startedAt);
-      if (!due.due) {
-        d.out(`not due: ${due.reason}`);
-        if (due.capped === true && o.notify && !alerted(d.home, startedAt)) {
-          // Once a day: the scheduled run has given up until tomorrow or a manual run.
-          await d.notifier(`jobpilot gave up on today's run: ${due.reason}`).then(() => markAlerted(d.home, startedAt), () => {});
+      const owed = due(spec, d.home, startedAt);
+      if (!owed.due) {
+        d.out(`not due: ${owed.reason}`);
+        if (owed.capped === true && o.notify && !attempts.alerted(d.home, startedAt)) {
+          // Once a window: the scheduled run has given up until the next window or a manual run.
+          await d.notifier(giveUpText(spec, owed.window, owed.reason)).then(() => attempts.markAlerted(d.home, startedAt), () => {});
         }
         return 0;
       }
-      // A run with every fetch failing would complete, count as today's and block the day (rereview of 8b49294):
+      // A run with every fetch failing would complete, count as the window's and block it (rereview of 8b49294):
       // wait for the network instead, quietly; the next half-hourly start tries again.
-      if (o.offlineFixtures === undefined && !(await (d.online ?? dnsOnline)())) {
+      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => dnsOnline(PROBE_HOSTS_OF[spec.pipeline])))())) {
         d.out('not due: the network is down (no source host resolves); the next start tries again');
         return 0;
       }
     }
-    const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
-    // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
-    live = offline === undefined ? new (await import('./browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
-    const summary = await runDaily({
-      home: d.home,
-      clock: d.clock,
-      fetch: offline?.fetch ?? nodeFetch,
-      browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
-      ...(o.notify ? { notifier: d.notifier } : {}),
-      ...(o.refresh ? { refresh: true } : {}),
-      ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
-      ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
-      ...(o.ifDue === true ? { onLocked: () => void (attempt = startAttempt(d.home, startedAt)) } : {}),
-    });
-    if (o.ifDue === true) finishAttempt(d.home, startedAt, 'done', attempt);
-    d.out(formatSummary(summary));
-    return summary.exitCode;
+    const result = await run(o.ifDue === true ? { onLocked: () => void (attempt = attempts.start(d.home, startedAt)) } : {});
+    if (o.ifDue === true) attempts.finish(d.home, startedAt, 'done', attempt);
+    d.out(result.text);
+    return result.exitCode;
   } catch (e) {
     if (o.ifDue === true && e instanceof LockError && /^another jobpilot process \(pid /.test(e.message)) {
       d.out(`not due: ${e.message}`);
@@ -120,17 +128,71 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
     const terms = forbiddenTermsAt(homePaths(d.home).pack);
     d.err(`error: ${redactedError(e, terms)}`);
     if (o.notify) {
-      await d.notifier(failureNotification(e, terms)).catch((n: unknown) => d.err(`error: the failure notification could not be posted: ${redactedError(n, terms)}`));
+      await d.notifier(failureNotification(e, terms, spec.command)).catch((n: unknown) => d.err(`error: the failure notification could not be posted: ${redactedError(n, terms)}`));
     }
     if (o.ifDue === true) {
       try {
-        finishAttempt(d.home, startedAt, 'failed', attempt);
+        attempts.finish(d.home, startedAt, 'failed', attempt);
       } catch (r) {
         d.err(`error: the failed attempt could not be recorded, so the next start retries at once: ${redactedError(r, terms)}`);
       }
     }
     return 2;
-  } finally {
-    await live?.close();
   }
+}
+
+/** The give-up notice: daily keeps its v1 text; a windowed pipeline names its window. */
+const giveUpText = (spec: DueSpec, window: string, reason: string): string =>
+  spec.pipeline === 'daily' ? `jobpilot gave up on today's run: ${reason}` : `jobpilot gave up on the ${window} window's ${spec.pipeline} run: ${reason}`;
+
+/**
+ * `jobpilot run` as a function returning the exit code: 0 clean; 1 when a step failed (other than gone or
+ * input-rejected) or was quarantined; 2 when the run could not run (pack, pacing, lock, pdftotext, fixtures), in which
+ * case `jobpilot run failed: <reason>` is posted (unless `--no-notify`).
+ */
+export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promise<0 | 1 | 2> {
+  return runWithDue(DAILY_DUE, o, d, async (hooks) => {
+    let live: PlaywrightBrowserProvider | undefined;
+    try {
+      const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+      // Loaded only for a live run: the browser library is large, and an offline run never renders a live page.
+      live = offline === undefined ? new (await import('./browser/playwright-provider.js')).PlaywrightBrowserProvider() : undefined;
+      const summary = await runDaily({
+        home: d.home,
+        clock: d.clock,
+        fetch: offline?.fetch ?? nodeFetch,
+        browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
+        ...(o.notify ? { notifier: d.notifier } : {}),
+        ...(o.refresh ? { refresh: true } : {}),
+        ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
+        ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+        ...hooks,
+      });
+      return { text: formatSummary(summary), exitCode: summary.exitCode };
+    } finally {
+      await live?.close();
+    }
+  });
+}
+
+/**
+ * `jobpilot run-freelance [--if-due] [--offline-fixtures <dir>] [--no-notify]`, with the exit codes of `run`: 0 clean;
+ * 1 when a step failed (other than gone or input-rejected) or was quarantined; 2 when the run could not run, in which
+ * case `jobpilot run-freelance failed: <reason>` is posted (unless `--no-notify`). `--if-due` follows `FREELANCE_DUE`
+ * (from 07:30 and 19:30 IST, `freelance-attempts.json`). No browser: no freelance source renders a page.
+ */
+export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
+  return runWithDue(FREELANCE_DUE, o, d, async (hooks) => {
+    const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+    const summary = await runFreelance({
+      home: d.home,
+      clock: d.clock,
+      fetch: offline?.fetch ?? nodeFetch,
+      ...(o.notify ? { notifier: d.notifier } : {}),
+      ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
+      ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+      ...hooks,
+    });
+    return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
+  });
 }

@@ -22,6 +22,18 @@ const V1_DOCS_STATES = ['ready', 'blocked', 'below-floor', 'none', 'missing'] as
 const list = (xs: readonly string[]): string => xs.map((x) => `'${x}'`).join(', ');
 
 /**
+ * Freelance (spec §8). These lists are frozen into the freelance migration's SQL: changing one needs a new migration.
+ * A gig's status: new → shortlisted → applied → replied → interviewing → won | lost | skipped (the user's, never a run's).
+ */
+export const GIG_STATUSES = ['new', 'shortlisted', 'applied', 'replied', 'interviewing', 'won', 'lost', 'skipped'] as const;
+export const GIG_KINDS = ['contract', 'gig', 'bounty', 'network-alert'] as const;
+/** The ranked list a gig is in (`rankGigs`); `below-floor`: a contract or gig with fit under the fit floor. NULL: rejected or not scored. */
+export const GIG_LISTS = ['contracts', 'gigs', 'review', 'below-floor'] as const;
+/** As the daily ones, without `below-floor` (that is a list here) and `stale`. */
+export const GIG_DOCS_STATES = ['ready', 'blocked', 'missing', 'none'] as const;
+export const NETWORK_STATUSES = ['todo', 'applied', 'screening', 'passed', 'rejected'] as const;
+
+/**
  * A migration: SQL run in one transaction, or (for a table rebuild, which SQLite needs to change a CHECK) a function run
  * in one transaction with foreign keys off, after which `PRAGMA foreign_key_check` must be empty (SQLite's documented
  * table-rebuild procedure; `AppStore` turns foreign keys back on afterwards).
@@ -178,4 +190,110 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   `,
   // Final review I2: docs_state `stale`, and the fact ids a job's documents cite (JSON array; NULL until known).
   { foreignKeysOff: true, run: staleMigration },
+  // Freelance Task 9: the freelance pipeline's own tables (spec §8). The full-time tables are not touched.
+  `
+  CREATE TABLE gigs (
+    gig_key TEXT PRIMARY KEY,
+    dedupe_key TEXT NOT NULL,
+    duplicate_of TEXT REFERENCES gigs (gig_key),
+    platform TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    client TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN (${list(GIG_KINDS)})),
+    budget TEXT NOT NULL,
+    rate TEXT,
+    hours TEXT NOT NULL,
+    verdict TEXT CHECK (verdict IS NULL OR verdict IN ('eligible', 'rejected', 'review')),
+    reasons TEXT NOT NULL DEFAULT '[]',
+    notes TEXT NOT NULL DEFAULT '[]',
+    flags TEXT NOT NULL DEFAULT '[]',
+    fit REAL,
+    breakdown TEXT,
+    list TEXT CHECK (list IS NULL OR list IN (${list(GIG_LISTS)})),
+    docs_state TEXT NOT NULL DEFAULT 'none' CHECK (docs_state IN (${list(GIG_DOCS_STATES)})),
+    docs_detail TEXT,
+    posted_at TEXT,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new' CHECK (status IN (${list(GIG_STATUSES)})),
+    note TEXT NOT NULL DEFAULT '',
+    applied_at TEXT,
+    notified_at TEXT,
+    UNIQUE (platform, source_id)
+  );
+  CREATE INDEX gigs_by_dedupe_key ON gigs (dedupe_key);
+  CREATE TABLE gig_docs (
+    gig_key TEXT NOT NULL REFERENCES gigs (gig_key),
+    kind TEXT NOT NULL CHECK (kind IN ('proposal', 'pitch', 'resume')),
+    format TEXT NOT NULL CHECK (format IN ('txt', 'pdf', 'docx')),
+    path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    pages INTEGER,
+    PRIMARY KEY (gig_key, kind, format)
+  );
+  CREATE TABLE gig_status_history (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    gig_key TEXT NOT NULL REFERENCES gigs (gig_key),
+    "from" TEXT,
+    "to" TEXT NOT NULL CHECK ("to" IN (${list(GIG_STATUSES)})),
+    at TEXT NOT NULL,
+    by TEXT NOT NULL CHECK (by IN ('user', 'migration'))
+  );
+  CREATE INDEX gig_status_history_by_gig ON gig_status_history (gig_key, seq);
+  CREATE TRIGGER gig_status_history_append_only_u BEFORE UPDATE ON gig_status_history BEGIN SELECT RAISE(ABORT, 'gig_status_history is append-only'); END;
+  CREATE TRIGGER gig_status_history_append_only_d BEFORE DELETE ON gig_status_history BEGIN SELECT RAISE(ABORT, 'gig_status_history is append-only'); END;
+  CREATE TRIGGER gig_status_history_append_only_r BEFORE INSERT ON gig_status_history
+    WHEN NEW.seq IS NOT NULL AND EXISTS (SELECT 1 FROM gig_status_history WHERE seq = NEW.seq)
+    BEGIN SELECT RAISE(ABORT, 'gig_status_history is append-only'); END;
+  CREATE TABLE gig_runs_summary (
+    run_id TEXT PRIMARY KEY,
+    at TEXT NOT NULL,
+    counts TEXT NOT NULL,
+    pack_hash TEXT NOT NULL,
+    policy_hash TEXT NOT NULL,
+    warnings TEXT NOT NULL DEFAULT '[]',
+    problems TEXT NOT NULL DEFAULT '[]'
+  );
+  CREATE TABLE source_health (
+    platform TEXT NOT NULL,
+    week TEXT NOT NULL CHECK (week GLOB '[0-9][0-9][0-9][0-9]-W[0-5][0-9]'),
+    fetched INTEGER NOT NULL DEFAULT 0,
+    eligible INTEGER NOT NULL DEFAULT 0,
+    above_floor INTEGER NOT NULL DEFAULT 0,
+    shortlisted INTEGER NOT NULL DEFAULT 0,
+    applied INTEGER NOT NULL DEFAULT 0,
+    replied INTEGER NOT NULL DEFAULT 0,
+    won INTEGER NOT NULL DEFAULT 0,
+    runs INTEGER NOT NULL DEFAULT 0,
+    failed_runs INTEGER NOT NULL DEFAULT 0,
+    probe_failures INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (platform, week)
+  );
+  -- The runs already counted into source_health, so projecting a run twice never counts it twice.
+  CREATE TABLE source_health_runs (
+    run_id TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    PRIMARY KEY (run_id, platform)
+  );
+  CREATE TABLE gig_snapshots (
+    gig_key TEXT NOT NULL REFERENCES gigs (gig_key),
+    day TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('proposal', 'pitch', 'resume')),
+    format TEXT NOT NULL CHECK (format IN ('txt', 'pdf', 'docx')),
+    path TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (gig_key, day, kind, format)
+  );
+  CREATE TRIGGER gig_snapshots_append_only_u BEFORE UPDATE ON gig_snapshots BEGIN SELECT RAISE(ABORT, 'gig_snapshots is append-only'); END;
+  CREATE TRIGGER gig_snapshots_append_only_d BEFORE DELETE ON gig_snapshots BEGIN SELECT RAISE(ABORT, 'gig_snapshots is append-only'); END;
+  CREATE TABLE network_status (
+    network_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL CHECK (status IN (${list(NETWORK_STATUSES)})),
+    updated_at TEXT NOT NULL
+  );
+  `,
 ];

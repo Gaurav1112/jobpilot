@@ -25,7 +25,7 @@ import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
-import { forbiddenTermsAt, redactedError, runCommand } from './app/run-command.js';
+import { forbiddenTermsAt, redactedError, runCommand, runFreelanceCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
 import { dailyDue } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
@@ -249,6 +249,19 @@ program
   .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+    );
+  });
+
+program
+  .command('run-freelance')
+  .description('Run the freelance pipeline (gigs and contracts), project the results into the gig tables and post the notification; nothing is ever submitted. Exit 0: clean; 1: some step failed or was quarantined (see problems); 2: the run could not run')
+  .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
+  .option('--no-notify', 'do not post the macOS notification (nothing is marked announced)')
+  .option('--if-due', 'run only if this half-day\'s run is owed (from 07:30 and 19:30 IST, none completed in the window, failed attempts spaced an hour and at most 3); else print why and exit 0. The scheduled job uses this')
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
+    process.exitCode = await runFreelanceCommand(
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });

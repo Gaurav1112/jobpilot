@@ -1,0 +1,243 @@
+import type { Clock } from '../../kernel/clock.js';
+import type { FetchLike } from '../../kernel/providers.js';
+import type { RunReport } from '../../kernel/supervisor.js';
+import { diskDocCheck } from '../docs-check.js';
+import { ensureHome } from '../home.js';
+import { freelanceKernel, loadRunPack, resolvePdftotext } from '../kernel.js';
+import { withLock } from '../lock.js';
+import type { Notifier } from '../notify.js';
+import { homePaths } from '../pack/paths.js';
+import { forbiddenTermStrict } from '../pack/rules.js';
+import type { Naming } from '../pack/schema.js';
+import { runProblems, safeLine, sourceSkipWarnings, type Problem } from '../problems.js';
+import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
+import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId } from '../run.js';
+import { AppStore, type GigView } from '../store/app-store.js';
+import { recordSourceHealth } from './health.js';
+import { freelanceSeeds } from './pipeline.js';
+import { projectFreelanceRun, type GigProjectResult } from './project.js';
+import { rankGigs } from './rank.js';
+import type { Platform, ScoredGig } from './types.js';
+
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const IST_OFFSET_MS = 330 * 60_000;
+/** The pm window's start (IST); the same instant `FREELANCE_DUE` uses. */
+const PM_FROM_MINUTES = 19 * 60 + 30;
+
+/** The half of the IST day at `now`: `pm` from 19:30 IST, else `am` (before 07:30 is that day's am, as a manual run). */
+export function halfOf(now: string): 'am' | 'pm' {
+  const t = Date.parse(now);
+  if (Number.isNaN(t)) throw new Error(`not an ISO time: ${now}`);
+  const minutes = new Date(t + IST_OFFSET_MS).getUTCHours() * 60 + new Date(t + IST_OFFSET_MS).getUTCMinutes();
+  return minutes >= PM_FROM_MINUTES ? 'pm' : 'am';
+}
+
+export const FREELANCE_REPLAY_HINT = 'All gig sources were already fetched in this half; the next half fetches again';
+
+export interface FreelanceRunOptions {
+  readonly home: string;
+  readonly clock: Clock;
+  readonly fetch: FetchLike;
+  /** Posts the notification. Absent (`--no-notify`): nothing is posted and no gig is marked announced. */
+  readonly notifier?: Notifier;
+  readonly sleep?: (ms: number) => Promise<void>;
+  readonly pdftotext?: string;
+  readonly afterStep?: (count: number) => void;
+  readonly afterProject?: () => void;
+  readonly onLocked?: () => void;
+  readonly codeHash?: string;
+}
+
+export interface FreelanceSummary {
+  readonly runId: string;
+  readonly runDate: string;
+  readonly half: 'am' | 'pm';
+  readonly asOf: string;
+  readonly resumed: boolean;
+  readonly report: RunReport;
+  readonly counts: RunCounts;
+  readonly projection: Omit<GigProjectResult, 'rows'>;
+  readonly problems: readonly Problem[];
+  readonly notification: string;
+  readonly notified: boolean;
+  readonly packHash: string;
+  readonly fullPackHash: string;
+  readonly policyHash: string;
+  readonly warnings: string[];
+  readonly exitCode: 0 | 1;
+}
+
+const PLATFORM_NAME: Readonly<Record<Platform, string>> = {
+  freelancer: 'Freelancer',
+  remotive: 'Remotive',
+  'hn-freelancer': 'HN',
+  'hn-hiring': 'HN',
+  boards: 'Boards',
+  gmail: 'Gmail',
+  upwork: 'Upwork',
+  reddit: 'Reddit',
+};
+
+const TITLE_MAX = 40;
+const oneLine = (s: string): string => s.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim();
+/** At most TITLE_MAX characters; a longer title is cut to TITLE_MAX - 1 and ends with an ellipsis. */
+const shortTitle = (t: string): string => {
+  const cps = [...oneLine(t)];
+  return cps.length <= TITLE_MAX ? cps.join('') : `${cps.slice(0, TITLE_MAX - 1).join('').trimEnd()}…`;
+};
+/** Whole US dollars, rounded down, so the banner never overstates the pay. */
+const dollars = (n: number): string => String(Math.floor(n));
+const plural = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`;
+
+type RateLike = { maxUsdH: number | null; minUsdH: number | null; budgetUsd: number | null; method: string };
+
+/**
+ * A ranking stand-in for a stored row: exactly the fields `rankGigs` orders by (red flags, maxUsdH, fit, postedAt,
+ * gigKey), so the notification picks its top with the dashboard's order. Cast: rankGigs reads nothing else.
+ */
+function rankable(g: GigView): ScoredGig {
+  const rate = (g.rate ?? { maxUsdH: null }) as RateLike;
+  return {
+    risked: { flags: g.flags, verdict: { rated: { rate, gig: { gigKey: g.gigKey, postedAt: g.postedAt } } } },
+    fit: g.fit ?? 0,
+    list: 'gigs',
+    breakdown: {},
+  } as unknown as ScoredGig;
+}
+
+/**
+ * The notification text (spec §1, Task 9): `<N> new gigs ≥$<floor>/h · top: $<maxUsdH>/h <title ≤ 40> (<Platform>)`
+ * (`1 new gig`), where the gigs are the newly shortlisted ones (Contracts or Gigs, documents ready, never announced)
+ * and the top is the first of them in `rankGigs` order that has no red flag. When the top's hourly rate is unknown (an
+ * eligible fixed-price gig) it shows `budget $<budgetUsd>` instead (`$?/h` when that is unknown too). None:
+ * `No new gigs this morning` (am) or `… this evening` (pm). Then ` · <k> problems` when the run had any. One line,
+ * never a forbidden term: if the top holds one only the count is shown, and if even that would, `jobpilot freelance
+ * run finished`.
+ */
+export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rateFloor: number; readonly half: 'am' | 'pm'; readonly naming: Pick<Naming, 'forbiddenTerms'>; readonly problems: number }): string {
+  const tail = o.problems > 0 ? ` · ${plural(o.problems, 'problem', 'problems')}` : '';
+  const clean = (s: string): string | undefined => (forbiddenTermStrict(s, o.naming) === undefined ? s : undefined);
+  const fallback = 'jobpilot freelance run finished';
+  if (fresh.length === 0) return clean(`No new gigs this ${o.half === 'am' ? 'morning' : 'evening'}${tail}`) ?? fallback;
+  const count = `${plural(fresh.length, 'new gig', 'new gigs')} ≥$${dollars(o.rateFloor)}/h`;
+  const byKey = new Map(fresh.map((g) => [g.gigKey, g]));
+  const candidates = rankGigs(fresh.map(rankable), 0).gigs.filter((s) => s.risked.flags.every((f) => !['off-platform', 'unusual-payment', 'upfront-fee'].includes(f.id)));
+  const topRow = candidates[0];
+  const top = topRow === undefined ? undefined : byKey.get(topRow.risked.verdict.rated.gig.gigKey);
+  if (top === undefined) return clean(`${count}${tail}`) ?? fallback;
+  const rate = (top.rate ?? { maxUsdH: null, budgetUsd: null }) as RateLike;
+  const pay = rate.maxUsdH !== null ? `$${dollars(rate.maxUsdH)}/h` : rate.budgetUsd !== null ? `budget $${dollars(rate.budgetUsd)}` : '$?/h';
+  const full = oneLine(`${count} · top: ${pay} ${shortTitle(top.title)} (${PLATFORM_NAME[top.platform as Platform] ?? top.platform})${tail}`);
+  return clean(full) ?? clean(`${count}${tail}`) ?? fallback;
+}
+
+/** The newly shortlisted gigs: Contracts or Gigs, documents ready, not yet announced, duplicate listings excluded. */
+const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null);
+
+/** Whether this run had source steps and every one of them was answered from the store. */
+function sourcesAllReplayed(counts: RunCounts): boolean {
+  const sources = Object.entries(counts.byAgent).filter(([a]) => a.startsWith('src-'));
+  const steps = sources.reduce((n, [, c]) => n + c.done + c.failed + c.quarantined, 0);
+  return steps > 0 && sources.every(([, c]) => c.replayed === c.done + c.quarantined && c.failed === 0);
+}
+
+/**
+ * `jobpilot run-freelance`: one freelance run under the run lock (spec §3, §8), the freelance counterpart of `runDaily`:
+ * 1. load the pack (overrides, `experience.asOf` = the IST month, the kept `render.nonce`) and wire
+ *    `jobpilot-freelance@1.0.0` (`freelanceKernel`);
+ * 2. seed (`freelanceSeeds`): Freelancer one request per query, Remotive one, HN two, and one `boards` request per
+ *    stored daily contract posting (`AppStore.contractPostings`), all dated with the IST date and half;
+ * 3. run as `freelance-<date>-<am|pm>` (a completed one moves to `-2`, a crashed one is resumed), project into the gig
+ *    tables, count source health and name every problem (a dead source included);
+ * 4. notify once per newly shortlisted gig (`notified_at`; only a posted notification announces);
+ * 5. record the run in `gig_runs_summary`.
+ * A second run in the same half replays every step at $0 (the seeds carry the date and half).
+ */
+export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> {
+  return withLock(o.home, 'run-freelance', async () => {
+    o.onLocked?.();
+    const paths = homePaths(o.home);
+    ensureHome(paths.home);
+    const pdftotext = o.pdftotext ?? resolvePdftotext();
+    const app = AppStore.open(paths.db);
+    try {
+      const now = o.clock.now();
+      const runDate = istDate(now);
+      const half = halfOf(now);
+      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
+      const rules = loaded.pack.freelance;
+      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
+      const prefix = `freelance-${runDate}-${half}`;
+      const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
+      const warnings = skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`);
+      warnings.push(
+        ...app.kernel
+          .incompleteRuns()
+          .filter((r) => r.run_id.startsWith('freelance-') && !r.run_id.startsWith(prefix) && !skipped.includes(r.run_id))
+          .map((r) => `run ${r.run_id} never completed and is from an earlier half; it will not be resumed`),
+      );
+      const boards = rules.platforms.boards.enabled ? app.contractPostings() : { postings: [], missing: [] };
+      if (boards.missing.length > 0) warnings.push(`${plural(boards.missing.length, 'stored contract job has', 'stored contract jobs have')} no stored posting (a Desk import) and ${boards.missing.length === 1 ? 'is' : 'are'} not seeded`);
+      const seeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting));
+      if (seeds.length === 0) warnings.push('no gig platform is enabled: nothing was fetched');
+      const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
+      const projected = projectFreelanceRun(app.kernel, app, runId, { fitFloor: rules.fitFloor, docOnDisk: diskDocCheck(paths.out) });
+      const { rows, ...projection } = projected;
+      const counts = runCounts(app.kernel, runId);
+      if (sourcesAllReplayed(counts)) warnings.push(FREELANCE_REPLAY_HINT);
+      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
+      const health = app.tx(() => recordSourceHealth(app.kernel, app, runId, { runDate, half, fitFloor: rules.fitFloor, rows }));
+      const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) }))];
+      o.afterProject?.();
+      const fresh = freshGigs(app);
+      const notification = gigNotificationFor(fresh, { rateFloor: rules.rateFloorUsdHour, half, naming: loaded.pack.naming, problems: problems.length });
+      let notified = false;
+      if (o.notifier === undefined) {
+        if (fresh.length > 0) warnings.push(`not announced (--no-notify): ${fresh.length}`);
+      } else {
+        try {
+          await o.notifier(notification);
+          notified = true;
+        } catch (e) {
+          warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+        }
+        if (notified) app.markGigsNotified(fresh.map((g) => g.gigKey), now);
+      }
+      app.recordGigRun({ runId, at: now, counts, packHash: loaded.freelancePackHash, policyHash: k.policyHash, warnings, problems });
+      return {
+        runId, runDate, half, asOf: loaded.asOf, resumed: resume, report, counts, projection, problems, notification, notified,
+        packHash: loaded.freelancePackHash, fullPackHash: loaded.freelanceFullPackHash, policyHash: k.policyHash, warnings, exitCode: exitCodeOf(report, problems),
+      };
+    } finally {
+      app.close();
+    }
+  });
+}
+
+const COLUMNS = ['done', 'replayed', 'failed', 'gone', 'inputRejected', 'skipped', 'quarantined'] as const satisfies readonly (keyof AgentCounts)[];
+const HEAD: Readonly<Record<(typeof COLUMNS)[number], string>> = {
+  done: 'done', replayed: 'replayed', failed: 'failed', gone: 'gone', inputRejected: 'rejected', skipped: 'skipped', quarantined: 'quarantined',
+};
+
+/** The freelance run summary as the CLI prints it. */
+export function formatFreelanceSummary(s: FreelanceSummary): string {
+  const lines = [`run ${s.runId} for ${s.runDate} ${s.half} (experience as of ${s.asOf})${s.resumed ? ', resumed' : ''}: ${s.report.status}`];
+  const agents = Object.keys(s.counts.byAgent);
+  const w = Math.max(5, ...agents.map((a) => a.length));
+  lines.push(`${'agent'.padEnd(w)}  ${COLUMNS.map((c) => HEAD[c]).join('  ')}`);
+  const row = (name: string, c: AgentCounts) => `${name.padEnd(w)}  ${COLUMNS.map((k) => String(c[k]).padStart(HEAD[k].length)).join('  ')}`;
+  for (const a of agents) lines.push(row(a, s.counts.byAgent[a] as AgentCounts));
+  lines.push(row('total', s.counts.totals));
+  const p = s.projection;
+  const l = p.lists;
+  lines.push(`gigs: ${p.gigs} written (${p.inserted} new, ${p.stale} stale skipped); contracts ${l.contracts}, gigs ${l.gigs}, review ${l.review}, below-floor ${l['below-floor']}, rejected ${l.rejected}, unscored ${l.unscored}`);
+  lines.push(`docs ready ${p.docs.ready}, blocked ${p.docs.blocked}, missing ${p.docs.missing}, none ${p.docs.none}`);
+  if (s.problems.length > 0) {
+    lines.push(`problems: ${s.problems.length}`);
+    for (const q of s.problems) lines.push(`  ${q.kind.padEnd(14)} ${q.agent}  ${q.item}: ${q.reason}`);
+  }
+  lines.push(`notification: ${s.notification}`);
+  lines.push(`pack ${s.packHash.slice(0, 12)}, full pack ${s.fullPackHash.slice(0, 12)}, policy ${s.policyHash.slice(0, 12)}`);
+  for (const warning of s.warnings) lines.push(`warning: ${warning}`);
+  return lines.join('\n');
+}

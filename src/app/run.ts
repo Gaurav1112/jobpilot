@@ -169,7 +169,7 @@ export function nonceOf(app: AppStore): number | undefined {
  * Ruling 4: gone and input-rejected items are problems (listed and counted) but not failures of the run. A failed commit
  * is a failed queue item, so it counts (review I3); a QA block counts only when its cause is the system.
  */
-const exitCodeOf = (report: RunReport, problems: readonly Problem[]): 0 | 1 =>
+export const exitCodeOf = (report: RunReport, problems: readonly Problem[]): 0 | 1 =>
   report.queue.failed - report.gone - report.inputRejected > 0 || report.queue.quarantined > 0 || problems.some((p) => p.kind === 'docs-blocked' && p.cause === 'system') ? 1 : 0;
 
 /** Whether this run had source steps and every one of them was answered from the store. */
@@ -245,14 +245,15 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
 }
 
 /**
- * The text of the notification a run that could not finish posts (`jobpilot run failed: <reason>`): the first line
+ * The text of the notification a run that could not finish posts (`jobpilot <command> failed: <reason>`, command `run`
+ * by default): the first line
  * of the error, unless the naming rules cannot be read, or that line names a forbidden term or a fragment of one. The
  * whole message goes through `redactText` first (rereview-2 M5), so a term split across lines ("Ini-" then "tech")
  * hides the lines it spans before the first is taken; any redaction in the first line leaves the reason out (the log
  * has it, redacted the same way).
  */
-export function failureNotification(err: unknown, forbiddenTerms: readonly string[] | undefined): string {
-  const unknown = 'jobpilot run failed; see the log';
+export function failureNotification(err: unknown, forbiddenTerms: readonly string[] | undefined, command: string = 'run'): string {
+  const unknown = `jobpilot ${command} failed; see the log`;
   if (forbiddenTerms === undefined) return unknown;
   const message = (err instanceof Error ? err.message : String(err)).replace(/\r\n?/g, '\n');
   const raw = message.split('\n')[0] ?? '';
@@ -262,7 +263,7 @@ export function failureNotification(err: unknown, forbiddenTerms: readonly strin
   const reason = first.length > 180 ? `${first.slice(0, 179)}…` : first;
   if (reason === '') return unknown;
   // final M-N1/I9: the strict check, the one the log's redactor uses (a substring `includes` missed look-alikes)
-  return forbiddenTermStrict(reason, { forbiddenTerms }) !== undefined ? unknown : `jobpilot run failed: ${reason}`;
+  return forbiddenTermStrict(reason, { forbiddenTerms }) !== undefined ? unknown : `jobpilot ${command} failed: ${reason}`;
 }
 
 export interface RebuildOptions {

@@ -23,8 +23,9 @@ export interface Problem {
    * `commit-failed` (review I3): a writing step's files could not be moved into place; its documents are blocked and
    * the next run renders them again. `docs-blocked`: the qa-gate refused a job's documents (`cause` says whether the
    * content or the system failed). `docs-stale` (review I2): ready documents cite a fact the user has since rejected.
+   * `source-dead` (freelance §4.5): a gig source with no yield for weeks or failing every fetch; never removed.
    */
-  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale';
+  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead';
   readonly agent: string;
   /** What the step was working on: the board (company and ats:slug), the career link, the posting or the job. */
   readonly item: string;
@@ -59,6 +60,14 @@ export const QA_CHECK_CAUSE: Readonly<Record<string, 'content' | 'system'>> = {
   'qa.files': 'system',
   'qa.docx-text': 'system',
   'qa.pdf-text': 'system',
+  // gig-qa (freelance Task 8): the text's own limits and wording are content; a text file or grounding mismatch is the system.
+  'gig.limits': 'content',
+  'gig.links': 'content',
+  'gig.banned': 'content',
+  'gig.ascii': 'content',
+  'gig.naming': 'content',
+  'gig.text': 'system',
+  'gig.ground': 'system',
 };
 
 /** The cause of a QA block: `system` when any failed check is a system cause (or unknown), else `content`. */
@@ -99,6 +108,32 @@ function postingIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unkn
   return isObj(found) ? found : undefined;
 }
 
+/** The gig a freelance envelope carries, at whatever depth its type puts it. */
+function gigIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unknown> | undefined {
+  const at = (...path: string[]): unknown => path.reduce<unknown>((v, k) => (isObj(v) ? v[k] : undefined), env.payload);
+  const found = ((): unknown => {
+    switch (env.type) {
+      case 'Gig@1':
+        return env.payload;
+      case 'RatedGig@1':
+        return at('gig');
+      case 'GigVerdict@1':
+        return at('rated', 'gig');
+      case 'RiskedGig@1':
+        return at('verdict', 'rated', 'gig');
+      case 'ScoredGig@1':
+        return at('risked', 'verdict', 'rated', 'gig');
+      case 'GigDocsPlan@1':
+        return at('scored', 'risked', 'verdict', 'rated', 'gig');
+      case 'GigRendered@1':
+        return at('plan', 'scored', 'risked', 'verdict', 'rated', 'gig');
+      default:
+        return undefined;
+    }
+  })();
+  return isObj(found) ? found : undefined;
+}
+
 /** A short identity of a step's input: never the free text of a posting, only names and ids. */
 export function itemOf(env: Pick<Envelope, 'type' | 'payload'>): string {
   const p = isObj(env.payload) ? env.payload : {};
@@ -109,7 +144,13 @@ export function itemOf(env: Pick<Envelope, 'type' | 'payload'>): string {
       return `${s(p['company'])} (careers:${s(p['slug'])}) ${s(p['url'])}`;
     case 'RawPosting@1':
       return `${s(p['company'])} (${s(p['source'])}:${s(p['sourceId'])})`;
+    case 'GigRequest@1':
+      return p['platform'] === 'boards' && isObj(p['item']) ? `boards: ${s(p['item']['company'])} — ${s(p['item']['title'])}` : `${s(p['platform'])}${p['query'] ? ` ${s(p['query'])}` : ''}`;
+    case 'RawGig@1':
+      return `${s(p['platform'])}:${s(p['sourceId'])}`;
     default: {
+      const gig = gigIn(env);
+      if (gig) return `${s(gig['title'])} (${s(gig['platform'])} gig ${s(gig['gigKey'])})`;
       const posting = postingIn(env);
       if (posting) return `${s(posting['company'])} — ${s(posting['title'])} (job ${s(posting['jobKey'])})`;
       return env.type;
@@ -183,7 +224,7 @@ export function runProblems(kernel: Store, runId: string, naming: Pick<Naming, '
 }
 
 /**
- * Review I3: every job whose QaReport in this run (executed or replayed) failed, once per job, in step-key order,
+ * Review I3: every job whose QaReport (or gig whose GigQaReport) in this run (executed or replayed) failed, once per job, in step-key order,
  * with the failed checks and their cause.
  */
 function qaBlocks(kernel: Store, events: readonly { kind: string; data: string }[], safe: (t: string) => string): Problem[] {
@@ -191,25 +232,27 @@ function qaBlocks(kernel: Store, events: readonly { kind: string; data: string }
   for (const ev of events) {
     if (ev.kind !== 'step_done' && ev.kind !== 'step_replayed') continue;
     const d = JSON.parse(ev.data) as Record<string, unknown>;
-    if (d['agent'] !== 'qa-gate' || (ev.kind === 'step_replayed' && d['status'] !== 'done') || typeof d['stepKey'] !== 'string') continue;
+    if ((d['agent'] !== 'qa-gate' && d['agent'] !== 'gig-qa') || (ev.kind === 'step_replayed' && d['status'] !== 'done') || typeof d['stepKey'] !== 'string') continue;
     keys.add(d['stepKey']);
   }
   const byJob = new Map<string, Problem>();
   for (const stepKey of [...keys].sort()) {
     for (const env of kernel.envelopesOfStep(stepKey)) {
-      const qa = env.payload as { jobKey?: unknown; ok?: unknown; checks?: { id: string; ok: boolean; detail: string }[] };
-      if (env.type !== 'QaReport@1' || qa.ok !== false || typeof qa.jobKey !== 'string' || byJob.has(qa.jobKey)) continue;
+      const qa = env.payload as { jobKey?: unknown; gigKey?: unknown; ok?: unknown; checks?: { id: string; ok: boolean; detail: string }[] };
+      const gig = env.type === 'GigQaReport@1';
+      const key = gig ? qa.gigKey : qa.jobKey;
+      if ((env.type !== 'QaReport@1' && !gig) || qa.ok !== false || typeof key !== 'string' || byJob.has(key)) continue;
       const failed = (qa.checks ?? []).filter((c) => !c.ok);
-      let item = `job ${qa.jobKey}`;
+      let item = `${gig ? 'gig' : 'job'} ${key}`;
       try {
         const input = kernel.getStep(stepKey)?.input_envelope_id;
         if (input) item = itemOf(kernel.getEnvelope(input));
       } catch {
         // keep the job key
       }
-      byJob.set(qa.jobKey, {
+      byJob.set(key, {
         kind: 'docs-blocked',
-        agent: 'qa-gate',
+        agent: gig ? 'gig-qa' : 'qa-gate',
         item: safe(item),
         reason: safe(`qa failed (${failed.map((c) => c.id).join(', ')}): ${failed.map((c) => `${c.id}: ${c.detail}`).join('; ')}`),
         cause: qaCause(failed.map((c) => c.id)),
