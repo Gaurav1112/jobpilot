@@ -2,7 +2,7 @@ import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
-import { bandPill, compCell, csrfField, docsPill, pill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { b2bPill, bandPill, compCell, csrfField, docsPill, pill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface Recommended {
   readonly format: 'pdf' | 'docx';
@@ -70,7 +70,7 @@ function whyMatched(j: JobDetail, display: (k: string) => string): Html {
 function eligibility(j: JobDetail): Html {
   const verdict = j.verdict === 'eligible' ? pill('Eligible', 'good') : j.verdict === 'review' ? pill('Needs a look', 'warn') : j.verdict === 'rejected' ? pill('Not eligible', 'critical') : pill('Not assessed yet', 'muted');
   return html`<section class="card" aria-labelledby="elig"><h2 id="elig">Eligibility</h2>
-<p>${verdict}</p>
+<p>${verdict}${b2bPill(j.notes)}</p>
 ${j.reasons.length > 0 ? html`<ul class="plain">${j.reasons.map((r) => html`<li>${reasonText(r)} <code>${r}</code></li>`)}</ul>` : ''}
 ${j.notes.length > 0 ? html`<ul class="plain notes">${j.notes.map((n) => html`<li>${n}</li>`)}</ul>` : ''}
 ${j.reasons.length === 0 && j.notes.length === 0 ? html`<p class="muted">Nothing to flag.</p>` : ''}

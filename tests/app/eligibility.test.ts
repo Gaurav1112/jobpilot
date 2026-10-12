@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { canonicalEmployment, decideEligibility, eligibility } from '../../src/app/agents/eligibility.js';
+import { canonicalEmployment, decideEligibility, eligibility, fullTimeContract, NOTE_B2B } from '../../src/app/agents/eligibility.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { appEvalSpecs } from '../../src/app/evals.js';
 import { assertNoForbidden, loadPack } from '../../src/app/pack/load.js';
@@ -605,13 +605,87 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
 
   it('every reason and note is one of the fixed codes', () => {
     const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
-    const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify', 'time zone may exclude India - verify']);
+    const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify', 'time zone may exclude India - verify', NOTE_B2B]);
     const spec = appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.agent.contract.id === 'eligibility')!;
     for (const k of spec.cases) {
       const v = decideEligibility(k.input as Posting, pack);
       for (const r of v.reasons) expect(r, k.id).toMatch(CODE);
       for (const n of v.notes) expect(NOTES.has(n), `${k.id}: ${n}`).toBe(true);
     }
+  });
+});
+
+describe('D2 full-time B2B', () => {
+  const B2B_DESC =
+    'Remote role. Base Salary: $100K–$175K USD per year. Contract type: B2B. Work async with a small team, available across all countries.';
+  const b2b = (over: Partial<Posting> = {}): Partial<Posting> => ({
+    source: 'himalayas',
+    ats: 'lever',
+    slug: 'example-lv', // a watchlist entry that is all-remote, so the remote rule passes on its own
+    title: 'Senior Bank & Integrations Engineer',
+    employmentType: 'Contractor',
+    descriptionText: B2B_DESC,
+    comp: { min: 100000, max: 175000, currency: 'USD', period: 'year', basis: 'base' },
+    remote: remote('remote', ['worldwide'], ['location:remote']),
+    ...over,
+  });
+
+  it('a full-time B2B contractor role is eligible with the badge note', () => {
+    expect(decide(b2b())).toEqual({ verdict: 'eligible', reasons: [], notes: [NOTE_B2B] });
+    expect(NOTE_B2B).toBe('B2B contractor: no PF/benefits');
+  });
+
+  it('a short-term contract keeps the reject', () => {
+    expect(decide(b2b({ descriptionText: `${B2B_DESC} This is a 6-month contract.` }))).toEqual(rejected('employment:contract'));
+  });
+
+  it('a contract title without B2B wording or a salary keeps the reject', () => {
+    expect(decide({ title: 'Java Developer (Contract)' })).toEqual(rejected('employment:contract'));
+  });
+
+  it('an hourly rate is still an hourly reject', () => {
+    const d = decide({ title: 'Java Developer', descriptionText: 'Contract type: B2B. We offer an hourly rate of $40.' });
+    expect(d).toEqual(rejected('employment:hourly'));
+  });
+
+  it('the remote rule runs after the pass', () => {
+    expect(decide(b2b({ slug: 'unlisted', ats: 'feed', remote: remote(null, ['united states'], []), locationText: 'United States' }))).toEqual(rejected('location-outside-india'));
+  });
+
+  it('the pay floor runs after the pass', () => {
+    const d = decide(b2b({ comp: { min: 1000, max: 2000, currency: 'USD', period: 'year', basis: 'base' } }));
+    expect(d.verdict).toBe('rejected');
+    expect(d.reasons[0]).toMatch(/^below-floor:\d+$/);
+  });
+
+  it('contract-to-hire stays rejected even with B2B wording', () => {
+    expect(decide(b2b({ employmentType: null, descriptionText: `${B2B_DESC} This is a contract-to-hire role.` }))).toEqual(rejected('employment:contract-to-hire'));
+    expect(decide(b2b({ descriptionText: `${B2B_DESC} Contract-to-hire.` }))).toEqual(rejected('employment:contract'));
+  });
+
+  it('only a contract kind is exempt: freelance, temporary, part-time and hourly are never', () => {
+    expect(decide(b2b({ employmentType: 'Temporary' }))).toEqual(rejected('employment:temporary'));
+    expect(decide(b2b({ employmentType: 'Part-time' }))).toEqual(rejected('employment:part-time'));
+    expect(decide(b2b({ title: 'Freelance Backend Engineer (Freelance)' }))).toEqual(rejected('employment:freelance'));
+    expect(decide(b2b({ employmentType: 'Contract, Temporary' }))).toEqual(rejected('employment:contract'));
+  });
+
+  it('a title word Contractor counts as contract', () => {
+    expect(decide(b2b({ employmentType: null, title: 'Contractor Java Developer' }))).toEqual({ verdict: 'eligible', reasons: [], notes: [NOTE_B2B] });
+  });
+
+  it('fullTimeContract: wording or a stated base salary, short-term wording vetoes', () => {
+    const p = (over: Partial<Posting>): Posting => posting({ title: 'Engineer', ...over });
+    expect(fullTimeContract(p({ descriptionText: 'Full-time contractor.' }))).toBe(true);
+    expect(fullTimeContract(p({ descriptionText: 'A long-term contract.' }))).toBe(true);
+    expect(fullTimeContract(p({ descriptionText: 'Contractor, full time.' }))).toBe(true);
+    expect(fullTimeContract(p({ descriptionText: 'B2B agreement.' }))).toBe(true);
+    expect(fullTimeContract(p({ comp: base(100, 200, 'USD') }))).toBe(true);
+    expect(fullTimeContract(p({ comp: base(100, 200, 'USD', 'unknown') }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Part-time.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. A short-term engagement.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: 'Contract type: B2B. Pay $50/hr.' }))).toBe(false);
+    expect(fullTimeContract(p({ descriptionText: `${'x '.repeat(1600)}Contract type: B2B.` }))).toBe(false); // past 3,000 characters
   });
 });
 

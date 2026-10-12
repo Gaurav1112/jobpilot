@@ -4,6 +4,7 @@ import { compText } from '../format.js';
 import { remoteText } from '../copy.js';
 import { html, type Html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
+import { NOTE_B2B } from '../../agents/eligibility.js';
 
 /** Copy and pills shared by every page. Words are the user's: "documents you can send", never "artifacts". */
 
@@ -61,3 +62,7 @@ export function compCell(j: Pick<JobView, 'comp' | 'compMinInr' | 'compMaxInr'>)
 
 export const csrfField = (token: string): Html => html`<input type="hidden" name="${CSRF_FIELD}" value="${token}">`;
 
+
+/** Freelance spec D2: the verdict note for a full-time B2B contractor role, as a badge; null when the job has none. */
+export const b2bPill = (notes: readonly string[]): Html | '' =>
+  notes.includes(NOTE_B2B) ? pill('B2B contractor', 'accent', NOTE_B2B) : '';

@@ -126,7 +126,7 @@ function seed(): void {
     // a Desk row
     s.importJob({ ...row(K9, 9, { title: 'Data Engineer', company: 'Initrode', score: 65 }), status: 'applied', note: 'from the desk', appliedAt: '2026-09-12T05:00:00.000Z', statusAt: '2026-09-12T05:00:00.000Z' });
     s.upsertJob(row(K10, 10, { title: 'Backend Engineer', company: '山 Systems', score: 66, docsState: 'blocked', docsDetail: 'renderer failed: invalid_output (unrenderable-glyph:U+5C71)' }));
-    s.upsertJob(row(K11, 11, { title: 'Backend Engineer', company: 'Initech Labs', score: 50 }));
+    s.upsertJob(row(K11, 11, { title: 'Backend Engineer', company: 'Initech Labs', score: 50, notes: ['B2B contractor: no PF/benefits'] }));
     s.recordRun({
       runId: 'daily-2026-10-09', at: '2026-10-09T01:30:00.000Z',
       counts: { byAgent: { normalizer: { done: 3, failed: 0, gone: 1, inputRejected: 0, quarantined: 0, skipped: 0, pending: 0, replayed: 2 }, 'evidence-matcher': { done: 1, failed: 0, gone: 0, inputRejected: 0, quarantined: 1, skipped: 0, pending: 0, replayed: 0 } }, totals: { done: 4, failed: 0, gone: 1, inputRejected: 0, quarantined: 1, skipped: 0, pending: 0, replayed: 2 } },
@@ -268,6 +268,14 @@ describe('dashboard: jobs list', () => {
     expect(body).toContain('Documents ready');
     expect(body).toContain('Pay ≥ floor');
     expect(body).toContain('From your Application Desk: Applied on 12 Sep 2026');
+  });
+
+  it('shows the B2B contractor badge on the row and on the job page, only where the note is set', async () => {
+    const list = (await get('/')).body;
+    expect(list).toContain('<span class="pill pill-accent" title="B2B contractor: no PF/benefits">B2B contractor</span>');
+    expect(list.match(/B2B contractor<\/span>/g)?.length).toBe(1);
+    expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor</span>');
+    expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor</span>');
   });
 
   it('marks rows first seen since the previous visit as new', async () => {

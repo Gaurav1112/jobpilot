@@ -27,6 +27,11 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    internship"); a word about the employer's product or customers never does. "internship" counts in the title.
  *    Re-review R9: "on" counts only before "basis" ("work on contract engagement workflows" is product text), and a
  *    product noun after the phrase ("a temporary staffing product", "a contract management platform") voids it.
+ *    Freelance spec D2: when the only reason would be `employment:contract` (the only canonical kind is contract: a
+ *    structured Contract/Contractor, a "Contract"/"Contractor" title word, or a contract phrase) and the posting is a
+ *    full-time B2B contractor role (`fullTimeContract`), it passes with the note `B2B contractor: no PF/benefits`. Every
+ *    other kind (temporary, intern, part-time, hourly, freelance, contract-to-hire, c2h) still rejects, and rules 5 and 6
+ *    then apply unchanged.
  * 5. remote from India, by the decision table:
  *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
  *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
@@ -66,6 +71,7 @@ export const NOTE_PAY_UNDISCLOSED = 'pay not disclosed';
 export const NOTE_PAY_BASIS = 'pay basis unclear';
 export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
+export const NOTE_B2B = 'B2B contractor: no PF/benefits';
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
@@ -187,7 +193,54 @@ function titleDenyWord(title: string, words: readonly string[]): string | undefi
   return [...words].filter((w) => w.trim() !== '').sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).find(standalone);
 }
 
-function employmentReason(p: Posting, pack: EligibilityPack): string | null {
+/** Freelance spec D2: wording that says a contract role is a full-time B2B engagement. Case-insensitive. */
+const B2B_FULL_TIME: readonly RegExp[] = [
+  /\bcontract type:\s*b2b\b/i,
+  /\bb2b (?:contract|agreement|contractor)\b/i,
+  /\bfull[\s-]?time (?:contract|contractor|b2b)\b/i,
+  /\b(?:contract|contractor)[,\s]+full[\s-]?time\b/i,
+  /\blong[\s-]term (?:contract|contractor)\b/i,
+];
+/** Freelance spec D2: wording that keeps a contract role rejected. */
+const SHORT_TERM: readonly RegExp[] = [
+  /\b\d{1,2}[\s-]?(?:months?|weeks?)\b[^.\n]{0,20}\bcontract\b/i,
+  /\bshort[\s-]term\b/i,
+  /\bpart[\s-]?time\b/i,
+  /\bper hour\b|\/\s?h(?:ou)?r\b|\bhourly\b/i,
+];
+const B2B_HEAD = 3000;
+
+/**
+ * Freelance spec D2: a full-time B2B contractor role. True when the title or the first 3,000 characters of the
+ * description carry full-time B2B wording, or an annual base salary is stated; false whenever short-term, part-time or
+ * hourly wording is there.
+ */
+export function fullTimeContract(p: Posting): boolean {
+  const text = `${p.title}\n${p.descriptionText.slice(0, B2B_HEAD)}`;
+  if (SHORT_TERM.some((re) => re.test(text))) return false;
+  return B2B_FULL_TIME.some((re) => re.test(text)) || (p.comp !== null && p.comp.basis === 'base');
+}
+
+/** True when `contract` is the only employment kind the posting states anywhere the rules look. */
+function onlyContractKind(p: Posting): boolean {
+  const known = (p.employmentType ?? '').split(/[,;/|]/).map((s) => canonicalEmployment(s.trim())).filter((c): c is string => c !== null);
+  if (known.some((c) => c !== 'contract')) return false;
+  if (/\binterns?(?:hips?)?\b/i.test(p.title)) return false;
+  const text = [p.employmentType ?? '', p.title, p.descriptionText.slice(0, HEAD)].join('\n');
+  return EMPLOYMENT_PHRASES.every(([label, re]) => {
+    const m = re.exec(text);
+    return m === null || (label !== '' ? label : (m[1] ?? '').toLowerCase()) === 'contract';
+  });
+}
+
+function employmentReason(p: Posting, pack: EligibilityPack): { reason: string | null; b2b: boolean } {
+  const reason = rawEmploymentReason(p, pack);
+  const kind = reason?.startsWith('employment:') === true ? canonicalEmployment(reason.slice('employment:'.length)) : null;
+  if (kind === 'contract' && onlyContractKind(p) && fullTimeContract(p)) return { reason: null, b2b: true };
+  return { reason, b2b: false };
+}
+
+function rawEmploymentReason(p: Posting, pack: EligibilityPack): string | null {
   // A bare contract word in the title is the posting's own label; it wins over a structured type (fix round 2).
   const titleWord = titleDenyWord(p.title, pack.filters.employmentDeny);
   if (titleWord !== undefined) return `employment:${titleWord}`;
@@ -462,11 +515,11 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const company = pack.filters.companyDeny.find((name) => hasTerm(p.company, name));
   if (company !== undefined) return reject(`company:${company}`);
   const employment = employmentReason(p, pack);
-  if (employment !== null) return reject(employment);
+  if (employment.reason !== null) return reject(employment.reason);
 
   const remote = remoteDecision(p, pack);
   const reasons: string[] = [];
-  const notes: string[] = [];
+  const notes: string[] = employment.b2b ? [NOTE_B2B] : [];
   const review = remote === 'review' || remote === 'review-timezone';
   if (review) {
     reasons.push('remote-unclear');

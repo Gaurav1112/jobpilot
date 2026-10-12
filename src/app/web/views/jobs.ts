@@ -2,7 +2,7 @@ import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-sto
 import { dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { sourceName } from '../copy.js';
-import { BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { b2bPill, BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -68,7 +68,7 @@ function row(j: ListedJob, istDay: (iso: string) => string): Html {
 <p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span>${
     j.alsoListedOn.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : ''
   }</p>
-<p class="job-pills">${remotePill(j.remote)}${docsPill(j.docsState)}</p>
+<p class="job-pills">${remotePill(j.remote)}${b2bPill(j.notes)}${docsPill(j.docsState)}</p>
 ${historyLine(j, istDay)}
 </div>
 <div class="job-status">${statusPill(j.status)}</div>
