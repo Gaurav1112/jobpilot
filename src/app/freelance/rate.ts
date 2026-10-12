@@ -54,7 +54,10 @@ const NOT_SCOPE_BEFORE =
  * Without a cue a figure is unconfirmed and unused.
  */
 const EFFORT_BEFORE = /\b(?:about|approx(?:\.|imately)?|estimated?|roughly|around|effort|scope|total|plan on|budgeted)\b|~/i;
-const EFFORT_AFTER = /^\s*(?:of\s+(?:work|development|dev|coding|effort|engineering)\b|(?:in\s+)?total\b)/i;
+const EFFORT_TAIL =
+  /^\s*(?:of\s+(?:work|development|dev|coding|effort|engineering)\b|for\s+(?:the\s+)?(?:(?:main|core|whole|entire)\s+)?(?:work|project|build|implementation|job|task)\b|(?:in\s+)?total\b)/i;
+/** A strong cue confirms a figure only when the figure ends its clause: `.`, `;`, `,`, `)`, `<` or the end of the text. */
+const CLAUSE_END = /^\s*(?:[.;,)<]|$)/;
 
 const round2 = (x: number): number => Math.round(Number((x * 100).toPrecision(15))) / 100;
 const valid = (x: number | null): boolean => x === null || (Number.isFinite(x) && x > 0);
@@ -89,9 +92,10 @@ function clauseBefore(window: string): string {
  * `null` when it states no hours figure at all, `'refused'` when it does but none can be used. A refused result is
  * `unknown`: it never falls through to the duration row.
  *
- * Allow-list: a figure is work scope only with an effort cue in its own clause (EFFORT_BEFORE: about, ~, estimated,
- * roughly, around, effort, scope, total, plan on, budgeted; or EFFORT_AFTER: "of work",
- * "of development", "total", "in total"). A figure without a cue is unconfirmed and unused.
+ * Allow-list on both sides: a figure is work scope only with an effort cue in its own clause (EFFORT_BEFORE: about, ~, estimated,
+ * roughly, around, effort, scope, total, plan on, budgeted; or EFFORT_TAIL: "of work",
+ * "of development", "for the whole project", "total", "in total"), and a strong before-cue confirms only when the
+ * figure ends its clause (CLAUSE_END) or is followed by such a tail. A figure without a cue is unconfirmed and unused.
  * Deny-list on top, which wins over a cue: a figure before which (within 25 characters, in the same clause: see
  * `clauseBefore`; a colon keeps the label with its figure) a deadline, response, availability, presence, support or
  * bound word stands (NOT_SCOPE_BEFORE), or after which a per-period unit, "or less", "max" or an amount of material
@@ -111,8 +115,8 @@ function totalHours(description: string): { lo: number; hi: number } | 'refused'
     const window = description.slice(Math.max(0, start - 25), start);
     const clause = clauseBefore(window);
     const rest = description.slice(start + m[0].length);
-    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(rest) || NOT_SCOPE_BEFORE.test(clause) || DEADLINE_PREPOSITION.test(description.slice(Math.max(0, start - 30), start))) denied.add(key);
-    else if (m[0].includes('~') || EFFORT_BEFORE.test(clause) || /approx\.\s*$/i.test(window) || EFFORT_AFTER.test(rest)) confirmed.set(key, { lo, hi });
+    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(rest) || NOT_SCOPE_AFTER.test(rest.replace(/^\s*[,;]/, '')) || NOT_SCOPE_BEFORE.test(clause) || DEADLINE_PREPOSITION.test(description.slice(Math.max(0, start - 30), start))) denied.add(key);
+    else if (EFFORT_TAIL.test(rest) || ((m[0].includes('~') || EFFORT_BEFORE.test(clause) || /approx\.\s*$/i.test(window)) && CLAUSE_END.test(rest))) confirmed.set(key, { lo, hi });
     else unconfirmed.add(key);
   }
   const found = [...confirmed.entries()].filter(([k]) => !denied.has(k));
