@@ -138,6 +138,8 @@ export interface RunOptions {
   readonly afterStep?: (count: number) => void;
   /** Test hook: runs after the projection, before the notification; throwing simulates a crash there. */
   readonly afterProject?: () => void;
+  /** Called once the lock is held, before anything else (`--if-due` records the attempt here). */
+  readonly onLocked?: () => void;
   /** Test hook: the code fingerprint in every step key (review I4); default `codeHash()` of this checkout. */
   readonly codeHash?: string;
 }
@@ -192,6 +194,7 @@ function sourcesAllReplayed(counts: RunCounts): boolean {
  */
 export function runDaily(o: RunOptions): Promise<DailySummary> {
   return withLock(o.home, 'run', async () => {
+    o.onLocked?.();
     const paths = homePaths(o.home);
     ensureHome(paths.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();

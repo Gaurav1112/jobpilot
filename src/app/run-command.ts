@@ -4,7 +4,8 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
-import { dailyDue, recordFailedAttempt } from './due.js';
+import { lookup } from 'node:dns/promises';
+import { alerted, dailyDue, finishAttempt, markAlerted, startAttempt } from './due.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
 import { offlineProviders } from './offline.js';
@@ -33,6 +34,15 @@ export interface RunCommandDeps {
   readonly err: (line: string) => void;
   readonly pdftotext?: string;
   readonly sleep?: (ms: number) => Promise<void>;
+  /** `--if-due` asks this before a live run; default `dnsOnline`. */
+  readonly online?: () => Promise<boolean>;
+}
+
+/** Hosts every pack's sources depend on; one resolving means the network is up (Wi-Fi is often still down at wake). */
+const PROBE_HOSTS = ['boards-api.greenhouse.io', 'api.lever.co', 'api.ashbyhq.com'];
+export async function dnsOnline(): Promise<boolean> {
+  const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
+  return (await Promise.all(PROBE_HOSTS.map(one))).some(Boolean);
 }
 
 /**
@@ -66,11 +76,22 @@ export function redactedError(e: unknown, terms: readonly string[] | undefined):
 export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promise<0 | 1 | 2> {
   let live: PlaywrightBrowserProvider | undefined;
   const startedAt = d.clock.now();
+  let attempt: number | undefined;
   try {
     if (o.ifDue === true) {
       const due = dailyDue(d.home, startedAt);
       if (!due.due) {
         d.out(`not due: ${due.reason}`);
+        if (due.capped === true && o.notify && !alerted(d.home, startedAt)) {
+          // Once a day: the scheduled run has given up until tomorrow or a manual run.
+          await d.notifier(`jobpilot gave up on today's run: ${due.reason}`).then(() => markAlerted(d.home, startedAt), () => {});
+        }
+        return 0;
+      }
+      // A run with every fetch failing would complete, count as today's and block the day (rereview of 8b49294):
+      // wait for the network instead, quietly; the next half-hourly start tries again.
+      if (o.offlineFixtures === undefined && !(await (d.online ?? dnsOnline)())) {
+        d.out('not due: the network is down (no source host resolves); the next start tries again');
         return 0;
       }
     }
@@ -86,7 +107,9 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
       ...(o.refresh ? { refresh: true } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+      ...(o.ifDue === true ? { onLocked: () => void (attempt = startAttempt(d.home, startedAt)) } : {}),
     });
+    if (o.ifDue === true) finishAttempt(d.home, startedAt, 'done', attempt);
     d.out(formatSummary(summary));
     return summary.exitCode;
   } catch (e) {
@@ -101,7 +124,7 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
     }
     if (o.ifDue === true) {
       try {
-        recordFailedAttempt(d.home, startedAt);
+        finishAttempt(d.home, startedAt, 'failed', attempt);
       } catch (r) {
         d.err(`error: the failed attempt could not be recorded, so the next start retries at once: ${redactedError(r, terms)}`);
       }

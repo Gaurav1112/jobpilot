@@ -232,8 +232,34 @@ describe('run --if-due (the half-hourly launchd start)', () => {
     const out: string[] = [];
     const code = await withLock(home, 'run', () => runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, '2026-10-09T03:59:00.000Z', posted, out)));
     expect(code).toBe(0);
-    expect(out).toEqual([expect.stringMatching(/^not due: another jobpilot process \(pid \d+, run\) holds .*jobpilot\.lock since /)]);
+    expect(out).toEqual([expect.stringMatching(/^not due: a jobpilot run is running \(pid \d+\)$/)]);
     expect(posted).toEqual([]);
+  });
+
+  it('offline at wake: a quiet exit 0 that records no attempt, instead of a run of failed fetches that blocks the day', async () => {
+    const home = newHome();
+    const posted: string[] = [];
+    const out: string[] = [];
+    const code = await runCommand({ notify: true, ifDue: true }, { ...deps(home, '2026-10-09T03:59:00.000Z', posted, out), online: async () => false });
+    expect(code).toBe(0);
+    expect(out).toEqual(['not due: the network is down (no source host resolves); the next start tries again']);
+    expect(posted).toEqual([]);
+    expect(existsSync(join(home, 'daily-attempts.json'))).toBe(false);
+  });
+
+  it('a DB that cannot be opened posts at most 3 failures and one give-up notice a day, not one per half hour', async () => {
+    const home = newHome();
+    writeFileSync(join(home, 'jobpilot.db'), 'not a database');
+    const posted: string[] = [];
+    const codes: number[] = [];
+    for (let k = 0; k < 34; k++) {
+      const t = new Date(Date.parse('2026-10-09T01:30:00.000Z') + k * 30 * 60_000).toISOString();
+      if (t >= '2026-10-09T18:30:00.000Z') break; // next IST day
+      codes.push(await runCommand({ offlineFixtures: FIXTURES, notify: true, ifDue: true }, deps(home, t, posted, [])));
+    }
+    expect(codes.filter((c) => c === 2)).toHaveLength(3);
+    expect(posted.filter((p) => p.startsWith('jobpilot run failed'))).toHaveLength(3);
+    expect(posted.filter((p) => p.startsWith('jobpilot gave up'))).toEqual([`jobpilot gave up on today's run: 3 attempts failed today; run "jobpilot run" by hand after fixing the cause`]);
   });
 
   it('after a completed run the rest of the day does nothing', async () => {

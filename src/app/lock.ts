@@ -161,6 +161,12 @@ function acquire(home: string, command: string, probe: ProcessProbe): () => void
   };
 }
 
+/** The live process holding the home's lock (its pid and command), or undefined when it is free or stale. */
+export function liveHolder(home: string, probe: ProcessProbe = systemProbe): { pid: number; command: string } | undefined {
+  const b = readBody(join(home, LOCK_FILE));
+  return b !== undefined && holderAlive(b, probe) ? { pid: b.pid, command: b.command } : undefined;
+}
+
 /** Runs `fn` holding the lock; the lock is taken before `fn` starts (synchronously) and released however it ends. */
 export async function withLock<T>(home: string, command: string, fn: () => Promise<T>, probe: ProcessProbe = systemProbe): Promise<T> {
   const release = acquire(home, command, probe);

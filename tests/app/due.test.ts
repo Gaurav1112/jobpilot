@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DAILY_FAILURES_KEY, dailyDue, isDue, MAX_FAILED_ATTEMPTS, recordFailedAttempt } from '../../src/app/due.js';
+import { ATTEMPTS_FILE, dailyDue, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, startAttempt } from '../../src/app/due.js';
+import { withLock } from '../../src/app/lock.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 
 // 2026-10-12 in IST; 01:30Z = 07:00 IST.
@@ -33,7 +34,7 @@ describe('isDue (pure)', () => {
     expect(isDue({ now: at('08:00'), completedToday: false, failuresToday: [first] }).due).toBe(true);
     const three = [at('07:00'), at('08:00'), at('09:00')];
     expect(MAX_FAILED_ATTEMPTS).toBe(3);
-    expect(isDue({ now: at('22:00'), completedToday: false, failuresToday: three })).toEqual({ due: false, reason: '3 attempts failed today; run "jobpilot run" by hand after fixing the cause' });
+    expect(isDue({ now: at('22:00'), completedToday: false, failuresToday: three })).toEqual({ due: false, capped: true, reason: '3 attempts failed today; run "jobpilot run" by hand after fixing the cause' });
   });
 
   it('uses the latest failure for spacing whatever the order', () => {
@@ -61,7 +62,7 @@ describe('dailyDue / recordFailedAttempt (store)', () => {
     ins.run('daily-2026-10-12', at('09:29'), null, 'running');
     ins.run('rebuild-2026-10-12', at('09:00'), at('09:01'), 'completed');
     app.close();
-    expect(dailyDue(home, at('10:00'))).toEqual({ due: true, reason: "today's run started and has not completed (running now, or resumed by the next start)" });
+    expect(dailyDue(home, at('10:00'))).toEqual({ due: true, reason: "today's run started and did not complete; this start continues it" });
 
     const again = AppStore.open(db());
     again.kernel.db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES ('daily-2026-10-12-2', 'p', 'h', ?, ?, 'completed')`).run(at('10:00'), at('10:12'));
@@ -69,24 +70,45 @@ describe('dailyDue / recordFailedAttempt (store)', () => {
     expect(dailyDue(home, at('10:30'))).toEqual({ due: false, reason: "today's run completed" });
   });
 
-  it('records failed attempts per IST day; a new day starts over', () => {
-    recordFailedAttempt(home, at('07:00'));
-    recordFailedAttempt(home, at('08:00'));
+  it('records failed attempts per IST day in the attempts file; a new day starts over', () => {
+    finishAttempt(home, at('07:00'), 'failed');
+    finishAttempt(home, at('08:00'), 'failed');
     expect(dailyDue(home, at('08:30')).due).toBe(false);
     expect(dailyDue(home, at('09:00')).due).toBe(true);
-    recordFailedAttempt(home, at('09:00'));
-    expect(dailyDue(home, at('15:00')).reason).toMatch(/^3 attempts failed today/);
+    finishAttempt(home, at('09:00'), 'failed');
+    expect(dailyDue(home, at('15:00'))).toMatchObject({ due: false, capped: true, reason: expect.stringMatching(/^3 attempts failed today/) });
     expect(dailyDue(home, at('07:00', '2026-10-13')).due).toBe(true);
-    recordFailedAttempt(home, at('07:00', '2026-10-13'));
-    const app = AppStore.open(db());
-    expect(JSON.parse(app.getSetting(DAILY_FAILURES_KEY) as string)).toEqual({ date: '2026-10-13', at: [at('07:00', '2026-10-13')] });
-    app.close();
+    finishAttempt(home, at('07:00', '2026-10-13'), 'failed');
+    expect(JSON.parse(readFileSync(join(home, ATTEMPTS_FILE), 'utf8'))).toEqual({ date: '2026-10-13', attempts: [{ at: at('07:00', '2026-10-13'), outcome: 'failed' }] });
   });
 
-  it('a corrupt failures setting counts as none', () => {
-    const app = AppStore.open(db());
-    app.setSetting(DAILY_FAILURES_KEY, '{nope');
-    app.close();
+  it('an attempt that started and never finished (killed) counts as failed; a finished one does not', () => {
+    startAttempt(home, at('07:00'));
+    expect(dailyDue(home, at('07:30')).reason).toBe('the last attempt failed at 07:00 IST; retrying from 08:00 IST');
+    const i = startAttempt(home, at('08:00'));
+    finishAttempt(home, at('08:00'), 'done', i);
+    expect(dailyDue(home, at('08:30')).reason).toBe('retry 2 of 3');
+    startAttempt(home, at('09:00'));
+    startAttempt(home, at('10:00'));
+    expect(dailyDue(home, at('23:00')).capped).toBe(true);
+  });
+
+  it('a live jobpilot holding the lock is not owed, whatever the attempts file says', async () => {
+    startAttempt(home, at('07:00'));
+    await withLock(home, 'run', async () => {
+      expect(dailyDue(home, at('07:30'))).toEqual({ due: false, reason: expect.stringMatching(/^a jobpilot run is running \(pid \d+\)$/) });
+    });
+  });
+
+  it('past the cap the DB is never opened, so a corrupt DB stops being read', () => {
+    writeFileSync(db(), 'not a database');
+    expect(() => dailyDue(home, at('09:00'))).toThrow();
+    for (const h of ['07:00', '08:00', '09:00']) finishAttempt(home, at(h), 'failed');
+    expect(dailyDue(home, at('10:00')).capped).toBe(true);
+  });
+
+  it('a corrupt attempts file counts as none', () => {
+    writeFileSync(join(home, ATTEMPTS_FILE), '{nope');
     expect(dailyDue(home, at('09:00')).due).toBe(true);
   });
 });

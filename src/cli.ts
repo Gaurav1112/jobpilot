@@ -430,6 +430,15 @@ program
     }),
   );
 
+/** Whether today's daily run is owed, as one line; a DB that cannot be read is named, not thrown. */
+function dueOrError(now: string): string {
+  try {
+    const d = dailyDue(jobpilotHome(), now);
+    return d.due ? `owed: ${d.reason}` : d.reason;
+  } catch (e) {
+    return `unknown: the database cannot be read (${e instanceof Error ? e.message : String(e)})`;
+  }
+}
 const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run and the always-on dashboard (macOS)');
 const scheduleOpts = () => {
   if (process.getuid === undefined) throw new Error('schedule needs a POSIX user id (macOS)');
@@ -442,7 +451,8 @@ schedule
     guarded(() => {
       const r = installSchedule(scheduleOpts());
       for (const p of r.plists) console.log(`wrote ${p}`);
-      console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${r.nextRun}`);
+      const owed = dueOrError(new Date().toISOString());
+      console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
@@ -465,8 +475,7 @@ schedule
         console.log(`  plist ${s.plistPath}`);
         console.log(`  log   ${s.logPath}`);
       }
-      const due = dailyDue(jobpilotHome(), new Date().toISOString());
-      console.log(`today's daily run: ${due.due ? `owed: ${due.reason}` : due.reason}`);
+      console.log(`today's daily run: ${dueOrError(new Date().toISOString())}`);
     }),
   );
 schedule
@@ -475,7 +484,8 @@ schedule
   .action(() =>
     guarded(() => {
       runNow(scheduleOpts());
-      console.log('started com.jobpilot.daily; follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
+      console.log(`started com.jobpilot.daily (run --if-due): ${dueOrError(new Date().toISOString())}`);
+      console.log('it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
 
