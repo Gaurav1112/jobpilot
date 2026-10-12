@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ATTEMPTS_FILE, dailyDue, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, startAttempt } from '../../src/app/due.js';
+import { alerted, ATTEMPTS_FILE, attemptsFor, DAILY_DUE, dailyDue, due, FREELANCE_DUE, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, markAlerted, startAttempt } from '../../src/app/due.js';
 import { withLock } from '../../src/app/lock.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 
@@ -110,5 +110,82 @@ describe('dailyDue / recordFailedAttempt (store)', () => {
   it('a corrupt attempts file counts as none', () => {
     writeFileSync(join(home, ATTEMPTS_FILE), '{nope');
     expect(dailyDue(home, at('09:00')).due).toBe(true);
+  });
+});
+
+describe('due (per-pipeline windows)', () => {
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-due-fl-'));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const insert = (id: string, status = 'completed', when = at('08:00')): void => {
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    app.kernel.db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES (?, 'p', 'h', ?, ?, ?)`).run(id, when, status === 'completed' ? when : null, status);
+    app.close();
+  };
+  const fl = attemptsFor(FREELANCE_DUE);
+
+  it('dailyDue is due(DAILY_DUE) without the window', () => {
+    expect(dailyDue(home, at('09:00'))).toEqual({ due: true, reason: "today's run has not run" });
+    expect(due(DAILY_DUE, home, at('09:00'))).toEqual({ due: true, window: '', reason: "today's run has not run" });
+  });
+
+  it('freelance is not due at 07:29 IST and is due from 07:30 (window am)', () => {
+    expect(due(FREELANCE_DUE, home, at('07:29'))).toMatchObject({ due: false, reason: 'before 07:30 IST' });
+    expect(due(FREELANCE_DUE, home, at('07:30'))).toMatchObject({ due: true, window: 'am' });
+    expect(due(FREELANCE_DUE, home, at('19:29'))).toMatchObject({ due: true, window: 'am' });
+  });
+
+  it('a completed am run: not due at 12:00, due at 19:30 as pm; its ordinals count too', () => {
+    insert('freelance-2026-10-12-am');
+    expect(due(FREELANCE_DUE, home, at('12:00'))).toMatchObject({ due: false, window: 'am', reason: "the am window's run completed" });
+    expect(due(FREELANCE_DUE, home, at('19:30'))).toMatchObject({ due: true, window: 'pm' });
+    insert('freelance-2026-10-12-pm-2');
+    expect(due(FREELANCE_DUE, home, at('20:00'))).toMatchObject({ due: false, window: 'pm' });
+  });
+
+  it('only digit ordinals complete a window; am does not complete pm; daily never counts for freelance', () => {
+    insert('freelance-2026-10-12-am-2');
+    insert('freelance-2026-10-12-am-x');
+    insert('daily-2026-10-12');
+    expect(due(FREELANCE_DUE, home, at('12:00')).due).toBe(false);
+    expect(due(FREELANCE_DUE, home, at('20:00'))).toMatchObject({ due: true, window: 'pm' });
+    // and freelance rows never complete the daily run
+    expect(dailyDue(home, at('20:00')).due).toBe(false); // daily-2026-10-12 completed
+    const h2 = mkdtempSync(join(tmpdir(), 'jobpilot-due-fl2-'));
+    try {
+      const app = AppStore.open(join(h2, 'jobpilot.db'));
+      app.kernel.db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES ('freelance-2026-10-12-am', 'p', 'h', ?, ?, 'completed')`).run(at('08:00'), at('08:01'));
+      app.close();
+      expect(dailyDue(h2, at('10:00')).due).toBe(true);
+    } finally {
+      rmSync(h2, { recursive: true, force: true });
+    }
+  });
+
+  it('a running am run is continued, not new', () => {
+    insert('freelance-2026-10-12-am', 'running');
+    expect(due(FREELANCE_DUE, home, at('09:00'))).toMatchObject({ due: true, window: 'am', reason: "the am window's run started and did not complete; this start continues it" });
+  });
+
+  it('3 failures in am cap am only; pm is due; the cap and the alert reset per window', () => {
+    for (const t of ['07:30', '08:30', '09:30']) fl.finish(home, at(t), 'failed');
+    fl.markAlerted(home, at('10:00'));
+    expect(due(FREELANCE_DUE, home, at('10:00'))).toMatchObject({ due: false, capped: true, window: 'am', reason: '3 attempts failed in the am window; run "jobpilot run" by hand after fixing the cause' });
+    expect(fl.alerted(home, at('10:00'))).toBe(true);
+    expect(due(FREELANCE_DUE, home, at('19:30'))).toMatchObject({ due: true, window: 'pm' });
+    expect(fl.alerted(home, at('19:30'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(home, 'freelance-attempts.json'), 'utf8'))).toMatchObject({ date: '2026-10-12-am' });
+    expect(() => readFileSync(join(home, ATTEMPTS_FILE))).toThrow(); // daily file untouched
+  });
+
+  it('daily attempts file written before this change is still honoured', () => {
+    writeFileSync(join(home, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-12', attempts: [{ at: at('07:00'), outcome: 'failed' }], alerted: true }));
+    expect(dailyDue(home, at('07:30')).reason).toBe('the last attempt failed at 07:00 IST; retrying from 08:00 IST');
+    expect(alerted(home, at('07:30'))).toBe(true);
+    markAlerted(home, at('07:30'));
+    startAttempt(home, at('08:00'));
+    expect(JSON.parse(readFileSync(join(home, 'daily-attempts.json'), 'utf8')).attempts).toHaveLength(2);
   });
 });
