@@ -330,7 +330,16 @@ read); session-browse of any marketplace.
 9. Parked sources (§4.6) re-probed monthly by `sources probe`; promoted only when they yield.
 10. Live run, probe review, merge.
 
-## 13. Open decisions (from the validation)
+## 13. Decisions from the validation (user, 2026-10-12)
 
-- D1: a fixed-price budget floor for gigs with no stated hours (recommended $500; 61/166 today).
-- D2: whether the full-time pipeline should accept B2B "full-time contractor" roles.
+- **D1: fixed-price budget floor $500.** A fixed-price gig with no stated hours and a budget under
+  $500 (USD after FX) is rejected as `budget-below-floor`; at or above it, it goes to review (never
+  the shortlist until hours are known). `freelance.yaml: fixedBudgetFloorUsd: 500`.
+- **D2: the full-time pipeline accepts full-time B2B contractor roles, labelled.** A posting whose
+  only reject would be `employment:contract`, and which states full-time hours or an annual salary
+  ("Contract type: B2B", "full-time contractor"), is judged by the normal full-time rules (comp floor,
+  fit, remote-India) and carries the badge "B2B contractor: no PF/benefits". Short-term, part-time,
+  hourly and contract-to-hire stay rejected. This is a change to `jobpilot-daily` eligibility, built
+  as its own first task (plan Task 0) with new golden cases; the existing eligibility eval (n=192)
+  must stay at 1.000 apart from the cases this decision deliberately flips, each listed in the
+  task.
