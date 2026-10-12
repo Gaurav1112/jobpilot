@@ -86,7 +86,7 @@ export interface GigDecision {
 }
 
 /** What one rule says: a reject reason, a review reason (both optional), and notes. */
-interface Outcome {
+export interface Outcome {
   readonly reject: string | null;
   readonly review: string | null;
   readonly notes: readonly string[];
@@ -202,7 +202,7 @@ function residenceStated(description: string): 'reject' | 'softened' | null {
 /** The gig's own location data does not already put India in scope. */
 const indiaNotInScope = (g: Gig): boolean => !inScope(g.location.countries);
 
-function locationOutcome(g: Gig): Outcome {
+export function locationOutcome(g: Gig): Outcome {
   const { countries, worldwide, text } = g.location;
   if (indiaNotInScope(g)) {
     const stated = residenceStated(g.description);
@@ -325,7 +325,7 @@ function fullTime(text: string): 'yes' | 'unclear' | 'no' | 'softened' {
   return result;
 }
 
-function hoursOutcome(g: Gig, cap: number): Outcome {
+export function hoursOutcome(g: Gig, cap: number): Outcome {
   if (g.kind !== 'contract') return PASS;
   const text = `${g.title}\n${g.description}`;
   let min = g.hoursPerWeek.min;

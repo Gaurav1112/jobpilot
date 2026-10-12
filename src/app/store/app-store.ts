@@ -853,6 +853,16 @@ export class AppStore {
     });
   }
 
+  /**
+   * Adds one failed probe (`jobpilot sources probe`) to `source_health.probe_failures` for (platform, week). A probe is
+   * not a run: `runs` and the other counts are untouched, and a row it creates has `runs` 0.
+   */
+  addProbeFailure(platform: string, week: string): void {
+    this.db
+      .prepare(`INSERT INTO source_health (platform, week, probe_failures) VALUES (?, ?, 1) ON CONFLICT (platform, week) DO UPDATE SET probe_failures = probe_failures + 1`)
+      .run(platform, week);
+  }
+
   /** The source health rows, by platform then week. */
   sourceHealth(platform?: string): SourceHealthRow[] {
     const rows = (

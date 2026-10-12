@@ -31,6 +31,7 @@ import { DAILY_DUE, FREELANCE_DUE, due, type DueSpec } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
+import { probeCommand } from './app/freelance/probe.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -437,6 +438,22 @@ networks
       process.exitCode = await withLock(paths.home, 'networks pack', async () =>
         networksPack(o.all === true ? 'all' : ids, todaysPack(), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
       );
+    }),
+  );
+
+const sources = program.command('sources').description('Freelance source tools');
+sources
+  .command('probe')
+  .description('Live and read-only: measure each freelance source\'s yield with the fixed score (access + volume + India + pay), polite and sequential. Never part of verify; nothing is submitted or promoted')
+  .option('--json', 'machine-readable output')
+  .option('--record <dir>', 'save every raw response there as a fixture candidate (refused inside ~/.jobpilot, the jobpilot home or the repo\'s tests/ unless --force)')
+  .option('--force', 'allow --record into a refused folder')
+  .action((o: { json?: boolean; record?: string; force?: boolean }) =>
+    guarded(async () => {
+      process.exitCode = await probeCommand({
+        home: jobpilotHome(), repoRoot: root, json: o.json === true, ...(o.record !== undefined ? { record: o.record } : {}), force: o.force === true,
+        clock: systemClock, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out: (l) => console.log(l),
+      });
     }),
   );
 
