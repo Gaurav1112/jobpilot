@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { freezePack } from '../../src/kernel/broker.js';
 import { dbPath, jobpilotHome, logsDir, outDir, packDir } from '../../src/app/pack/paths.js';
+import { loadRunPack } from '../../src/app/kernel.js';
 import { assertNoForbidden, citeable, ForbiddenTermError, loadPack, PackError } from '../../src/app/pack/load.js';
 import { assertNoForbiddenStrict, forbiddenTermStrict, redactText } from '../../src/app/pack/rules.js';
 import type { Fact, Naming } from '../../src/app/pack/schema.js';
@@ -530,16 +531,13 @@ describe('freelance pack files', () => {
     expect(pack.freelance.rateFloorUsdHour).toBe(40);
     expect(pack.freelance.derivedRateCountsForFloor).toBe(true);
     expect(pack.freelance.fixedBudgetFloorUsd).toBe(500);
+    expect(pack.freelance.kinds).toEqual(['contract', 'gig', 'bounty']);
+    expect(pack.freelance.platforms['upwork']?.enabled).toBe(false);
+    expect(pack.freelance.platforms['reddit']?.enabled).toBe(false);
     expect(pack.freelance.platforms['freelancer']?.queries).toEqual(['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm']);
     expect(pack.platformRules['upwork']).toEqual({ maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000 });
     expect(pack.networks).toEqual([]);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);
-  });
-  it('present files join the pack hash', () => {
-    const d = copyFixture();
-    const before = loadPack(d).hash;
-    writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
-    expect(loadPack(d).hash).not.toBe(before);
   });
   it('rateFloorUsdHour -1 names the file and the field', () => {
     const d = copyFixture();
@@ -549,11 +547,95 @@ describe('freelance pack files', () => {
   it('a bad network file names networks/<file> and the field', () => {
     const d = copyFixture();
     writeFileSync(join(d, 'networks', 'toptal.yaml'), 'id: toptal\nname: Toptal\nurl: not a url\n');
-    expect(() => loadPack(d)).toThrow(/networks\/toptal\.yaml/);
+    expect(() => loadPack(d)).toThrow(/networks\/toptal\.yaml.*url/s);
   });
   it('a network whose id differs from its file name is refused', () => {
     const d = copyFixture();
     cpSync(join(d, 'networks', 'arc.yaml'), join(d, 'networks', 'zzz.yaml'));
     expect(() => loadPack(d)).toThrow(/networks\/zzz\.yaml.*id/s);
+  });
+});
+
+const DAILY_HASH = '900420850a1aaf46edd002e793fcee1d80cd16e2edb08e0fa37f76a3e7d2c820';
+const edit = (d: string, file: string, from: string, to: string): void => {
+  const p = join(d, file);
+  const t = readFileSync(p, 'utf8');
+  if (!t.includes(from)) throw new Error(`test setup: ${file} lacks ${from}`);
+  writeFileSync(p, t.replace(from, to));
+};
+
+describe('freelance pack: defaults and partial files', () => {
+  it('an empty freelance.yaml gives the defaults', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'freelance.yaml'), '{}\n');
+    const { pack } = loadPack(d);
+    expect(pack.freelance.rateFloorUsdHour).toBe(40);
+    expect(pack.freelance.kinds).toEqual(['contract', 'gig', 'bounty']);
+    expect(pack.freelance.platforms['upwork']?.enabled).toBe(false);
+  });
+  it('a platform named with only enabled keeps empty queries', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'freelance.yaml'), 'platforms:\n  freelancer: { enabled: false }\n');
+    const f = loadPack(d).pack.freelance.platforms['freelancer'];
+    expect(f).toEqual({ enabled: false, queries: [] });
+  });
+  it('an empty kinds list is refused', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'freelance.yaml'), 'kinds: []\n');
+    expect(() => loadPack(d)).toThrow(/freelance\.yaml.*kinds.*at least one/s);
+  });
+  it('a non-yaml file in networks/ is refused by name', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'networks', 'notes.txt'), 'x');
+    expect(() => loadPack(d)).toThrow(/networks\/notes\.txt/);
+  });
+});
+
+describe('freelance pack: hashes', () => {
+  it('the daily packHash is the pre-freelance value, with or without the files', () => {
+    expect(loadPack(FIXTURE).hash).toBe(DAILY_HASH);
+    const d = copyFixture();
+    rmSync(join(d, 'freelance.yaml'));
+    rmSync(join(d, 'platform-rules.yaml'));
+    rmSync(join(d, 'networks'), { recursive: true });
+    expect(loadPack(d).hash).toBe(DAILY_HASH);
+  });
+  it('editing freelance.yaml or a network leaves packHash and changes freelancePackHash', () => {
+    const d = copyFixture();
+    const a = loadPack(d);
+    writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
+    const b = loadPack(d);
+    edit(d, 'networks/arc.yaml', 'keywords: [backend,', 'keywords: [golang, backend,');
+    const c = loadPack(d);
+    for (const x of [b, c]) expect(x.hash).toBe(a.hash);
+    expect(b.freelancePackHash).not.toBe(a.freelancePackHash);
+    expect(c.freelancePackHash).not.toBe(b.freelancePackHash);
+  });
+  it('loadRunPack exposes both and keeps fullPackHash independent of the freelance files', () => {
+    const d = copyFixture();
+    const a = loadRunPack(d, {}, '2026-10');
+    writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
+    const b = loadRunPack(d, {}, '2026-10');
+    expect(b.packHash).toBe(DAILY_HASH);
+    expect(b.fullPackHash).toBe(a.fullPackHash);
+    expect(b.freelancePackHash).not.toBe(a.freelancePackHash);
+  });
+});
+
+describe('freelance pack: naming guard (loadRunPack, which jobpilot pack check uses)', () => {
+  it('refuses a forbidden term in a network keyword, naming the file', () => {
+    const d = copyFixture();
+    edit(d, 'networks/arc.yaml', 'keywords: [backend,', 'keywords: [Initech, backend,');
+    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/networks\/arc\.yaml: keywords\[0\] holds forbidden term #1/);
+  });
+  it('refuses a forbidden term in platforms.freelancer.queries', () => {
+    const d = copyFixture();
+    edit(d, 'freelance.yaml', 'queries: [java,', 'queries: [Initech, java,');
+    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/freelance\.yaml: platforms\.freelancer\.queries\[0\] holds forbidden term #1/);
+  });
+  it('refuses an undrawable glyph in a network screening prep line', () => {
+    const d = copyFixture();
+    edit(d, 'networks/toptal.yaml', 'English communication practice', 'English \u2192 practice');
+    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/networks\/toptal\.yaml: screening\[0\]\.prep\[0\]/);
   });
 });

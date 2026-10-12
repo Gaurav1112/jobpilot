@@ -3,7 +3,7 @@ import { Platform } from '../freelance/types.js';
 
 const FREELANCER_QUERIES = ['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm'];
 
-const PlatformConfig = z.strictObject({ enabled: z.boolean(), queries: z.array(z.string()) });
+const PlatformConfig = z.strictObject({ enabled: z.boolean().default(true), queries: z.array(z.string()).default([]) });
 export type PlatformConfig = z.infer<typeof PlatformConfig>;
 
 /** Sources without a query list are on by default; upwork and reddit have no source in this build, so they start off. */
@@ -35,7 +35,7 @@ export const FreelanceFile = z.strictObject({
   derivedRateCountsForFloor: z.boolean().default(true),
   fixedBudgetFloorUsd: Money.default(500),
   fitFloor: z.number().min(0).max(100).default(60),
-  kinds: z.array(z.enum(['contract', 'gig', 'bounty'])).default(['contract', 'gig', 'bounty']),
+  kinds: z.array(z.enum(['contract', 'gig', 'bounty'])).min(1, 'at least one kind is required').default(['contract', 'gig', 'bounty']),
   platforms: perPlatform(PlatformConfig, DEFAULT_PLATFORMS).prefault({}),
 });
 export type FreelanceRules = z.infer<typeof FreelanceFile>;

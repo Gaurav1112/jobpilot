@@ -66,17 +66,26 @@ function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: u
   return r.data;
 }
 
+/**
+ * The pack as the daily pipeline hashes it: without the freelance fields, so editing (or adding) a freelance file never
+ * re-runs a daily step. `freelancePackHash` is the hash with them.
+ */
+export function withoutFreelance<T extends object>(pack: T): Omit<T, 'freelance' | 'platformRules' | 'networks'> {
+  const { freelance: _f, platformRules: _r, networks: _n, ...rest } = pack as T & Record<string, unknown>;
+  return rest as Omit<T, 'freelance' | 'platformRules' | 'networks'>;
+}
+
 /** networks/<id>.yaml, sorted by id; each file's id must be its file name, so the id is never a surprise. */
 function readNetworks(dir: string): Network[] {
   const nd = join(dir, 'networks');
   if (!existsSync(nd)) return [];
-  const files = readdirSync(nd).filter((f) => f.endsWith('.yaml')).sort();
-  const networks = files.map((f) => {
+  const files = readdirSync(nd).sort();
+  return files.map((f) => {
+    if (!f.endsWith('.yaml')) throw new PackError(`networks/${f}: only .yaml files belong in networks/`);
     const n = readYaml(dir, `networks/${f}`, NetworkFile);
     if (n.id !== f.slice(0, -'.yaml'.length)) throw new PackError(`networks/${f}: id: ${n.id} must match the file name`);
     return n;
   });
-  return networks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 function withKey(g: LexiconGroup): LexiconGroup {
@@ -133,7 +142,7 @@ function checkClaimable(titles: readonly string[]): void {
  * Loads and validates the pack in `dir`. `overrides` replaces fact statuses (Task 8) before hashing.
  * The hash covers the public pack only, so contact and answers edits never invalidate cached steps.
  */
-export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['status']>> = {}, opts: LoadOptions = {}): { pack: Pack; hash: string } {
+export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['status']>> = {}, opts: LoadOptions = {}): { pack: Pack; hash: string; freelancePackHash: string } {
   const facts = readYaml(dir, 'facts.yaml', FactsFile).facts;
   const seen = new Set<string>();
   for (const f of facts) {
@@ -184,16 +193,7 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
   checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
-  // The freelance files join the hash only when present, so a pack without them keeps the daily pipeline's hash and
-  // adding or editing one re-runs just the steps that read it.
-  const absent = [
-    ...(existsSync(join(dir, 'freelance.yaml')) ? [] : ['freelance' as const]),
-    ...(existsSync(join(dir, 'platform-rules.yaml')) ? [] : ['platformRules' as const]),
-    ...(pack.networks.length > 0 ? [] : ['networks' as const]),
-  ];
-  const hashed: Partial<PublicPack> = { ...publicPack };
-  for (const k of absent) delete hashed[k];
-  return { pack, hash: hashOf(hashed) };
+  return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack) };
 }
 
 export { assertNoForbidden, citeable, ForbiddenTermError } from './rules.js';

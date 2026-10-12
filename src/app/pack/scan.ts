@@ -24,7 +24,7 @@ function* stringsIn(v: unknown, path: string): Generator<{ path: string; text: s
 
 type ScannedPack = Pick<
   Pack,
-  'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser'
+  'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser' | 'freelance' | 'platformRules' | 'networks'
 >;
 
 /** What to write instead of a character Noto Sans cannot draw. */
@@ -118,6 +118,18 @@ export function packTextProblems(pack: ScannedPack): string[] {
     ['lexicon.yaml', pack.lexicon], ['watchlist.yaml', { watchlist: pack.watchlist }], ['targets.yaml', targets], ['filters.yaml', filters],
     ['eligibility.yaml', pack.eligibility], ['offers.yaml', pack.offers], ['fx.yaml', pack.fx], ['feeds.yaml', pack.feeds], ['policy.user.yaml', pack.policyUser],
   ];
+  // Freelancer queries go to third-party APIs and network titles and keywords feed documents, so they get the same
+  // strict term check and the glyph check as document text.
+  const freelanceFiles: readonly (readonly [string, unknown])[] = [
+    ['freelance.yaml', pack.freelance], ['platform-rules.yaml', pack.platformRules],
+    ...pack.networks.map((n) => [`networks/${n.id}.yaml`, n] as const),
+  ];
+  for (const [file, value] of freelanceFiles) {
+    for (const s of stringsIn(value, '')) {
+      term(s.text, `${file}: ${s.path}`);
+      p.push(...glyphProblems(s.text, `${file}: ${s.path}`));
+    }
+  }
   for (const [file, value] of files) for (const s of stringsIn(value, '')) term(s.text, `${file}: ${s.path}`);
   return p;
 }

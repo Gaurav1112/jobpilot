@@ -12,7 +12,7 @@ import type { CompiledPipeline } from '../kernel/wiring.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import { codeHash } from './code-hash.js';
 import { appGuardrails } from './guardrails.js';
-import { loadPack, PackError } from './pack/load.js';
+import { loadPack, PackError, withoutFreelance } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
@@ -58,6 +58,8 @@ export interface RunPack {
   readonly fullPack: Pack & { readonly render?: { readonly nonce: number } };
   /** Hash of `fullPack`, in the renderer's step key only. */
   readonly fullPackHash: string;
+  /** Hash of the public pack including the freelance files; the freelance supervisor's pack hash. */
+  readonly freelancePackHash: string;
   readonly asOf: string;
   readonly nonce: number | undefined;
 }
@@ -71,7 +73,7 @@ export interface RunPack {
  * field or fact id and a term by its position only.
  */
 export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce?: number): RunPack {
-  const { pack, hash } = loadPack(dir, overrides, { asOf });
+  const { pack, hash, freelancePackHash } = loadPack(dir, overrides, { asOf });
   const text = packTextProblems(pack);
   // rereview R11: the first line (the failure notification's text) gives the count and where to look, never a term
   if (text.length > 0) {
@@ -80,7 +82,7 @@ export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact
   }
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
-  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(fullPack), asOf, nonce };
+  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, asOf, nonce };
 }
 
 export interface AppKernelOptions {

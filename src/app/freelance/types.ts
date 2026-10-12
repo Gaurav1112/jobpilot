@@ -5,7 +5,7 @@ import { IsoDate, IsoDateOrDateTime, JobKey } from '../types.js';
 export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit']);
 export type Platform = z.infer<typeof Platform>;
 
-const Currency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']);
+const GigCurrency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD']);
 
 export const GigRequest = defineType(
   'GigRequest',
@@ -56,7 +56,7 @@ export const Gig = defineType(
           type: z.enum(['hourly', 'fixed', 'monthly', 'unknown']),
           min: z.number().nullable(),
           max: z.number().nullable(),
-          currency: Currency.nullable(),
+          currency: GigCurrency.nullable(),
         })
         .strict(),
       hoursPerWeek: z.object({ min: z.number().nullable(), max: z.number().nullable(), source: z.literal('text').nullable() }).strict(),
