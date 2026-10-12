@@ -200,8 +200,9 @@ Reasons are named, as in v1 eligibility. Reject when:
   anywhere passes. Nothing stated → `review`.
 - **hours**: stated over 20 h/week, or "full-time", "40 hours", "dedicated" describing this role.
   Not stated → `review`.
-- **overlap**: a required window that cannot meet IST 18:00–00:00 (e.g. "online 9–5 EST" =
-  18:30–02:30 IST → reject). "Some overlap", "async" pass.
+- **overlap**: a window required OF YOU that shares under 2 hours with IST 18:00–00:00 → reject (e.g. "must be
+  online 9am-5pm PST" = 22:30–06:30 IST shares 1.5 h). The client's own hours, a rare short sync, "some overlap" and
+  "async" never reject. (Corrected 2026-10-12: the earlier example "9–5 EST" shares 4.5 h and passes.)
 - **exclusivity**: "must not work other jobs", "exclusive", contract-to-hire with exclusivity.
 - **role, company, naming**: v1 `roleDeny`, `companyDeny`; a gig from the user's current
   employer or its client (naming forbidden terms, strict matcher) is rejected.
@@ -333,8 +334,9 @@ read); session-browse of any marketplace.
 ## 13. Decisions from the validation (user, 2026-10-12)
 
 - **D1: fixed-price budget floor $500.** A fixed-price gig with no stated hours and a budget under
-  $500 (USD after FX) is rejected as `budget-below-floor`; at or above it, it goes to review (never
-  the shortlist until hours are known). `freelance.yaml: fixedBudgetFloorUsd: 500`.
+  $500 (USD after FX) is rejected as `budget-below-floor`; at or above it, it is eligible as a gig (judged by
+  deliverable; the rate stays labelled `unknown`). Amended 2026-10-12 in Task 6 review: requiring hours would mean
+  no fixed-price gig could ever pass. A preset bracket (D1b) or a hedged budget ("budget is flexible") goes to review. `freelance.yaml: fixedBudgetFloorUsd: 500`.
 - **D1b (user, 2026-10-12): platform preset brackets are not budgets.** A fixed budget exactly matching a platform
   preset bracket (`platform-rules.yaml: freelancer.presetBrackets`, derived from recordings: same bracket for at least 3
   distinct clients) goes to review with the note `preset bracket - bids may exceed it`, never `budget-below-floor`.
