@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { scorePosting, type ScorerPack } from '../../../src/app/agents/scorer-lexicon.js';
 import type { WritingPack } from '../../../src/app/agents/writing/grounded.js';
 import { gigKey } from '../../../src/app/freelance/keys.js';
-import { checklistMarkdown, networkPack, profileText, type NetworkPackResult } from '../../../src/app/freelance/networks.js';
+import { checklistMarkdown, networkPack, profileCutNotes, profileText, type NetworkPackResult } from '../../../src/app/freelance/networks.js';
 import { evidenceFor, syntheticPosting } from '../../../src/app/freelance/writing/gig-evidence.js';
 import { resumeProblems } from '../../../src/app/guardrails.js';
 import { resolvePdftotext } from '../../../src/app/kernel.js';
@@ -74,9 +74,9 @@ describe('networkPack', () => {
   });
 
   it('every profile sentence is a substring of the resume headline, summary or skills line', () => {
-    const sources = [r.resume.headline, r.resume.summary.text, r.resume.skills.join(', ')];
     for (const net of networks) {
       const res = networkPack({ ...net, profileFields: [...net.profileFields, { id: 'skills', maxChars: 60 }] }, pack, AS_OF, pub);
+      const sources = [res.resume.headline, res.resume.summary.text, res.resume.skills.join(', ')];
       for (const p of res.profile) for (const s of sentencesOf(p.text)) expect(sources.some((src) => src.includes(s)), `${net.id}/${p.id}: ${s}`).toBe(true);
     }
   });
@@ -150,8 +150,50 @@ describe('networkPack', () => {
   });
 
   it('result type carries every field', () => {
-    const keys: (keyof NetworkPackResult)[] = ['networkId', 'resume', 'profile', 'checklist', 'problems', 'missing'];
+    const keys: (keyof NetworkPackResult)[] = ['networkId', 'resume', 'profile', 'checklist', 'problems', 'missing', 'skillsSource'];
     for (const k of keys) expect(r).toHaveProperty(k);
+  });
+});
+
+describe('own-stack fallback', () => {
+  const nomatch: Network = { ...toptal, keywords: ['zzfoo', 'zzbar baz'], targetTitles: ['zzqux wrangler'] };
+  const own = networkPack(nomatch, pack, AS_OF, pub);
+
+  it('falls back to the user\'s own backed skills when no network keyword is backed', () => {
+    expect(own.skillsSource).toBe('own-stack');
+    expect(own.resume.covered.length).toBeGreaterThan(0);
+    expect(own.resume.summary.text).toMatch(/Core skills/);
+    expect(own.problems).toEqual([]);
+    expect(resumeProblems(own.resume, pack, '', pub)).toEqual([]);
+    expect(own.missing).toEqual(['zzbar baz', 'zzfoo']);
+    const lines = checklistMarkdown(nomatch, own, pack).split('\n');
+    expect(lines[0]).toBe(MOONLIGHTING);
+    expect(lines[1]).toBe('Skills shown are your own strongest backed skills: none of this network\'s keywords match a verified fact.');
+  });
+
+  it('keeps network keywords when one is backed, with no checklist line', () => {
+    const r = networkPack(toptal, pack, AS_OF, pub);
+    expect(r.skillsSource).toBe('network-keywords');
+    expect(checklistMarkdown(toptal, r, pack)).not.toContain('Skills shown are your own');
+  });
+
+  it('is deterministic', () => {
+    const again = networkPack(nomatch, pack, AS_OF, pub);
+    expect(profileText(nomatch, again)).toBe(profileText(nomatch, own));
+    expect(checklistMarkdown(nomatch, again, pack)).toBe(checklistMarkdown(nomatch, own, pack));
+  });
+});
+
+describe('truncation notes', () => {
+  const r = networkPack(toptal, pack, AS_OF, pub);
+  it('reports omitted sentences and skills, and nothing when nothing is cut', () => {
+    const first = sentencesOf(r.resume.summary.text)[0] as string;
+    const net = { ...toptal, profileFields: [{ id: 'summary', maxChars: first.length + 1 }, { id: 'skills', maxChars: 20 }] };
+    const notes = profileCutNotes(net, networkPack(net, pack, AS_OF, pub));
+    expect(notes[0]).toMatch(/^summary: \d+ sentences? omitted to fit \d+$/);
+    expect(notes[1]).toMatch(/^skills: \d+ skills? omitted to fit 20$/);
+    const loose = networkPack({ ...toptal, profileFields: [{ id: 'headline', maxChars: 10_000 }] }, pack, AS_OF, pub);
+    expect(profileCutNotes({ ...toptal, profileFields: [{ id: 'headline', maxChars: 10_000 }] }, loose)).toEqual([]);
   });
 });
 
@@ -215,6 +257,22 @@ describe('jobpilot networks (CLI)', () => {
     expect(r.stderr).toMatch(/unknown network nope/);
     expect(existsSync(outOf('nope'))).toBe(false);
   });
+
+  it.skipIf(!hasPdftotext)('a refused network removes the earlier pack and says so', () => {
+    const file = join(home, 'pack/networks/lemon.yaml');
+    const before = readFileSync(file, 'utf8');
+    expect(cli('networks', 'pack', 'lemon').status).toBe(0);
+    expect(existsSync(outOf('lemon'))).toBe(true);
+    writeFileSync(file, before.replace('{ id: headline, maxChars: 120 }', '{ id: headline, maxChars: 3 }'));
+    try {
+      const r = cli('networks', 'pack', 'lemon');
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('refused; removed the earlier pack');
+      expect(existsSync(outOf('lemon'))).toBe(false);
+    } finally {
+      writeFileSync(file, before);
+    }
+  }, 60_000);
 
   it('refuses a planted forbidden keyword and prints only the redacted problem', () => {
     const file = join(home, 'pack/networks/lemon.yaml');

@@ -1,6 +1,8 @@
 import {
   backedKeys,
   displayRoles,
+  summaryKeys,
+  termDisplay,
   isGapKey,
   keyOfDisplay,
   groupOf,
@@ -40,10 +42,12 @@ import { evidenceFor, syntheticPosting } from './writing/gig-evidence.js';
 export interface NetworkPackResult {
   networkId: string;
   resume: ResumePlan;
-  profile: { id: string; text: string; factIds: string[] }[];
+  profile: { id: string; text: string; factIds: string[]; omitted: number }[];
   checklist: { stage: string; prep: string[]; evidence: string[] }[];
   problems: string[];
   missing: string[];
+  /** `own-stack` when no network keyword was backed and the summary's skills came from the user's own backed skills. */
+  skillsSource: 'network-keywords' | 'own-stack';
 }
 
 export const MOONLIGHTING_LINE = "Before your first gig: check your employment contract's moonlighting and IP clauses.";
@@ -64,12 +68,12 @@ function unitEnds(text: string, list: boolean): number[] {
 }
 
 /** The longest prefix of whole units within `max`, or undefined when the first unit alone is over it. */
-function cut(text: string, max: number, list: boolean): { text: string } | { first: number } {
+function cut(text: string, max: number, list: boolean): { text: string; omitted: number } | { first: number } {
   const ends = unitEnds(text, list);
   const fits = ends.filter((e) => e <= max);
   const last = fits.at(-1);
   if (last === undefined) return { first: ends[0] ?? text.length };
-  return { text: text.slice(0, last) };
+  return { text: text.slice(0, last), omitted: ends.length - fits.length };
 }
 
 /** Citeable fact ids backing any of `keys`, sorted. */
@@ -97,12 +101,12 @@ function profileOf(net: Network, resume: ResumePlan, pack: WritingPack, problems
             : undefined;
     if (source === undefined) {
       problems.push(`profile field #${i + 1} (${field.id}) has no verified source`);
-      return { id: field.id, text: '', factIds: [] };
+      return { id: field.id, text: '', factIds: [], omitted: 0 };
     }
     const c = cut(source.text, field.maxChars, source.list);
     if ('first' in c) {
       problems.push(`profile field ${field.id}: the first sentence has ${c.first} characters, the limit is ${field.maxChars}`);
-      return { id: field.id, text: '', factIds: [] };
+      return { id: field.id, text: '', factIds: [], omitted: 0 };
     }
     const factIds =
       field.id === 'summary'
@@ -110,7 +114,7 @@ function profileOf(net: Network, resume: ResumePlan, pack: WritingPack, problems
         : field.id === 'skills'
           ? factsBacking(keysOf(c.text.split(', ')), skillFacts, pack)
           : [];
-    return { id: field.id, text: c.text, factIds };
+    return { id: field.id, text: c.text, factIds, omitted: c.omitted };
   });
 }
 
@@ -162,7 +166,17 @@ export function networkPack(net: Network, pack: WritingPack, asOf: string, rawPa
     text: [keywords.join(', '), titles.join(', ')].join('\n'),
     firstSeen: `${asOf}-01`,
   });
-  const resume = planResume(evidenceFor(posting, view, rawPack), view);
+  let resume = planResume(evidenceFor(posting, view, rawPack), view);
+  let skillsSource: NetworkPackResult['skillsSource'] = 'network-keywords';
+  if (resume.covered.length === 0) {
+    // No network keyword is backed: add the user's own strongest backed skills to the synthetic description, re-plan.
+    const own = summaryKeys(view).slice(0, 6).map((k) => termDisplay(k, view));
+    if (own.length > 0) {
+      const again = syntheticPosting({ key: net.id, title: titles[0] ?? '', company: net.name, text: [keywords.join(', '), titles.join(', '), own.join(', ')].join('\n'), firstSeen: `${asOf}-01` });
+      resume = planResume(evidenceFor(again, view, rawPack), view);
+      skillsSource = 'own-stack';
+    }
+  }
   const grounding = resumeProblems(resume, view, '', rawPack);
   const profile = profileOf(net, resume, view, problems);
   return {
@@ -172,6 +186,7 @@ export function networkPack(net: Network, pack: WritingPack, asOf: string, rawPa
     checklist: checklistOf(net, view),
     problems: [...grounding, ...problems],
     missing: missingOf(keywords, view),
+    skillsSource,
   };
 }
 
@@ -192,10 +207,24 @@ export function profileText(net: Network, r: NetworkPackResult): string {
   return `${lines.join('\n')}\n`;
 }
 
+/** One note per profile field that was cut to fit: `<field>: N sentences omitted to fit <max>`. */
+export function profileCutNotes(net: Network, r: NetworkPackResult): string[] {
+  return r.profile.flatMap((p) => {
+    if (p.omitted === 0) return [];
+    const max = net.profileFields.find((f) => f.id === p.id)?.maxChars ?? '?';
+    const unit = p.id === 'skills' ? 'skill' : 'sentence';
+    return [`${p.id}: ${p.omitted} ${unit}${p.omitted === 1 ? '' : 's'} omitted to fit ${max}`];
+  });
+}
+
+export const OWN_STACK_LINE = "Skills shown are your own strongest backed skills: none of this network's keywords match a verified fact.";
+
 /** checklist.md: the moonlighting line first, the unchecked-file warning, then each stage's prep and evidence. */
 export function checklistMarkdown(net: Network, r: NetworkPackResult, pack: WritingPack): string {
   const claim = new Map(pack.facts.map((f) => [f.id, f.claim]));
-  const lines = [MOONLIGHTING_LINE, ''];
+  const lines = [MOONLIGHTING_LINE];
+  if (r.skillsSource === 'own-stack') lines.push(OWN_STACK_LINE);
+  lines.push('');
   if (!net.checkedByUser) lines.push(`Network file not yet checked by you: verify the stages at ${net.url}`, '');
   lines.push(`# ${net.name} vetting prep`, '');
   r.checklist.forEach((c, i) => {

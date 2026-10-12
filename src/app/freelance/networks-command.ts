@@ -9,7 +9,7 @@ import { renderDocx } from '../render/docx.js';
 import { RenderPack } from '../render/fill.js';
 import { modelText, normText, PAGE_LIMITS, resumeModel } from '../render/model.js';
 import { renderPdf, uncoveredGlyph } from '../render/pdf.js';
-import { checklistMarkdown, networkPack, profileText } from './networks.js';
+import { checklistMarkdown, networkPack, profileCutNotes, profileText } from './networks.js';
 
 /**
  * `jobpilot networks pack` (spec §7): writes `out/networks/<id>/{resume.pdf,resume.docx,profile.txt,checklist.md}` for
@@ -104,7 +104,9 @@ async function writeOne(id: string, loaded: RunPack, outRoot: string, d: Network
     if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
   }
   const fields = r.profile.map((p) => `${p.id} ${p.text.length}/${net.profileFields.find((f) => f.id === p.id)?.maxChars ?? '?'}`).join(', ');
-  d.out(`${id}: wrote out/networks/${id}/ (resume ${pdf.pages} page${pdf.pages === 1 ? '' : 's'}; ${fields}; ${r.missing.length} missing keyword${r.missing.length === 1 ? '' : 's'})`);
+  const cuts = profileCutNotes(net, r).map((n) => ` (${n})`).join('');
+  const own = r.skillsSource === 'own-stack' ? ' · skills: your own stack (no network keyword matched)' : '';
+  d.out(`${id}: wrote out/networks/${id}/ (resume ${pdf.pages} page${pdf.pages === 1 ? '' : 's'}; ${fields}; ${r.missing.length} missing keyword${r.missing.length === 1 ? '' : 's'})${cuts}${own}`);
   return [];
 }
 
@@ -125,7 +127,11 @@ export async function networksPack(ids: readonly string[] | 'all', loaded: RunPa
     const problems = await writeOne(id, loaded, outRoot, d);
     if (problems.length === 0) continue;
     code = 1;
-    d.err(redactText(`${id}: refused, nothing written:`, terms));
+    const known = loaded.pack.networks.some((n) => n.id === id);
+    const dir = join(outRoot, id);
+    const removed = known && existsSync(dir);
+    if (removed) rmSync(dir, { recursive: true, force: true });
+    d.err(redactText(`${id}: refused${removed ? '; removed the earlier pack' : ', nothing written'}:`, terms));
     for (const p of problems) d.err(redactText(`  - ${p}`, terms));
   }
   return code;
