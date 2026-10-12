@@ -47,7 +47,7 @@ const fail = (r: RawGig, why: string): KernelError => new KernelError('invalid_o
  * "10 hours per week", "15-30 hrs/week", "20h a wk", "between 10 and 20 hours a week". A phrase without a per-week unit
  * is not hours per week.
  */
-const HOURS_PER_WEEK = /\b(?:between\s+(\d{1,2})\s+and\s+(\d{1,2})|(\d{1,2})(?:\s?-\s?(\d{1,2}))?)\s?(?:h|hrs|hours)\s?(?:\/|per|a)\s?(?:week|wk)\b/gi;
+export const HOURS_PER_WEEK = /\b(?:between\s+(\d{1,2})\s+and\s+(\d{1,2})|(\d{1,2})(?:\s?-\s?(\d{1,2}))?)\s?(?:h|hrs|hours)\s?(?:\/|per|a)\s?(?:week|wk)\b/gi;
 
 /** The stated hours per week; several distinct figures ("not 40 h/week, just 10 h/week") are ambiguous, so null. */
 function hoursOf(text: string): Gig['hoursPerWeek'] {

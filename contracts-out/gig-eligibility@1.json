@@ -1,0 +1,863 @@
+{
+  "hash": "8a42271ff43367c3c5aaf7475f4bdb013904fbdec039007a6e105f5d2c194a86",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "pack": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "gig": {
+            "additionalProperties": false,
+            "properties": {
+              "bids": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "budget": {
+                "additionalProperties": false,
+                "properties": {
+                  "currency": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "USD",
+                          "INR",
+                          "EUR",
+                          "GBP",
+                          "CAD",
+                          "AUD",
+                          "SGD",
+                          "NZD",
+                          "HKD"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "min": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "type": {
+                    "enum": [
+                      "hourly",
+                      "fixed",
+                      "monthly",
+                      "unknown"
+                    ],
+                    "type": "string"
+                  },
+                  "usdPerUnit": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "type",
+                  "min",
+                  "max",
+                  "currency",
+                  "usdPerUnit"
+                ],
+                "type": "object"
+              },
+              "client": {
+                "additionalProperties": false,
+                "properties": {
+                  "country": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "hireRate": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "paymentVerified": {
+                    "type": [
+                      "boolean",
+                      "null"
+                    ]
+                  },
+                  "reviews": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "since": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "spendUsd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "country",
+                  "paymentVerified",
+                  "hireRate",
+                  "spendUsd",
+                  "reviews",
+                  "since"
+                ],
+                "type": "object"
+              },
+              "dedupeKey": {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "duration": {
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "weeks": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "weeks",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "gigKey": {
+                "pattern": "^[0-9a-f]{16}$",
+                "type": "string"
+              },
+              "hoursPerWeek": {
+                "additionalProperties": false,
+                "properties": {
+                  "max": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "min": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "source": {
+                    "anyOf": [
+                      {
+                        "const": "text",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "min",
+                  "max",
+                  "source"
+                ],
+                "type": "object"
+              },
+              "kind": {
+                "enum": [
+                  "contract",
+                  "gig",
+                  "bounty",
+                  "network-alert"
+                ],
+                "type": "string"
+              },
+              "location": {
+                "additionalProperties": false,
+                "properties": {
+                  "countries": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "text": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "worldwide": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "countries",
+                  "worldwide",
+                  "text"
+                ],
+                "type": "object"
+              },
+              "platform": {
+                "enum": [
+                  "freelancer",
+                  "remotive",
+                  "hn-freelancer",
+                  "hn-hiring",
+                  "boards",
+                  "gmail",
+                  "upwork",
+                  "reddit"
+                ],
+                "type": "string"
+              },
+              "postedAt": {
+                "anyOf": [
+                  {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T[0-9:.]+(?:Z|[+-]\\d{2}:?\\d{2})?)?$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "skills": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sourceId": {
+                "type": "string"
+              },
+              "timezone": {
+                "additionalProperties": false,
+                "properties": {
+                  "overlapText": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "required": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "required",
+                  "overlapText"
+                ],
+                "type": "object"
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "gigKey",
+              "dedupeKey",
+              "platform",
+              "sourceId",
+              "url",
+              "title",
+              "description",
+              "client",
+              "kind",
+              "budget",
+              "hoursPerWeek",
+              "duration",
+              "timezone",
+              "location",
+              "skills",
+              "postedAt",
+              "bids"
+            ],
+            "type": "object"
+          },
+          "rate": {
+            "additionalProperties": false,
+            "properties": {
+              "budgetUsd": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "fxDate": {
+                "anyOf": [
+                  {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "fxSource": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "pack",
+                      "platform"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "maxUsdH": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "method": {
+                "enum": [
+                  "stated",
+                  "fixed÷stated-hours",
+                  "derived-from-duration",
+                  "monthly÷hours",
+                  "unknown"
+                ],
+                "type": "string"
+              },
+              "minUsdH": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "minUsdH",
+              "maxUsdH",
+              "method",
+              "fxDate",
+              "fxSource",
+              "budgetUsd"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "gig",
+          "rate"
+        ],
+        "type": "object"
+      },
+      "type": "RatedGig@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "gig-eligibility",
+    "kind": "deterministic",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "rated": {
+            "additionalProperties": false,
+            "properties": {
+              "gig": {
+                "additionalProperties": false,
+                "properties": {
+                  "bids": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "budget": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "currency": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "USD",
+                              "INR",
+                              "EUR",
+                              "GBP",
+                              "CAD",
+                              "AUD",
+                              "SGD",
+                              "NZD",
+                              "HKD"
+                            ],
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "max": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "min": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "type": {
+                        "enum": [
+                          "hourly",
+                          "fixed",
+                          "monthly",
+                          "unknown"
+                        ],
+                        "type": "string"
+                      },
+                      "usdPerUnit": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "type",
+                      "min",
+                      "max",
+                      "currency",
+                      "usdPerUnit"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "country": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "hireRate": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "paymentVerified": {
+                        "type": [
+                          "boolean",
+                          "null"
+                        ]
+                      },
+                      "reviews": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "since": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "spendUsd": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "country",
+                      "paymentVerified",
+                      "hireRate",
+                      "spendUsd",
+                      "reviews",
+                      "since"
+                    ],
+                    "type": "object"
+                  },
+                  "dedupeKey": {
+                    "pattern": "^[0-9a-f]{16}$",
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "text": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "weeks": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "weeks",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  "gigKey": {
+                    "pattern": "^[0-9a-f]{16}$",
+                    "type": "string"
+                  },
+                  "hoursPerWeek": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "max": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "min": {
+                        "type": [
+                          "number",
+                          "null"
+                        ]
+                      },
+                      "source": {
+                        "anyOf": [
+                          {
+                            "const": "text",
+                            "type": "string"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "min",
+                      "max",
+                      "source"
+                    ],
+                    "type": "object"
+                  },
+                  "kind": {
+                    "enum": [
+                      "contract",
+                      "gig",
+                      "bounty",
+                      "network-alert"
+                    ],
+                    "type": "string"
+                  },
+                  "location": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "countries": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "text": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "worldwide": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "countries",
+                      "worldwide",
+                      "text"
+                    ],
+                    "type": "object"
+                  },
+                  "platform": {
+                    "enum": [
+                      "freelancer",
+                      "remotive",
+                      "hn-freelancer",
+                      "hn-hiring",
+                      "boards",
+                      "gmail",
+                      "upwork",
+                      "reddit"
+                    ],
+                    "type": "string"
+                  },
+                  "postedAt": {
+                    "anyOf": [
+                      {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T[0-9:.]+(?:Z|[+-]\\d{2}:?\\d{2})?)?$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "skills": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "sourceId": {
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "overlapText": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "required": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "required",
+                      "overlapText"
+                    ],
+                    "type": "object"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "gigKey",
+                  "dedupeKey",
+                  "platform",
+                  "sourceId",
+                  "url",
+                  "title",
+                  "description",
+                  "client",
+                  "kind",
+                  "budget",
+                  "hoursPerWeek",
+                  "duration",
+                  "timezone",
+                  "location",
+                  "skills",
+                  "postedAt",
+                  "bids"
+                ],
+                "type": "object"
+              },
+              "rate": {
+                "additionalProperties": false,
+                "properties": {
+                  "budgetUsd": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "fxDate": {
+                    "anyOf": [
+                      {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "fxSource": {
+                    "anyOf": [
+                      {
+                        "enum": [
+                          "pack",
+                          "platform"
+                        ],
+                        "type": "string"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "maxUsdH": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  },
+                  "method": {
+                    "enum": [
+                      "stated",
+                      "fixed÷stated-hours",
+                      "derived-from-duration",
+                      "monthly÷hours",
+                      "unknown"
+                    ],
+                    "type": "string"
+                  },
+                  "minUsdH": {
+                    "type": [
+                      "number",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "minUsdH",
+                  "maxUsdH",
+                  "method",
+                  "fxDate",
+                  "fxSource",
+                  "budgetUsd"
+                ],
+                "type": "object"
+              }
+            },
+            "required": [
+              "gig",
+              "rate"
+            ],
+            "type": "object"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "verdict": {
+            "enum": [
+              "eligible",
+              "rejected",
+              "review"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "rated",
+          "verdict",
+          "reasons",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "type": "GigVerdict@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "evaluation",
+    "timeoutMs": 10000,
+    "version": "1.0.0"
+  }
+}

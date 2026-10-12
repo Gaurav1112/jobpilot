@@ -12,11 +12,13 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
+import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
+import { gigRisk } from './freelance/gig-risk.js';
 import { rateNormalizer } from './freelance/rate.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
-import type { RatedGig } from './freelance/types.js';
+import type { GigVerdict, RatedGig, RiskedGig } from './freelance/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -125,6 +127,28 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: rateNormalizer,
       cases: loadJsonl(join(datasetDir, 'gig-rate.jsonl')),
       project: (outs) => one(outs, (o: RatedGig) => o.rate),
+      metric: 'exactMatch',
+      min: 1,
+      pack,
+      packHash: hash,
+    },
+    {
+      // RatedGig@1 to the verdict, reasons and notes, on the fixture pack's freelance rules (40 an hour, 20 h, 18:00-00:00 IST, 500 fixed).
+      name: 'gig-eligibility',
+      agent: gigEligibility,
+      cases: loadJsonl(join(datasetDir, 'gig-eligibility.jsonl')),
+      project: (outs) => one(outs, (o: GigVerdict) => ({ verdict: o.verdict, reasons: o.reasons, notes: o.notes })),
+      metric: 'exactMatch',
+      min: 1,
+      pack,
+      packHash: hash,
+    },
+    {
+      // GigVerdict@1 to its red-flag ids (the fixed detail text is covered by the unit tests).
+      name: 'gig-risk',
+      agent: gigRisk,
+      cases: loadJsonl(join(datasetDir, 'gig-risk.jsonl')),
+      project: (outs) => one(outs, (o: RiskedGig) => ({ flags: o.flags.map((f) => f.id) })),
       metric: 'exactMatch',
       min: 1,
       pack,
