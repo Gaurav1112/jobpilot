@@ -1,0 +1,28 @@
+# Braintrust. Source: https://support.usebraintrust.com/hc/en-us/articles/14302713002391-Guide-Becoming-Approved-Talent
+# Braintrust help centre guide "Becoming Approved Talent". Read 2026-10-12.
+# Starter file: check before use.
+id: braintrust
+name: Braintrust
+url: https://support.usebraintrust.com/hc/en-us/articles/14302713002391-Guide-Becoming-Approved-Talent
+kind: vetted-network
+screening:
+  - stage: Profile to 100 percent
+    prep:
+      - Role, at least five skills, work experience, years of experience
+  - stage: Identity verification
+    prep:
+      - Government ID and a selfie, prompted after the first application
+  - stage: Async screening interview
+    prep:
+      - Five to ten minutes, not a technical assessment
+      - Topics include problem solving, role alignment, communication, impact, compensation goals and work authorization
+  - stage: Review outcome
+    prep:
+      - Usually within 24 hours, up to 72
+      - Criteria include 3+ years of experience and ability to start right away
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

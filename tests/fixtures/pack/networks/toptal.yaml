@@ -1,0 +1,33 @@
+# Toptal. Source: https://www.toptal.com/top-3-percent
+# Page lists a 3-8 week screening in five steps. Read 2026-10-12.
+# Starter file: check before use.
+id: toptal
+name: Toptal
+url: https://www.toptal.com/top-3-percent
+kind: vetted-network
+screening:
+  - stage: Language and personality
+    prep:
+      - English communication practice
+      - Be ready to talk about why you freelance
+  - stage: In-depth skill review
+    prep:
+      - Timed technical assessments
+      - Revise fundamentals and problem solving
+  - stage: Live screening
+    prep:
+      - Live exercises with a domain expert
+      - Practise thinking aloud
+  - stage: Test project
+    prep:
+      - One to three weeks of real-world work
+      - Plan the hours before accepting
+  - stage: Continued excellence
+    prep:
+      - Track record while working with clients
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

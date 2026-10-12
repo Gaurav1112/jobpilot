@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
+import type { FreelanceRules, Network, PlatformRules } from './freelance-schema.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
 const Currency = z.enum(['INR', 'USD', 'EUR', 'GBP']);
@@ -204,6 +205,10 @@ export interface Pack {
   watchlist: WatchEntry[];
   feeds: Feeds;
   policyUser: Record<string, unknown>;
+  /** freelance.yaml, platform-rules.yaml and networks/*.yaml; absent files give the defaults (networks: empty, sorted by id). */
+  freelance: FreelanceRules;
+  platformRules: PlatformRules;
+  networks: Network[];
 }
 
 /** What agents may read: no P1 data (contact, answers). */

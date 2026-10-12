@@ -1,0 +1,22 @@
+# Contra. Source: https://contra.com/blog/top-independents-on-contra
+# Contra blog post "Top Independents on Contra". The page describes the invitation-only Top Independent tier, not a sign-up gate. Read 2026-10-12.
+# Starter file: check before use.
+id: contra
+name: Contra
+url: https://contra.com/blog/top-independents-on-contra
+kind: vetted-network
+screening:
+  - stage: Profile review
+    prep:
+      - Portfolio of best projects and services
+      - Work preferences kept up to date
+  - stage: Invitation to the Top Independent network
+    prep:
+      - Reviewed by the Contra team
+      - Client recommendations help
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

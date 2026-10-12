@@ -510,3 +510,50 @@ describe('fx asOf is a real calendar date', () => {
     expect(fx('2026-13-01')).toBe(false);
   });
 });
+
+describe('freelance pack files', () => {
+  it('the fixture pack exposes freelance, platformRules and eight networks sorted by id', () => {
+    const { pack } = loadPack(FIXTURE);
+    expect(pack.freelance.rateFloorUsdHour).toBe(40);
+    expect(pack.freelance.maxHoursPerWeek).toBe(20);
+    expect(pack.freelance.istWindow).toBe('18:00-00:00');
+    expect(pack.freelance.fitFloor).toBe(60);
+    expect(pack.platformRules['freelancer']?.maxChars).toBe(1500);
+    expect(pack.networks.map((n) => n.id)).toEqual(['arc', 'braintrust', 'contra', 'flexiple', 'gunio', 'lemon', 'toptal', 'turing']);
+    expect(pack.networks.every((n) => !n.checkedByUser)).toBe(true);
+  });
+  it('a pack without the files loads the defaults', () => {
+    const d = copyFixture();
+    for (const f of ['freelance.yaml', 'platform-rules.yaml']) rmSync(join(d, f));
+    rmSync(join(d, 'networks'), { recursive: true });
+    const { pack, hash } = loadPack(d);
+    expect(pack.freelance.rateFloorUsdHour).toBe(40);
+    expect(pack.freelance.derivedRateCountsForFloor).toBe(true);
+    expect(pack.freelance.fixedBudgetFloorUsd).toBe(500);
+    expect(pack.freelance.platforms['freelancer']?.queries).toEqual(['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm']);
+    expect(pack.platformRules['upwork']).toEqual({ maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000 });
+    expect(pack.networks).toEqual([]);
+    expect(hash).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('present files join the pack hash', () => {
+    const d = copyFixture();
+    const before = loadPack(d).hash;
+    writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
+    expect(loadPack(d).hash).not.toBe(before);
+  });
+  it('rateFloorUsdHour -1 names the file and the field', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'freelance.yaml'), 'rateFloorUsdHour: -1\n');
+    expect(() => loadPack(d)).toThrow(/freelance\.yaml.*rateFloorUsdHour/s);
+  });
+  it('a bad network file names networks/<file> and the field', () => {
+    const d = copyFixture();
+    writeFileSync(join(d, 'networks', 'toptal.yaml'), 'id: toptal\nname: Toptal\nurl: not a url\n');
+    expect(() => loadPack(d)).toThrow(/networks\/toptal\.yaml/);
+  });
+  it('a network whose id differs from its file name is refused', () => {
+    const d = copyFixture();
+    cpSync(join(d, 'networks', 'arc.yaml'), join(d, 'networks', 'zzz.yaml'));
+    expect(() => loadPack(d)).toThrow(/networks\/zzz\.yaml.*id/s);
+  });
+});

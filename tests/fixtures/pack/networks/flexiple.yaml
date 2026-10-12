@@ -1,0 +1,14 @@
+# Flexiple. Source: https://flexiple.com/talent
+# Flexiple talent page. Read 2026-10-12. It describes sign-up and outreach, and publishes no vetting stages.
+# Starter file: check before use.
+id: flexiple
+name: Flexiple
+url: https://flexiple.com/talent
+kind: vetted-network
+screening: []
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

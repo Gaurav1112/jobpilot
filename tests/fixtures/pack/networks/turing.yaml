@@ -1,0 +1,29 @@
+# Turing. Source: https://www.turing.com/blog/turing-developer-test-preparation-tips
+# Turing blog post on the developer tests, four-step vetting process. Read 2026-10-12.
+# Starter file: check before use.
+id: turing
+name: Turing
+url: https://www.turing.com/blog/turing-developer-test-preparation-tips
+kind: vetted-network
+screening:
+  - stage: Resume and profile
+    prep:
+      - Upload resume and set up the profile
+  - stage: Work experience survey
+    prep:
+      - Multiple choice, about 20 to 30 minutes
+      - Needs no preparation, answer honestly
+  - stage: Tech stack tests
+    prep:
+      - Multiple choice, 45 to 120 minutes each
+      - Revise fundamentals of each chosen stack
+  - stage: Live coding challenge
+    prep:
+      - Real-time coding test
+      - Practise algorithms and data structures
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

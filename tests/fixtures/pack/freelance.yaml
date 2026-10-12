@@ -1,0 +1,19 @@
+# Freelance rules (fictional pack). Every value here is the shipped default, written out so it can be edited.
+rateFloorUsdHour: 40
+maxHoursPerWeek: 20
+istWindow: "18:00-00:00"
+derivedRateCountsForFloor: true
+fixedBudgetFloorUsd: 500
+fitFloor: 60
+kinds: [contract, gig, bounty]
+platforms:
+  freelancer:
+    enabled: true
+    queries: [java, golang, typescript, node.js, react, aws, kafka, kubernetes, python, llm]
+  remotive: { enabled: true, queries: [] }
+  hn-freelancer: { enabled: true, queries: [] }
+  hn-hiring: { enabled: true, queries: [] }
+  boards: { enabled: true, queries: [] }
+  gmail: { enabled: true, queries: [] }
+  upwork: { enabled: false, queries: [] }
+  reddit: { enabled: false, queries: [] }

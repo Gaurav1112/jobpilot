@@ -1,0 +1,28 @@
+# Arc. Source: https://arc.dev/employer-blog/vetting-process/
+# Arc blog post "How Arc Chooses the Top 2% of Talent" (2024-11). Read 2026-10-12.
+# Starter file: check before use.
+id: arc
+name: Arc
+url: https://arc.dev/employer-blog/vetting-process/
+kind: vetted-network
+screening:
+  - stage: Profile screening
+    prep:
+      - Work history, industry experience and skills reviewed
+  - stage: Communication assessment
+    prep:
+      - English fluency and remote readiness
+      - Video or voice introduction
+  - stage: Technical interview
+    prep:
+      - About one hour, role specific
+      - Live coding or pair programming for engineers
+  - stage: Final review
+    prep:
+      - Ongoing performance monitoring and check-ins
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

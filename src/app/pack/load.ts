@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse } from 'yaml';
 import type { ZodType } from 'zod';
@@ -6,6 +6,7 @@ import { hashOf } from '../../kernel/canonical.js';
 import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
 import { FEED_SOURCES, knownFeeds } from '../feeds.js';
 import { DEFAULT_FX } from './defaults.js';
+import { FreelanceFile, NetworkFile, PlatformRulesFile, type Network } from './freelance-schema.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -63,6 +64,19 @@ function readYaml<T>(dir: string, file: string, schema: ZodType<T>, fallback?: u
     throw new PackError(`${file}: ${issues.join('; ')}`);
   }
   return r.data;
+}
+
+/** networks/<id>.yaml, sorted by id; each file's id must be its file name, so the id is never a surprise. */
+function readNetworks(dir: string): Network[] {
+  const nd = join(dir, 'networks');
+  if (!existsSync(nd)) return [];
+  const files = readdirSync(nd).filter((f) => f.endsWith('.yaml')).sort();
+  const networks = files.map((f) => {
+    const n = readYaml(dir, `networks/${f}`, NetworkFile);
+    if (n.id !== f.slice(0, -'.yaml'.length)) throw new PackError(`networks/${f}: id: ${n.id} must match the file name`);
+    return n;
+  });
+  return networks.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }
 
 function withKey(g: LexiconGroup): LexiconGroup {
@@ -160,6 +174,9 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     watchlist: readYaml(dir, 'watchlist.yaml', WatchlistFile).watchlist,
     feeds: readYaml(dir, 'feeds.yaml', FeedsSchema, { enabled: [] }),
     policyUser: readYaml(dir, 'policy.user.yaml', PolicyUserSchema, {}),
+    freelance: readYaml(dir, 'freelance.yaml', FreelanceFile, {}),
+    platformRules: readYaml(dir, 'platform-rules.yaml', PlatformRulesFile, {}),
+    networks: readNetworks(dir),
   };
   checkDates(pack);
   // A feed with no source agent would be configuration the run silently never honours (review I2).
@@ -167,7 +184,16 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
   checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
-  return { pack, hash: hashOf(publicPack) };
+  // The freelance files join the hash only when present, so a pack without them keeps the daily pipeline's hash and
+  // adding or editing one re-runs just the steps that read it.
+  const absent = [
+    ...(existsSync(join(dir, 'freelance.yaml')) ? [] : ['freelance' as const]),
+    ...(existsSync(join(dir, 'platform-rules.yaml')) ? [] : ['platformRules' as const]),
+    ...(pack.networks.length > 0 ? [] : ['networks' as const]),
+  ];
+  const hashed: Partial<PublicPack> = { ...publicPack };
+  for (const k of absent) delete hashed[k];
+  return { pack, hash: hashOf(hashed) };
 }
 
 export { assertNoForbidden, citeable, ForbiddenTermError } from './rules.js';

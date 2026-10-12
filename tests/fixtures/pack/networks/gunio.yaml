@@ -1,0 +1,27 @@
+# Gun.io. Source: https://gun.io/find-work/
+# Gun.io "Find Work" page. Read 2026-10-12. The page states no coding test; screening is profile and interview based.
+# Starter file: check before use.
+id: gunio
+name: Gun.io
+url: https://gun.io/find-work/
+kind: vetted-network
+screening:
+  - stage: Complete the profile
+    prep:
+      - Work history and preferred languages; profile at 100 percent
+  - stage: Shortlist and review
+    prep:
+      - Reviewed by senior engineers
+      - Walk through experience with a Gun.io member
+  - stage: Client interview
+    prep:
+      - Live conversation with the client
+  - stage: Contract
+    prep:
+      - Gun.io arranges contract and payment
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false

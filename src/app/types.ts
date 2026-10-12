@@ -10,12 +10,12 @@ export const isCalendarDate = (s: string): boolean => {
   const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][m - 1];
   return days !== undefined && d >= 1 && d <= days;
 };
-const IsoDate = z
+export const IsoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD')
   .refine(isCalendarDate, 'not a real calendar date');
-const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
-const JobKey = z.string().regex(/^[0-9a-f]{16}$/, 'expected 16 lowercase hex chars');
+export const IsoDateOrDateTime = z.string().regex(/^\d{4}-\d{2}-\d{2}(?:T[0-9:.]+(?:Z|[+-]\d{2}:?\d{2})?)?$/, 'expected ISO date or datetime');
+export const JobKey = z.string().regex(/^[0-9a-f]{16}$/, 'expected 16 lowercase hex chars');
 const Sha256 = z.string().regex(/^[0-9a-f]{64}$/, 'expected 64 lowercase hex chars');
 const RelativePath = z
   .string()

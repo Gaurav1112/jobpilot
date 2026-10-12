@@ -1,0 +1,27 @@
+# Lemon.io. Source: https://lemon.io/blog/inside-lemonios-unapologetically-thorough-vetting-process/
+# Lemon.io blog post on its vetting process. Read 2026-10-12. Overview page https://lemon.io/our-vetting-process/ was seen only as a search excerpt.
+# Starter file: check before use.
+id: lemon
+name: Lemon.io
+url: https://lemon.io/blog/inside-lemonios-unapologetically-thorough-vetting-process/
+kind: vetted-network
+screening:
+  - stage: Experience assessment
+    prep:
+      - Resume review for commercial product experience
+  - stage: Soft skills assessment
+    prep:
+      - Communication, professional maturity and remote readiness
+  - stage: Technical assessment
+    prep:
+      - Interview on technical decisions and trade-offs
+      - Live coding in Coderbyte; system design for senior roles
+  - stage: Final selection
+    prep:
+      - Scored on technical, professional and soft skills
+profileFields:
+  - { id: headline, maxChars: 120 }
+  - { id: summary, maxChars: 1000 }
+targetTitles: [backend engineer, software engineer, platform engineer]
+keywords: [backend, distributed systems, microservices, cloud]
+checkedByUser: false
