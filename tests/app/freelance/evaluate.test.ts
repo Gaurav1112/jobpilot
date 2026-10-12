@@ -253,10 +253,10 @@ describe('gig-eligibility: rules', () => {
     const d = (description: string) => decide(rated({ description }));
     expect(d('Available 10am-6pm EST.').verdict).toBe('eligible'); // 20:30-04:30 IST, shares 3.5 h
     expect(d('Working hours 8:00 - 16:00 CET').verdict).toBe('eligible'); // 12:30-20:30 IST, shares 2.5 h
-    expect(d('Available 7am-3pm CET.').reasons).toEqual(['overlap-outside-ist-window']); // 11:30-19:30 IST, shares 1.5 h
+    expect(d('Must be available 7am-3pm CET.').reasons).toEqual(['overlap-outside-ist-window']); // 11:30-19:30 IST, shares 1.5 h
     expect(d('Be available 14:00 to 22:00 UTC').verdict).toBe('eligible'); // 19:30-03:30 IST
     expect(d('Available 9-5 UTC').verdict).toBe('eligible'); // 9am-5pm UTC = 14:30-22:30 IST shares 4.5 h; a bare 9-5 is read as 9am-5pm
-    expect(d('Available 9-5 IST').reasons).toEqual(['overlap-outside-ist-window']); // no suffix reads as business hours (9am-5pm): 09:00-17:00 IST shares nothing
+    expect(d('Must be available 9-5 IST.').reasons).toEqual(['overlap-outside-ist-window']); // no suffix reads as business hours (9am-5pm): 09:00-17:00 IST shares nothing
   });
 
   it('is pure: the same input gives the same verdict and the input is untouched', () => {
