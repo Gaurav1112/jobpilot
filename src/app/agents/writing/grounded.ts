@@ -322,7 +322,7 @@ export const DEFAULT_BUDGET: BulletBudget = { latest: BULLETS_LATEST, other: BUL
  * 2026-10-12 with the user's real pack: every CV renders on one page up to 869 (870 puts one on two pages); 825 is
  * that less about 5%.
  */
-export const CV_BULLET_CHARS = 825;
+export const CV_BULLET_CHARS = 825; // calibrated on the 2026-10-12 real pack; if facts grow, gig-qa fails a 2-page CV safely (never cuts it)
 /**
  * The 1-page contract CV (freelance, Task 8 fix rounds 1 and 3, user decisions): up to 2 bullets for each of the latest
  * two roles, within `CV_BULLET_CHARS` in total; older roles keep their title, employer and dates with no bullet.

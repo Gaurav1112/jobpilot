@@ -184,7 +184,8 @@ export function hookQuote(description: string, groups: readonly TermGroup[], all
 
 /** The longest gig title a hook names. */
 export const TITLE_MAX = 70;
-const TRAILING_JOINERS = /[\s,;:\-&(/+|]+$/u;
+/** What a cut title may not end on: joining punctuation, or a small word ("for a", "and the"); stripped repeatedly. */
+const TRAILING_JOINERS = /(?:[\s,;:\-&(/+|]+|\s+(?:a|an|the|for|of|to|with|and|or|in|on))+$/iu;
 
 /**
  * The client's gig title to name in a hook: the title, whitespace collapsed; a trailing posting timestamp

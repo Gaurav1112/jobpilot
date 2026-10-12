@@ -201,6 +201,7 @@ describe('proposal-planner', () => {
     expect(long.cut).toBe(true);
     expect(long.title.length).toBeLessThanOrEqual(70);
     expect('Build a cross platform mobile application for booking local fitness classes and trainers').toContain(long.title);
+    expect(hookTitle('SOC 2 Type I audit (licensed, AICPA peer-reviewed CPA firm only) for a B2B SaaS platform', 70)).toEqual({ title: 'SOC 2 Type I audit (licensed, AICPA peer-reviewed CPA firm only)', cut: true }); // no "for a" before the "..."
     expect(hookTitle('Kafka work', 70)).toBeNull(); // 2 words
     expect(hookTitle('URGENT JAVA DEVELOPER NEEDED', 70)).toBeNull(); // all capitals
     expect(hookTitle('Fix my site example.com today', 70)).toBeNull();
@@ -348,6 +349,10 @@ describe('proposal-planner', () => {
       expect(t.replace(/[\p{L}\p{M}\p{N}]/gu, ''), q).toMatch(/^[\x09\x0a\x20-\x7e]*$/);
     }
     expect(asciiPunct('Led X — the core – 2019–2021 “a” ’s … →')).toBe("Led X - the core - 2019-2021 \"a\" 's ... ->");
+  });
+
+  it('no hook echoes a plan heading ("approach it", "run it/this")', () => {
+    for (const h of [...PHRASES.hookTitle, ...PHRASES.hookTerm, ...PHRASES.hookPlain, ...PHRASES.hook]) expect(h).not.toMatch(/approach (it|this)|run (it|this)/i);
   });
 
   it('a quoting hook claims nothing about the gig: it only points to the closest evidence below', () => {
