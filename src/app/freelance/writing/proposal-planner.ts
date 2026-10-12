@@ -8,7 +8,7 @@ import { forbiddenTermStrict } from '../../pack/rules.js';
 import type { ResumePlan } from '../../types.js';
 import { type Gig, GigDocsPlan, ScoredGig } from '../types.js';
 import { evidenceFor, syntheticPosting } from './gig-evidence.js';
-import { asciiPunct, DOMAIN_KEYS, hasNonAsciiPunct, PHRASES, pick, planCategory } from './phrases.js';
+import { asciiPunct, DOMAIN_KEYS, hasNonAsciiPunct, PHRASES, pick, planCategory, variantOf } from './phrases.js';
 import { pitchOf } from './pitch-planner.js';
 
 /**
@@ -22,16 +22,20 @@ import { pitchOf } from './pitch-planner.js';
  *   firstSeen the gig's `postedAt` (else the first day of the pack's asOf month). `covered` and `missing` are the
  *   resume plan's.
  * - **Evidence.** Candidates are the Evidence's ranked facts (citeable experience or project facts) that are placed in
- *   a role and whose matched terms meet `covered`, in rank order, with those matching a covered term found literally in
- *   the gig title or skills moved first (stable). A claim over 220 characters is dropped while at least two shorter
- *   candidates remain, else moved after them. At most 2 per employer. Of the first 5, the first is always chosen and the rest of the lines are the
- *   shortest of the other four (ties by order), all shown in candidate order: at most 3 for a proposal (2 when 3 would put it, `{cadence}` unfilled, over the platform's `maxChars`), 2
- *   for a pitch. Each line is `- <display employer> (<role start year>-<end year or "now">): <claim>`, the claim
- *   verbatim with ASCII punctuation (`asciiPunct`), its role the one it is placed in. A proposal puts a
- *   `PHRASES.evidenceIntro` line before the list.
+ *   a role and whose matched terms meet `covered`, in rank order. A candidate is *literal* when one of its covered
+ *   matched terms is named in the gig title, skills or hook quote. The **lead** is chosen first: among the literal
+ *   candidates within the top 3 by rank, the one at `variantOf(gigKey, k)` (k of them; a deterministic rotation),
+ *   else the first literal candidate, else rank 1; the lead is exempt from the length limit. The other candidates
+ *   drop a claim over 220 characters while enough shorter ones remain (else it moves last), take at most 2 per
+ *   employer (the lead counts), and the rest of the lines are the shortest of the first four (ties by rank), shown in
+ *   rank order after the lead: at most 3 lines for a proposal (2 when 3 would put it, `{cadence}` unfilled, over the
+ *   platform's `maxChars`), 2 for a pitch. Each line is `- <display employer> (<role start year>-<end year or "now">):
+ *   <claim>`, the claim verbatim with ASCII punctuation (`asciiPunct`), its role the one it is placed in. A proposal
+ *   puts a `PHRASES.evidenceIntro` line before the list.
  * - **Hook.** With at least one evidence line, the best client sentence to quote (`hookQuote`), in an attributed
- *   `PHRASES.hook` phrase. With none, a `PHRASES.hookTerm` phrase naming the focus covered term (`focusKey`); with no
- *   evidence or nothing covered, `PHRASES.hookPlain`.
+ *   `PHRASES.hook` phrase. Else a `PHRASES.hookTerm` phrase naming the hook term: the first covered key that is not a
+ *   domain (`DOMAIN_KEYS`) named in the title, then the skills, else the lead fact's first non-domain matched key.
+ *   With no evidence or no such term, `PHRASES.hookPlain`.
  * - **Plan.** `PHRASES.planIntro`, then a wording of the steps of the title's category (`planCategory`).
  * - **Availability.** A `PHRASES.availability` phrase with `freelance.yaml` `maxHoursPerWeek` and `istWindow`; the
  *   `{cadence}` placeholder stays for the gig renderer (`cadenceOf`).
@@ -102,7 +106,9 @@ export function sentencesOf(text: string): string[] {
 const REQUEST = /\b(?:need(?:s|ed)?|looking for|build(?:ing)?|develop(?:ing|ment)?|must|requir(?:e|es|ed|ement|ements)|want(?:s|ed)?|help)\b/giu;
 const NEGATION = /\b(?:not|never|without|cannot)\b|n't\b|\bdont want\b/iu;
 const STATUS = /\b(?:is|are|was|were|has been|have been)\s+(?:already\s+)?(?:\w+ed|done|ready|complete|live|built|in place|set up|up and running)\b|\balready\b/iu;
-const FIRST_PERSON_OR_BIDDER = /^(?:I|I'm|I've|We|We're|We've|Our|My|Me|You|Your)\b/iu;
+const FIRST_PERSON_OR_BIDDER = /^(?:I|I'm|I've|My|Me|You|Your)\b/iu;
+const WE_OR_OUR = /^(?:We|We're|We've|Our)\b/iu;
+const OUR_DEVELOPER = /^Our\s+(?:developers?|devs?|engineers?|programmers?|freelancers?)\b/iu;
 const requests = (s: string): number => [...s.matchAll(REQUEST)].length;
 
 /**
@@ -110,17 +116,30 @@ const requests = (s: string): number => [...s.matchAll(REQUEST)].length;
  * - at least 3 words; no URL or email, quote mark, brace, markup, control character, non-ASCII punctuation or
  *   forbidden term;
  * - not a list (a short "Label: " prefix, four or more commas, or a stray list number at the end, "configuration 9.");
- * - not opening with I, We, Our, My, Me, You or Your (quoting "We ..." back reads oddly; "You ..." is about the
- *   bidder, so the hook would read as a claim that the user meets it);
+ * - not opening with I, My, Me, You or Your ("You ..." is about the bidder, so the hook would read as a claim that the
+ *   user meets it); opening with We or Our only as a request ("We need ...", "We are looking for ..."), never "Our
+ *   developer ..." (the hook is attributed, "You wrote:", so the client's "we" is never read as the user's);
  * - no negation (not, n't, never, without, cannot); not a status ("X is created", "already ...") unless it also asks
  *   for something (a request word).
  */
 function quotable(s: string, forbidden: readonly string[]): boolean {
   if (words(s) < 3) return false;
   if (/^\S+(?:\s\S+){0,3}:\s/u.test(s) || (s.match(/,/g) ?? []).length >= 4 || /\s\d{1,2}[.)]$/u.test(s)) return false;
+  if (WE_OR_OUR.test(s) && (requests(s) === 0 || OUR_DEVELOPER.test(s))) return false;
   if (FIRST_PERSON_OR_BIDDER.test(s) || NEGATION.test(s.replace(/[’']/gu, "'").replace(/don'?t want/iu, 'dont want')) || (STATUS.test(s) && requests(s) === 0)) return false;
   if (URL_OR_EMAIL.test(s) || /["{}<>\\`]|[\x00-\x1f\x7f]/u.test(s) || hasNonAsciiPunct(s)) return false;
   return forbiddenTermStrict(s, { forbiddenTerms: forbidden }) === undefined;
+}
+
+/** Whether every bracket in `s` closes, in order, and double quotes pair up. */
+function balanced(s: string): boolean {
+  const open: string[] = [];
+  const pairs: Readonly<Record<string, string>> = { ')': '(', ']': '[', '}': '{' };
+  for (const ch of s) {
+    if (ch === '(' || ch === '[' || ch === '{') open.push(ch);
+    else if (ch in pairs && open.pop() !== pairs[ch]) return false;
+  }
+  return open.length === 0 && (s.match(/"/g) ?? []).length % 2 === 0;
 }
 
 /** The longest prefix of `s` ending at a clause boundary (", ", "; ", " - ", " (") within `max` characters that keeps at least 6 words, or undefined. */
@@ -137,7 +156,8 @@ function clauseCut(s: string, max: number): string | undefined {
 /**
  * The client's words to quote: among the description's sentences (`sentencesOf`, a leading list marker dropped) that
  * name one of `groups` and are quotable, each taken whole when it fits `max` characters, else cut at its last clause
- * boundary within `max` that keeps at least 6 words and still names a group (a sentence with no such cut is skipped),
+ * boundary within `max` that keeps at least 6 words, still names a group, has balanced brackets and quote marks and
+ * holds a request word (a sentence with no such cut is skipped),
  * the one with the highest score: request words (need, looking for, build, develop, must, require, want, help) plus
  * the groups it names, ties to the earliest. Null when no sentence qualifies.
  */
@@ -150,6 +170,8 @@ export function hookQuote(description: string, groups: readonly TermGroup[], all
     if (termsIn(s, groups, all).length === 0 || !quotable(s, forbidden)) continue;
     const quote = s.length <= max ? s : clauseCut(s, max);
     if (quote === undefined || !quotable(quote, forbidden)) continue;
+    // a cut quote must stand on its own: brackets and quote marks balanced, and still asking for something
+    if (quote !== s && (!balanced(quote) || requests(quote) === 0)) continue;
     const named = termsIn(quote, groups, all).length;
     if (named === 0) continue;
     const score = requests(quote) + named;
@@ -188,44 +210,69 @@ const yearsOf = (r: { readonly start: string; readonly end: string }): string =>
 export const evidenceLine = (employer: string, role: { readonly start: string; readonly end: string }, claim: string): string =>
   `- ${asciiPunct(employer)} (${yearsOf(role)}): ${asciiPunct(claim)}`;
 
-/** The evidence lines: see the module rules. */
-function evidenceLines(resume: ResumePlan, gig: Gig, pack: WritingPack, max: number): FactLine[] {
+interface Candidate {
+  readonly id: string;
+  readonly claim: string;
+  readonly role: ReturnType<typeof displayRoles>[number];
+  readonly matched: readonly string[];
+  readonly i: number;
+}
+
+/** The evidence candidates: ranked placed facts whose matched terms meet the covered list, in rank order. */
+function candidatesOf(resume: ResumePlan, pack: WritingPack): Candidate[] {
   const covered = new Set(resume.covered);
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
   const roles = displayRoles(pack);
-  const literal = new Set(termsIn(`${gig.title}\n${skillsText(gig)}`, groupsOf(resume.covered, pack), allGroups(pack)));
-  const cands = resume.evidence.ranked.flatMap((r) => {
-    const f = byId.get(r.factId);
-    if (f === undefined || !isRankable(f) || !r.matched.some((k) => covered.has(k))) return [];
-    const i = roleIndexOf(f, roles, pack);
-    const role = i === undefined ? undefined : roles[i];
-    return role === undefined ? [] : [{ id: f.id, claim: f.claim, role, literal: r.matched.some((k) => literal.has(k)) }];
-  });
-  let ordered = [...cands.filter((c) => c.literal), ...cands.filter((c) => !c.literal)];
-  // A claim over CLAIM_SOFT_MAX is skipped while at least two shorter ones remain (the 2-line minimum), else moved last.
-  const short = ordered.filter((c) => c.claim.length <= CLAIM_SOFT_MAX);
-  ordered = short.length >= 2 ? short : [...short, ...ordered.filter((c) => c.claim.length > CLAIM_SOFT_MAX)];
-  const perEmployer = new Map<string, number>();
-  const capped = ordered.filter((c) => {
+  return resume.evidence.ranked
+    .flatMap((r) => {
+      const f = byId.get(r.factId);
+      if (f === undefined || !isRankable(f) || !r.matched.some((k) => covered.has(k))) return [];
+      const at = roleIndexOf(f, roles, pack);
+      const role = at === undefined ? undefined : roles[at];
+      return role === undefined ? [] : [{ id: f.id, claim: f.claim, role, matched: r.matched.filter((k) => covered.has(k)) }];
+    })
+    .map((c, i) => ({ ...c, i }));
+}
+
+/** The evidence lines (lead first) and the lead's covered matched keys: see the module rules. */
+function evidenceLines(cands: readonly Candidate[], literal: ReadonlySet<string>, gigKey: string, max: number): { lines: FactLine[]; lead: Candidate | undefined } {
+  const isLiteral = (c: Candidate): boolean => c.matched.some((k) => literal.has(k));
+  const tier = cands.slice(0, 3).filter(isLiteral);
+  const lead = tier.length > 0 ? tier[variantOf(gigKey, tier.length)] : (cands.find(isLiteral) ?? cands[0]);
+  if (lead === undefined) return { lines: [], lead };
+  const others = cands.filter((c) => c.id !== lead.id);
+  // A claim over CLAIM_SOFT_MAX is skipped while enough shorter ones remain, else moved last; the lead is exempt.
+  const short = others.filter((c) => c.claim.length <= CLAIM_SOFT_MAX);
+  const pool = short.length >= max - 1 ? short : [...short, ...others.filter((c) => c.claim.length > CLAIM_SOFT_MAX)];
+  const perEmployer = new Map<string, number>([[lead.role.employer, 1]]);
+  const capped = pool.filter((c) => {
     const n = perEmployer.get(c.role.employer) ?? 0;
     perEmployer.set(c.role.employer, n + 1);
     return n < 2;
   });
-  const top = capped.slice(0, 5).map((c, i) => ({ ...c, i }));
-  const [lead, ...rest] = top;
-  const shortest = [...rest].sort((a, b) => a.claim.length - b.claim.length || a.i - b.i).slice(0, Math.max(0, max - 1));
-  const chosen = (lead === undefined ? [] : [lead, ...shortest]).sort((a, b) => a.i - b.i);
-  return chosen.map((c) => ({ text: evidenceLine(c.role.employer, c.role, c.claim), factIds: [c.id] }));
+  const rest = capped
+    .slice(0, 4)
+    .sort((a, b) => a.claim.length - b.claim.length || a.i - b.i)
+    .slice(0, Math.max(0, max - 1))
+    .sort((a, b) => a.i - b.i);
+  return { lines: [lead, ...rest].map((c) => ({ text: evidenceLine(c.role.employer, c.role, c.claim), factIds: [c.id] })), lead };
+}
+
+/** The hook term: the first non-domain covered key named in the title, then the skills, else the lead fact's first non-domain matched key. */
+function hookTermKey(resume: ResumePlan, gig: Gig, lead: Candidate | undefined, pack: WritingPack): string | undefined {
+  const keys = resume.covered.filter((k) => !DOMAIN_KEYS.has(k));
+  const all = allGroups(pack);
+  for (const text of [gig.title, skillsText(gig)]) {
+    const hit = keys.find((k) => termsIn(text, groupsOf([k], pack), all).length > 0);
+    if (hit !== undefined) return hit;
+  }
+  return keys.find((k) => lead?.matched.includes(k) === true);
 }
 
 /** The hook: see the module rules. */
-function hookOf(gig: Gig, resume: ResumePlan, evidence: readonly FactLine[], hookChars: number | null, pack: WritingPack): GigSlots['hook'] {
-  const phrase = pick(PHRASES.hook, gig.gigKey);
-  const room = hookChars === null ? QUOTE_MAX : Math.min(QUOTE_MAX, hookChars - (phrase.length - '{quote}'.length - '{end}'.length + 3));
-  const q = evidence.length === 0 ? null : hookQuote(gig.description, groupsOf(resume.covered, pack), allGroups(pack), room, pack.naming.forbiddenTerms);
-  if (q !== null) return { text: fill(phrase, { quote: q.quote, end: endOf(q.quote, q.cut) }), quote: q.quote };
-  const term = evidence.length === 0 ? undefined : focusKey(resume.covered, gig, pack);
-  if (term !== undefined) return { text: fill(pick(PHRASES.hookTerm, gig.gigKey), { term: asciiPunct(displayAny(term, pack)) }), quote: null };
+function hookOf(gig: Gig, quote: { quote: string; cut: boolean } | null, termKey: string | undefined, hasEvidence: boolean, pack: WritingPack): GigSlots['hook'] {
+  if (quote !== null && hasEvidence) return { text: fill(pick(PHRASES.hook, gig.gigKey), { quote: quote.quote, end: endOf(quote.quote, quote.cut) }), quote: quote.quote };
+  if (termKey !== undefined && hasEvidence) return { text: fill(pick(PHRASES.hookTerm, gig.gigKey), { term: asciiPunct(displayAny(termKey, pack)) }), quote: null };
   return { text: pick(PHRASES.hookPlain, gig.gigKey), quote: null };
 }
 
@@ -271,9 +318,16 @@ export function gigSlots(scored: ScoredGig, resume: ResumePlan, rawPack: unknown
   const rules = GigRules.parse(rawPack);
   const gig = scored.risked.verdict.rated.gig;
   const rule = rules.platformRules[gig.platform];
-  const evidence = evidenceLines(resume, gig, pack, maxEvidence);
+  const cands = candidatesOf(resume, pack);
+  const phrase = pick(PHRASES.hook, gig.gigKey);
+  const hookChars = rule?.hookChars ?? null;
+  const room = hookChars === null ? QUOTE_MAX : Math.min(QUOTE_MAX, hookChars - (phrase.length - '{quote}'.length - '{end}'.length + 3));
+  const all = allGroups(pack);
+  const quote = cands.length === 0 ? null : hookQuote(gig.description, groupsOf(resume.covered, pack), all, room, pack.naming.forbiddenTerms);
+  const literal = new Set(termsIn(`${gig.title}\n${skillsText(gig)}\n${quote?.quote ?? ''}`, groupsOf(resume.covered, pack), all));
+  const { lines: evidence, lead } = evidenceLines(cands, literal, gig.gigKey, maxEvidence);
   return {
-    hook: hookOf(gig, resume, evidence, rule?.hookChars ?? null, pack),
+    hook: hookOf(gig, quote, hookTermKey(resume, gig, lead, pack), evidence.length > 0, pack),
     evidenceIntro: evidence.length === 0 ? '' : pick(PHRASES.evidenceIntro, gig.gigKey),
     evidence,
     planIntro: pick(PHRASES.planIntro, gig.gigKey),

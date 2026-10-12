@@ -102,6 +102,15 @@ describe('proposal-planner', () => {
     expect(hookQuote('The stack is Kafka, Java, Go, Redis, and AWS.', groups, groups, 140)).toBeNull();
     expect(hookQuote('Kafka deployment configuration 9.', groups, groups, 140)).toBeNull();
     for (const first of ['I', 'We', 'Our', 'My', 'Me', 'You', 'Your']) expect(hookQuote(`${first} run Kafka consumers in production.`, groups, groups, 140), first).toBeNull();
+    // "We ..." / "Our ..." only as a request, never "Our developer ..."; I, My, Me, You, Your never
+    expect(hookQuote('We need a Kafka consumer built in Java.', groups, groups, 140)?.quote).toBe('We need a Kafka consumer built in Java.');
+    expect(hookQuote('We are looking for a Kafka engineer.', groups, groups, 140)?.quote).toBe('We are looking for a Kafka engineer.');
+    expect(hookQuote('Our developer must know Kafka.', groups, groups, 140)).toBeNull();
+    expect(hookQuote('I need a Kafka engineer.', groups, groups, 140)).toBeNull();
+    // a cut quote must have balanced brackets and a request word
+    expect(hookQuote('Propose your approach to the parsing work (OCR plus Kafka, and some extra glue code around it today).', groups, groups, 50)).toBeNull();
+    expect(hookQuote('Solid AWS skills, containerisation, Kafka (some Java), and lots of other things on top of that.', groups, groups, 60)).toBeNull();
+    expect(hookQuote('Please build the backend (preferred stack: Kafka or Java), secure and fast and with plenty of tests around it.', groups, groups, 90)).toEqual({ quote: 'Please build the backend (preferred stack: Kafka or Java)', cut: true });
     expect(hookQuote('The job does not involve Kafka work.', groups, groups, 140)).toBeNull();
     expect(hookQuote("The team doesn't want Kafka.", groups, groups, 140)).toBeNull();
     expect(hookQuote('Ship it without Kafka.', groups, groups, 140)).toBeNull();
@@ -148,8 +157,40 @@ describe('proposal-planner', () => {
 
   it('evidence prefers facts whose terms the gig title or skills name', () => {
     // the title names Redis, so the Redis fact leads even though Kafka facts rank higher on this description
-    const p = planOf(scoredGig({ title: 'Redis caching layer', description: 'We need help with Kafka, Java and Redis. The services must stay fast.', skills: [] }));
+    // no sentence is quotable, so only the title counts: the Redis fact leads, though Kafka facts rank higher
+    const p = planOf(scoredGig({ title: 'Redis caching layer', description: 'Ideal skills: Kafka, Java, Redis.', skills: [] }));
     expect(p.proposal!.evidence[0]!.factIds).toEqual(['f-nw-02']);
+  });
+
+  it('the lead is chosen before the length limit and rotates among literal top-3 candidates by gig key', () => {
+    const lead = (gigKey: string) => planOf(scoredGig({ gigKey, title: 'Java and Kafka services', description: 'Ideal skills: Kafka, Java, Redis.', skills: [] })).proposal!.evidence[0]!.factIds[0];
+    const leads = new Set(Array.from({ length: 12 }, (_, i) => lead(keyWith(i, 12))));
+    expect(leads.size).toBeGreaterThan(1);
+    expect(lead(keyWith(3, 12))).toBe(lead(keyWith(3, 12)));
+    // a lead over 220 characters stays the lead
+    const longClaim = `Led the design of an event-driven order pipeline on Kafka handling 40M events a day${', with replay'.repeat(20)}.`;
+    const longPack = { ...pub, facts: pub.facts.map((f) => (f.id === 'f-nw-01' ? { ...f, claim: longClaim } : f)) };
+    const g = planGigDocs(scoredGig({ gigKey: keyWith(0, 12), title: 'Kafka pipeline', description: 'Ideal skills: Kafka.', skills: [] }), longPack)!;
+    expect(g.proposal!.evidence[0]!.factIds).toEqual(['f-nw-01']);
+    expect(gigDocsProblems(g, longPack)).toEqual([]);
+  });
+
+  it('the hook term skips domains and falls back to the lead fact, not the first covered term', () => {
+    // the title names SaaS (a domain) and Redis: the hook names Redis
+    const r = planOf(scoredGig({ title: 'SaaS dashboard on Redis', description: 'Ideal skills: Kafka, Java, Redis, SaaS.', skills: [] }));
+    expect(r.proposal!.hook.quote).toBeNull();
+    expect(PHRASES.hookTerm.map((h) => h.replace('{term}', 'Redis'))).toContain(r.proposal!.hook.text);
+    // the title names only SaaS, and the lead fact's only covered term is SaaS: no domain hook, a plain one
+    const d = planOf(scoredGig({ title: 'SaaS dashboard', description: 'Ideal skills: Kafka, Java, Redis, SaaS.', skills: [] }));
+    expect(d.proposal!.evidence[0]!.factIds).toEqual(['f-nw-03']);
+    expect(PHRASES.hookPlain).toContain(d.proposal!.hook.text);
+    // no literal term at all: the lead is rank 1, and the hook names the lead's first non-domain term, not covered[0]
+    const n = planOf(scoredGig({ title: 'Help wanted', description: 'Ideal skills: Redis, Kafka.', skills: [] }));
+    const leadId = n.proposal!.evidence[0]!.factIds[0]!;
+    expect(n.covered[0]).toBe('kafka');
+    expect(leadId).toBe(n.resume.evidence.ranked.find((x) => x.matched.some((k) => n.covered.includes(k)))!.factId);
+    const term = leadId === 'f-nw-02' ? 'Redis' : 'Kafka';
+    expect(PHRASES.hookTerm.map((h) => h.replace('{term}', term))).toContain(n.proposal!.hook.text);
   });
 
   it('a missing term appears in the question, by its display name', () => {
@@ -178,7 +219,10 @@ describe('proposal-planner', () => {
     expect(planCategory('Final Hardening & Release: 2 Working Apps')).toBe('finish');
     expect(planCategory('Migrate our monolith')).toBe('migrate');
     expect(planCategory('Stripe webhook setup')).toBe('integrate');
-    expect(planCategory('AI-Assisted Software Engineer for Fintech')).toBe('ai');
+    expect(planCategory('Build an LLM chatbot')).toBe('ai');
+    expect(planCategory('Stripe API for an AI model')).toBe('ai'); // ai comes before integrate
+    expect(planCategory('AI-Assisted Software Engineer for Fintech')).not.toBe('ai'); // using AI tools, not building AI
+    expect(planCategory('Train a model agent')).toBe('default'); // bare "model" and "agent" are not ai
     expect(planCategory('Cross-Platform App Build')).toBe('build');
     expect(planCategory('Tracking & Measurement Specialist Required')).toBe('default');
     expect(planCategory('Admin Portal tidy')).toBe('default'); // whole words only: "Portal" is not "port"

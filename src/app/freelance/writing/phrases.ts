@@ -28,7 +28,7 @@ export function pick<T>(list: readonly T[], gigKey: string, i = 0): T {
 
 export type Steps = readonly [string, string, string];
 /** The plan categories, in the order `planCategory` tries them (first match wins). */
-export const PLAN_CATEGORIES = ['audit', 'fix', 'finish', 'migrate', 'integrate', 'ai', 'build', 'default'] as const;
+export const PLAN_CATEGORIES = ['audit', 'fix', 'finish', 'migrate', 'ai', 'integrate', 'build', 'default'] as const;
 export type PlanCategory = (typeof PLAN_CATEGORIES)[number];
 
 export interface PhraseBank {
@@ -65,11 +65,18 @@ export const PHRASES: PhraseBank = {
     'Happy to take this on. The {term} part is where I would begin, and my closest work is below.',
     'Here is how I would approach this, starting with the {term} side.',
     'I have read your brief; the {term} work is where I would put my first hours.',
+    '{term} is the part of your brief I would take on first.',
+    'Starting with {term}, here is how I would take this on.',
+    'On the {term} side, here is what I would bring and how I would run it.',
+    'The {term} piece looks like the right place to start, so that is where my plan begins.',
   ],
   hookPlain: [
     'I read through your brief. Here is what I would bring to it.',
     'I have read your brief and would like to help with this.',
     'Happy to take this on. Below is how I would approach it.',
+    'Thanks for the brief. Here is how I would take this from start to handover.',
+    'Here is a short plan for this, and the work of mine that is closest to it.',
+    'Below is how I would run this, step by step, and what I would hand over.',
   ],
   evidenceIntro: ['A few examples from my work:', 'Some of my work that overlaps with this:', 'From my own work:'],
   planIntro: ['How I would approach it:', 'My plan:', 'How I would run this:'],
@@ -205,16 +212,23 @@ export const CATEGORY_WORDS: Readonly<Record<Exclude<PlanCategory, 'default'>, r
   finish: ['finish', 'existing', 'hardening', 'deploy', 'upgrade', 'release'],
   migrate: ['migrate', 'migration', 'port'],
   integrate: ['integrate', 'integration', 'integrations', 'api', 'stripe', 'payment gateway', 'webhook', 'webhooks'],
-  ai: ['ai', 'llm', 'llms', 'agent', 'agents', 'gpt', 'claude', 'rag', 'model', 'models'],
+  ai: ['ai model', 'ai models', 'ml model', 'ml models', 'llm', 'llms', 'gpt', 'claude', 'openai', 'rag', 'ai agent', 'ai agents', 'agentic', 'chatbot', 'chatbots', 'machine learning', 'generative'],
   build: ['build', 'platform', 'app', 'apps', 'develop', 'developer', 'development', 'mvp'],
 };
 
 const wordRe = (w: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])${w.replace(/\s+/g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu');
 
-/** The plan category of a gig title: the first category (in `PLAN_CATEGORIES` order) with one of its keywords in the title as a whole word, else `default`. */
+/** A title about using AI tools ("AI-Assisted Software Engineer"), not building AI: never the `ai` category. */
+const USES_AI = /\bai[- ]assisted\b|\bai[- ]powered (?:dev|engineer)|\busing ai\b/iu;
+
+/**
+ * The plan category of a gig title: the first category (in `PLAN_CATEGORIES` order) with one of its keywords in the
+ * title as a whole word, else `default`. A title about using AI tools (`USES_AI`) skips `ai`.
+ */
 export function planCategory(title: string): PlanCategory {
   for (const c of PLAN_CATEGORIES) {
     if (c === 'default') return c;
+    if (c === 'ai' && USES_AI.test(title)) continue;
     if (CATEGORY_WORDS[c].some((w) => wordRe(w).test(title))) return c;
   }
   return 'default';
