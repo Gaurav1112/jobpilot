@@ -19,7 +19,7 @@ const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
   reddit: { enabled: false, queries: [] },
 };
 
-/** One entry per platform; a platform the file leaves out takes its default, one it names is replaced whole. */
+/** One entry per platform; a platform the file leaves out takes its default; one it names is replaced whole (platform config) or merged over the defaults (platform rules). */
 function perPlatform<T>(item: (p: Platform) => z.ZodType<T>, defaults: Record<Platform, T>) {
   const shape = Object.fromEntries(Platform.options.map((p) => [p, item(p).default(defaults[p] as never)])) as Record<Platform, z.ZodDefault<z.ZodType<T>>>;
   return z.strictObject(shape);
@@ -42,50 +42,66 @@ export const FreelanceFile = z.strictObject({
 export type FreelanceRules = z.infer<typeof FreelanceFile>;
 
 /**
- * A budget bracket a platform offers as a preset (a client picks it without stating a real budget). Matched on the raw
- * currency, minimum and maximum before any conversion; `max` is null for an open-ended tier ("50+").
+ * A budget tier a platform offers as a preset (a client picks it without stating a real budget). `type` keeps fixed and
+ * hourly tiers apart (a fixed budget matches only fixed tiers). Matched on the raw minimum and maximum before any
+ * conversion; `max` is null for an open-ended tier ("50+"). `currencies` is the list of currency codes the tier holds
+ * in, or '*' for any.
  */
-const PresetBracket = z.strictObject({ currency: z.string().min(1), min: z.number().nonnegative(), max: z.number().positive().nullable() });
+const PresetBracket = z.strictObject({
+  type: z.enum(['fixed', 'hourly']),
+  min: z.number().nonnegative(),
+  max: z.number().positive().nullable(),
+  currencies: z.union([z.literal('*'), z.array(z.string().min(1)).min(1)]),
+});
 export type PresetBracket = z.infer<typeof PresetBracket>;
 
-const PlatformRule = z.strictObject({
-  maxChars: z.number().int().positive().nullable(),
-  hookChars: z.number().int().positive().nullable(),
-  linksAllowed: z.boolean(),
-  attachmentsAllowed: z.boolean(),
-  minIntervalMs: z.number().int().nonnegative(),
-  presetBrackets: z.array(PresetBracket).default([]),
-});
-export type PlatformRule = z.infer<typeof PlatformRule>;
+const nullablePositiveInt = z.number().int().positive().nullable();
+const ruleShape = (d: { maxChars: number | null; hookChars: number | null; linksAllowed: boolean; attachmentsAllowed: boolean; minIntervalMs: number; presetBrackets: PresetBracket[] }) =>
+  z.strictObject({
+    maxChars: nullablePositiveInt.default(d.maxChars),
+    hookChars: nullablePositiveInt.default(d.hookChars),
+    linksAllowed: z.boolean().default(d.linksAllowed),
+    attachmentsAllowed: z.boolean().default(d.attachmentsAllowed),
+    minIntervalMs: z.number().int().nonnegative().default(d.minIntervalMs),
+    presetBrackets: z.array(PresetBracket).default(d.presetBrackets),
+  });
+export type PlatformRule = z.infer<ReturnType<typeof ruleShape>>;
 
+/** The currencies in which Freelancer's dollar-like tiers keep the same (min, max) shape. INR and HKD have their own scaled tiers. */
+const DOLLAR_LIKE = ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'SGD'];
+const dollar = (type: 'fixed' | 'hourly', min: number, max: number | null): PresetBracket => ({ type, min, max, currencies: DOLLAR_LIKE });
+const inr = (type: 'fixed' | 'hourly', min: number, max: number | null): PresetBracket => ({ type, min, max, currencies: ['INR'] });
 /**
- * Derived from the 228 live Freelancer projects recorded on 2026-10-12 (scratchpad probe-out/raw/freelancer-*.json): every
- * (type, currency, min, max) seen on 3 or more distinct projects. Fixed: INR 12500-37500 (39), USD 250-750 (29), USD
- * 30-250 (16), USD 10-30 (14), INR 1500-12500 (12), INR 600-1500 (8), AUD 250-750 (4), INR 37500-75000 (4), CAD 10-30
- * (3). Hourly: USD 15-25 (15), INR 750-1250 (13), USD 8-15 (7), USD 25-50 (4), USD 2-8 (4), USD 50+ (3), INR 100-400
- * (3). (`owner_id` is null in every recording, so distinct owners could not be counted.)
+ * Derived from the 228 unique live Freelancer projects recorded on 2026-10-12 (scratchpad probe-out/raw/freelancer-*.json):
+ * every (type, shape) seen on 3 or more projects, the dollar-like currencies pooled by shape. Fixed: 250-750 (37 in
+ * dollar-like currencies), 30-250 (18), 10-30 (17), 750-1500 (3), 3000-5000 (3), 5000-10000 (3); INR 12500-37500 (39),
+ * 1500-12500 (12), 600-1500 (8), 37500-75000 (4). Hourly: 15-25 (15), 8-15 (7), 25-50 (4), 2-8 (4), 50+ (3); INR
+ * 750-1250 (13), 100-400 (3). `owner_id` is null in every recording, so distinct owners could not be counted.
+ * Three more were each seen once, in a currency whose tier minimum differs from the dollar one, and were added after a
+ * review found the gigs wrongly rejected: EUR 8-30 and NZD 14-30 (the 10-30 tier) and HKD 240-2000 (30-250 x 8). GBP
+ * 20-250 is the review's own example of the 30-250 tier in pounds; it is NOT in the recordings (GBP fixed seen: 250-750, 3000-5000).
  */
 const FREELANCER_PRESETS: PresetBracket[] = [
-  { currency: 'INR', min: 12500, max: 37500 }, { currency: 'USD', min: 250, max: 750 }, { currency: 'USD', min: 30, max: 250 },
-  { currency: 'USD', min: 10, max: 30 }, { currency: 'INR', min: 1500, max: 12500 }, { currency: 'INR', min: 600, max: 1500 },
-  { currency: 'AUD', min: 250, max: 750 }, { currency: 'INR', min: 37500, max: 75000 }, { currency: 'CAD', min: 10, max: 30 },
-  { currency: 'USD', min: 15, max: 25 }, { currency: 'INR', min: 750, max: 1250 }, { currency: 'USD', min: 8, max: 15 },
-  { currency: 'USD', min: 25, max: 50 }, { currency: 'USD', min: 2, max: 8 }, { currency: 'USD', min: 50, max: null },
-  { currency: 'INR', min: 100, max: 400 },
+  dollar('fixed', 250, 750), dollar('fixed', 30, 250), dollar('fixed', 10, 30), dollar('fixed', 750, 1500), dollar('fixed', 3000, 5000), dollar('fixed', 5000, 10000),
+  inr('fixed', 12500, 37500), inr('fixed', 1500, 12500), inr('fixed', 600, 1500), inr('fixed', 37500, 75000),
+  { type: 'fixed', min: 20, max: 250, currencies: ['GBP'] }, { type: 'fixed', min: 8, max: 30, currencies: ['EUR'] }, { type: 'fixed', min: 14, max: 30, currencies: ['NZD'] }, { type: 'fixed', min: 240, max: 2000, currencies: ['HKD'] },
+  dollar('hourly', 15, 25), dollar('hourly', 8, 15), dollar('hourly', 25, 50), dollar('hourly', 2, 8), dollar('hourly', 50, null),
+  inr('hourly', 750, 1250), inr('hourly', 100, 400),
 ];
-const PLAIN: PlatformRule = { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500, presetBrackets: [] };
+const PLAIN_DEFAULTS: PlatformRule = { maxChars: 2500, hookChars: null, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 1500, presetBrackets: [] };
 const DEFAULT_RULES: Record<Platform, PlatformRule> = {
   freelancer: { maxChars: 1500, hookChars: 150, linksAllowed: false, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: FREELANCER_PRESETS },
   upwork: { maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: [] },
-  remotive: PLAIN,
-  'hn-freelancer': PLAIN,
-  'hn-hiring': PLAIN,
-  boards: PLAIN,
-  gmail: PLAIN,
-  reddit: PLAIN,
+  remotive: PLAIN_DEFAULTS,
+  'hn-freelancer': PLAIN_DEFAULTS,
+  'hn-hiring': PLAIN_DEFAULTS,
+  boards: PLAIN_DEFAULTS,
+  gmail: PLAIN_DEFAULTS,
+  reddit: PLAIN_DEFAULTS,
 };
 
-export const PlatformRulesFile = perPlatform(() => PlatformRule, DEFAULT_RULES);
+/** A user-written entry MERGES over the platform's defaults: every field it leaves out keeps the default (an explicit `presetBrackets: []` stays empty). */
+export const PlatformRulesFile = perPlatform((p) => ruleShape(DEFAULT_RULES[p]), DEFAULT_RULES);
 export type PlatformRules = z.infer<typeof PlatformRulesFile>;
 
 /** The user is expected to check a shipped starter against the network's live page before relying on it. */

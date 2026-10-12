@@ -134,12 +134,48 @@ describe('gig-eligibility: role filter and preset brackets', () => {
     expect(decide(g, none).reasons).toEqual(['budget-below-floor']);
   });
 
+  it('a tier holds in every currency of its group, and fixed and hourly tiers are typed apart', () => {
+    const fixed = (currency: 'USD' | 'AUD' | 'HKD' | 'INR', min: number, max: number, budgetUsd: number) =>
+      decide(rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min, max, currency: currency as never, usdPerUnit: null } }, { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd }));
+    // AUD 30-250 x 0.69767 = 174.42 (the platform rate, hand-computed): no AUD row in the fx table is needed
+    expect(fixed('AUD', 30, 250, 174.42).reasons).toEqual(['budget-preset']);
+    expect(fixed('HKD', 240, 2000, 254.85).reasons).toEqual(['budget-preset']);
+    expect(fixed('INR', 30, 250, 3).reasons).toEqual(['budget-below-floor']); // the dollar tier is not an INR tier
+    expect(fixed('USD', 15, 25, 25).reasons).toEqual(['budget-below-floor']); // 15-25 is an hourly tier
+  });
+
+  it('a rate worked out of a preset bracket is review, never rate-below-floor', () => {
+    const g = rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min: 250, max: 750, currency: 'USD', usdPerUnit: null } }, { minUsdH: 9.26, maxUsdH: 27.78, method: 'fixed÷stated-hours', fxDate: null, fxSource: null, budgetUsd: 750 });
+    expect(decide(g)).toEqual({ verdict: 'review', reasons: ['budget-preset'], notes: ['preset bracket - bids may exceed it'] });
+    const custom = rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min: 600, max: 700, currency: 'USD', usdPerUnit: null } }, { minUsdH: 9.26, maxUsdH: 27.78, method: 'fixed÷stated-hours', fxDate: null, fxSource: null, budgetUsd: 700 });
+    expect(decide(custom).reasons).toEqual(['rate-below-floor:27.78']);
+  });
+
+  it('a hedged rate or budget is review with the note, a plain one still rejects', () => {
+    const d = (description: string) => decide(rated({ description }, { ...STATED, minUsdH: 25, maxUsdH: 35 }));
+    for (const t of ['The hourly rate is indicative only.', 'If you have a different rate, put it in your reply.', 'Please quote your hourly rate.', 'Budget is flexible.', 'Pay is negotiable.']) {
+      expect(d(t), t).toEqual({ verdict: 'review', reasons: ['rate-unclear'], notes: ['rate negotiable - verify'] });
+    }
+    expect(d('Flexible working hours.').reasons).toEqual(['rate-below-floor:35']); // flexible about something other than money
+    expect(d('Hours are 10 per week.').reasons).toEqual(['rate-below-floor:35']);
+  });
+
   it('the default freelancer presets are the derived list', () => {
-    const { PlatformRulesFile } = freelanceSchema;
-    const rules = PlatformRulesFile.parse({});
-    expect(rules.freelancer.presetBrackets).toContainEqual({ currency: 'INR', min: 12500, max: 37500 });
-    expect(rules.freelancer.presetBrackets).toHaveLength(16);
+    const rules = freelanceSchema.PlatformRulesFile.parse({});
+    const tiers = rules.freelancer.presetBrackets;
+    expect(tiers).toHaveLength(21);
+    expect(tiers).toContainEqual({ type: 'fixed', min: 12500, max: 37500, currencies: ['INR'] });
+    expect(tiers).toContainEqual({ type: 'fixed', min: 250, max: 750, currencies: ['USD', 'EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'SGD'] });
+    expect(tiers.filter((t) => t.type === 'hourly')).toHaveLength(7);
     expect(rules.upwork.presetBrackets).toEqual([]);
+  });
+
+  it('a user-written freelancer entry merges over the defaults: it never silently loses the presets', () => {
+    const rules = freelanceSchema.PlatformRulesFile.parse({ freelancer: { maxChars: 1000 } });
+    expect(rules.freelancer.maxChars).toBe(1000);
+    expect(rules.freelancer.hookChars).toBe(150);
+    expect(rules.freelancer.presetBrackets).toHaveLength(21);
+    expect(freelanceSchema.PlatformRulesFile.parse({ freelancer: { presetBrackets: [] } }).freelancer.presetBrackets).toEqual([]); // an explicit empty list is the user's choice
   });
 });
 
@@ -321,7 +357,7 @@ describe('golden evals', () => {
     const spec = specs.find((s) => s.name === 'gig-eligibility')!;
     expect(spec.agent.contract.id).toBe('gig-eligibility');
     expect(spec).toMatchObject({ metric: 'exactMatch', min: 1 });
-    expect(spec.cases.length).toBeGreaterThanOrEqual(40);
+    expect(spec.cases.length).toBeGreaterThanOrEqual(240);
     const reasons = new Set(spec.cases.flatMap((c) => (c.expected as { reasons: string[] }).reasons.map((r) => r.replace(/:.*$/, ''))));
     for (const r of ['closed', 'role-filter', 'budget-preset', 'company', 'location-outside-india', 'hours-over-cap', 'overlap-outside-ist-window', 'exclusive', 'budget-below-floor', 'rate-below-floor', 'location-unclear', 'hours-unclear', 'rate-unclear', 'exclusivity-unclear']) expect(reasons.has(r), r).toBe(true);
     expect(new Set(spec.cases.map((c) => (c.expected as { verdict: string }).verdict))).toEqual(new Set(['eligible', 'rejected', 'review']));
@@ -347,6 +383,6 @@ describe('golden evals', () => {
   });
 
   it('datasets carry no forbidden fixture term', () => {
-    for (const f of ['gig-eligibility.jsonl', 'gig-risk.jsonl']) assertNoForbidden(readFileSync(join(root, 'evals/datasets', f), 'utf8'), full.naming);
+    for (const f of ['gig-eligibility.jsonl', 'gig-eligibility-reviewed.jsonl', 'gig-risk.jsonl']) assertNoForbidden(readFileSync(join(root, 'evals/datasets', f), 'utf8'), full.naming);
   });
 });

@@ -136,7 +136,7 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       // RatedGig@1 to the verdict, reasons and notes, on the fixture pack's freelance rules (40 an hour, 20 h, 18:00-00:00 IST, 500 fixed).
       name: 'gig-eligibility',
       agent: gigEligibility,
-      cases: loadJsonl(join(datasetDir, 'gig-eligibility.jsonl')),
+      cases: [...loadJsonl(join(datasetDir, 'gig-eligibility.jsonl')), ...loadJsonl(join(datasetDir, 'gig-eligibility-reviewed.jsonl'))],
       project: (outs) => one(outs, (o: GigVerdict) => ({ verdict: o.verdict, reasons: o.reasons, notes: o.notes })),
       metric: 'exactMatch',
       min: 1,

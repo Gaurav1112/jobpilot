@@ -23,6 +23,9 @@ const root = join(import.meta.dirname, '../..');
 const KNOWN_DEFAULT_DIFFS: Record<string, unknown> = {
   // Same verdict; the defaults' `\bsupport agent\b` (Task 7 note) now names the reason before the location rule.
   'eligibility/real-levelup-philippines': { verdict: 'rejected', reasons: ['role:\\bsupport agent\\b'], notes: [] },
+  // The defaults' roleDeny has no bare `mobile` or `quality` (Task 7 M4), so these two recorded titles raise no role-filter review here; the preset review is the same.
+  'gig-eligibility/live-40760606': { verdict: 'review', reasons: ['budget-preset'], notes: ['preset bracket - bids may exceed it'] },
+  'gig-eligibility/live-40763027': { verdict: 'review', reasons: ['budget-preset'], notes: ['preset bracket - bids may exceed it'] },
   // Bare "ai" no longer counts for llm in the defaults (Task 7 note), so the fixture's 39 is 35 here.
   'scorer-lexicon/ambiguous-words-in-tech-context': {
     score: 35,

@@ -61,11 +61,14 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    unknown rate (contract, or a gig with no budget) is `rate unknown - verify`.
  */
 
+const PresetTier = z.object({ type: z.enum(['fixed', 'hourly']), min: z.number(), max: z.number().nullable(), currencies: z.union([z.literal('*'), z.array(z.string())]) });
+type Tier = z.infer<typeof PresetTier>;
+
 const PackView = z.object({
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()) }),
   naming: z.object({ forbiddenTerms: z.array(z.string()) }),
   // Per platform, only the preset brackets are read.
-  platformRules: z.record(z.string(), z.object({ presetBrackets: z.array(z.object({ currency: z.string(), min: z.number(), max: z.number().nullable() })).default([]) })).default({}),
+  platformRules: z.record(z.string(), z.object({ presetBrackets: z.array(PresetTier).default([]) })).default({}),
   freelance: z.object({
     rateFloorUsdHour: z.number().nonnegative(),
     maxHoursPerWeek: z.number().positive(),
@@ -104,6 +107,9 @@ export const NOTE_OVERLAP = 'overlap stated - verify';
 export const NOTE_EXCLUSIVITY = 'exclusivity wording - verify';
 export const NOTE_PRESET = 'preset bracket - bids may exceed it';
 export const NOTE_ROLE_FILTER = 'title matches your role filter: ';
+export const NOTE_PARTIAL_SCOPE = 'stated hours may cover part of the scope - verify';
+export const NOTE_RATE_NEGOTIABLE = 'rate negotiable - verify';
+export const NOTE_LOCATION_ZONES = 'location field names time zones - verify';
 export const NOTE_RATE_UNKNOWN = 'rate unknown - verify';
 export const NOTE_DERIVED_NOT_COUNTED = 'derived rate below floor - not counted';
 
@@ -129,15 +135,38 @@ const DESCRIPTION_RESTRICTION = new RegExp(
   ].join('|'),
 );
 
+const TIMEZONE_WORDS = /\b(?:time ?zones?|hours?)\b/i;
+const TIMEZONE_ABBREVIATIONS = /\b(?:EST|EDT|PST|PDT|CET|CEST|GMT|UTC|PT|ET|IST)\b/;
+
+/**
+ * "You must be located in the US": a requirement on the candidate, in words. Case-sensitive for the abbreviations. Not when
+ * negated, and not when the same sentence names India or somewhere wider ("or India", "or anywhere").
+ */
+const RESIDENCE = /\b(?:[Yy]ou|[Tt]he (?:freelancer|developer|contractor)|[Cc]andidates?|[Aa]pplicants?|[Ff]reelancers?)\s+(?:must|need to|have to|should)\s+(?:be\s+)?(?:based|located|resident|residing|living)\s+in\s+(?:the\s+)?(?:US|USA|U\.S\.|United States|UK|Canada|EU|Europe)\b/;
+const WIDER = /\b(?:india|asia|apac|worldwide|anywhere|or elsewhere|globally|global)\b/i;
+function residenceStated(description: string): boolean {
+  return description.split(/(?<=[.!?])\s+|\n/).some((sentence) => {
+    const m = RESIDENCE.exec(sentence);
+    return m !== null && !NEGATION.test(sentence.slice(0, m.index)) && !WIDER.test(sentence) && !/\bnot\b/i.test(sentence);
+  });
+}
+
+/** The gig's own location data does not already put India in scope. */
+const indiaNotInScope = (g: Gig): boolean => !inScope(g.location.countries);
+
 function locationOutcome(g: Gig): Outcome {
   const { countries, worldwide, text } = g.location;
-  const restricted = DESCRIPTION_RESTRICTION.test(g.description);
+  if (indiaNotInScope(g) && residenceStated(g.description)) return rejectOf('location-outside-india');
+  // A sentence that also names India or somewhere wider ("the US or India") is no restriction.
+  const restricted = g.description.split(/(?<=[.!?])\s+|\n/).some((sentence) => DESCRIPTION_RESTRICTION.test(sentence) && !/\b(?:india|asia|apac|worldwide|anywhere)\b/i.test(sentence));
   const withText = (o: Outcome): Outcome => (o.reject === null && restricted && !o.notes.includes(NOTE_LOCATION_TEXT) ? { reject: null, review: o.review ?? 'location-unclear', notes: [...o.notes, NOTE_LOCATION_TEXT] } : o);
 
   if (text !== null && ONLY.test(text)) {
     return worldwide || inScope(countries) ? reviewOf('location-unclear', NOTE_LOCATION_MAY_EXCLUDE) : rejectOf('location-outside-india');
   }
   if (worldwide || inScope(countries)) return withText(PASS);
+  // A location field about time zones or hours ("USA timezones", "EU hours") is a preference for overlap, not a country restriction.
+  if (text !== null && (TIMEZONE_WORDS.test(text) || TIMEZONE_ABBREVIATIONS.test(text))) return withText(reviewOf('location-unclear', NOTE_LOCATION_ZONES));
   if (countries.length === 0) return withText(reviewOf('location-unclear', NOTE_LOCATION_NOT_STATED));
   // Countries named, none of them India or a region with India.
   if (text === null) return withText(reviewOf('location-unclear', NOTE_LOCATION_MAY_EXCLUDE));
@@ -163,7 +192,7 @@ const CONDITIONAL = /\b(?:if|whether|ideally|prefer\w*|bonus|nice to have|option
 const HABITUAL = /\b(?:typical(?:ly)?|usual(?:ly)?|rarely|often|generally|on average|averag\w+|most of our|some of our|many of our|our (?:projects|clients|engagements|team|developers)|can vary|varies|may vary|flexible)\b/i;
 /** In the figure's own clause: wording that makes it this engagement's requirement. */
 const CONFIRM = /\b(?:commit(?:ment|ted|s)?|require[sd]?|requirements?|need(?:s|ed)?|expect(?:s|ed|ing)?|must|dedicat\w+|availability|engagement|you(?:'ll|r)?|to work|looking for|seeking|minimum|min|at least|hours?\s*:|schedule|workload)\b/i;
-const CONFIRM_AFTER = /^\s*(?:(?:is |are )?(?:required|needed|expected|minimum|mandatory)\b|commitment\b|of availability\b)/i;
+const CONFIRM_AFTER = /^\s*(?:(?:is |are )?(?:required|needed|expected|minimum|mandatory)\b|commitment\b|of availability\b|(?:[\w-]+\s+)?(?:contract|role|position|engagement|assignment|gig|opportunity)\b)/i;
 
 type Figure = 'yes' | 'unclear' | 'absent';
 
@@ -193,10 +222,10 @@ const FULL_TIME = /\bfull[\s-]?time\b/gi;
  * mention outside every shape ("our full-time engineers", "we're a full-time remote team", "employed full-time") is
  * ignored; the hours then stay unknown (review).
  */
-const ENGAGEMENT_NOUN = '(?:role|position|contract|contractor|engagement|assignment|commitment|basis|job|opportunity|opening|freelancer|consultant|gig|project)';
+const ENGAGEMENT_NOUN = '(?:role|position|contract|contractor|engagement|assignment|commitment|basis|opportunity|opening|freelancer|consultant|gig|project)';
 const FULL_TIME_SHAPES: readonly RegExp[] = [
   // "a full-time remote contract role", "full-time contractor", "on a full-time basis"
-  new RegExp(`\\bfull[\\s-]?time\\s+(?:(?:remote|contract|contractual|freelance|independent|long[\\s-]term|on-?site)\\s+){0,3}${ENGAGEMENT_NOUN}\\b`, 'gi'),
+  new RegExp(`\\bfull[\\s-]?time,?\\s+(?:(?:remote|contract|contractual|freelance|independent|long[\\s-]term|on-?site),?\\s+){0,3}${ENGAGEMENT_NOUN}\\b`, 'gi'),
   // "this role is full-time"
   new RegExp(`\\b${ENGAGEMENT_NOUN}\\s+(?:is|are|will be|would be|requires?)\\s+(?:an?\\s+)?(?:\\w+\\s+){0,2}?full[\\s-]?time\\b`, 'gi'),
   // "we need a full-time ...", "looking for an experienced full-time ..."
@@ -212,7 +241,7 @@ const FULL_TIME_SHAPES: readonly RegExp[] = [
   /\b(?:contract|contractor|freelance)\s*,\s*full[\s-]?time\b|\bfull[\s-]?time\s*,\s*(?:contract|contractor|freelance)\b/gi,
 ];
 /** Wording beside a "full-time" that makes it an alternative, a preference, a possibility or a negation. */
-const FULL_TIME_SOFT = /\b(?:or|and\/or|either|part[\s-]?time|prefer(?:red)?|ideally|possible|path|then|may|might|could|can be|optional|option|flexible|negotiable|not|non|no|never|rather than|instead of|convert|conversion|eventually|potential|after|starting|until|without|unlike|instead)\b|\b\w+n['’]t\b|\//i;
+const FULL_TIME_SOFT = /\b(?:or|and\/or|either|part[\s-]?time|prefer(?:red)?|ideally|possible|path|then|may|might|could|can be|optional|option|flexible|negotiable|not|non|no|never|rather than|instead of|convert|conversion|eventually|potential|after|starting|until|without|unlike|instead|have|has|keep|alongside|if|with|previously|elsewhere|current|day job|while|besides|in addition to|welcome|welcomed|welcomes)\b|\b\w+n['’]t\b|\//i;
 
 /** `yes`: a "full-time" is tied to this engagement and not hedged; `unclear`: one is hedged; `no`: none is tied to it (boilerplate, or none). */
 function fullTime(text: string): 'yes' | 'unclear' | 'no' {
@@ -227,7 +256,7 @@ function fullTime(text: string): 'yes' | 'unclear' | 'no' {
     const rightRaw = text.slice(at + m[0].length, at + m[0].length + 50);
     const rightEnd = rightRaw.search(/[.;!?\n|]/);
     const clause = text.slice(Math.max(0, at - 50) + left, at + m[0].length) + (rightEnd === -1 ? rightRaw : rightRaw.slice(0, rightEnd));
-    if (FULL_TIME_SOFT.test(clause)) return 'unclear';
+    if (FULL_TIME_SOFT.test(clause) || rightRaw[rightEnd] === '?') return 'unclear';
     result = 'yes';
   }
   return result;
@@ -267,9 +296,29 @@ const ZONE_TOKEN = new RegExp(`\\b(?:${ZONES})\\b`, 'g');
 const LEAD = /\b(?:online|available|availability|working|work|on call|present|reachable)\b/i;
 const VOID_OVERLAP =
   /\b(?:async(?:hronous(?:ly)?)?|flexible|flexibility|some overlap|partial overlap|minimal overlap|prefer(?:red)?|ideally|nice to have|negotiable|adjustable|can be adjusted|variable)\b|\b(?:overlap|window|hours) (?:is |are )?not (?:required|needed|necessary|strict|mandatory)\b|\bno (?:strict |fixed )?overlap\b/i;
-/** A sentence about the company's own hours ("we are available 9-5 PST for questions") is not a window asked of the candidate, unless it also addresses the candidate. */
-const COMPANY_SUBJECT = /\b(?:we|we're|our|us|the team|support|customers?|clients?|office|store|shop)\b/i;
-const CANDIDATE_CUE = /\b(?:you|your|must|required|requires?|should|need to|expected|candidate|freelancer|developer|engineer|contractor)\b/i;
+/**
+ * A window counts only when the REQUIRED party is the candidate, in a requirement shape: "you must be online ...",
+ * "the developer should be available ...", "we need you to be online ...", or an imperative sentence ("Must be online
+ * ...", "Available 9-5 CET"). A window whose subject is I / my / we / our / the team / support / customers / users is the
+ * client's own hours, not a requirement on you.
+ */
+const SUBJECT = '(?:you|(?:the\\s+)?(?:freelancers?|developers?|contractors?|engineers?|candidates?))';
+const REQUIREMENT = new RegExp(
+  `\\b${SUBJECT}\\s+(?:must|will need to|are required to|is required to|need to|needs to|should|have to|has to|will be|are expected to|is expected to)\\s+(?:be\\s+)?(?:online|available|work(?:ing)?|reachable|present)\\b|\\b(?:need|require|expect|want)s?\\s+${SUBJECT}\\s+to\\s+(?:be\\s+)?(?:online|available|work(?:ing)?|reachable)\\b`,
+  'gi',
+);
+const IMPERATIVE = /^\W*(?:(?:must|should|need to|required to|has to|have to)\s+)?(?:be\s+)?(?:online|available|working|on call|reachable)\b/i;
+const REQUIRED_AFTER = /^[^.]{0,30}?\b(?:are|is)\s+(?:required|mandatory|needed)\b/i;
+/** A short or rare meeting inside the sentence ("a weekly 30 minute sync", "for a call", "two days a week") is not a working-hours requirement. */
+const SYNC = /\b(?:sync|calls?|meetings?|stand-?ups?|catch-?ups?|check-?ins?|once a week|once per week|twice a week|weekly|monthly|(?:one|two|three|\d) days? (?:a|per|each) week)\b/i;
+/** Time zone names written out: "Pacific time" is PT, "Eastern time" is ET (the brief's fixed offsets). */
+const ZONE_NAMES: readonly [RegExp, string][] = [[/\bPacific (?:Standard |Daylight )?[Tt]ime\b/g, 'PT'], [/\bEastern (?:Standard |Daylight )?[Tt]ime\b/g, 'ET']];
+
+function isRequirement(sentence: string, at: number): boolean {
+  const prefix = sentence.slice(Math.max(0, at - 70), at);
+  const near = [...prefix.matchAll(REQUIREMENT)].some((m) => prefix.length - ((m.index ?? 0) + m[0].length) <= 60);
+  return near || IMPERATIVE.test(sentence) || (/\bhours?\b/i.test(prefix) && REQUIRED_AFTER.test(sentence.slice(at)));
+}
 const ZONE_HOURS = new RegExp(`\\b(?:${ZONES})\\s+(?:hours|business hours|working hours|time ?zone)\\b`);
 
 /** The start minutes a clock reading can mean: a suffix fixes it, an hour above 12 or 0 is 24-hour, else both halves of the day. */
@@ -313,16 +362,17 @@ function windowMinutes(istWindow: string): { start: number; end: number } {
 
 function overlapOutcome(g: Gig, istWindow: string): Outcome {
   const win = windowMinutes(istWindow);
-  const raw = `${g.description}\n${g.timezone.overlapText ?? ''}`.replace(/\b(\d{1,2}(?::\d{2})?)\s?([AaPp])\.?[Mm]\.?/g, (_m, t: string, ap: string) => `${t}${ap.toLowerCase()}m`);
+  let raw = `${g.description}\n${g.timezone.overlapText ?? ''}`.replace(/\b(\d{1,2}(?::\d{2})?)\s?([AaPp])\.?[Mm]\.?/g, (_m, t: string, ap: string) => `${t}${ap.toLowerCase()}m`);
+  for (const [re, zone] of ZONE_NAMES) raw = raw.replace(re, zone);
   const shares: number[] = [];
   let unparsed = false;
   for (const sentence of raw.split(/(?<=[.!?])\s+|\n/)) {
-    if (VOID_OVERLAP.test(sentence) || (COMPANY_SUBJECT.test(sentence) && !CANDIDATE_CUE.test(sentence))) continue;
-    let parsedHere = false;
+    if (VOID_OVERLAP.test(sentence)) continue;
+    let rangeHere = false;
     for (const m of sentence.matchAll(RANGE)) {
+      rangeHere = true;
       const at = m.index ?? 0;
-      if (!LEAD.test(sentence.slice(Math.max(0, at - 45), at))) continue;
-      parsedHere = true;
+      if (!isRequirement(sentence, at) || SYNC.test(sentence)) continue;
       const w = parseWindow(m);
       if (w === null || w.dur < MIN_WINDOW_MIN) {
         unparsed = true;
@@ -333,7 +383,7 @@ function overlapOutcome(g: Gig, istWindow: string): Outcome {
       for (let k = -1; k <= 1; k++) share += Math.max(0, Math.min(istStart + w.dur, win.end + k * DAY) - Math.max(istStart, win.start + k * DAY));
       shares.push(share);
     }
-    if (parsedHere) continue;
+    if (rangeHere) continue;
     for (const z of sentence.matchAll(ZONE_TOKEN)) {
       const at = z.index ?? 0;
       if (LEAD.test(sentence.slice(Math.max(0, at - 45), at))) unparsed = true;
@@ -346,15 +396,29 @@ function overlapOutcome(g: Gig, istWindow: string): Outcome {
 
 /* ------------------------------------------------------------------ 7. exclusive */
 
-/** The person may not work for anyone else. "Exclusive rights", "non-exclusive" and "exclusively for Android" are not that. */
+/**
+ * The person may not work for anyone else. "Exclusive rights", "non-exclusive" and "exclusively for Android" are not
+ * that, and a match counts only as a requirement on the candidate (see `exclusiveOutcome`).
+ */
 const STRONG_EXCLUSIVE =
-  /\b(?:(?:must not|cannot|can't|can not|may not|not allowed to|not permitted to|no)\s+(?:work|hold|have|take(?: on)?)\s+(?:for\s+)?(?:any\s+)?(?:other|another)\s+(?:jobs?|employment|employers?|clients?|projects?|commitments?)|(?<!non[-\s])exclusive\s+contractor|work(?:ing)?\s+exclusively\s+(?:for|with)\s+(?:us|the client|our)|(?:sole|only)\s+employer)\b/i;
+  /\b(?:(?:must not|cannot|can't|can not|may not|not allowed to|not permitted to|no)\s+(?:work|hold|have|take(?: on)?)\s+(?:for\s+)?(?:any\s+)?(?:other|another)\s+(?:jobs?|employment|employers?|clients?|projects?|commitments?)|no other (?:clients?|jobs?|employment|employers?|projects?) (?:while|during|whilst)|(?<!non[-\s])exclusive\s+contractor(?!\s+(?:agreement|deal|arrangement|status))|work(?:ing)?\s+exclusively\s+(?:for|with)\s+(?:us|the client|our)|(?:sole|only)\s+employer)\b/gi;
+/** In the sentence before the match: a negation anywhere voids it ("you do not need to be an exclusive contractor"). */
+const NEGATION = /\b(?:not|no|never|without|nor)\b|n['’]t\b/i;
+/** Who is bound: you / the freelancer / ..., or the client asking for a hire ("we need an exclusive contractor"). */
+const BOUND = /\b(?:you|your|freelancers?|contractors?|developers?|candidates?|engineers?)\b|\b(?:we|i)\s+(?:need|want|seek|require|are looking for|am looking for|will hire|hire)\b/i;
 const WEAK_EXCLUSIVE = /(?<!non[-\s])\bexclusiv(?:e|ity)\b/i;
 const ABOUT_THE_PERSON = /\b(?:you|your|freelancer|contractor|candidate|developer|engineer|availability|full[\s-]?time|commitment|engagement|work for|worker|resource)\b/i;
 const ABOUT_RIGHTS = /\b(?:rights?|licen[sc]\w*|ownership|ip|copyright|source code|code|domain|distribution|resale|territor\w*|intellectual|patent|trademark|content|design|assets?)\b/i;
 
 function exclusiveOutcome(g: Gig): Outcome {
-  if (STRONG_EXCLUSIVE.test(g.description)) return rejectOf('exclusive');
+  for (const sentence of g.description.split(/(?<=[.!?])\s+|\n/)) {
+    for (const m of sentence.matchAll(STRONG_EXCLUSIVE)) {
+      const prefix = sentence.slice(0, m.index ?? 0);
+      if (NEGATION.test(prefix)) continue;
+      // An imperative has no subject ("Cannot work for other clients"); anything else needs a person or a hiring client.
+      if (prefix.replace(/\b(?:please|also|note|and|but|so|that)\b|[^\w]/gi, '') === '' || BOUND.test(prefix)) return rejectOf('exclusive');
+    }
+  }
   const weak = g.description.split(/(?<=[.!?])\s+|\n/).some((s) => WEAK_EXCLUSIVE.test(s) && ABOUT_THE_PERSON.test(s) && !ABOUT_RIGHTS.test(s));
   return weak ? reviewOf('exclusivity-unclear', NOTE_EXCLUSIVITY) : PASS;
 }
@@ -363,22 +427,37 @@ function exclusiveOutcome(g: Gig): Outcome {
 
 const DERIVED: ReadonlySet<RatedGig['rate']['method']> = new Set(['fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours']);
 
-/** The raw budget (before any conversion) is exactly one of the platform's preset brackets: the client did not state a real budget. */
-function isPreset(g: Gig, brackets: readonly { currency: string; min: number; max: number | null }[]): boolean {
-  const { currency, min, max } = g.budget;
-  return g.budget.type === 'fixed' && currency !== null && min !== null && brackets.some((b) => b.currency === currency && b.min === min && b.max === max);
+/** The raw budget (before any conversion) is exactly one of the platform's fixed tiers: the client did not state a real budget. */
+function isPreset(g: Gig, tiers: readonly Tier[]): boolean {
+  const { currency, min, max, type } = g.budget;
+  return type === 'fixed' && currency !== null && min !== null && tiers.some((t) => t.type === 'fixed' && t.min === min && t.max === max && (t.currencies === '*' || t.currencies.includes(currency)));
 }
 
-function payOutcome(r: RatedGig, f: GigPack['freelance'], brackets: readonly { currency: string; min: number; max: number | null }[]): Outcome {
+/** The price is open to the bidder's proposal: "indicative only", "rate negotiable", "quote your rate", "budget is flexible". */
+const HEDGE_SPECIFIC = /\b(?:quote your (?:own )?(?:hourly )?rate|your (?:own )?(?:hourly )?rate|different rate|name your (?:own )?(?:price|rate)|propose (?:a|your) (?:own )?(?:rate|price))\b|\b(?:state|share|include|send|provide|give|tell|quote|propose|let|your)\b[^.]{0,60}\b(?:hourly|project[- ]based|expected|desired)(?: or \w[\w-]*)? (?:rate|price)\b/i;
+const HEDGE_SOFT = /\b(?:indicative|negotiable|flexible|open to (?:offers|proposals))\b/i;
+const MONEY_WORD = /\b(?:rates?|budgets?|prices?|pricing|pay|payment|fees?|cost|compensation)\b/i;
+const hedged = (description: string): boolean => description.split(/(?<=[.!?])\s+|\n/).some((s) => HEDGE_SPECIFIC.test(s) || (HEDGE_SOFT.test(s) && MONEY_WORD.test(s)));
+const PARTIAL_SCOPE = /\b(?:milestones?|phases?|stages?|sprints?|iterations?|first part|initial)\b/i;
+const negotiable = (): Outcome => reviewOf('rate-unclear', NOTE_RATE_NEGOTIABLE);
+
+function payOutcome(r: RatedGig, f: GigPack['freelance'], tiers: readonly Tier[]): Outcome {
   const { rate, gig } = r;
+  const preset = isPreset(gig, tiers);
   if (rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
     if (gig.kind === 'gig' && rate.budgetUsd !== null) {
       if (rate.budgetUsd >= f.fixedBudgetFloorUsd) return PASS;
-      return isPreset(gig, brackets) ? reviewOf('budget-preset', NOTE_PRESET) : rejectOf('budget-below-floor');
+      if (preset) return reviewOf('budget-preset', NOTE_PRESET);
+      return hedged(gig.description) ? negotiable() : rejectOf('budget-below-floor');
     }
     return reviewOf('rate-unclear', NOTE_RATE_UNKNOWN);
   }
   if (rate.maxUsdH === null || rate.maxUsdH >= f.rateFloorUsdHour) return PASS;
+  // A rate worked out of a preset bracket inherits the bracket's doubt: the budget was never stated.
+  if (preset && (rate.method === 'fixed÷stated-hours' || rate.method === 'derived-from-duration')) return reviewOf('budget-preset', NOTE_PRESET);
+  if (hedged(gig.description)) return negotiable();
+  // "This $800 covers the first milestone of about 40 hours": the hours are part of the scope, so the rate is not the job's.
+  if (rate.method === 'fixed÷stated-hours' && PARTIAL_SCOPE.test(gig.description)) return reviewOf('rate-unclear', NOTE_PARTIAL_SCOPE);
   if (rate.method === 'stated' || (DERIVED.has(rate.method) && f.derivedRateCountsForFloor)) return rejectOf(`rate-below-floor:${rate.maxUsdH}`);
   return noteOf(NOTE_DERIVED_NOT_COUNTED);
 }
