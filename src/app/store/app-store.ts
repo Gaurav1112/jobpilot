@@ -854,6 +854,21 @@ export class AppStore {
   }
 
   /**
+   * Marks a run as seen for a platform without counting it into `source_health` (no row, no week, no probe streak):
+   * a `source_health_runs` row whose platform column holds `<platform>:<note>` (freelance §4.5: a Gmail run whose
+   * messages were all read but none parsed is `gmail:no-parser`, neither a failure nor a zero-yield week). False when
+   * the run was already marked.
+   */
+  markSourceRun(runId: string, platform: string, note: string): boolean {
+    return this.db.prepare(`INSERT OR IGNORE INTO source_health_runs (run_id, platform) VALUES (?, ?)`).run(runId, `${platform}:${note}`).changes === 1;
+  }
+
+  /** The notes `markSourceRun` left for a run, as `<platform>:<note>`, sorted. */
+  sourceRunNotes(runId: string): string[] {
+    return (this.db.prepare(`SELECT platform FROM source_health_runs WHERE run_id = ? AND platform LIKE '%:%' ORDER BY platform`).all(runId) as { platform: string }[]).map((r) => r.platform);
+  }
+
+  /**
    * Adds one failed probe (`jobpilot sources probe`) to `source_health.probe_failures` for (platform, week). A probe is
    * not a run: `runs` and the other counts are untouched, and a row it creates has `runs` 0.
    */

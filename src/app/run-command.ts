@@ -193,12 +193,13 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
 export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
   return runWithDue(FREELANCE_DUE, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
-    const gmail = offline !== undefined ? GMAIL_OFFLINE : (d.gmail?.() ?? GMAIL_OFF);
+    // Asked only by the run, and only when gmail is enabled: a Keychain problem never stops the other sources.
+    const gmail = offline !== undefined ? () => GMAIL_OFFLINE : d.gmail;
     const summary = await runFreelance({
       home: d.home,
       clock: d.clock,
       fetch: offline?.fetch ?? nodeFetch,
-      gmail,
+      ...(gmail !== undefined ? { gmail } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),

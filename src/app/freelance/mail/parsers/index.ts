@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { redactText } from '../../../pack/rules.js';
 import { htmlToText } from '../../../text/html.js';
 import type { MailMessage } from '../mime.js';
 
@@ -8,7 +7,11 @@ import type { MailMessage } from '../mime.js';
  * lower-case) AND its layout fingerprint: a stable heading or footer string taken from a real sample email, found in
  * the text part or in the text of the HTML part. A message with no parser for its sender, or whose fingerprint is
  * missing, or that the chosen parser refuses (it throws, returns no job or a job that fails `AlertJob`), is
- * quarantined whole: never partly read, no generic fallback.
+ * quarantined whole: never partly read, no generic fallback. The run lists one problem per sender domain.
+ *
+ * Every parser must also refuse a job whose URL host is not the platform's own domain (a spoofed `From` could
+ * otherwise plant links), and should check the message's `Authentication-Results` DKIM pass for that domain once a
+ * real sample shows the header.
  *
  * **Real-platform parsers are built only from real samples.** The user drops one alert `.eml` per sender in
  * `~/.jobpilot/secrets/alert-samples/`; a parser is then written in `parsers/<sender>.ts`, tested against that sample
@@ -71,21 +74,3 @@ export function selectParser(mail: MailMessage, parsers: readonly AlertParser[] 
   const hits = mine.filter((p) => bodies.some((b) => b.includes(p.fingerprint)));
   return hits.length === 1 ? hits[0] : undefined;
 }
-
-export const SUBJECT_MAX = 60;
-
-/** A subject safe for a problem line: one line, forbidden terms as `[hidden]`, `"` as `'`, cut at SUBJECT_MAX characters. */
-export function redactSubject(subject: string, forbiddenTerms: readonly string[]): string {
-  const line = subject.replace(/[\u0000-\u001F\u007F]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/"/g, "'");
-  const safe = redactText(line, { forbiddenTerms: [...forbiddenTerms] });
-  const cps = [...safe];
-  return cps.length <= SUBJECT_MAX ? safe : `${cps.slice(0, SUBJECT_MAX).join('')}…`;
-}
-
-/** The quarantine note for a message: `unrecognised alert: <sender domain> "<subject redacted>"`, plus why when a parser refused it. */
-export function unrecognisedNote(mail: Pick<MailMessage, 'fromDomain' | 'subject'>, forbiddenTerms: readonly string[], refusedBy?: string): string {
-  const domain = redactText(mail.fromDomain, { forbiddenTerms: [...forbiddenTerms] });
-  return `unrecognised alert: ${domain} "${redactSubject(mail.subject, forbiddenTerms)}"${refusedBy === undefined ? '' : ` (parser ${refusedBy} refused it)`}`;
-}
-
-export const UNRECOGNISED_PREFIX = 'unrecognised alert: ';

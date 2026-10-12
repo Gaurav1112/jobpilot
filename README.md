@@ -124,16 +124,29 @@ Connect once:
    read-only access; the tab then says "You can close this tab". The client and the refresh
    token go into the macOS Keychain (service `jobpilot`), and nothing is printed or written
    anywhere else. Then it asks whether to delete the JSON (the default is to keep it).
+   The browser is opened with `open <url>`, so for a moment that URL is visible to `ps` on this
+   Mac. It carries the client id, the `state` and the PKCE `code_challenge`, never the client
+   secret or a token. The challenge is useless without the verifier, which stays in memory, and
+   the state is used once.
 
 `gmail status` shows whether Gmail is connected (never the token), and `gmail disconnect`
 deletes the Keychain items. Until you connect, the Sources tab shows Gmail as "not connected -
-run jobpilot gmail connect", and the run carries on without it.
+run jobpilot gmail connect", and the run carries on without it. If the Keychain cannot be read,
+the run warns "Keychain could not be read (security exit N); Gmail skipped" and the other
+sources still run.
+
+Each run looks the label up by its exact name. If there is no label named `jobpilot/gigs`, the
+run warns "label jobpilot/gigs not found in Gmail - create it and a filter" rather than
+reporting zero alerts.
 
 ### Alert parsers: one per sender, built from a real sample
 
 A parser is chosen by the sender's address and a layout fingerprint (a stable heading or
-footer from the sample email). An email nothing recognises is set aside whole and listed under
-the run's problems as `unrecognised alert: <sender domain> "<subject>"`. It is never half read.
+footer from the sample email). An email nothing recognises is set aside whole and never half
+read. The run lists one problem per sender domain: `N unrecognised alerts from <domain> - save
+one as .eml in ~/.jobpilot/secrets/alert-samples/`. A run in which nothing could be parsed does
+not count against Gmail's source health, so Gmail never "looks dead" just because it has no
+parser yet.
 
 This build has **no parsers yet**. To add one: drop the .eml in
 `~/.jobpilot/secrets/alert-samples/`; a parser is built and tested from it, with the user's own
@@ -145,7 +158,10 @@ details redacted. In practice:
    test on it.
 3. Write `src/app/freelance/mail/parsers/<sender>.ts` (the `AlertParser` shape in
    `parsers/index.ts`: the exact sender, the fingerprint, and a `parse` that throws on anything
-   it does not recognise). Then add it to `ALERT_PARSERS`.
+   it does not recognise). Then add it to `ALERT_PARSERS`. A `From` address can be spoofed, so
+   every parser **must refuse a job whose URL host is not the platform's own domain**. It
+   **should also check** that the message's `Authentication-Results` header shows a DKIM pass
+   for that domain (once the real sample shows the header).
 4. Add a test where the sample parses to its expected jobs and an altered fingerprint is set
    aside, then run `node --run verify`.
 

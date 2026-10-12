@@ -4,7 +4,7 @@ import type { AddressInfo } from 'node:net';
 import { KernelError } from '../../../kernel/errors.js';
 import type { FetchLike, FetchResponse } from '../../../kernel/providers.js';
 import type { Secrets } from '../../secrets.js';
-import { AUTH_URL, GMAIL_HOST, GMAIL_NOT_CONNECTED, GMAIL_READ_PATH, GMAIL_SCOPE, SECRET, TOKEN_URL } from './google.js';
+import { AUTH_URL, GMAIL_HOST, GMAIL_LABEL_ID, GMAIL_NOT_CONNECTED, GMAIL_READ_PATH, GMAIL_SCOPE, SECRET, TOKEN_URL } from './google.js';
 
 /**
  * Google OAuth 2.0 for an installed ("Desktop") app, read-only Gmail (Task 13):
@@ -112,6 +112,8 @@ export interface GmailClient {
 /** Refresh token → access token (refresh_token grant), in memory. */
 export async function refreshAccess(post: FormPost, o: GmailClient & { readonly refreshToken: string }, signal?: AbortSignal): Promise<{ accessToken: string; expiresIn: number | null }> {
   const json = await tokenJson(await post(TOKEN_URL, { grant_type: 'refresh_token', refresh_token: o.refreshToken, client_id: o.clientId, client_secret: o.clientSecret }, signal), 'stored sign-in');
+  // Google may leave `scope` out of a refresh reply; the token then carries the scope of the grant, which
+  // `exchangeCode` already checked was exactly gmail.readonly. A stated scope must still be exactly that.
   if (json.scope !== undefined) onlyReadonly(json);
   if (typeof json.access_token !== 'string' || json.access_token === '') throw new Error('Google returned no access token');
   return { accessToken: json.access_token, expiresIn: typeof json.expires_in === 'number' ? json.expires_in : null };
@@ -148,7 +150,11 @@ export async function startLoopback(state: string, timeoutMs: number): Promise<L
     };
     const u = new URL(req.url ?? '/', 'http://127.0.0.1');
     if (req.method !== 'GET' || u.pathname !== '/cb') return send(404, 'Not found', 'jobpilot is waiting for Google at /cb only.');
-    if (u.searchParams.get('state') !== state) return send(400, 'Refused', "This reply did not come from jobpilot's sign-in request, so it was refused.");
+    // One state and at most one code and one error: a repeated parameter is a smuggling attempt, not Google.
+    const once = (k: string): boolean => u.searchParams.getAll(k).length <= 1;
+    if (u.searchParams.getAll('state').length !== 1 || u.searchParams.get('state') !== state || !once('code') || !once('error')) {
+      return send(400, 'Refused', "This reply did not come from jobpilot's sign-in request, so it was refused.");
+    }
     const error = u.searchParams.get('error');
     const got = u.searchParams.get('code');
     // The wait ends once the page has been sent, so the browser always gets it.
@@ -178,10 +184,7 @@ export async function startLoopback(state: string, timeoutMs: number): Promise<L
   return { redirectUri: `http://127.0.0.1:${port}/cb`, code, close: () => finish(new Error('cancelled')) };
 }
 
-/**
- * What a freelance run needs of Gmail: whether it is connected (a refresh token is in the Keychain; read without its
- * value) and a fetch wrapper. `reason` says why it is off.
- */
+/** What a freelance run needs of Gmail: whether it is connected, why not (`reason`), and the authorised fetch layer. */
 export interface GmailRunAccess {
   readonly connected: boolean;
   readonly reason: string | null;
@@ -192,32 +195,49 @@ export const GMAIL_OFF: GmailRunAccess = { connected: false, reason: GMAIL_NOT_C
 
 const response = (status: number, body: unknown): FetchResponse => ({ status, text: async () => JSON.stringify(body) });
 
+/** `security exit N` from a Keychain error, for the warning. */
+const keychainError = (e: unknown): string => {
+  const m = e instanceof Error ? /security exit (\d+)/.exec(e.message) : null;
+  return `Keychain could not be read (security exit ${m?.[1] ?? '?'}); Gmail skipped`;
+};
+
 /**
- * The run's Gmail access. `wrap` puts an authorised layer over the run's fetch:
+ * The run's Gmail access, read from the Keychain once, now (call it only when gmail is enabled). Any Keychain error
+ * makes it `connected: false` with the reason `Keychain could not be read (security exit N); Gmail skipped`, a run
+ * warning, never a run failure. A refresh token without its client is "not connected" too.
+ *
+ * `wrap` puts an authorised layer over the run's fetch:
  * - `GET TOKEN_URL` (the agent's first request, checked by the broker like any other) refreshes the access token: one
- *   POST to the token endpoint with the Keychain's client and refresh token. The access token stays in this closure;
- *   the agent sees only `{"token":"ready"}` or Google's error code.
- * - a request to the Gmail host must be a read (`GMAIL_READ_PATH`, a GET: the broker makes GETs only) and gets
- *   `authorization: Bearer <access token>`; without a refreshed token it is answered 401 without being sent.
+ *   POST to the token endpoint with the client and refresh token. The access token stays in this closure; the agent
+ *   sees only `{"token":"ready"}` or Google's error code.
+ * - a request to the Gmail host must be a read (`GMAIL_READ_PATH`, a GET: the broker makes GETs only), with `labelIds`
+ *   only a label id, and gets `authorization: Bearer <access token>`; without a refreshed token it is answered 401
+ *   without being sent.
  * - every other URL goes to the base fetch unchanged.
- * The Keychain is read once, at the refresh, never before.
  */
 export function gmailRunAccess(secrets: Pick<Secrets, 'get' | 'has'>, post: FormPost = realFormPost): GmailRunAccess {
-  const connected = secrets.has(SECRET.refresh);
+  let creds: (GmailClient & { readonly refreshToken: string }) | undefined;
+  try {
+    if (!secrets.has(SECRET.refresh)) return GMAIL_OFF;
+    const clientId = secrets.get(SECRET.clientId);
+    const clientSecret = secrets.get(SECRET.clientSecret);
+    const refreshToken = secrets.get(SECRET.refresh);
+    if (clientId === undefined || clientSecret === undefined || refreshToken === undefined) return GMAIL_OFF;
+    creds = { clientId, clientSecret, refreshToken };
+  } catch (e) {
+    return { connected: false, reason: keychainError(e), wrap: (f) => f };
+  }
+  const c = creds;
   return {
-    connected,
-    reason: connected ? null : GMAIL_NOT_CONNECTED,
+    connected: true,
+    reason: null,
     wrap(base) {
       let access: string | undefined;
       return async (url, init) => {
         const u = new URL(url);
         if (u.href === TOKEN_URL) {
-          const clientId = secrets.get(SECRET.clientId);
-          const clientSecret = secrets.get(SECRET.clientSecret);
-          const refreshToken = secrets.get(SECRET.refresh);
-          if (clientId === undefined || clientSecret === undefined || refreshToken === undefined) return response(401, { error: 'not_connected' });
           try {
-            const t = await refreshAccess(post, { clientId, clientSecret, refreshToken }, init.signal);
+            const t = await refreshAccess(post, c, init.signal);
             access = t.accessToken;
             return response(200, { token: 'ready', expiresIn: t.expiresIn });
           } catch (e) {
@@ -227,7 +247,9 @@ export function gmailRunAccess(secrets: Pick<Secrets, 'get' | 'has'>, post: Form
           }
         }
         if (u.hostname === GMAIL_HOST) {
-          if (!GMAIL_READ_PATH.test(u.pathname)) throw new KernelError('policy_denied', `G-READONLY: ${u.pathname} is not a Gmail read`);
+          if (!GMAIL_READ_PATH.test(u.pathname) || !u.searchParams.getAll('labelIds').every((l) => GMAIL_LABEL_ID.test(l))) {
+            throw new KernelError('policy_denied', `G-READONLY: ${u.pathname} is not a Gmail read`);
+          }
           if (access === undefined) return response(401, { error: 'no_access_token' });
           return base(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${access}` } });
         }

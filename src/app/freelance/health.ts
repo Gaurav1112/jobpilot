@@ -1,6 +1,7 @@
 import type { Store } from '../../kernel/store/store.js';
 import type { Problem } from '../problems.js';
 import type { AppStore, GigUpsert, SourceHealthRow } from '../store/app-store.js';
+import { GMAIL_LABEL_MISSING, UNRECOGNISED_NOTE } from './mail/google.js';
 import { PLATFORM_AGENT } from './pipeline.js';
 import type { GigRequest, Platform } from './types.js';
 
@@ -17,6 +18,10 @@ import type { GigRequest, Platform } from './types.js';
  * | runs | 1 |
  * | failed_runs | 1 when any of the platform's source steps failed (or was skipped by an open breaker) |
  * | probe_failures | the streak of runs in which every source step of the platform failed or was skipped (0 after one that did not) |
+ *
+ * A Gmail run whose messages were all fetched but none parsed (no parser for those senders yet, or the label is
+ * missing) is marked `gmail:no-parser` in `source_health_runs` and counted nowhere: neither a probe failure nor a
+ * zero-yield week, so it never makes Gmail "look dead".
  *
  * `applied`, `replied` and `won` are the user's outcomes; no run writes them. A platform is counted only in a run that
  * fetched it: one whose source steps all replayed fetched nothing (a second run in the same half), and Remotive is
@@ -53,15 +58,16 @@ export function previousWeek(week: string): string {
 const fetchesIn = (platform: Platform, half: 'am' | 'pm'): boolean => !(platform === 'remotive' && half === 'pm');
 
 /** One run's source steps, per platform: whether any executed (not replayed), any failed, all failed, and what they returned. */
-function sourceSteps(kernel: Store, runId: string): Map<Platform, { executed: boolean; failed: number; total: number; gigKeys: Set<string> }> {
-  const events = new Map<string, { kind: string; status?: unknown }>();
+function sourceSteps(kernel: Store, runId: string): Map<Platform, { executed: boolean; failed: number; total: number; gigKeys: Set<string>; notes: string[] }> {
+  const events = new Map<string, { kind: string; status?: unknown; notes: string[] }>();
   // A skipped step has no step event; its queue status says so.
   for (const e of kernel.events(runId)) {
     const d = JSON.parse(e.data) as Record<string, unknown>;
     if (typeof d['agent'] !== 'string' || typeof d['envelopeId'] !== 'string' || !d['agent'].startsWith('src-')) continue;
-    if (['step_done', 'step_replayed', 'step_failed'].includes(e.kind)) events.set(`${d['agent']}\u0000${d['envelopeId']}`, { kind: e.kind, status: d['status'] });
+    const notes = e.kind === 'step_done' && Array.isArray(d['skippedNotes']) ? d['skippedNotes'].filter((n): n is string => typeof n === 'string') : [];
+    if (['step_done', 'step_replayed', 'step_failed'].includes(e.kind)) events.set(`${d['agent']}\u0000${d['envelopeId']}`, { kind: e.kind, status: d['status'], notes });
   }
-  const out = new Map<Platform, { executed: boolean; failed: number; total: number; gigKeys: Set<string> }>();
+  const out = new Map<Platform, { executed: boolean; failed: number; total: number; gigKeys: Set<string>; notes: string[] }>();
   for (const q of kernel.queueItems(runId)) {
     if (!q.agent_id.startsWith('src-')) continue;
     let req: GigRequest;
@@ -71,8 +77,9 @@ function sourceSteps(kernel: Store, runId: string): Map<Platform, { executed: bo
       continue;
     }
     if (PLATFORM_AGENT[req.platform] !== q.agent_id) continue; // a source answering another platform's request: not its fetch
-    const s = out.get(req.platform) ?? { executed: false, failed: 0, total: 0, gigKeys: new Set<string>() };
+    const s = out.get(req.platform) ?? { executed: false, failed: 0, total: 0, gigKeys: new Set<string>(), notes: [] };
     const e = events.get(`${q.agent_id}\u0000${q.envelope_id}`);
+    if (e?.kind === 'step_done') s.notes.push(...e.notes);
     s.total += 1;
     // A request of its own platform that a breaker skipped was not fetched: for the probe streak it failed.
     if (q.status === 'failed' || q.status === 'skipped') s.failed += 1;
@@ -98,6 +105,11 @@ export function recordSourceHealth(
   for (const [platform, s] of [...steps].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (!s.executed || !fetchesIn(platform, o.half)) continue;
     const mine = o.rows.filter((r) => r.platform === platform);
+    // Gmail read fine but no parser read any alert (or the label is missing): no evidence about the source either way.
+    if (platform === 'gmail' && s.failed === 0 && mine.length === 0 && s.notes.some((n) => UNRECOGNISED_NOTE.test(n) || n === GMAIL_LABEL_MISSING)) {
+      app.markSourceRun(runId, platform, 'no-parser');
+      continue;
+    }
     const previous = app.sourceHealth(platform).at(-1)?.probeFailures ?? 0;
     const allFailed = s.total > 0 && s.failed === s.total;
     app.addSourceHealth(runId, platform, week, {

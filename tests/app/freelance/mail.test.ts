@@ -6,13 +6,15 @@ import { join, relative } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { normalizeGig } from '../../../src/app/freelance/gig-normalizer.js';
 import { connectGmail, disconnectGmail, gmailStatus } from '../../../src/app/freelance/mail/connect.js';
-import { GMAIL_LABEL, GMAIL_MAX_MESSAGES, gmailListUrl, gmailMessageUrl, makeSrcGigMail, srcGigMail } from '../../../src/app/freelance/mail/gmail.js';
-import { GMAIL_HOST, GMAIL_NOT_CONNECTED, GMAIL_SCOPE, SECRET, TOKEN_HOST, TOKEN_URL } from '../../../src/app/freelance/mail/google.js';
+import { GMAIL_LABEL, GMAIL_MAX_MESSAGES, gmailLabelsUrl, gmailListUrl as listUrl, gmailMessageUrl, makeSrcGigMail, srcGigMail } from '../../../src/app/freelance/mail/gmail.js';
+import { GMAIL_HOST, GMAIL_LABEL_MISSING, GMAIL_NOT_CONNECTED, GMAIL_SCOPE, SECRET, TOKEN_HOST, TOKEN_URL } from '../../../src/app/freelance/mail/google.js';
 import { parseMail } from '../../../src/app/freelance/mail/mime.js';
-import { authUrl, exchangeCode, gmailRunAccess, newPkce, realFormPost, startLoopback, type FormPost } from '../../../src/app/freelance/mail/oauth.js';
-import { ALERT_PARSERS, parserProblems, redactSubject, selectParser } from '../../../src/app/freelance/mail/parsers/index.js';
+import { authUrl, exchangeCode, gmailRunAccess, newPkce, realFormPost, startLoopback, type FormPost, type GmailRunAccess } from '../../../src/app/freelance/mail/oauth.js';
+import { ALERT_PARSERS, parserProblems, selectParser } from '../../../src/app/freelance/mail/parsers/index.js';
 import { freelanceSeeds, PLATFORM_AGENT } from '../../../src/app/freelance/pipeline.js';
 import { runFreelance } from '../../../src/app/freelance/run.js';
+import { REMOTIVE_URL } from '../../../src/app/freelance/sources/remotive.js';
+import { AppStore } from '../../../src/app/store/app-store.js';
 import type { GigRequest, RawGig } from '../../../src/app/freelance/types.js';
 import { FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
 import { deleteSecret, getSecret, hasSecret, keychain, setSecret, type SecretsRunner } from '../../../src/app/secrets.js';
@@ -97,13 +99,18 @@ async function runAgent(agent: Agent<GigRequest, RawGig>, fetch: FetchLike, r: G
 const ok = (body: unknown) => ({ status: 200, text: async () => JSON.stringify(body) });
 const message = (id: string, eml: string) => ({ id, threadId: id, labelIds: ['Label_7'], raw: b64url(eml), internalDate: '1791792000000' });
 
-/** A fake Gmail: the token check, list pages and raw messages; anything else is a 404. */
-function gmail(o: { pages?: { ids: string[]; next?: string }[]; mails?: Record<string, string> }): FetchLike & { calls: string[] } {
+const LABEL_ID = 'Label_7';
+const gmailListUrl = (pageToken?: string): string => listUrl(LABEL_ID, pageToken);
+const LABELS = { labels: [{ id: 'INBOX', name: 'INBOX', type: 'system' }, { id: 'Label_6', name: 'jobpilot/gigs-old', type: 'user' }, { id: LABEL_ID, name: GMAIL_LABEL, type: 'user' }] };
+
+/** A fake Gmail: the token check, the label list, list pages and raw messages; anything else is a 404. */
+function gmail(o: { pages?: { ids: string[]; next?: string }[]; mails?: Record<string, string>; labels?: unknown }): FetchLike & { calls: string[] } {
   const calls: string[] = [];
   const pages = o.pages ?? [{ ids: Object.keys(o.mails ?? {}) }];
   const fetch: FetchLike = async (url) => {
     calls.push(url);
     if (url === TOKEN_URL) return ok({ token: 'ready', expiresIn: 3599 });
+    if (url === gmailLabelsUrl()) return ok(o.labels ?? LABELS);
     for (let i = 0; i < pages.length; i++) {
       const page = pages[i] as { ids: string[]; next?: string };
       if (url === gmailListUrl(i === 0 ? undefined : `page${i}`)) {
@@ -194,6 +201,15 @@ describe('oauth: the installed-app flow with PKCE and a loopback redirect', () =
     expect(right.status).toBe(200);
     expect(right.body).toContain('You can close this tab');
     expect(await lb.code).toBe('good-code');
+  });
+
+  it('refuses a reply with a repeated state, code or error', async () => {
+    const lb = await startLoopback('s0', 10_000);
+    for (const q of ['state=s0&state=s0&code=c', 'state=s0&code=c1&code=c2', 'state=s0&code=c&error=x&error=y', 'state=x&state=s0&code=c']) {
+      expect((await hit(`${lb.redirectUri}?${q}`)).status, q).toBe(400);
+    }
+    expect((await hit(`${lb.redirectUri}?state=s0&code=one`)).status).toBe(200);
+    expect(await lb.code).toBe('one');
   });
 
   it('a Google error reply or no reply in time ends the wait', async () => {
@@ -332,7 +348,10 @@ describe('jobpilot gmail connect, status and disconnect (all fakes)', () => {
     await wrapped('https://remotive.com/api/remote-jobs?category=software-dev', init);
     expect(seen[0]?.headers['authorization']).toBe(`Bearer ${PLANT.access}`);
     expect(seen[1]?.headers['authorization']).toBeUndefined();
-    await expect(wrapped(`https://${GMAIL_HOST}/gmail/v1/users/me/labels`, init)).rejects.toThrow(/not a Gmail read/);
+    await wrapped(gmailLabelsUrl(), init);
+    expect(seen.at(-1)?.url).toBe(gmailLabelsUrl());
+    await expect(wrapped(`https://${GMAIL_HOST}/gmail/v1/users/me/labels/Label_7`, init)).rejects.toThrow(/not a Gmail read/);
+    await expect(wrapped(`https://${GMAIL_HOST}/gmail/v1/users/me/messages?labelIds=a%2Fb`, init)).rejects.toThrow(/not a Gmail read/);
     await expect(wrapped(`https://${GMAIL_HOST}/gmail/v1/users/me/messages/abc/attachments/x`, init)).rejects.toThrow(/not a Gmail read/);
   });
 });
@@ -366,8 +385,9 @@ describe('src-gig-mail', () => {
     const fetch = gmail({ mails: { [MSG_ID]: EML } });
     const { gigs, skips } = await runAgent(agentWith, fetch);
     expect(skips).toEqual([]);
-    expect(fetch.calls).toEqual([TOKEN_URL, gmailListUrl(), gmailMessageUrl(MSG_ID)]);
-    expect(gmailListUrl()).toBe(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent('label:jobpilot/gigs newer_than:3d')}&maxResults=100`);
+    expect(fetch.calls).toEqual([TOKEN_URL, gmailLabelsUrl(), gmailListUrl(), gmailMessageUrl(MSG_ID)]);
+    expect(gmailLabelsUrl()).toBe('https://gmail.googleapis.com/gmail/v1/users/me/labels');
+    expect(gmailListUrl()).toBe('https://gmail.googleapis.com/gmail/v1/users/me/messages?labelIds=Label_7&q=newer_than%3A3d&maxResults=100');
     expect(gigs.map((g) => g.sourceId)).toEqual([`${MSG_ID}:1`, `${MSG_ID}:2`]);
     expect(gigs.every((g) => g.platform === 'gmail')).toBe(true);
     expect(gigs[0]?.raw).toEqual({
@@ -392,7 +412,7 @@ describe('src-gig-mail', () => {
     expect(altered).not.toBe(EML.replace('Example Board =C2=B7 contract alerts digest', 'Example Board weekly roundup'));
     const { gigs, skips } = await runAgent(agentWith, gmail({ mails: { [MSG_ID]: altered } }));
     expect(gigs).toEqual([]);
-    expect(skips).toEqual(['unrecognised alert: example-board.test "2 new contract jobs · TypeScript, Go"']);
+    expect(skips).toEqual(['1 unrecognised alert from example-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/']);
   });
 
   it('an unknown sender is quarantined the same way, and so is a message the parser refuses', async () => {
@@ -401,8 +421,8 @@ describe('src-gig-mail', () => {
     const { gigs, skips } = await runAgent(agentWith, gmail({ mails: { aaa1: stranger, bbb2: broken } }));
     expect(gigs).toEqual([]);
     expect(skips).toEqual([
-      'unrecognised alert: other-board.test "2 new contract jobs · TypeScript, Go"',
-      'unrecognised alert: example-board.test "2 new contract jobs · TypeScript, Go" (parser example-board refused it)',
+      '1 unrecognised alert from example-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+      '1 unrecognised alert from other-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
     ]);
   });
 
@@ -418,19 +438,35 @@ describe('src-gig-mail', () => {
     expect(selectParser(parseMail(MSG_ID, EML, null), [])).toBeUndefined();
   });
 
-  it('subjects are redacted (forbidden terms to [hidden]) and cut at 60 characters', async () => {
-    expect(redactSubject('Initech is hiring a contract engineer', ['Initech'])).toBe('[hidden] is hiring a contract engineer');
-    expect(redactSubject(`${'x'.repeat(70)}`, [])).toBe(`${'x'.repeat(60)}…`);
-    expect(redactSubject('two\r\nlines\tand "quotes"', [])).toBe("two lines and 'quotes'");
-    const stranger = EML.replace('From: Example Board <alerts@example-board.test>', 'From: jobs@initech.test').replace(/^Subject: .*$/m, 'Subject: Initech wants you');
-    const { skips } = await runAgent(agentWith, gmail({ mails: { [MSG_ID]: stranger } }));
-    expect(skips).toEqual(['unrecognised alert: [hidden] "[hidden] wants you"']);
+  it('collapses unrecognised alerts to one note per sender domain, a forbidden domain hidden', async () => {
+    const other = EML.replace('From: Example Board <alerts@example-board.test>', 'From: "Someone" <news@other-board.test>');
+    const banned = EML.replace('From: Example Board <alerts@example-board.test>', 'From: jobs@initech.test');
+    const { skips } = await runAgent(srcGigMail, gmail({ mails: { a1: EML, a2: EML, a3: EML, b1: other, b2: other, c1: banned } }));
+    // In sender-domain order.
+    expect(skips).toEqual([
+      '1 unrecognised alert from [hidden] - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+      '3 unrecognised alerts from example-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+      '2 unrecognised alerts from other-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+    ]);
+  });
+
+  it('finds the label by its exact name and lists by its id; a missing label is a note, never 0 alerts', async () => {
+    const missing = gmail({ mails: { [MSG_ID]: EML }, labels: { labels: [{ id: 'Label_6', name: 'jobpilot/gigs-old' }, { id: 'Label_9', name: 'JobPilot/Gigs' }] } });
+    const r = await runAgent(agentWith, missing);
+    expect(r.gigs).toEqual([]);
+    expect(r.skips).toEqual([GMAIL_LABEL_MISSING]);
+    expect(GMAIL_LABEL_MISSING).toBe('label jobpilot/gigs not found in Gmail - create it and a filter');
+    expect(missing.calls).toEqual([TOKEN_URL, gmailLabelsUrl()]);
+    const twice = gmail({ labels: { labels: [{ id: 'L1', name: GMAIL_LABEL }, { id: 'L2', name: GMAIL_LABEL }] } });
+    await expect(runAgent(agentWith, twice)).rejects.toThrow(/more than one label/);
+    const badId = gmail({ labels: { labels: [{ id: 'a/b', name: GMAIL_LABEL }] } });
+    await expect(runAgent(agentWith, badId)).rejects.toThrow(/no valid id/);
   });
 
   it('reads every page of the list, and fails loudly above the cap instead of truncating', async () => {
     const paged = gmail({ pages: [{ ids: ['m1'], next: 'page1' }, { ids: ['m2'] }], mails: { m1: EML, m2: EML } });
     const { gigs } = await runAgent(agentWith, paged);
-    expect(paged.calls).toEqual([TOKEN_URL, gmailListUrl(), gmailListUrl('page1'), gmailMessageUrl('m1'), gmailMessageUrl('m2')]);
+    expect(paged.calls).toEqual([TOKEN_URL, gmailLabelsUrl(), gmailListUrl(), gmailListUrl('page1'), gmailMessageUrl('m1'), gmailMessageUrl('m2')]);
     expect(gigs.map((g) => g.sourceId)).toEqual(['m1:1', 'm1:2', 'm2:1', 'm2:2']);
     const ids = (from: number) => Array.from({ length: 100 }, (_, i) => `x${from + i}`);
     const over = gmail({ pages: [{ ids: ids(0), next: 'page1' }, { ids: ids(100), next: 'page2' }, { ids: ids(200) }] });
@@ -454,16 +490,41 @@ describe('src-gig-mail', () => {
   });
 });
 
+/** Gmail write calls, as literal paths, quoted method names or joined path parts. */
+const WRITE_PATTERNS = [
+  /batchModify/i, /batchDelete/i, /\/modify\b/, /\/trash\b/, /\/untrash\b/, /\/send\b/, /messages\.send/, /\/drafts\b/,
+  /messages\/(?:import|insert)\b/, /\b(?:add|remove)LabelIds\b/, /['"`]UNREAD['"`]/, /gmail\.(?:modify|send|compose|insert|labels|metadata)\b/,
+  /mail\.google\.com\//, /threads\/[^\s'"`]*\/(?:modify|trash)/, /['"`]trash['"`]/, /['"`](?:modify|send|untrash|batchModify|batchDelete)['"`]/,
+];
+const METHOD = /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/g;
+/** The one request with a non-GET method anywhere in src/: realFormPost to the token endpoint. */
+const ALLOWED_METHOD = { file: 'src/app/freelance/mail/oauth.ts', count: 1, near: 'export const realFormPost' };
+
+function writeHits(file: string, text: string): string[] {
+  const hits = WRITE_PATTERNS.filter((re) => re.test(text)).map((re) => `${file}: ${re}`);
+  const methods = [...text.matchAll(METHOD)];
+  if (methods.length > 0) {
+    const allowed = file === ALLOWED_METHOD.file && methods.length === ALLOWED_METHOD.count && text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index) >= 0 && text.slice(text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index), methods[0]?.index).includes('TOKEN_URL');
+    if (!allowed) hits.push(`${file}: ${methods.length} non-GET method(s)`);
+  }
+  return hits;
+}
+
 describe('read-only: no Gmail write endpoint anywhere in src/', () => {
-  it('finds no modify, trash, delete, send, draft, import or label-change call', () => {
-    const PATTERNS = [
-      /batchModify/i, /batchDelete/i, /\/modify\b/, /\/trash\b/, /\/untrash\b/, /\/send\b/, /messages\.send/, /\/drafts\b/,
-      /messages\/(?:import|insert)\b/, /\b(?:add|remove)LabelIds\b/, /['"`]UNREAD['"`]/, /gmail\.(?:modify|send|compose|insert|labels|metadata)\b/,
-      /mail\.google\.com\//, /threads\/[^\s'"`]*\/(?:modify|trash)/,
-    ];
+  it('finds no modify, trash, delete, send, draft, import or label-change call, and no non-GET but the token POST', () => {
     const hits: string[] = [];
-    for (const [p, text] of files(join(root, 'src'))) for (const re of PATTERNS) if (re.test(text)) hits.push(`${relative(root, p)}: ${re}`);
+    for (const [p, text] of files(join(root, 'src'))) hits.push(...writeHits(relative(root, p), text));
     expect(hits).toEqual([]);
+  });
+
+  it('catches planted write calls: a joined path, a quoted method name, a DELETE, a second POST', () => {
+    const oauth = readFileSync(join(root, ALLOWED_METHOD.file), 'utf8');
+    expect(writeHits(ALLOWED_METHOD.file, oauth)).toEqual([]);
+    expect(writeHits('src/x.ts', "const u = [GMAIL_API, 'messages', id, 'trash'].join('/');")).not.toEqual([]);
+    expect(writeHits('src/x.ts', 'const u = `${GMAIL_API}/messages/${id}` + `/modify`;')).not.toEqual([]);
+    expect(writeHits('src/x.ts', "call(id, 'batchModify')")).not.toEqual([]);
+    expect(writeHits('src/x.ts', "await fetch(u, { method: 'DELETE' })")).not.toEqual([]);
+    expect(writeHits(ALLOWED_METHOD.file, `${oauth}\nawait fetch(gmailUrl, { method: 'POST' });\n`)).not.toEqual([]);
   });
 });
 
@@ -481,6 +542,7 @@ describe('not connected: the source is disabled, never failed', () => {
     const off = { enabled: false, queries: [] };
     writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': off, 'hn-hiring': off, boards: off, gmail: { enabled: true, queries: [] } } })}\n`);
   };
+  const connectedTo = (fake: FetchLike): (() => GmailRunAccess) => () => ({ connected: true, reason: null, wrap: () => fake });
   const noNet: FetchLike = async () => {
     throw new Error('no network in this test');
   };
@@ -502,10 +564,82 @@ describe('not connected: the source is disabled, never failed', () => {
     const fake = gmail({ mails: { [MSG_ID]: EML } });
     const s = await runFreelance({
       home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false',
-      gmail: { connected: true, reason: null, wrap: () => fake },
+      gmail: connectedTo(fake),
     });
     expect(s.exitCode).toBe(0);
-    expect(s.problems).toEqual([{ kind: 'mail-quarantined', agent: 'src-gig-mail', item: 'gmail alert', reason: 'unrecognised alert: example-board.test "2 new contract jobs · TypeScript, Go"' }]);
+    expect(s.problems).toEqual([{ kind: 'mail-quarantined', agent: 'src-gig-mail', item: 'gmail alert', reason: '1 unrecognised alert from example-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/' }]);
     expect(s.warnings.join('\n')).not.toMatch(/skipped by src-gig-mail/);
+  });
+
+  it('5 unrecognised alerts from 2 domains are 2 problem lines', async () => {
+    const home = tempHome();
+    onlyGmail(home);
+    const other = EML.replace('From: Example Board <alerts@example-board.test>', 'From: news@other-board.test');
+    const fake = gmail({ mails: { a1: EML, a2: EML, a3: EML, b1: other, b2: other } });
+    const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: connectedTo(fake) });
+    expect(s.problems.map((p) => p.reason)).toEqual([
+      '3 unrecognised alerts from example-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+      '2 unrecognised alerts from other-board.test - save one as .eml in ~/.jobpilot/secrets/alert-samples/',
+    ]);
+  });
+
+  it('4 weeks of runs where no parser read anything never make Gmail look dead', async () => {
+    const home = tempHome();
+    onlyGmail(home);
+    const fake = gmail({ mails: { [MSG_ID]: EML } });
+    const runIds: string[] = [];
+    for (const day of ['2026-10-12', '2026-10-19', '2026-10-26', '2026-11-02', '2026-11-09']) {
+      const s = await runFreelance({ home, clock: { now: () => `${day}T03:00:00.000Z` }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: connectedTo(fake) });
+      expect(s.problems.filter((p) => p.kind === 'source-dead')).toEqual([]);
+      runIds.push(s.runId);
+    }
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      expect(app.sourceHealth('gmail')).toEqual([]);
+      for (const id of runIds) expect(app.sourceRunNotes(id)).toEqual(['gmail:no-parser']);
+    } finally {
+      app.close();
+    }
+  });
+
+  it('a missing label is a warning: the run fetches no message, lists no problem and exits 0', async () => {
+    const home = tempHome();
+    onlyGmail(home);
+    const fake = gmail({ mails: { [MSG_ID]: EML }, labels: { labels: [] } });
+    const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: connectedTo(fake) });
+    expect(s.exitCode).toBe(0);
+    expect(s.warnings).toContain(GMAIL_LABEL_MISSING);
+    expect(s.problems).toEqual([]);
+    expect(fake.calls.some((u) => u.includes('/messages'))).toBe(false);
+  });
+
+  it('a Keychain error (exit 36) skips Gmail with a warning; the other sources run and the run exits 0', async () => {
+    const home = tempHome();
+    cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
+    const off = { enabled: false, queries: [] };
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: { enabled: true, queries: [] }, 'hn-freelancer': off, 'hn-hiring': off, boards: off, gmail: { enabled: true, queries: [] } } })}\n`);
+    const locked: SecretsRunner = () => ({ status: 36, stdout: '', stderr: 'security: SecKeychainSearchCopyNext: User interaction is not allowed.' });
+    const fetched: string[] = [];
+    const fetch: FetchLike = async (url) => {
+      fetched.push(url);
+      return url === REMOTIVE_URL ? ok({ jobs: [] }) : { status: 404, text: async () => '' };
+    };
+    const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: () => gmailRunAccess(keychain(locked)) });
+    expect(s.exitCode).toBe(0);
+    expect(s.warnings).toContain('Keychain could not be read (security exit 36); Gmail skipped');
+    expect(fetched).toEqual([REMOTIVE_URL]);
+    expect(s.counts.byAgent['src-remotive']?.done).toBe(1);
+    expect(s.problems).toEqual([]);
+  });
+
+  it('with gmail turned off the Keychain is never asked', async () => {
+    const home = tempHome();
+    onlyGmail(home);
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: { enabled: false, queries: [] }, remotive: { enabled: false, queries: [] }, 'hn-freelancer': { enabled: false, queries: [] }, 'hn-hiring': { enabled: false, queries: [] }, boards: { enabled: false, queries: [] }, gmail: { enabled: false, queries: [] } } })}\n`);
+    let asked = 0;
+    const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: () => (asked++, gmailRunAccess(keychain(() => ({ status: 36, stdout: '', stderr: '' })))) });
+    expect(asked).toBe(0);
+    expect(s.exitCode).toBe(0);
+    expect(s.warnings.join('\n')).not.toMatch(/Gmail/);
   });
 });

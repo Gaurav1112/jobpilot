@@ -86,7 +86,11 @@ export async function connectGmail(d: ConnectDeps): Promise<void> {
     const { refreshToken } = await exchangeCode(d.post, { ...client, code, redirectUri: loopback.redirectUri, verifier: pkce.verifier });
     d.secrets.set(SECRET.clientId, client.clientId);
     d.secrets.set(SECRET.clientSecret, client.clientSecret);
-    d.secrets.set(SECRET.refresh, refreshToken);
+    try {
+      d.secrets.set(SECRET.refresh, refreshToken);
+    } catch (e) {
+      throw new Error(`the client was saved but the sign-in token was not; run jobpilot gmail connect again (${e instanceof Error ? e.message : String(e)})`);
+    }
   } finally {
     loopback.close();
   }

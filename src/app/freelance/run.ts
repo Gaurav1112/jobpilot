@@ -14,6 +14,7 @@ import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
 import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
 import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
 import { foreignSourceStep, recordSourceHealth } from './health.js';
+import { GMAIL_LABEL_MISSING } from './mail/google.js';
 import { GMAIL_OFF, type GmailRunAccess } from './mail/oauth.js';
 import { freelanceSeeds } from './pipeline.js';
 import { projectFreelanceRun, type GigProjectResult } from './project.js';
@@ -48,10 +49,11 @@ export interface FreelanceRunOptions {
   readonly onLocked?: () => void;
   readonly codeHash?: string;
   /**
-   * Gmail for this run (`gmailRunAccess` over the Keychain in the CLI): whether it is connected, and the authorised
-   * fetch layer. Absent: not connected, so the gmail source is not seeded (a warning names the reason).
+   * Gmail for this run (`gmailRunAccess` over the Keychain in the CLI), asked only when `platforms.gmail` is enabled.
+   * Absent, not connected or a Keychain error: the gmail source is not seeded and a warning names the reason; the run
+   * goes on.
    */
-  readonly gmail?: GmailRunAccess;
+  readonly gmail?: () => GmailRunAccess;
 }
 
 export interface FreelanceSummary {
@@ -167,7 +169,14 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const half = halfOf(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
       const rules = loaded.pack.freelance;
-      const gmail = o.gmail ?? GMAIL_OFF;
+      let gmail: GmailRunAccess = GMAIL_OFF;
+      if (rules.platforms.gmail.enabled && o.gmail !== undefined) {
+        try {
+          gmail = o.gmail();
+        } catch (e) {
+          gmail = { ...GMAIL_OFF, reason: `Gmail could not be prepared (${e instanceof Error ? e.message : String(e)}); Gmail skipped` };
+        }
+      }
       const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
@@ -192,12 +201,15 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const { rows: _rows, ...projection } = projected;
       const counts = runCounts(app.kernel, runId);
       if (sourcesAllReplayed(counts)) warnings.push(FREELANCE_REPLAY_HINT);
-      // The Gmail source's notes are quarantined alerts: listed as problems below, not as malformed postings.
+      // The Gmail source's notes are quarantined alerts (problems, below) or a missing label (a warning), never
+      // malformed postings.
       warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming, ['src-gig-mail']));
+      const mailNotes = skipNoteProblems(app.kernel, runId, 'src-gig-mail', loaded.pack.naming);
+      if (mailNotes.some((p) => p.reason === GMAIL_LABEL_MISSING)) warnings.push(GMAIL_LABEL_MISSING);
       const foreignSkip = (agent: string, input: { type: string; payload: unknown }, status: string) => status === 'skipped' && foreignSourceStep(agent, input);
       const problems = [
         ...runProblems(app.kernel, runId, loaded.pack.naming, foreignSkip),
-        ...skipNoteProblems(app.kernel, runId, 'src-gig-mail', loaded.pack.naming),
+        ...mailNotes.filter((p) => p.reason !== GMAIL_LABEL_MISSING),
         ...health.map((p) => ({ ...p, item: safeLine(p.item, loaded.pack.naming), reason: safeLine(p.reason, loaded.pack.naming) })),
       ];
       o.afterProject?.();
