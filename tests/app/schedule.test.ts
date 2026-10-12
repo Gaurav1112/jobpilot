@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { setWarningSink } from '../../src/app/home.js';
+import { FREELANCE_DUE } from '../../src/app/due.js';
+import { withLock } from '../../src/app/lock.js';
+import { runWithDue } from '../../src/app/run-command.js';
 import {
-  DAILY_LABEL, DASHBOARD_LABEL, escapeXml, installSchedule, nextRunIst, plistDaily, plistDashboard,
+  DAILY_LABEL, DASHBOARD_LABEL, FREELANCE_LABEL, escapeXml, plistFreelance, installSchedule, nextRunIst, plistDaily, plistDashboard,
   runNow, scheduleStatus, uninstallSchedule, type Runner,
 } from '../../src/app/schedule.js';
 
@@ -52,6 +55,23 @@ describe('plist text', () => {
     expect(x).not.toContain('KeepAlive');
   });
 
+  it('freelance plist runs run-freelance --if-due at load and every :00 and :30, logging to freelance.log', () => {
+    const x = plistFreelance(base);
+    expect(FREELANCE_LABEL).toBe('com.jobpilot.freelance');
+    expect(x).toContain(`<key>Label</key>\n  <string>${FREELANCE_LABEL}</string>`);
+    expect(x).toMatch(/<string>\/Users\/x\/jobpilot\/src\/bin\.ts<\/string>\s*<string>run-freelance<\/string>\s*<string>--if-due<\/string>\s*<\/array>/);
+    expect(x).toMatch(/<key>StartCalendarInterval<\/key>\s*<array>\s*<dict>\s*<key>Minute<\/key>\s*<integer>0<\/integer>\s*<\/dict>\s*<dict>\s*<key>Minute<\/key>\s*<integer>30<\/integer>\s*<\/dict>\s*<\/array>/);
+    expect(x).not.toContain('<key>Hour</key>');
+    expect(x).toMatch(/<key>RunAtLoad<\/key>\s*<true\/>/);
+    expect(x).toMatch(/<key>ProcessType<\/key>\s*<string>Background<\/string>/);
+    expect(x).toMatch(/<key>LowPriorityIO<\/key>\s*<true\/>/);
+    expect(x).toMatch(/<key>ExitTimeOut<\/key>\s*<integer>\d+<\/integer>/);
+    expect(x).toContain('<key>TZ</key>\n    <string>Asia/Kolkata</string>');
+    expect(x.match(/\/Users\/x\/\.jobpilot\/logs\/freelance\.log/g)).toHaveLength(2);
+    expect(x).not.toContain('daily.log');
+    expect(x).not.toContain('KeepAlive');
+  });
+
   it('dashboard plist serves, runs at load and keeps alive', () => {
     const x = plistDashboard(base);
     expect(x).toContain(`<string>${DASHBOARD_LABEL}</string>`);
@@ -71,7 +91,7 @@ describe('plist text', () => {
 
   const hasPlutil = spawnSync('/bin/sh', ['-c', 'command -v plutil']).status === 0;
   it.skipIf(!hasPlutil)('is valid per plutil', () => {
-    for (const x of [plistDaily(base), plistDashboard(base)]) {
+    for (const x of [plistDaily(base), plistFreelance(base), plistDashboard(base)]) {
       const r = spawnSync('plutil', ['-lint', '-'], { input: x, encoding: 'utf8' });
       expect(r.status, r.stdout + r.stderr).toBe(0);
     }
@@ -105,12 +125,14 @@ describe('install / uninstall / status', () => {
     const r = installSchedule(o, f.run);
     const d = join(o.agentsDir, `${DAILY_LABEL}.plist`);
     const s = join(o.agentsDir, `${DASHBOARD_LABEL}.plist`);
-    for (const p of [d, s]) expect(statSync(p).mode & 0o777).toBe(0o644);
+    const fl = join(o.agentsDir, `${FREELANCE_LABEL}.plist`);
+    for (const p of [d, fl, s]) expect(statSync(p).mode & 0o777).toBe(0o644);
     expect(statSync(join(o.home, 'logs')).mode & 0o777).toBe(0o700);
-    for (const n of ['daily.log', 'dashboard.log']) expect(statSync(join(o.home, 'logs', n)).mode & 0o777).toBe(0o600);
+    for (const n of ['daily.log', 'freelance.log', 'dashboard.log']) expect(statSync(join(o.home, 'logs', n)).mode & 0o777).toBe(0o600);
     expect(f.calls).toEqual([
       [base.node, '--version'],
       ['launchctl', 'bootout', 'gui/501', d], ['launchctl', 'bootstrap', 'gui/501', d], ['launchctl', 'enable', `gui/501/${DAILY_LABEL}`],
+      ['launchctl', 'bootout', 'gui/501', fl], ['launchctl', 'bootstrap', 'gui/501', fl], ['launchctl', 'enable', `gui/501/${FREELANCE_LABEL}`],
       ['launchctl', 'bootout', 'gui/501', s], ['launchctl', 'bootstrap', 'gui/501', s], ['launchctl', 'enable', `gui/501/${DASHBOARD_LABEL}`],
     ]);
     expect(r.nextRun).toBe('2026-10-09 07:00 IST');
@@ -159,7 +181,8 @@ describe('install / uninstall / status', () => {
     installSchedule(o, fake().run);
     const f = fake();
     uninstallSchedule(o, f.run);
-    expect(f.calls).toEqual([['launchctl', 'bootout', `gui/501/${DAILY_LABEL}`], ['launchctl', 'bootout', `gui/501/${DASHBOARD_LABEL}`]]);
+    expect(f.calls).toEqual([['launchctl', 'bootout', `gui/501/${DAILY_LABEL}`], ['launchctl', 'bootout', `gui/501/${FREELANCE_LABEL}`], ['launchctl', 'bootout', `gui/501/${DASHBOARD_LABEL}`]]);
+    expect(existsSync(join(o.agentsDir, `${FREELANCE_LABEL}.plist`))).toBe(false);
     expect(existsSync(join(o.agentsDir, `${DAILY_LABEL}.plist`))).toBe(false);
     expect(existsSync(join(o.agentsDir, `${DASHBOARD_LABEL}.plist`))).toBe(false);
     expect(() => uninstallSchedule(o, fake({ bootout: { status: 3 } }).run)).not.toThrow();
@@ -181,12 +204,31 @@ describe('install / uninstall / status', () => {
     expect(never[0]).toMatchObject({ state: 'running', lastExitCode: null });
     const none = scheduleStatus(o, fake({ print: { status: 113, stderr: 'Could not find service' } }).run);
     expect(none.every((s) => !s.loaded && s.state === null)).toBe(true);
+    expect(none.map((s) => s.label)).toEqual([DAILY_LABEL, FREELANCE_LABEL, DASHBOARD_LABEL]);
+    expect(none[1]?.logPath).toBe(join(o.home, 'logs', 'freelance.log'));
+    expect(none[1]?.plistPath).toBe(join(o.agentsDir, `${FREELANCE_LABEL}.plist`));
   });
 
   it('run-now kickstarts the daily job only', () => {
     const f = fake();
     runNow({ uid: 501 }, f.run);
     expect(f.calls).toEqual([['launchctl', 'kickstart', `gui/501/${DAILY_LABEL}`]]);
+    const g = fake();
+    runNow({ uid: 501, freelance: true }, g.run);
+    expect(g.calls).toEqual([['launchctl', 'kickstart', `gui/501/${FREELANCE_LABEL}`]]);
+    expect(() => runNow({ uid: 501, freelance: true }, fake({ kickstart: { status: 113, stderr: 'no service' } }).run)).toThrow(/install/);
     expect(() => runNow({ uid: 501 }, fake({ kickstart: { status: 113, stderr: 'no service' } }).run)).toThrow(/install/);
+  });
+});
+
+describe('shared lock', () => {
+  it('a freelance start while the daily run holds the lock says so and exits 0', async () => {
+    const home = join(tmp, 'home');
+    mkdirSync(home, { recursive: true });
+    const out: string[] = [];
+    const deps = { home, clock: { now: () => '2026-10-12T14:30:00.000Z' }, notifier: async () => {}, out: (l: string) => out.push(l), err: (l: string) => out.push(`ERR ${l}`) };
+    const code = await withLock(home, 'run', () => runWithDue(FREELANCE_DUE, { ifDue: true, notify: false }, deps, async () => { throw new Error('must not run'); }));
+    expect(code).toBe(0);
+    expect(out).toEqual([`not due: a jobpilot run is running (pid ${process.pid})`]);
   });
 });

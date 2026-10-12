@@ -27,7 +27,7 @@ import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { forbiddenTermsAt, redactedError, runCommand, runFreelanceCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
-import { dailyDue } from './app/due.js';
+import { DAILY_DUE, FREELANCE_DUE, due, type DueSpec } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
@@ -468,36 +468,39 @@ program
     }),
   );
 
-/** Whether today's daily run is owed, as one line; a DB that cannot be read is named, not thrown. */
-function dueOrError(now: string): string {
+/** Whether a pipeline's run is owed, as one line; a DB that cannot be read is named, not thrown. */
+function dueOrError(now: string, spec: DueSpec = DAILY_DUE): string {
   try {
-    const d = dailyDue(jobpilotHome(), now);
-    return d.due ? `owed: ${d.reason}` : d.reason;
+    const d = due(spec, jobpilotHome(), now);
+    const label = d.window === '' ? '' : `${d.window} window: `;
+    return `${label}${d.due ? `owed: ${d.reason}` : d.reason}`;
   } catch (e) {
     return `unknown: the database cannot be read (${e instanceof Error ? e.message : String(e)})`;
   }
 }
-const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run and the always-on dashboard (macOS)');
+const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run, the 07:30 and 19:30 IST freelance runs and the always-on dashboard (macOS)');
 const scheduleOpts = () => {
   if (process.getuid === undefined) throw new Error('schedule needs a POSIX user id (macOS)');
   return { node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid() };
 };
 schedule
   .command('install')
-  .description('Write both launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
+  .description('Write the three launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
   .action(() =>
     guarded(() => {
       const r = installSchedule(scheduleOpts());
       for (const p of r.plists) console.log(`wrote ${p}`);
       const owed = dueOrError(new Date().toISOString());
       console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
+      const fOwed = dueOrError(new Date().toISOString(), FREELANCE_DUE);
+      console.log(`freelance run: from 07:30 and 19:30 IST, checked at login and every half hour; ${fOwed.includes('owed:') ? `a window is owed now (${fOwed})` : `now: ${fOwed}`}`);
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
   );
 schedule
   .command('uninstall')
-  .description('Unload both jobs and delete their plists')
+  .description('Unload all three jobs and delete their plists')
   .action(() =>
     guarded(() => {
       for (const p of uninstallSchedule(scheduleOpts())) console.log(`removed ${p}`);
@@ -514,16 +517,19 @@ schedule
         console.log(`  log   ${s.logPath}`);
       }
       console.log(`today's daily run: ${dueOrError(new Date().toISOString())}`);
+      console.log(`freelance run, ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}`);
     }),
   );
 schedule
   .command('run-now')
-  .description('Start the daily job now through launchd (a manual test of the scheduled command)')
-  .action(() =>
+  .description('Start the daily job now through launchd (a manual test of the scheduled command); --freelance starts the freelance job')
+  .option('--freelance', 'start com.jobpilot.freelance (run-freelance --if-due) instead')
+  .action((o: { freelance?: boolean }) =>
     guarded(() => {
-      runNow(scheduleOpts());
-      console.log(`started com.jobpilot.daily (run --if-due): ${dueOrError(new Date().toISOString())}`);
-      console.log('it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
+      const f = o.freelance === true;
+      runNow({ ...scheduleOpts(), freelance: f });
+      console.log(f ? `started com.jobpilot.freelance (run-freelance --if-due): ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}` : `started com.jobpilot.daily (run --if-due): ${dueOrError(new Date().toISOString())}`);
+      console.log(f ? 'it runs only when the window is owed; "jobpilot run-freelance" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'freelance.log') : 'it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
 

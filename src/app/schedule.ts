@@ -8,6 +8,7 @@ import { checkHome, fileWarning, warnOnce } from './home.js';
 import { homePaths } from './pack/paths.js';
 
 export const DAILY_LABEL = 'com.jobpilot.daily';
+export const FREELANCE_LABEL = 'com.jobpilot.freelance';
 export const DASHBOARD_LABEL = 'com.jobpilot.dashboard';
 const DASHBOARD_PORT = 4317;
 const IST_OFFSET_MINUTES = 330;
@@ -57,6 +58,18 @@ function plist(label: string, o: PlistOpts, args: readonly string[], logName: st
   return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n${parts.join('\n')}\n</dict>\n</plist>\n`;
 }
 
+/** Both pipelines start at load and every :00 and :30 of the Mac's clock; `--if-due` decides whether a start does anything. */
+function plistDue(label: string, o: PlistOpts, args: readonly string[], logName: string): string {
+  const slot = (minute: number): string => `    <dict>\n${entry('Minute', `      <integer>${minute}</integer>`, '      ')}\n    </dict>`;
+  return plist(label, o, args, logName, [
+    entry('StartCalendarInterval', `  <array>\n${[0, 30].map(slot).join('\n')}\n  </array>`),
+    entry('RunAtLoad', '  <true/>'),
+    entry('ProcessType', str('Background', '  ')),
+    entry('LowPriorityIO', '  <true/>'),
+    entry('ExitTimeOut', '  <integer>120</integer>'),
+  ]);
+}
+
 /**
  * The daily job: `run --if-due` at load (login) and at every :00 and :30 of the Mac's clock. Most starts find nothing
  * owed and exit at once (`app/due.ts`); the first start at or after 07:00 IST, or the first after the Mac wakes from a
@@ -64,14 +77,16 @@ function plist(label: string, o: PlistOpts, args: readonly string[], logName: st
  * slot missed in sleep (2026-10-11, -12).
  */
 export function plistDaily(o: PlistOpts): string {
-  const slot = (minute: number): string => `    <dict>\n${entry('Minute', `      <integer>${minute}</integer>`, '      ')}\n    </dict>`;
-  return plist(DAILY_LABEL, o, ['run', '--if-due'], 'daily.log', [
-    entry('StartCalendarInterval', `  <array>\n${[0, 30].map(slot).join('\n')}\n  </array>`),
-    entry('RunAtLoad', '  <true/>'),
-    entry('ProcessType', str('Background', '  ')),
-    entry('LowPriorityIO', '  <true/>'),
-    entry('ExitTimeOut', '  <integer>120</integer>'),
-  ]);
+  return plistDue(DAILY_LABEL, o, ['run', '--if-due'], 'daily.log');
+}
+
+/**
+ * The freelance job: `run-freelance --if-due` on the same schedule as the daily one. It is owed from 07:30 and 19:30 IST
+ * (`FREELANCE_DUE`), so the first start at or after either, or after a sleep that spanned it, runs that window. It shares
+ * the daily job's lock: a start while a daily run is going says so and exits 0.
+ */
+export function plistFreelance(o: PlistOpts): string {
+  return plistDue(FREELANCE_LABEL, o, ['run-freelance', '--if-due'], 'freelance.log');
 }
 
 /** The always-on local dashboard (the server itself binds 127.0.0.1). */
@@ -152,17 +167,16 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   if (v.status !== 0 || nodeVersion === undefined) throw new Error(`could not run "${o.node} --version": ${(v.stderr || v.stdout).trim() || `exit ${v.status}`}`);
   if (Number(nodeVersion.split('.')[0]) < 24) throw new Error(`jobpilot needs Node 24 or newer; ${o.node} is ${nodeVersion}. Install it with a Node 24 binary (not the Volta shim) and run again`);
   const now = o.now ?? new Date();
-  const daily = plistDaily(o);
-  const dash = plistDashboard(o);
+  const jobs = [[DAILY_LABEL, plistDaily(o)], [FREELANCE_LABEL, plistFreelance(o)], [DASHBOARD_LABEL, plistDashboard(o)]] as const;
 
   const logsDir = homePaths(o.home).logs;
   prepareLogsDir(o.home, logsDir);
-  const logs = ['daily.log', 'dashboard.log'].map((n) => join(logsDir, n));
+  const logs = ['daily.log', 'freelance.log', 'dashboard.log'].map((n) => join(logsDir, n));
   for (const l of logs) prepareLogFile(l);
   mkdirSync(agentsDirOf(o), { recursive: true });
 
   const plists: string[] = [];
-  for (const [label, xml] of [[DAILY_LABEL, daily], [DASHBOARD_LABEL, dash]] as const) {
+  for (const [label, xml] of jobs) {
     const p = plistPathOf(o, label);
     writeFileSync(p, xml, { mode: 0o644 });
     chmodSync(p, 0o644); // launchd refuses group- or world-writable plists; the umask must not decide
@@ -183,7 +197,7 @@ const notLoaded = (r: { status: number; stdout: string; stderr: string }): boole
 
 export function uninstallSchedule(o: ScheduleOpts, run: Runner = realRunner): string[] {
   const removed: string[] = [];
-  for (const label of [DAILY_LABEL, DASHBOARD_LABEL]) {
+  for (const label of [DAILY_LABEL, FREELANCE_LABEL, DASHBOARD_LABEL]) {
     const p = plistPathOf(o, label);
     // By label, so a job still loaded after its plist file went missing is unloaded too.
     const r = run('launchctl', ['bootout', `gui/${o.uid}/${label}`]);
@@ -204,7 +218,7 @@ export interface JobStatus {
 }
 
 export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobStatus[] {
-  return [[DAILY_LABEL, 'daily.log'], [DASHBOARD_LABEL, 'dashboard.log']].map(([label, log]) => {
+  return [[DAILY_LABEL, 'daily.log'], [FREELANCE_LABEL, 'freelance.log'], [DASHBOARD_LABEL, 'dashboard.log']].map(([label, log]) => {
     const r = run('launchctl', ['print', `gui/${o.uid}/${label}`]);
     const loaded = r.status === 0;
     const state = loaded ? (/^\s*state = (.+)$/m.exec(r.stdout)?.[1]?.trim() ?? null) : null;
@@ -220,8 +234,9 @@ export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobSt
   });
 }
 
-/** Start the daily job now (a manual test of the real scheduled command). */
-export function runNow(o: { uid: number }, run: Runner = realRunner): void {
-  const r = run('launchctl', ['kickstart', `gui/${o.uid}/${DAILY_LABEL}`]);
+/** Start the daily job now, or with `freelance` the freelance job (a manual test of the real scheduled command). */
+export function runNow(o: { uid: number; freelance?: boolean }, run: Runner = realRunner): void {
+  const label = o.freelance === true ? FREELANCE_LABEL : DAILY_LABEL;
+  const r = run('launchctl', ['kickstart', `gui/${o.uid}/${label}`]);
   if (r.status !== 0) throw new Error(`launchctl kickstart failed (${r.status}): ${(r.stderr || r.stdout).trim()}. Is the schedule installed? Run "jobpilot schedule install"`);
 }
