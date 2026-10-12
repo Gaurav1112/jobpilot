@@ -113,6 +113,11 @@ describe('gig-scorer', () => {
     expect('bids' in c!.breakdown).toBe(false);
   });
 
+  it('a non-ISO postedAt gives no fresh row', async () => {
+    const [s] = await score(risked(1, { postedAt: 'yesterday' }));
+    expect('fresh' in s!.breakdown).toBe(false);
+  });
+
   it('is deterministic for a given clock', async () => {
     const r = risked(1, { title: 'Senior Java', postedAt: '2026-10-12' });
     expect(await score(r)).toEqual(await score(r));
@@ -175,6 +180,35 @@ describe('rankGigs', () => {
     const out = rankGigs([worse, better], 45).contracts;
     expect(out).toHaveLength(1);
     expect(out[0]!.risked.verdict.rated.rate.maxUsdH).toBe(70);
+  });
+
+  it('duplicates differing only in bids give the same survivor in 20 shuffles', () => {
+    const withBids = (bids: number): ScoredGig => {
+      const r = sc(1, {});
+      return { ...r, risked: { ...r.risked, verdict: { ...r.risked.verdict, rated: { ...r.risked.verdict.rated, gig: { ...r.risked.verdict.rated.gig, bids } } } } };
+    };
+    const rows = [withBids(3), withBids(9), withBids(5), withBids(7)];
+    const survivors = new Set<number | null>();
+    let seed = 12345;
+    for (let i = 0; i < 20; i++) {
+      const shuffled = [...rows];
+      for (let j = shuffled.length - 1; j > 0; j--) {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        const k = seed % (j + 1);
+        [shuffled[j], shuffled[k]] = [shuffled[k]!, shuffled[j]!];
+      }
+      const out = rankGigs(shuffled, 45).contracts;
+      expect(out).toHaveLength(1);
+      survivors.add(out[0]!.risked.verdict.rated.gig.bids);
+    }
+    expect(survivors.size).toBe(1);
+  });
+
+  it('a non-ISO postedAt is treated as null, never parsed', () => {
+    const odd = sc(1, { postedAt: 'Oct 12 2026' });
+    const none = sc(2, { postedAt: null });
+    const iso = sc(3, { postedAt: '2026-10-01' });
+    expect(keys(rankGigs([odd, none, iso], 45).contracts)).toEqual(['3', '1', '2']); // iso first; null and odd tie, gigKey decides
   });
 
   it('does not mutate its input and is stable across runs', () => {

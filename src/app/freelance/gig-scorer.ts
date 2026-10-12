@@ -1,6 +1,7 @@
 import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { packOf, scoreText } from '../agents/scorer-lexicon.js';
+import { isoMs } from './rank.js';
 import { RiskedGig, ScoredGig, type Gig } from './types.js';
 
 /**
@@ -56,8 +57,8 @@ export const gigScorer = defineAgent(gigScorerContract, async (risked, ctx) => {
   const breakdown: Record<string, number> = {};
   for (const row of scored.breakdown) breakdown[row.label] = row.points;
   breakdown['client'] = clientPoints(gig.client);
-  const posted = gig.postedAt === null ? Number.NaN : Date.parse(gig.postedAt);
-  if (!Number.isNaN(posted)) {
+  const posted = isoMs(gig.postedAt);
+  if (posted !== null) {
     const hours = Math.max(0, (Date.parse(ctx.clock.now()) - posted) / 3_600_000);
     breakdown['fresh'] = Math.round(hours * 10) / 10;
   }
