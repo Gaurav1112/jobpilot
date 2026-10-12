@@ -10,7 +10,7 @@ import { Gig, RatedGig } from './types.js';
  *
  * - `hourly` with a minimum or maximum: `stated`.
  * - `fixed`: with `hoursPerWeek.max` and `duration.weeks`, budget / (hours x weeks), `fixed÷stated-hours`; else with
- *   exactly one total-hours figure or range in the description (see `totalHours`), budget / hours, `fixed÷stated-hours`
+ *   exactly one total-hours figure or range with an effort cue in the description (see `totalHours`), budget / hours, `fixed÷stated-hours`
  *   (a range "N-M hours" gives minUsdH = min budget / M and maxUsdH = max budget / N); else with `duration.weeks` only,
  *   budget / (weeks x maxHoursPerWeek), `derived-from-duration`; else `unknown`.
  * - `monthly` with `hoursPerWeek.max`: monthly / (hours x 4.33), `monthly÷hours`; else `unknown`.
@@ -44,7 +44,11 @@ const NOT_SCOPE_AFTER =
   /^(?:\s?(?:\/|per|a|an|each|every)\s?(?:week|wk|day|month|mo)\b|\s?(?:weekly|daily|monthly)\b|\s?\/\s?(?:wk|day|mo)\b|\s+(?:or\s+less|max(?:imum)?\b|of\s+(?:video|footage|audio|content|recordings?|support)\b))/i;
 /** Within about 25 characters before the figure: a deadline, response time, uptime, support or a bound, not work scope. */
 const NOT_SCOPE_BEFORE =
-  /\b(?:within|in under|under|turnaround|respond(?:s|ing)?|response|reply|resolution|resolve|deadline|available|availability|uptime|support|sla|deliver(?:y|ed)?|up to|at most|at least|minimum|maximum|max|over|more than|less than|no more than|every|each)\b/i;
+  /\b(?:within|in under|under|turnaround|respond(?:s|ing)?|response|reply|resolution|resolve|deadline|available|availability|uptime|support|sla|deliver(?:y|ed)?|up to|at most|at least|minimum|maximum|max|over|more than|less than|no more than|every|each|online|present|on call|overlap)\b/i;
+/** Effort cues: before the figure in its clause, or right after it. Without one a figure is unconfirmed and unused. */
+const EFFORT_BEFORE =
+  /\b(?:about|approx(?:\.|imately)?|estimated?|roughly|around|effort|scope|total|expect(?:s|ed)?|plan on|budgeted|takes?|need(?:s|ed)?|requires?)\b|~/i;
+const EFFORT_AFTER = /^\s*(?:of\s+(?:work|development|dev|coding|effort|engineering)\b|(?:in\s+)?total\b)/i;
 
 const round2 = (x: number): number => Math.round(Number((x * 100).toPrecision(15))) / 100;
 const valid = (x: number | null): boolean => x === null || (Number.isFinite(x) && x > 0);
@@ -76,16 +80,23 @@ function clauseBefore(window: string): string {
 
 /**
  * The work hours a description states for the whole job: `{lo, hi}` for "about 27 hours" (lo = hi) or "15-25 hours",
- * `null` when it states no hours figure at all, `'refused'` when it does but none can be used: several distinct
- * figures (ambiguous), or only figures that are not scope. Not scope: a figure before which a deadline or bound word
- * stands (within 25 characters, but only in the same clause: see `clauseBefore`; a colon keeps the label with its
- * figure, "Turnaround: 24 hours"), or after which a per-period unit, "or less", "max"
- * or an amount of material follows; a figure that is not scope in one place is not scope anywhere. A reversed range
- * ("25-15 hours") is refused. A refused result is `unknown`: it never falls through to the duration row.
+ * `null` when it states no hours figure at all, `'refused'` when it does but none can be used. A refused result is
+ * `unknown`: it never falls through to the duration row.
+ *
+ * Allow-list: a figure is work scope only with an effort cue in its own clause (EFFORT_BEFORE: about, ~, estimated,
+ * roughly, effort, scope, total, expect, plan on, budgeted, takes, needs, requires; or EFFORT_AFTER: "of work",
+ * "of development", "total", "in total"). A figure without a cue is unconfirmed and unused.
+ * Deny-list on top, which wins over a cue: a figure before which (within 25 characters, in the same clause: see
+ * `clauseBefore`; a colon keeps the label with its figure) a deadline, response, availability, presence, support or
+ * bound word stands (NOT_SCOPE_BEFORE), or after which a per-period unit, "or less", "max" or an amount of material
+ * follows (NOT_SCOPE_AFTER), or a reversed range ("25-15 hours"); a figure denied in one place is denied everywhere.
+ * Refused: no confirmed figure left, more than one confirmed figure, or a confirmed figure beside an unconfirmed
+ * different one ("About 50 hours, maybe 80 hours").
  */
 function totalHours(description: string): { lo: number; hi: number } | 'refused' | null {
-  const scope = new Map<string, { lo: number; hi: number }>();
-  const notScope = new Set<string>();
+  const confirmed = new Map<string, { lo: number; hi: number }>();
+  const unconfirmed = new Set<string>();
+  const denied = new Set<string>();
   for (const m of description.matchAll(TOTAL_HOURS)) {
     const hi = Number(m[2]);
     const lo = m[1] === undefined ? hi : Number(m[1]);
@@ -93,12 +104,16 @@ function totalHours(description: string): { lo: number; hi: number } | 'refused'
     const key = `${lo}-${hi}`;
     const window = description.slice(Math.max(0, start - 25), start);
     const clause = clauseBefore(window);
-    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(description.slice(start + m[0].length)) || NOT_SCOPE_BEFORE.test(clause)) notScope.add(key);
-    else scope.set(key, { lo, hi });
+    const rest = description.slice(start + m[0].length);
+    if (!(lo > 0 && hi >= lo) || NOT_SCOPE_AFTER.test(rest) || NOT_SCOPE_BEFORE.test(clause)) denied.add(key);
+    else if (m[0].includes('~') || EFFORT_BEFORE.test(clause) || /approx\.\s*$/i.test(window) || EFFORT_AFTER.test(rest)) confirmed.set(key, { lo, hi });
+    else unconfirmed.add(key);
   }
-  const found = [...scope.entries()].filter(([k]) => !notScope.has(k)).map(([, v]) => v);
+  const found = [...confirmed.entries()].filter(([k]) => !denied.has(k));
   if (found.length > 1) return 'refused';
-  return found[0] ?? (notScope.size > 0 ? 'refused' : null);
+  const only = found[0];
+  if (only === undefined) return denied.size > 0 || unconfirmed.size > 0 ? 'refused' : null;
+  return [...unconfirmed].some((k) => k !== only[0] && !denied.has(k)) ? 'refused' : only[1];
 }
 
 export function rateOf(gig: Gig, fx: Fx, maxHoursPerWeek: number): Rate {
