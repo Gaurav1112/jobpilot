@@ -142,6 +142,44 @@ user's outcomes (applied, replied, won). The ranker's freshness term and the das
 page use it. A source with zero yield for 4 weeks, or failing its probe 3 days running, is
 flagged in problems ("source X looks dead"), **never silently removed**.
 
+### 4.6 Live validation (2026-10-12): every channel A/B source probed and scored
+
+A probe read every channel A/B endpoint once (polite, sequential, raw responses kept as fixture
+candidates) and applied this spec's rules with the user's real lexicon: freelance kind, ≥ 2
+strong/medium skills, hours rule (§5.2), India-open (§5.2), pay ≥ $40/h (§5.3). The v1 boards were
+measured from the daily catalogue.
+Score = access (ok 30, partial 22, key 20, email 10, failed 0) + volume 30·log(1+relevant)/log(51)
++ India 20·(open + ½ unknown)/relevant + pay 20·(≥$40 + ¼ unknown)/relevant.
+
+| Source | Score | Skill-matched | Relevant (hours ok) | Pass all rules | Review | Verdict |
+|---|---|---|---|---|---|---|
+| Freelancer.com | 85 | 149 | 147 | 0 | 123 | **keep**: main automated feed; fixed-price needs a budget floor (below) |
+| Himalayas (contract types) | 79 | 64 | 49 (15 B2B full-time excluded) | 0 | 49 | **keep**, review-only: no pay stated, recruiter reposts |
+| Remotive | 75 | 1 | 1 | 0 | 1 | keep (cheap; public API returns a small delayed subset) |
+| HN "Who is hiring" contract/part-time | 48 | 5 | 2 | 0 | 1 | keep (monthly, 2 requests) |
+| Arbeitnow DE/UK | 49 | 5 | 5 | 0 | 0 | **park**: onsite/hybrid DE/UK; nothing open to India |
+| Greenhouse/Lever/Ashby/careers/Jobicy contract roles | 30–40 | 1 | 1 | 0 | 0 | keep (free: already fetched by the daily run) |
+| RemoteOK, We Work Remotely, Working Nomads, Golang Projects | 30 | 0 | 0 | 0 | 0 | **park**: work, but zero relevant contract gigs |
+| HN "Freelancer? Seeking freelancer?" | 30 | 0 | 0 | 0 | 0 | keep (monthly; October had 18 comments, all SEEKING WORK) |
+| GitHub bounty labels | 30 | 23 | 0 | 0 | 0 | **drop**: top results are spam/test repos (59/100 from one repo), no Algora bot verification in 8/8 sampled; amounts live in bot comments |
+| Algora own listing | — | | | | | **drop**: no public JSON (HTML only; scraping is out) |
+| Reddit | — | | | | | **blocked**: public JSON 403s; needs the user's OAuth script app |
+| Upwork API | — | | | | | **key needed** (approval) |
+| Channel C (21 email sources) | — | | | | | **unmeasured** until the Gmail label exists |
+
+Findings that change the build:
+- **Freelancer.com's `hourly_project_info.commitment` is a default** (all 77 hourly projects say
+  40 h/week), so it is ignored; hours come from the text only, else `unknown` → review.
+- **v1 eligibility keeps only its first reject reason**, so a contract-rejected posting carries no
+  location verdict; the freelance pipeline must evaluate location itself, never reuse that verdict.
+- **"Contract type: B2B" with an annual salary is full-time employment by contract** (e.g. DualEntry,
+  $100K–175K, all countries). It fails this pipeline's ≤ 20 h rule. It also means the *full-time*
+  pipeline currently rejects such roles as `employment:contract` (decision for the user, §13).
+- Fixed-price budgets on Freelancer.com: median $392, 61/166 ≥ $500, 19 ≥ $1,000.
+- With today's data, the free automatable sources yield **no gig that passes every rule**; the
+  value is concentrated in vetted networks and Upwork (channels B/C). Build order is changed
+  accordingly (§12).
+
 ## 5. Understanding and evaluation (all deterministic code)
 
 ### 5.1 `Gig` schema
@@ -277,14 +315,22 @@ Auto-submit of any kind; LLM writing (the next sub-project, "human writing", beh
 contracts); paid platforms, Connects purchase, paid APIs; Fiverr (seller-listing model, nothing to
 read); session-browse of any marketplace.
 
-## 12. Build order (for the plan)
+## 12. Build order (for the plan), re-ordered by the §4.6 validation
 
-1. Probe gate: live-probe every "probe" source; record fixtures for every channel A/B source.
+1. **Network application packs first** (Toptal, Arc, Braintrust, Contra, Turing, Lemon, Gun.io,
+   Flexiple): network-tuned CV + profile + vetting checklist. Highest value, no source code needed.
 2. Kernel/app: generalise `due.ts` per pipeline; `jobpilot-freelance` wiring; tables.
-3. Channel A sources, then normalizer, deduper, rate-normalizer (with evals).
-4. Eligibility, risk, scorer, ranker (with evals).
-5. Writing: platform rules, planners, renderer/qa-gate extensions.
+3. Freelancer.com source (with the fixed-budget floor), Himalayas + v1-board contract reuse,
+   Remotive, HN; normalizer, deduper, rate-normalizer (with evals).
+4. Eligibility (location evaluated afresh, hours from text), risk, scorer, ranker (with evals).
+5. Writing: platform rules, proposal/pitch/CV planners, renderer/qa-gate extensions.
 6. Dashboard `/freelance`, CLI, schedule.
 7. Channel C: Gmail connect + per-sender parsers (fixtures from the user's real alert emails).
-8. Channel B: Reddit, then Upwork when approved.
-9. Live run, probe review, merge.
+8. Channel B: Upwork when approved; Reddit when the user creates the script app.
+9. Parked sources (§4.6) re-probed monthly by `sources probe`; promoted only when they yield.
+10. Live run, probe review, merge.
+
+## 13. Open decisions (from the validation)
+
+- D1: a fixed-price budget floor for gigs with no stated hours (recommended $500; 61/166 today).
+- D2: whether the full-time pipeline should accept B2B "full-time contractor" roles.
