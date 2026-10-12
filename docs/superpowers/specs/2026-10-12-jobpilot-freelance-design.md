@@ -335,6 +335,12 @@ read); session-browse of any marketplace.
 - **D1: fixed-price budget floor $500.** A fixed-price gig with no stated hours and a budget under
   $500 (USD after FX) is rejected as `budget-below-floor`; at or above it, it goes to review (never
   the shortlist until hours are known). `freelance.yaml: fixedBudgetFloorUsd: 500`.
+- **D1b (user, 2026-10-12): platform preset brackets are not budgets.** A fixed budget exactly matching a platform
+  preset bracket (`platform-rules.yaml: freelancer.presetBrackets`, derived from recordings: same bracket for at least 3
+  distinct clients) goes to review with the note `preset bracket - bids may exceed it`, never `budget-below-floor`.
+  Found on 2026-10-12: 33 of 91 floor rejects sat at Freelancer's stock ₹12,500–37,500 cap.
+- **Role filter on gigs → review (controller, 2026-10-12):** `filters.roleDeny` was written for job titles and misfires
+  on gig titles (about 6 of 35 wrong), so for gigs a match is `review` with the pattern named, never a reject.
 - **D2: the full-time pipeline accepts full-time B2B contractor roles, labelled.** A posting whose
   only reject would be `employment:contract`, and which states full-time hours or an annual salary
   ("Contract type: B2B", "full-time contractor"), is judged by the normal full-time rules (comp floor,
