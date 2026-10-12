@@ -13,7 +13,7 @@ import { demoEvalSpecs } from './demo/evals.js';
 import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
 import { exportedAgents } from './exported-agents.js';
-import { loadRunPack, preparePipeline } from './app/kernel.js';
+import { loadRunPack, preparePipeline, resolvePdftotext } from './app/kernel.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
@@ -30,6 +30,7 @@ import { AppStore } from './app/store/app-store.js';
 import { dailyDue } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
+import { networksList, networksPack } from './app/freelance/networks-command.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -401,6 +402,30 @@ for (const [verb, status] of [['verify', 'verified'], ['reject', 'rejected']] as
       }),
     );
 }
+
+const networks = program.command('networks').description('Vetted freelance networks: application packs built from your verified facts');
+networks
+  .command('list')
+  .description('List the network files in pack/networks/')
+  .action(() =>
+    guarded(() => {
+      for (const l of networksList(todaysPack())) console.log(l);
+    }),
+  );
+networks
+  .command('pack [ids...]')
+  .description('Write out/networks/<id>/ (resume.pdf, resume.docx, profile.txt, checklist.md) for each network, only from verified facts; nothing is submitted')
+  .option('--all', 'every network in pack/networks/')
+  .action((ids: string[], o: { all?: boolean }) =>
+    guarded(async () => {
+      if (o.all === true && ids.length > 0) throw new Error('pass network ids or --all, not both');
+      const paths = homePaths(jobpilotHome());
+      const pdftotext = resolvePdftotext();
+      process.exitCode = await withLock(paths.home, 'networks pack', async () =>
+        networksPack(o.all === true ? 'all' : ids, todaysPack(), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
+      );
+    }),
+  );
 
 const docs = program.command('docs').description('Document tools');
 docs

@@ -65,7 +65,8 @@ export function scorePosting(v: EligibilityVerdict, pack: ScorerPack): Scored {
   return { posting, verdict: v.verdict, notes: [...v.notes], score, breakdown, jdTerms };
 }
 
-function packOf(pack: unknown): ScorerPack {
+/** The scorer's view of a pack; a pack lacking lexicon or targets fails loudly. */
+export function packOf(pack: unknown): ScorerPack {
   const view = PackView.safeParse(pack);
   if (!view.success) throw new KernelError('invalid_output', 'scorer-lexicon: the pack is missing or lacks lexicon or targets');
   return view.data;
