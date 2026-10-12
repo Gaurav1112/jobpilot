@@ -1,0 +1,7 @@
+{ "id": 9001, "title": "Ask HN: Freelancer? Seeking freelancer? (October 2026)", "type": "story", "created_at_i": 1790866800, "children": [
+  { "id": 9101, "author": "a", "type": "comment", "created_at": "2026-10-01T16:00:00Z", "created_at_i": 1790870400, "story_id": 9001, "parent_id": 9001, "text": "SEEKING FREELANCER | Remote | Go backend engineer for a 3 month contract", "children": [
+    { "id": 9102, "author": "b", "type": "comment", "created_at": "2026-10-01T17:00:00Z", "created_at_i": 1790874000, "story_id": 9001, "parent_id": 9101, "text": "SEEKING FREELANCER in a reply is not a top-level post", "children": [] } ] },
+  { "id": 9103, "author": "c", "type": "comment", "created_at": "2026-10-02T09:00:00Z", "created_at_i": 1790931600, "story_id": 9001, "parent_id": 9001, "text": "SEEKING WORK | Remote | Python developer", "children": [] },
+  { "id": 9104, "author": "d", "type": "comment", "created_at": "2026-10-03T09:00:00Z", "created_at_i": 1791018000, "story_id": 9001, "parent_id": 9001, "text": "SEEKING FREELANCER | UTC+1 | TypeScript, React", "children": [] },
+  { "id": 9105, "author": null, "type": "comment", "created_at": "2026-10-03T10:00:00Z", "created_at_i": 1791021600, "story_id": 9001, "parent_id": 9001, "text": null, "children": [] }
+] }

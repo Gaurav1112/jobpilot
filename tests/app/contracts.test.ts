@@ -12,7 +12,8 @@ describe('contracts-out', () => {
     for (const a of exportedAgents) r.register(a);
     expect(r.list().map((a) => a.contract.id)).toEqual([
       'cover-writer', 'demo-scorer', 'demo-source', 'eligibility', 'evidence-matcher', 'normalizer', 'qa-gate', 'renderer', 'resume-planner',
-      'scorer-lexicon', 'src-ashby', 'src-careers-job', 'src-careers-list', 'src-greenhouse', 'src-himalayas', 'src-jobicy', 'src-lever',
+      'scorer-lexicon', 'src-ashby', 'src-board-contracts', 'src-careers-job', 'src-careers-list', 'src-freelancer', 'src-greenhouse', 'src-himalayas', 'src-hn', 'src-jobicy', 'src-lever',
+      'src-remotive',
     ]);
     expect(checkDrift(r, join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
   });

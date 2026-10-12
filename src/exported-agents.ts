@@ -1,3 +1,4 @@
+import { gigSources } from './app/freelance/sources/index.js';
 import { dailyAgents } from './app/pipeline.js';
 import { demoAgents } from './demo/pipeline.js';
 
@@ -9,4 +10,4 @@ const WITH_CAREERS = [{ ats: 'careers', listUrl: 'https://careers.example.com/jo
  * check`, part of `node --run verify`): the demo agents and every agent of the daily pipeline (sources, normalizer,
  * eligibility, scorer and the writing team).
  */
-export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS)] as const;
+export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS), ...gigSources] as const;

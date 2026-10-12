@@ -1,0 +1,4 @@
+{
+ "https://hn.algolia.com/api/v1/search_by_date?query=%22Seeking%20freelancer%22&tags=story": "search.json",
+ "https://hn.algolia.com/api/v1/items/9001": "thread.json"
+}
