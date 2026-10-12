@@ -234,8 +234,10 @@ type Platform = 'freelancer'|'remotive'|'hn-freelancer'|'hn-hiring'|'boards'|'gm
 - `gig-evidence.ts`: `export function syntheticPosting(o: { key: string; title: string; company: string; text: string; firstSeen: string }): Posting`.
   - Builds a valid `Posting@1`: `ats: 'feed'`, `source: 'gig'`, `sourceId: key`, `jobKey: gigKey('synthetic', key)`,
     `remote.structured: 'remote'`, `countries: ['worldwide']`, `comp: null`, `yearsRequired: null`.
-  - Plus `export function evidenceFor(posting: Posting, pack: WritingPack): Evidence`, which builds the `Scored`
-    the way `buildEvidence` expects (score 100, breakdown `{}`) and returns `buildEvidence(scored, pack)`.
+  - Plus `export function evidenceFor(posting: Posting, pack: WritingPack, rawPack = pack): Evidence`, which scores
+    the posting with the real scorer (`scorePosting`, exactly as `resumeProblems` re-derives it) and returns
+    `buildEvidence(scored, pack)`. (Corrected 2026-10-12: a made-up score fails G-GROUND by design.) Task 8 uses the same
+    function for gigs.
 - `networks.ts`: `export function networkPack(net: NetworkFile, pack: WritingPack, asOf: string): NetworkPackResult`, where
 
 ```ts
