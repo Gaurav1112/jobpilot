@@ -1,5 +1,5 @@
 {
-  "hash": "a36d5942484e03d6db4fcdee837e4ff56986443c5baa838a6099d258ff488cd5",
+  "hash": "a4e89005c693e32cffa1e5e8f157e67b3b8eaf09863a0a8dc8bc79dd3f1e7643",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -117,6 +117,9 @@
                     },
                     "type": "array"
                   },
+                  "evidenceIntro": {
+                    "type": "string"
+                  },
                   "hook": {
                     "additionalProperties": false,
                     "properties": {
@@ -151,6 +154,7 @@
                 },
                 "required": [
                   "hook",
+                  "evidenceIntro",
                   "evidence",
                   "planIntro",
                   "plan",
@@ -1331,6 +1335,9 @@
                         },
                         "type": "array"
                       },
+                      "evidenceIntro": {
+                        "type": "string"
+                      },
                       "hook": {
                         "additionalProperties": false,
                         "properties": {
@@ -1365,6 +1372,7 @@
                     },
                     "required": [
                       "hook",
+                      "evidenceIntro",
                       "evidence",
                       "planIntro",
                       "plan",

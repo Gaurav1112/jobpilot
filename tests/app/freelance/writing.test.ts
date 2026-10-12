@@ -4,12 +4,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CAPABILITY_ALLOW_LIST, capabilityProblems } from '../../../src/app/allow-list.js';
-import type { WritingPack } from '../../../src/app/agents/writing/grounded.js';
+import { COMPACT, DEFAULT_BUDGET, type WritingPack } from '../../../src/app/agents/writing/grounded.js';
 import { gigQa, gigQaChecks, gigQaContract, repeatKey, type GigQaInputs } from '../../../src/app/freelance/writing/gig-qa.js';
 import { freelanceDocsPacks, gigPath, gigRenderer, gigRendererContract } from '../../../src/app/freelance/writing/gig-renderer.js';
-import { asciiPunct, PHRASES, variantOf } from '../../../src/app/freelance/writing/phrases.js';
+import { asciiPunct, PHRASES, planCategory, variantOf } from '../../../src/app/freelance/writing/phrases.js';
 import { pitchText } from '../../../src/app/freelance/writing/pitch-planner.js';
-import { cadenceOf, DEFAULT_CADENCE, hookQuote, planGigDocs, proposalPlanner, proposalPlannerContract, proposalText } from '../../../src/app/freelance/writing/proposal-planner.js';
+import { cadenceOf, DEFAULT_CADENCE, hookQuote, planGigDocs, sentencesOf, proposalPlanner, proposalPlannerContract, proposalText } from '../../../src/app/freelance/writing/proposal-planner.js';
 import { GigDocsPlan, GigQaReport, GigRendered, type ScoredGig } from '../../../src/app/freelance/types.js';
 import { appGuardrails, G_GROUND, G_NAMING, gigDocsProblems, resumeProblems } from '../../../src/app/guardrails.js';
 import { loadRunPack } from '../../../src/app/kernel.js';
@@ -84,42 +84,72 @@ describe('proposal-planner', () => {
     expect(quoted).toBeGreaterThan(0);
   });
 
-  it('hookQuote: first sentence with a matched term; long sentences cut at a word boundary within the limit', () => {
-    const groups = [{ key: 'kafka', synonyms: [] }];
-    expect(hookQuote('We are a team. We use Kafka daily. Kafka again.', groups, groups, 140)).toEqual({ quote: 'We use Kafka daily.', cut: false });
-    const long = `We need ${'very '.repeat(30)}good Kafka people. Next.`;
-    const q = hookQuote(`We need Kafka for ${'many '.repeat(40)}things.`, groups, groups, 60);
-    expect(q?.cut).toBe(true);
-    expect(q?.quote.length).toBeLessThanOrEqual(60);
-    expect(q?.quote.endsWith(' ')).toBe(false);
-    expect(hookQuote(long, groups, groups, 60)).toBeNull(); // the term lies past the cut
+  it('hookQuote: whole sentences, scored by request words plus covered terms, ties to the earliest; clause cuts only', () => {
+    const groups = [{ key: 'kafka', synonyms: [] }, { key: 'java', synonyms: [] }];
+    // the best-scoring sentence, not the first
+    expect(hookQuote('The team uses Kafka daily. The service must be rebuilt in Java with Kafka.', groups, groups, 140)).toEqual({ quote: 'The service must be rebuilt in Java with Kafka.', cut: false });
+    // ties go to the earliest
+    expect(hookQuote('The team uses Kafka. The service uses Kafka too.', groups, groups, 140)?.quote).toBe('The team uses Kafka.');
+    // too long: cut at the last clause boundary within the room that keeps at least 6 words
+    const long = `The consumer service must read orders from Kafka and write them out, then ${'enrich every record further '.repeat(6)}today.`;
+    expect(hookQuote(long, groups, groups, 80)).toEqual({ quote: 'The consumer service must read orders from Kafka and write them out', cut: true });
+    // no clause boundary within the room: the sentence is skipped, never cut mid-clause
+    expect(hookQuote(`The Kafka consumer must ${'handle many many records '.repeat(8)}today.`, groups, groups, 60)).toBeNull();
     expect(hookQuote('Mail me at a@b.com about Kafka. Nothing else.', groups, groups, 140)).toBeNull();
-    expect(hookQuote('We use “Kafka” daily.', groups, groups, 140)).toBeNull(); // non-ASCII punctuation is never quoted
-    // never a list, a stray list number or a line about the bidder
+    expect(hookQuote('The team uses “Kafka” daily.', groups, groups, 140)).toBeNull(); // non-ASCII punctuation is never quoted
+    // never a list, a stray list number, first person, the bidder, a negation or a status
     expect(hookQuote('Ideal Skills: Kafka, Java and Go.', groups, groups, 140)).toBeNull();
-    expect(hookQuote('We use Kafka, Java, Go, Redis, and AWS.', groups, groups, 140)).toBeNull();
+    expect(hookQuote('The stack is Kafka, Java, Go, Redis, and AWS.', groups, groups, 140)).toBeNull();
     expect(hookQuote('Kafka deployment configuration 9.', groups, groups, 140)).toBeNull();
-    expect(hookQuote('You have shipped Kafka consumers before.', groups, groups, 140)).toBeNull();
-    expect(hookQuote('- We run Kafka in production.', groups, groups, 140)).toEqual({ quote: 'We run Kafka in production.', cut: false });
+    for (const first of ['I', 'We', 'Our', 'My', 'Me', 'You', 'Your']) expect(hookQuote(`${first} run Kafka consumers in production.`, groups, groups, 140), first).toBeNull();
+    expect(hookQuote('The job does not involve Kafka work.', groups, groups, 140)).toBeNull();
+    expect(hookQuote("The team doesn't want Kafka.", groups, groups, 140)).toBeNull();
+    expect(hookQuote('Ship it without Kafka.', groups, groups, 140)).toBeNull();
+    expect(hookQuote('The Kafka cluster is already configured.', groups, groups, 140)).toBeNull();
+    expect(hookQuote('The Kafka cluster is configured, and it needs a consumer.', groups, groups, 140)?.quote).toBe('The Kafka cluster is configured, and it needs a consumer.');
+    expect(hookQuote('- The service must use Kafka in production.', groups, groups, 140)).toEqual({ quote: 'The service must use Kafka in production.', cut: false });
   });
 
-  it('every evidence line carries the fact ids of verbatim resume bullets', () => {
+  it('sentencesOf keeps abbreviations inside a sentence (e.g., i.e., U.S., etc.)', () => {
+    expect(sentencesOf('Use a broker, e.g. Kafka. Then ship.')).toEqual(['Use a broker, e.g. Kafka.', 'Then ship.']);
+    expect(sentencesOf('Clients in the U.S. Midwest need it. Done!')).toEqual(['Clients in the U.S. Midwest need it.', 'Done!']);
+    expect(sentencesOf('Queues, logs, etc. are in scope. Next.')).toEqual(['Queues, logs, etc. are in scope.', 'Next.']);
+    expect(sentencesOf('One thing, i.e. the API. Two  things.')).toEqual(['One thing, i.e. the API.', 'Two things.']);
+    expect(sentencesOf('Version 2.5 of the app. It runs.')).toEqual(['Version 2.5 of the app.', 'It runs.']);
+  });
+
+  it('evidence is an intro line, then "- employer (years): claim" lines, each one fact verbatim with its capital', () => {
     const p = planOf(scoredGig());
     expect(p.proposal!.evidence.length).toBeGreaterThanOrEqual(2);
-    const bullets = new Map(p.resume.roles.flatMap((r) => r.bullets.map((b) => [b.factId, b.text] as const)));
+    expect(p.proposal!.evidence.length).toBeLessThanOrEqual(3);
+    expect(PHRASES.evidenceIntro).toContain(p.proposal!.evidenceIntro);
+    const byId = new Map(full.facts.map((f) => [f.id, f]));
+    const perEmployer = new Map<string, number>();
     for (const e of p.proposal!.evidence) {
-      expect(e.factIds.length).toBeGreaterThan(0);
-      for (const id of e.factIds) {
-        const claim = bullets.get(id);
-        expect(claim, id).toBeDefined();
-        const c = asciiPunct(claim!);
-        expect(e.text.includes(c) || e.text.includes(`${c.charAt(0).toLowerCase()}${c.slice(1)}`), e.text).toBe(true);
-      }
+      expect(e.factIds).toHaveLength(1);
+      const f = byId.get(e.factIds[0]!)!;
+      expect(e.text).toMatch(/^- (Northwind Labs \(2022-now\)|Contoso Retail \(2018-2022\)|Fabrikam \(2016-2018\)): /);
+      expect(e.text.endsWith(`: ${asciiPunct(f.claim)}`), e.text).toBe(true);
+      const emp = e.text.slice(2, e.text.indexOf(' ('));
+      perEmployer.set(emp, (perEmployer.get(emp) ?? 0) + 1);
     }
+    for (const [emp, n] of perEmployer) expect(n, emp).toBeLessThanOrEqual(2);
+    const text = proposalText(p.proposal!, DEFAULT_CADENCE);
+    expect(text).toContain(`${p.proposal!.evidenceIntro}\n${p.proposal!.evidence[0]!.text}`);
+    expect(text).not.toMatch(/^Relevant work:/m);
     for (const s of fixtures) {
       const plan = planOf(s);
-      for (const e of [...(plan.proposal?.evidence ?? []), ...(plan.pitch?.lines.filter((l) => l.factIds.length > 0) ?? [])]) expect(e.factIds.length).toBeGreaterThan(0);
+      for (const e of [...(plan.proposal?.evidence ?? []), ...(plan.pitch?.lines.filter((l) => l.factIds.length > 0) ?? [])]) {
+        expect(e.factIds).toHaveLength(1);
+        expect(e.text).toMatch(/^- .+ \((\d{4}|\d{4}-(\d{4}|now))\): /);
+      }
     }
+  });
+
+  it('evidence prefers facts whose terms the gig title or skills name', () => {
+    // the title names Redis, so the Redis fact leads even though Kafka facts rank higher on this description
+    const p = planOf(scoredGig({ title: 'Redis caching layer', description: 'We need help with Kafka, Java and Redis. The services must stay fast.', skills: [] }));
+    expect(p.proposal!.evidence[0]!.factIds).toEqual(['f-nw-02']);
   });
 
   it('a missing term appears in the question, by its display name', () => {
@@ -142,20 +172,38 @@ describe('proposal-planner', () => {
     expect(repeatKey(proposalText(a.proposal!, DEFAULT_CADENCE))).not.toBe(repeatKey(proposalText(b.proposal!, DEFAULT_CADENCE)));
   });
 
-  it('the plan steps come from the step library of the top covered term group', () => {
-    const p = planOf(scoredGig());
-    const lib = Object.values(PHRASES.planSteps);
-    expect(lib.some((steps) => JSON.stringify(steps) === JSON.stringify(p.proposal!.plan))).toBe(true);
-    expect(p.proposal!.plan).toHaveLength(3);
-    const bare = planOf(scoredGig({ description: 'Need someone to help with a project.', skills: [] }));
-    expect(bare.proposal!.plan).toEqual(PHRASES.planSteps['default']);
+  it('the plan steps come from the title category, a wording picked by the gig key', () => {
+    expect(planCategory('SOC 2 Type I audit for a SaaS platform')).toBe('audit');
+    expect(planCategory('Debug Java Spring Service Logic')).toBe('fix');
+    expect(planCategory('Final Hardening & Release: 2 Working Apps')).toBe('finish');
+    expect(planCategory('Migrate our monolith')).toBe('migrate');
+    expect(planCategory('Stripe webhook setup')).toBe('integrate');
+    expect(planCategory('AI-Assisted Software Engineer for Fintech')).toBe('ai');
+    expect(planCategory('Cross-Platform App Build')).toBe('build');
+    expect(planCategory('Tracking & Measurement Specialist Required')).toBe('default');
+    expect(planCategory('Admin Portal tidy')).toBe('default'); // whole words only: "Portal" is not "port"
+    const p = planOf(scoredGig({ title: 'Fix a Kafka consumer bug' }));
+    expect(PHRASES.planSteps.fix.map((s) => JSON.stringify(s))).toContain(JSON.stringify(p.proposal!.plan));
+    for (const steps of Object.values(PHRASES.planSteps).flat()) for (const step of steps) expect(step).not.toMatch(/or your spec, if this is new|I have (done|built|shipped)/);
+    const bare = planOf(scoredGig({ title: 'Help needed', description: 'Need someone to help with a project.', skills: [] }));
+    expect(PHRASES.planSteps.default.map((s) => JSON.stringify(s))).toContain(JSON.stringify(bare.proposal!.plan));
     expect(bare.proposal!.hook.quote).toBeNull();
     expect(PHRASES.hookPlain).toContain(bare.proposal!.hook.text);
-    // covered terms but no sentence safe to quote: a hook naming the first covered term
-    const unquoted = planOf(scoredGig({ description: 'Ideal skills: Java, Kafka, AWS, PostgreSQL, Redis.', skills: [] }));
+    // covered terms but no sentence safe to quote: a hook naming the covered term the title names
+    const unquoted = planOf(scoredGig({ title: 'Kafka work', description: 'Ideal skills: Java, Kafka, AWS, PostgreSQL, Redis.', skills: [] }));
     expect(unquoted.proposal!.hook.quote).toBeNull();
-    expect(unquoted.proposal!.hook.text).toContain('Java');
-    expect(PHRASES.hookTerm.map((h) => h.replace('{term}', 'Java'))).toContain(unquoted.proposal!.hook.text);
+    expect(PHRASES.hookTerm.map((h) => h.replace('{term}', 'Kafka'))).toContain(unquoted.proposal!.hook.text);
+  });
+
+  it('the question names the missing term the title names first, and asks about a domain as a domain', () => {
+    const p = planOf(scoredGig({ title: 'Elixir data job', description: 'We need help with Kafka. Scala and Elixir are used.', skills: [] }));
+    expect(p.missing).toEqual(expect.arrayContaining(['elixir', 'scala']));
+    expect(p.missing.indexOf('scala')).toBeLessThan(p.missing.indexOf('elixir'));
+    expect(p.proposal!.question).toMatch(/Elixir/);
+    const pack2 = { ...pub, facts: pub.facts.map((f) => (f.tech.includes('fintech') ? { ...f, tech: f.tech.filter((t) => t !== 'fintech') } : f)) };
+    const d = planGigDocs(scoredGig({ title: 'Fintech backend', description: 'A fintech product needs Java services on Kafka.', skills: [] }), pack2)!;
+    expect(d.missing).toContain('fintech');
+    expect(PHRASES.domainQuestion.map((q) => q.replace('{term}', 'fintech'))).toContain(d.proposal!.question);
   });
 
   it('availability states the freelance rules and leaves {cadence} for the renderer', () => {
@@ -183,8 +231,16 @@ describe('proposal-planner', () => {
     expect(planGigDocs(scoredGig({ kind: 'bounty' }), pub)).toBeUndefined();
   });
 
-  it('the contract CV is planResume of the synthetic posting, so it passes G-GROUND at full strength', () => {
-    for (const s of fixtures) expect(resumeProblems(planOf(s).resume, wpack, '', pub), s.risked.verdict.rated.gig.sourceId).toEqual([]);
+  it('the contract CV is planResume with the compact budget, so it passes G-GROUND at full strength', () => {
+    for (const s of fixtures) {
+      const r = planOf(s).resume;
+      expect(resumeProblems(r, wpack, '', pub, COMPACT), s.risked.verdict.rated.gig.sourceId).toEqual([]);
+      r.roles.forEach((role, i) => expect(role.bullets.length).toBeLessThanOrEqual(i < 2 ? 2 : 0));
+      expect(r.roles.length).toBe(full.roles.length); // older roles keep title, employer and dates
+    }
+    // the daily budget is unchanged
+    expect(DEFAULT_BUDGET).toEqual({ latest: 4, other: 2 });
+    expect(resumeProblems(planOf(fixtures[0]!).resume, wpack, '', pub).join('\n')).toMatch(/differs from its re-derivation/);
   });
 
   it('the template text is plain ASCII: every phrase, and every proposal outside the quoted words', () => {
@@ -209,7 +265,7 @@ describe('proposal-planner', () => {
       expect(s).not.toMatch(/I am writing to express|to whom it may concern/i);
     }
     for (const [slot, v] of Object.entries(PHRASES)) if (Array.isArray(v)) expect(v.length, slot).toBeGreaterThanOrEqual(3);
-    for (const [slot, v] of Object.entries(PHRASES.evidenceLead)) expect(v.length, slot).toBeGreaterThanOrEqual(3);
+    for (const [cat, v] of Object.entries(PHRASES.planSteps)) expect(v.length, cat).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -220,13 +276,15 @@ describe('gigDocsProblems (G-GROUND for GigDocsPlan@1)', () => {
 
   it('names an evidence line that is not its fact verbatim, a quote not in the description, and any re-derivation difference', () => {
     const p = planOf(scoredGig());
-    const ev = p.proposal!.evidence.map((e, i) => (i === 0 ? { ...e, text: e.text.replace(/\d+/, '99') } : e));
+    const ev = p.proposal!.evidence.map((e, i) => (i === 0 ? { ...e, text: e.text.replace(/\d+(?=[^)]*$)/, '99') } : e));
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: ev } }, pub).join('\n')).toMatch(/proposal.evidence\[0\].*verbatim/);
-    const hook = { text: p.proposal!.hook.text.replace(p.proposal!.hook.quote!, 'We want Kafka now.'), quote: 'We want Kafka now.' };
+    const yrs = p.proposal!.evidence.map((e, i) => (i === 0 ? { ...e, text: e.text.replace(/\(\d{4}/, '(2001') } : e));
+    expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: yrs } }, pub).join('\n')).toMatch(/proposal.evidence\[0\]: the line is not "- employer \(years\): claim"/);
+    const hook = { text: p.proposal!.hook.text.replace(p.proposal!.hook.quote!, 'The team wants Kafka now.'), quote: 'The team wants Kafka now.' };
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, hook } }, pub).join('\n')).toMatch(/hook.quote is not in the gig description/);
     expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, plan: ['Ship it in a day.', ...p.proposal!.plan.slice(1)] } }, pub).join('\n')).toMatch(/differs from its re-derivation/);
     expect(gigDocsProblems({ ...p, missing: [] }, pub).join('\n')).toMatch(/missing/);
-    expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: [{ text: 'At Northwind Labs, I built it.', factIds: ['f-nope'] }] } }, pub).join('\n')).toMatch(/unknown fact f-nope/);
+    expect(gigDocsProblems({ ...p, proposal: { ...p.proposal!, evidence: [{ text: '- Northwind Labs (2022-now): Built it.', factIds: ['f-nope'] }] } }, pub).join('\n')).toMatch(/unknown fact f-nope/);
   });
 
   it('G-GROUND passes the planner output and trips on a tampered plan', () => {

@@ -28,7 +28,7 @@ docx, all already pinned. **No new dependencies.** Gmail and Upwork OAuth use `f
 - Every agent is created with `defineContract` + `defineAgent`.
   - The description is ≥ 10 characters and contains no word "and".
   - One skill, one output type.
-  - `kind` is `deterministic`, or `io` for fetchers.
+  - `kind` is `deterministic`, or `io` for fetchers and file writers.
 - **The engine holds no personal data.** Tests use `tests/fixtures/pack/` (fictional "Asha Rao"); new freelance pack
   files are added there too. The real pack lives only in `~/.jobpilot/pack/`.
 - **Forbidden-term rule (from v1, unchanged).** The user's client company name never appears in `src/`, `tests/`,

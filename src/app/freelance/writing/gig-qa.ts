@@ -4,7 +4,7 @@ import { defineContract } from '../../../kernel/contract.js';
 import { KernelError } from '../../../kernel/errors.js';
 import { check, type Check, contactProblems, hasTerm, hyphenProblems, namingProblem, pdfPages, readDocxText, sameText } from '../../agents/writing/qa-checks.js';
 import { gigDocsProblems } from '../../guardrails.js';
-import { normText, PAGE_LIMITS } from '../../render/model.js';
+import { normText } from '../../render/model.js';
 import { GigQaReport, gigQaRan, GigRendered } from '../types.js';
 import { gigFilesOf, txtBytes } from './gig-text.js';
 import { hasNonAsciiPunct } from './phrases.js';
@@ -23,7 +23,7 @@ import { hasNonAsciiPunct } from './phrases.js';
  * | gig.ascii | no punctuation or symbol outside ASCII in the text, except inside the client's quoted words |
  * | gig.ground | `gigDocsProblems(plan, pack)` is empty and no placeholder brace is left in the text |
  * | gig.naming | no forbidden term (strict) in the `.txt` file, the CV's PDF and DOCX text layers, or the recorded texts |
- * | qa.pages, qa.terms, qa.hyphen, qa.docx-text, qa.pdf-text, qa.contact-intact | the daily qa-gate's checks (`qa-checks.ts`) on the contract CV |
+ * | qa.pages, qa.terms, qa.hyphen, qa.docx-text, qa.pdf-text, qa.contact-intact | the daily qa-gate's checks (`qa-checks.ts`) on the contract CV; its page limit is 1 (`CV_PAGES`) |
  *
  * `gig.repeat` (two proposals of one run sharing their first 60 characters, `repeatKey`) needs the whole run, so the
  * projector checks it. Details name files, lines and ids only, never a forbidden term or a P1 token.
@@ -51,6 +51,9 @@ const GigQaPack = z.object({
   naming: z.object({ forbiddenTerms: z.array(z.string()) }),
   platformRules: z.record(z.string(), z.object({ maxChars: z.number().nullable(), hookChars: z.number().nullable(), linksAllowed: z.boolean() })),
 });
+
+/** The contract CV is one page (user decision, fix round 1). */
+export const CV_PAGES = 1;
 
 /** What gig-qa read: each file's bytes and sha256 (or why it could not be read), and each PDF's text layer. */
 export interface GigQaInputs {
@@ -159,7 +162,7 @@ export function gigQaChecks(rendered: GigRendered, rawPack: unknown, read: GigQa
     for (const list of [pages, pdfTextProblems, contact]) list.push(`${pdfFile.path} has no text layer`);
   } else {
     const n = pdfPages(pdf);
-    if (n > PAGE_LIMITS.resume) pages.push(`the contract CV has ${n} pages, the limit is ${PAGE_LIMITS.resume}`);
+    if (n > CV_PAGES) pages.push(`the contract CV has ${n} pages, the limit is ${CV_PAGES}`);
     const recorded = byPath.get(pdfFile.path)?.pages;
     if (recorded !== n) pages.push(`${pdfFile.path} has ${n} pages, the renderer recorded ${String(recorded)}`);
     hyphen.push(...hyphenProblems(pdf, source).map((p) => `${pdfFile.path} ${p}`));

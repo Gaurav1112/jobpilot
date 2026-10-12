@@ -1,5 +1,5 @@
 {
-  "hash": "eb4b9be84ebf0958d88bfc1e7a9a049efbb0178b8f3f8a92e21b6d67882c2ed0",
+  "hash": "c15e27215f60ffc3f9caad3833e20ca4230e2b50ab5feb99b2bf2d6dba9377d6",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -623,6 +623,9 @@
                     },
                     "type": "array"
                   },
+                  "evidenceIntro": {
+                    "type": "string"
+                  },
                   "hook": {
                     "additionalProperties": false,
                     "properties": {
@@ -657,6 +660,7 @@
                 },
                 "required": [
                   "hook",
+                  "evidenceIntro",
                   "evidence",
                   "planIntro",
                   "plan",

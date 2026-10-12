@@ -121,7 +121,7 @@ describe('G-GROUND', () => {
   it("trips when a bullet sits under another employer's role", () => {
     const p = clone(resume);
     p.roles[2]!.bullets[0] = { ...p.roles[0]!.bullets[0]! };
-    expect(onResume(G_GROUND, p).detail).toMatch(/roles\[2\]\.bullets\[0\]: fact f-nw-01 is from Northwind Labs, not Fabrikam/);
+    expect(onResume(G_GROUND, p).detail).toMatch(/roles\[2\]\.bullets\[0\]: fact f-nw-01's employer shows as Northwind Labs, but the bullet sits under the role at Fabrikam/);
   });
 
   it('trips when the summary years are altered, whether or not the text agrees', () => {

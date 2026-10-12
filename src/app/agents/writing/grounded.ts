@@ -304,6 +304,19 @@ export function roleIndexOf(f: Fact, roles: readonly Role[], pack: WritingPack):
 export const BULLETS_LATEST = 4;
 export const BULLETS_OTHER = 2;
 
+/** How many bullets a resume plan gives the latest two roles and every older role. */
+export interface BulletBudget {
+  readonly latest: number;
+  readonly other: number;
+}
+/** The daily resume (up to 2 pages): 4 bullets for each of the latest two roles, 2 for the rest. */
+export const DEFAULT_BUDGET: BulletBudget = { latest: BULLETS_LATEST, other: BULLETS_OTHER };
+/**
+ * The 1-page contract CV (freelance, Task 8 fix round 1, user decision): 2 bullets for each of the latest two roles;
+ * older roles keep their title, employer and dates with no bullet.
+ */
+export const COMPACT: BulletBudget = { latest: 2, other: 0 };
+
 /** The summary slots: see the module rules. `terms` are display names, in order. */
 export function summarySlots(headline: string, years: number, terms: readonly string[], roles: readonly Role[]): SummarySlots {
   const [top1, top2, top3, top4] = terms;
@@ -332,8 +345,8 @@ function summaryKeysOf(covered: readonly string[], pack: WritingPack): string[] 
 
 const newestFirst = (pack: WritingPack) => (a: Fact, b: Fact) => factSpan(b, pack).start - factSpan(a, pack).start || cmp(a.id, b.id);
 
-/** The ResumePlan of one Evidence: see the module rules. */
-export function planResume(evidence: Evidence, pack: WritingPack): ResumePlan {
+/** The ResumePlan of one Evidence: see the module rules. `budget` sets the bullets per role (default: the daily resume's). */
+export function planResume(evidence: Evidence, pack: WritingPack, budget: BulletBudget = DEFAULT_BUDGET): ResumePlan {
   checkEmployers(pack);
   const posting = evidence.scored.posting;
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
@@ -348,7 +361,7 @@ export function planResume(evidence: Evidence, pack: WritingPack): ResumePlan {
   const bulletsOf = (i: number) =>
     ranked
       .filter((f) => roleIndexOf(f, roles, pack) === i)
-      .slice(0, i < 2 ? BULLETS_LATEST : BULLETS_OTHER)
+      .slice(0, i < 2 ? budget.latest : budget.other)
       .map((f) => ({ factId: f.id, text: f.claim }));
   const unplaced = pack.facts
     .filter((f) => isRankable(f) && roleIndexOf(f, roles, pack) === undefined)

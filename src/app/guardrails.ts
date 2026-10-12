@@ -5,7 +5,10 @@ import { GuardrailRegistry, type Guardrail, type GuardrailContext } from '../ker
 import { scorePosting, type ScorerPack } from './agents/scorer-lexicon.js';
 import {
   backedKeys,
+  type BulletBudget,
   buildEvidence,
+  COMPACT,
+  DEFAULT_BUDGET,
   coverSlots,
   displayOf,
   displayRoles,
@@ -19,6 +22,7 @@ import {
   postingSlots,
   renderCover,
   roleContains,
+  roleIndexOf,
   summaryKeys,
   summarySlots,
   summaryTerms,
@@ -36,7 +40,7 @@ import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
 import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
-import { gigResume, planGigDocs } from './freelance/writing/proposal-planner.js';
+import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
 
 /**
  * The app guardrails (spec §5.5, Task 9 and its fix round 1). All run on the out side and read the public pack from
@@ -121,7 +125,7 @@ const RANKABLE = new Set(['experience', 'project']);
  * Every grounding problem of a ResumePlan, each prefixed with `prefix`. `rawPack` is the whole public pack (the
  * scorer's view is wider than the writing view).
  */
-export function resumeProblems(plan: ResumePlan, pack: WritingPack, prefix = '', rawPack: unknown = pack): string[] {
+export function resumeProblems(plan: ResumePlan, pack: WritingPack, prefix = '', rawPack: unknown = pack, budget: BulletBudget = DEFAULT_BUDGET): string[] {
   const problems: string[] = [];
   const say = (s: string) => problems.push(`${prefix}${s}`);
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
@@ -169,7 +173,7 @@ export function resumeProblems(plan: ResumePlan, pack: WritingPack, prefix = '',
       const f = cite(where, b.factId, b.text, RANKABLE);
       if (f === undefined) return;
       const shown = attempt(problems, `${prefix}${where}`, () => displayOf(f.employer, pack));
-      if (shown !== undefined && shown !== r.employer) say(`${where}: fact ${b.factId} is from ${shown}, not ${r.employer}`);
+      if (shown !== undefined && shown !== r.employer) say(`${where}: fact ${b.factId}'s employer shows as ${shown}, but the bullet sits under the role at ${r.employer}`);
       if (!roleContains(r, f, pack)) say(`${where}: fact ${b.factId} (${f.period}) is not dated inside the role (${r.start}..${r.end})`);
     }),
   );
@@ -206,7 +210,7 @@ export function resumeProblems(plan: ResumePlan, pack: WritingPack, prefix = '',
   }
 
   if (evidence !== undefined && problems.length === 0) {
-    const expected = attempt(problems, `${prefix}plan`, () => planResume(evidence, pack));
+    const expected = attempt(problems, `${prefix}plan`, () => planResume(evidence, pack, budget));
     const d = expected === undefined ? undefined : firstDiff(expected, plan);
     if (d !== undefined) say(`the plan differs from its re-derivation (at ${d})`);
   }
@@ -260,13 +264,15 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
  * platform rules). Independent checks first, then the whole plan re-derived (`planGigDocs`) and compared:
  * - the plan's gigKey and platform are the scored gig's, and its kind has the right document (gig: a proposal, contract:
  *   a pitch, nothing else);
- * - the resume plan is the gig's synthetic posting planned afresh (`gigResume`) and passes `resumeProblems`;
+ * - the resume plan is the gig's synthetic posting planned afresh (`gigResume`) and passes `resumeProblems` with the
+ *   compact (1-page) bullet budget, `COMPACT`;
  *   `covered` and `missing` are the resume plan's;
  * - the hook quote, when there is one, is a substring of the description (whitespace collapsed) and stands in the
  *   hook in quote marks;
- * - every evidence line (proposal evidence, pitch lines with fact ids) cites known, citeable experience or project
- *   facts that are bullets of the resume plan, each claim in the text verbatim (ASCII punctuation, `asciiPunct`; its
- *   first letter may be lower-cased after "I");
+ * - the hook quote also lies inside one sentence of the description (`sentencesOf`);
+ * - every evidence line (proposal evidence, pitch lines with fact ids) cites one known, citeable experience or project
+ *   fact placed in a role, its claim in the text verbatim (ASCII punctuation, `asciiPunct`), and the line is exactly
+ *   `- <role display employer> (<role years>): <claim>` (`evidenceLine`);
  * - finally the plan equals its re-derivation, so every phrase, variant, step, availability and question is checked.
  * Details name paths and fact ids only, never a claim or the gig's text.
  */
@@ -290,23 +296,25 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
     const d = firstDiff(resume.evidence.scored.posting, plan.resume.evidence.scored.posting);
     if (d !== undefined) problems.push(`resume.evidence.scored.posting is not the gig's synthetic posting (at ${d})`);
   }
-  problems.push(...resumeProblems(plan.resume, pack, 'resume.', rawPack));
+  problems.push(...resumeProblems(plan.resume, pack, 'resume.', rawPack, COMPACT));
   if (!same(plan.covered, plan.resume.covered)) problems.push("covered is not the resume plan's covered list");
   if (!same(plan.missing, plan.resume.missing)) problems.push("missing is not the resume plan's missing list");
 
   const hook = plan.proposal?.hook;
   if (hook !== undefined && hook.quote !== null) {
+    if (!sentencesOfDescription(gig.description).some((x) => x.includes(hook.quote as string))) problems.push('proposal.hook.quote is not inside one sentence of the description');
     if (!gig.description.replace(/\s+/g, ' ').trim().includes(hook.quote)) problems.push('proposal.hook.quote is not in the gig description verbatim');
     if (!hook.text.includes(`"${hook.quote}"`)) problems.push('proposal.hook.text does not hold the quote in quote marks');
   }
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
-  const bullets = new Set(plan.resume.roles.flatMap((r) => r.bullets.map((b) => b.factId)));
+  const roles = displayRoles(pack);
   const lines = [
     ...(plan.proposal?.evidence.map((e, i) => ({ where: `proposal.evidence[${i}]`, ...e })) ?? []),
     ...(plan.pitch?.lines.map((e, i) => ({ where: `pitch.lines[${i}]`, ...e })) ?? []),
   ];
   for (const l of lines) {
-    if (l.where.startsWith('proposal') && l.factIds.length === 0) problems.push(`${l.where} cites no fact`);
+    if (l.where.startsWith('proposal') && l.factIds.length !== 1) problems.push(`${l.where} must cite exactly one fact`);
+    if (l.where.startsWith('pitch') && l.factIds.length > 1) problems.push(`${l.where} cites more than one fact`);
     for (const id of l.factIds) {
       const f = byId.get(id);
       if (f === undefined) {
@@ -315,9 +323,11 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
       }
       if (!citeable(f)) problems.push(`${l.where}: fact ${id} is not citeable (${f.status})`);
       if (!RANKABLE.has(f.kind)) problems.push(`${l.where}: fact ${id} is a ${f.kind}, not experience or project`);
-      if (!bullets.has(id)) problems.push(`${l.where}: fact ${id} is not a bullet of the resume plan`);
-      const c = asciiPunct(f.claim);
-      if (!l.text.includes(c) && !l.text.includes(`${c.charAt(0).toLowerCase()}${c.slice(1)}`)) problems.push(`${l.where}: fact ${id}'s claim is not in the text verbatim`);
+      if (!l.text.includes(asciiPunct(f.claim))) problems.push(`${l.where}: fact ${id}'s claim is not in the text verbatim`);
+      const i = attempt(problems, l.where, () => roleIndexOf(f, roles, pack));
+      const role = i === undefined ? undefined : roles[i];
+      if (role === undefined) problems.push(`${l.where}: fact ${id} is dated inside no role at its employer`);
+      else if (l.text !== evidenceLine(role.employer, role, f.claim)) problems.push(`${l.where}: the line is not "- employer (years): claim" for fact ${id}'s role (${role.employer}, ${role.start}..${role.end})`);
     }
   }
 

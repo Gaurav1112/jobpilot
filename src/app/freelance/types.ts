@@ -138,6 +138,8 @@ export const GigDocsPlan = defineType(
         .object({
           /** `quote` is the client's own words, a substring of the description; null for a plain hook. */
           hook: z.object({ text: z.string(), quote: z.string().nullable() }).strict(),
+          /** The line before the evidence list (empty when there is no evidence line). */
+          evidenceIntro: z.string(),
           evidence: z.array(FactLine),
           planIntro: z.string(),
           plan: z.array(z.string()),
