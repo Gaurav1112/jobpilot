@@ -168,7 +168,7 @@ describe('careers locator: rules', () => {
     const s = serve({ 'https://www.acme.test/robots.txt': { status: 503, body: 'down' }, 'https://www.acme.test/': file('drupal-home.html') });
     const site = await locate(cand('acme.test'), s.fetch);
     expect(site.method).toBe('none');
-    expect(site.reasons?.join(' ')).toMatch(/robots-unavailable|host-disabled:robots-unavailable/);
+    expect(site.reasons?.join(' ')).toMatch(/robots-unavailable/);
     expect(s.calls).not.toContain('https://www.acme.test/');
   });
 
@@ -258,9 +258,9 @@ describe('locator: run-scoped host state, status handling, budget (fix round 1)'
     const s = serve({ 'https://boards.greenhouse.io/alpha': { status: 429, body: 'slow' }, 'https://www.beta.test/': file('plain-home.html') });
     await locate(a, s.fetch, agent, hostsOf(a, b));
     const before = s.calls.length;
-    const site = await locate(b, s.fetch, agent, hostsOf(a, b));
+    // B's outcome depends on A's (the sibling's) state, so it is a refused step (input_rejected), never a stored result.
+    await expect(locate(b, s.fetch, agent, hostsOf(a, b))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringContaining('listed: host-disabled:http-429') });
     expect(s.calls.slice(before).filter((u) => u.includes('boards.greenhouse.io'))).toEqual([]);
-    expect(site.reasons).toContain('listed: host-disabled:http-429');
   });
 
   it('a plain 403 on a path disables that host (named http-403) but the careers. subdomain is still probed', async () => {

@@ -159,32 +159,73 @@ export interface HostState {
   readonly robots: Map<string, Promise<RobotsVerdict>>;
   readonly disabled: Map<string, string>;
 }
-export const createHostState = (): HostState => ({ robots: new Map(), disabled: new Map() });
+
+/** Where a run's disabled hosts are kept durably (the app's `AppStore` implements it). */
+export interface HostStateStore {
+  coverageHostState(runKey: string): ReadonlyMap<string, string>;
+  disableCoverageHost(runKey: string, host: string, reason: string, at: string): void;
+}
 
 class BudgetExhausted extends Error {}
 
+/** The step refused because of state another candidate set: never stored as a finished step (see makeCareersLocator). */
+const HOST_DISABLED = 'host-disabled:';
+
 /**
- * The careers-locator agent. Call it ONCE PER RUN: the host state (robots.txt cache, disabled hosts) lives as long as
- * the returned agent, so a pipeline builds a new one for each coverage run and feeds it the candidates in a fixed order.
+ * The careers-locator agent for ONE coverage run. Build it inside each run, with that run's key (the run id the
+ * supervisor resumes under, e.g. `coverage-2026-10-13`); never keep one in a long-lived process such as the dashboard,
+ * whose host state would outlive its run.
+ *
+ * Host state and memoisation (a step is one candidate, and its step key knows nothing of its siblings):
+ * - A host that is disabled (challenge, 401, 403, 429, a robots.txt refusal) is written to `store` under `runKey`
+ *   BEFORE the candidate that caused it returns, and loaded again when a locator is built for the same key, so a
+ *   resumed run still knows every host disabled before the crash. Without a store the state lives in memory only.
+ * - A result that carries any `host-disabled:*` reason depends on a sibling's request, not on its own input, so it is
+ *   never returned as a finished result: the step fails with `input_rejected` (a failed step is not replayed, it
+ *   trips no breaker, and its detail names the reason). It is re-evaluated in every later run. A candidate whose OWN
+ *   request was refused returns an ordinary result (its disable is already persisted).
+ * - robots.txt verdicts are not persisted: after a crash each host's robots.txt is fetched once more on resume.
+ * - The shared robots.txt fetch runs under the abort signal of whichever candidate asks first; if that candidate's
+ *   step times out mid-fetch, the host becomes robots-unavailable for the run (conservative, intended).
  */
-export function makeCareersLocator(opts: { readonly hosts?: HostState; readonly maxRequests?: number } = {}) {
-  const hosts = opts.hosts ?? createHostState();
+export function makeCareersLocator(opts: { readonly runKey?: string; readonly store?: HostStateStore; readonly maxRequests?: number } = {}) {
+  const state: HostState = { robots: new Map(), disabled: new Map() };
+  const runKey = opts.runKey ?? 'unkeyed';
+  if (opts.store !== undefined) for (const [h, why] of opts.store.coverageHostState(runKey)) state.disabled.set(h, why);
   const maxRequests = opts.maxRequests ?? MAX_REQUESTS;
-  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, hosts, maxRequests)]);
+  const disable = (host: string, why: string, at: string): void => {
+    if (state.disabled.has(host)) return;
+    opts.store?.disableCoverageHost(runKey, host, why, at); // durable first, then visible to the next candidate
+    state.disabled.set(host, why);
+  };
+  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, state, disable, maxRequests)]);
 }
 
-async function locate(c: CompanyCandidate, ctx: AgentContext, state: HostState, maxRequests: number): Promise<CareersSite> {
+async function locate(c: CompanyCandidate, ctx: AgentContext, state: HostState, disable: (host: string, why: string, at: string) => void, maxRequests: number): Promise<CareersSite> {
   const reasons: string[] = [];
+  let site: CareersSite;
   try {
-    return await probe(c, ctx, state, maxRequests, reasons);
+    site = await probe(c, ctx, state, disable, maxRequests, reasons);
   } catch (e) {
     if (!(e instanceof BudgetExhausted)) throw e;
     reasons.push('budget-exhausted');
-    return { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
+    site = { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
   }
+  const skipped = (site.reasons ?? []).filter((r) => r.includes(HOST_DISABLED));
+  if (skipped.length > 0) {
+    throw new KernelError('input_rejected', `skipped by run state set by another candidate (${skipped.join('; ')})${site.careersUrl === null ? '' : `; found ${site.careersUrl}`}`);
+  }
+  return site;
 }
 
-async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, maxRequests: number, reasons: string[]): Promise<CareersSite> {
+async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, disableHost: (host: string, why: string, at: string) => void, maxRequests: number, reasons: string[]): Promise<CareersSite> {
+  /** Hosts THIS candidate's own requests disabled: its refusals are its own outcome, unlike a sibling's. */
+  const own = new Set<string>();
+  const disable = (host: string, why: string, at: string): void => {
+    if (!state.disabled.has(host)) own.add(host);
+    disableHost(host, why, at);
+  };
+  const skipReason = (host: string, why: string): string => (own.has(host) ? `${why} (${host})` : `${HOST_DISABLED}${why}`);
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const http = ctx.http;
   const planned = new Set(locatorHosts(c));
@@ -210,12 +251,12 @@ async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, m
         return { kind: 'miss', reason: hop > 0 ? `redirect to ${host} (off-domain)` : `${host} is not a planned host` };
       }
       const off = state.disabled.get(host);
-      if (off !== undefined) return { kind: 'miss', reason: `host-disabled:${off}` };
+      if (off !== undefined) return { kind: 'miss', reason: skipReason(host, off) };
       if (checkRobots) {
         const denial = robotsDenial(await robotsFor(host), u);
         if (denial !== null) return { kind: 'miss', reason: `${denial} (${host})` };
         const off2 = state.disabled.get(host);
-        if (off2 !== undefined) return { kind: 'miss', reason: `host-disabled:${off2}` };
+        if (off2 !== undefined) return { kind: 'miss', reason: skipReason(host, off2) };
       }
       // robots.txt is shared by the whole run, so it is counted but never refused by one candidate's budget
       if (checkRobots && requests >= maxRequests) throw new BudgetExhausted();
@@ -232,7 +273,7 @@ async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, m
       const plainDenied = page.status === 401 || page.status === 403;
       if (challenge || page.status === 429 || (plainDenied && checkRobots)) {
         const why = challenge ? 'challenge' : `http-${page.status}`;
-        state.disabled.set(host, why);
+        disable(host, why, ctx.clock.now());
         return { kind: 'challenge', reason: page.status === 429 && !challenge ? `rate-limited (429) on ${host}` : `${why} (${page.status}) on ${host}` };
       }
       if (page.status >= 300 && page.status < 400) {
@@ -249,21 +290,33 @@ async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, m
     return { kind: 'miss', reason: `more than ${MAX_HOPS} redirects from ${start.slice(0, 80)}` };
   }
 
-  /** The host's robots.txt for the run: fetched once, whoever asks first. */
+  /** The host's robots.txt for the run: fetched once, whoever asks first. Only settled verdicts are cached. */
   function robotsFor(host: string): Promise<RobotsVerdict> {
     const cached = state.robots.get(host);
     if (cached !== undefined) return cached;
     const p = (async (): Promise<RobotsVerdict> => {
-      const r = await fetchUrl(`https://${host}/robots.txt`, false);
-      if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
-      if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
-      if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
-      if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };
-      if (r.status >= 400) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${r.status}` };
-      return { kind: 'rules', robots: parseRobots(r.body) };
+      let verdict: RobotsVerdict;
+      try {
+        verdict = await robotsVerdict(host);
+      } catch (e) {
+        // e.g. a TimeoutError rethrown by the broker: the host is robots-unavailable for the run, never a cached rejection
+        verdict = { kind: 'disallow-all', reason: 'robots-unavailable', why: e instanceof Error ? e.name : 'error' };
+      }
+      if (verdict.kind === 'disallow-all') disable(host, verdict.reason, ctx.clock.now());
+      return verdict;
     })();
     state.robots.set(host, p);
     return p;
+  }
+
+  async function robotsVerdict(host: string): Promise<RobotsVerdict> {
+    const r = await fetchUrl(`https://${host}/robots.txt`, false);
+    if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
+    if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
+    if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
+    if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };
+    if (r.status >= 400) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${r.status}` };
+    return { kind: 'rules', robots: parseRobots(r.body) };
   }
 
   const miss = (what: string, r: Fetched): void => {

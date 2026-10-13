@@ -1006,6 +1006,17 @@ export class AppStore {
       .run(networkId, status, at);
   }
 
+  /** Disables `host` for the coverage run `runKey`. The first reason stays (a later one for the same host is ignored). */
+  disableCoverageHost(runKey: string, host: string, reason: string, at: string): void {
+    this.db.prepare(`INSERT OR IGNORE INTO coverage_host_state (run_key, host, reason, at) VALUES (?, ?, ?, ?)`).run(runKey, host, reason, at);
+  }
+
+  /** The hosts disabled so far in coverage run `runKey`, host to reason, by host. */
+  coverageHostState(runKey: string): Map<string, string> {
+    const rows = this.db.prepare(`SELECT host, reason FROM coverage_host_state WHERE run_key = ? ORDER BY host`).all(runKey) as { host: string; reason: string }[];
+    return new Map(rows.map((r) => [r.host, r.reason]));
+  }
+
   /**
    * Records one coverage verdict for a company (the weekly run). The user's override always wins: a rejected company
    * stays `rejected` (only `updated_at` moves), an approved one is `verified` whatever the verdict says short of a

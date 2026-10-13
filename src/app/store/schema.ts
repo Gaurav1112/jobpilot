@@ -333,4 +333,15 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   );
   CREATE INDEX companies_by_status ON companies (status, company_key);
   `,
+  // Coverage Task 3 fix round 2: the hosts a coverage run has disabled (challenge, 401, 403, 429, robots refusals), keyed
+  // by the run, so a resumed run starts knowing them. A literal on purpose.
+  `
+  CREATE TABLE coverage_host_state (
+    run_key TEXT NOT NULL,
+    host TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    at TEXT NOT NULL,
+    PRIMARY KEY (run_key, host)
+  );
+  `,
 ];

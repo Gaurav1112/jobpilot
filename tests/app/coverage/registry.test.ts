@@ -83,10 +83,10 @@ describe('migration 9: the companies registry', () => {
     const before = dumpHash(db);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toBeUndefined();
     const s = AppStore.on(kernel);
-    expect(APP_MIGRATIONS.length).toBe(9);
-    expect(s.schemaVersion()).toBe(9);
+    expect(APP_MIGRATIONS.length).toBe(10);
+    expect(s.schemaVersion()).toBe(10);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toEqual({ name: 'companies' });
-    expect(dumpHash(db, ['companies'])).toBe(before);
+    expect(dumpHash(db, ['companies', 'coverage_host_state'])).toBe(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
   });
 
@@ -102,6 +102,21 @@ describe('migration 9: the companies registry', () => {
   it('freezes its SQL as a literal (no interpolation)', () => {
     expect(typeof APP_MIGRATIONS[8]).toBe('string');
     expect(APP_MIGRATIONS[8]).toContain("CHECK (status IN ('verified', 'proposed', 'rejected', 'failing', 'failed'))");
+  });
+});
+
+describe('migration 10: coverage host state', () => {
+  it('adds coverage_host_state, keeps the earlier SQL, and round-trips a disabled host per run', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    expect(s.schemaVersion()).toBe(10);
+    const cols = (s.kernel.db.prepare(`PRAGMA table_info(coverage_host_state)`).all() as { name: string }[]).map((c) => c.name);
+    expect(cols).toEqual(['run_key', 'host', 'reason', 'at']);
+    s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-429', '2026-10-13T01:00:00.000Z');
+    s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-403', '2026-10-13T02:00:00.000Z'); // the first reason stays
+    s.disableCoverageHost('coverage-2026-10-20', 'b.test', 'challenge', '2026-10-20T01:00:00.000Z');
+    expect([...s.coverageHostState('coverage-2026-10-13')]).toEqual([['a.test', 'http-429']]);
+    expect([...s.coverageHostState('coverage-2026-10-20')]).toEqual([['b.test', 'challenge']]);
+    expect([...s.coverageHostState('coverage-none')]).toEqual([]);
   });
 });
 
