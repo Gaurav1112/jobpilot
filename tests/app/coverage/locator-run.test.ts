@@ -100,7 +100,7 @@ describe('through the supervisor: a sibling-dependent outcome is not memoised', 
     id: 'loc',
     version: '1.0.0',
     seed: { type: Seed, guarantees: [] },
-    teams: [{ id: 'coverage', lead: 'coverage-lead', members: ['careers-locator'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }],
+    teams: [{ id: 'coverage-locator', lead: 'coverage-locator-lead', members: ['careers-locator'], exitGuarantees: [], breaker: { consecutiveFailures: 3 } }],
     edges: [{ type: 'CompanyCandidate@1', to: 'careers-locator' }],
   };
   const build = (app: AppStore, runKey: string, fetch: FetchLike, invoked: string[]) => {

@@ -1,0 +1,3 @@
+# The e2e pick: one company the user named.
+companies:
+  - {name: Alpha Robotics, website: 'https://alpha.test', careersUrl: 'https://alpha.test/careers'}

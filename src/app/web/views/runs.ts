@@ -10,7 +10,7 @@ export interface RunsPageData {
   readonly istTime: (iso: string) => string;
 }
 
-const COLUMNS: readonly (readonly [key: string, label: string])[] = [
+const BASE_COLUMNS: readonly (readonly [key: string, label: string])[] = [
   ['done', 'Done'],
   ['replayed', 'Replayed'],
   ['failed', 'Failed'],
@@ -25,15 +25,29 @@ const n = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ?
 const s = (v: unknown): string => (typeof v === 'string' ? v : '?');
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {
-  failed: 'Failed', gone: 'Gone from the source', input_rejected: 'Input rejected', quarantined: 'Quarantined', skipped: 'Skipped',
+  failed: 'Failed', gone: 'Gone from the source', input_rejected: 'Input rejected', deferred: 'Deferred', quarantined: 'Quarantined', skipped: 'Skipped',
   'commit-failed': 'Documents not written', 'docs-blocked': 'Documents blocked by QA', 'docs-stale': 'Documents cite a rejected fact',
 };
+
+/** A coverage run counts host-disabled deferrals apart from input rejections; only its table gets the column. */
+const DEFERRED_COLUMN = ['deferred', 'Deferred'] as const;
+
+/** The problem's label: a coverage deferral names the host's state, `Deferred: host disabled (<why>)`. */
+function problemLabel(p: Record<string, unknown>): string {
+  const kind = s(p['kind']);
+  if (kind === 'deferred') {
+    const why = /host-disabled:([a-z0-9-]+)/i.exec(s(p['reason']))?.[1] ?? 'unknown';
+    return 'Deferred: host disabled (' + why + ')';
+  }
+  return PROBLEM_LABEL[kind] ?? kind;
+}
 
 function counts(c: unknown): Html {
   const by = isObj(c) && isObj(c['byAgent']) ? c['byAgent'] : {};
   const agents = Object.keys(by).sort();
   if (agents.length === 0) return html`<p class="muted">No steps recorded.</p>`;
   const totals = isObj(c) && isObj(c['totals']) ? c['totals'] : {};
+  const COLUMNS = 'deferred' in totals ? [...BASE_COLUMNS, DEFERRED_COLUMN] : BASE_COLUMNS;
   return html`<div class="table-wrap"><table class="counts">
 <thead><tr><th scope="col">Agent</th>${COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}</tr></thead>
 <tbody>${agents.map((a) => {
@@ -53,7 +67,7 @@ function problems(ps: readonly unknown[] | undefined): Html {
   if (list.length === 0) return html`<p class="good-text">No problems.</p>`;
   return html`<h3>Problems <span class="num">(${list.length})</span></h3><ul class="problems">${list.map(
     (p) =>
-      html`<li><span class="problem-kind">${PROBLEM_LABEL[s(p['kind'])] ?? s(p['kind'])}</span> <code>${s(p['agent'])}</code> <span class="problem-item">${s(p['item'])}</span><span class="problem-reason">${s(p['reason'])}</span></li>`,
+      html`<li><span class="problem-kind">${problemLabel(p)}</span> <code>${s(p['agent'])}</code> <span class="problem-item">${s(p['item'])}</span><span class="problem-reason">${s(p['reason'])}</span></li>`,
   )}</ul>`;
 }
 

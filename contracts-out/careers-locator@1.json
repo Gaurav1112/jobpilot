@@ -1,0 +1,184 @@
+{
+  "hash": "26fe7be5b82c87227a17144a502e63e2a26c59a0ed8b63ce77e77a1220890033",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "careersUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "companyKey": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "pick",
+              "remoteintech",
+              "yc",
+              "jobs"
+            ],
+            "type": "string"
+          },
+          "website": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "companyKey",
+          "name",
+          "website",
+          "careersUrl",
+          "source",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "CompanyCandidate@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "coverage:candidate-hosts"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "careers-locator",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "additionalProperties": false,
+            "properties": {
+              "careersUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "companyKey": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "runDate": {
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "type": "string"
+              },
+              "source": {
+                "enum": [
+                  "pick",
+                  "remoteintech",
+                  "yc",
+                  "jobs"
+                ],
+                "type": "string"
+              },
+              "website": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "companyKey",
+              "name",
+              "website",
+              "careersUrl",
+              "source",
+              "runDate"
+            ],
+            "type": "object"
+          },
+          "careersUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "method": {
+            "enum": [
+              "listed",
+              "homepage-link",
+              "path",
+              "subdomain",
+              "sitemap",
+              "none"
+            ],
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate",
+          "careersUrl",
+          "method",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "type": "CareersSite@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "coverage-locator",
+    "timeoutMs": 120000,
+    "version": "1.0.0"
+  }
+}

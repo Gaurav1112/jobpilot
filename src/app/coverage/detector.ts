@@ -2,7 +2,7 @@ import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
-import { asHttps, BudgetExhausted, HOST_DISABLED, MAX_HOPS, makeRunGate, refuseSiblingDependent, stepFetcher, type Fetched, type HostStateStore, type RunGate } from './gate.js';
+import { asHttps, BudgetExhausted, gateOf, HOST_DISABLED, MAX_HOPS, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate } from './gate.js';
 import { locatorHosts } from './locator.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
@@ -52,9 +52,9 @@ const MAX_EVIDENCE = 24;
 export const platformDetectorContract = defineContract({
   id: 'platform-detector',
   version: '1.0.0',
-  description: 'Identifies the ATS behind a careers page from its link, script or JSON-LD signatures',
+  description: 'Identifies the ATS behind a careers page from its link, script or JSON-LD signatures; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['platform-detector'],
-  team: 'coverage',
+  team: 'coverage-detector',
   kind: 'io',
   consumes: CareersSite,
   produces: PlatformGuess,
@@ -415,10 +415,12 @@ function decide(c: Collected): Decision {
 
 /**
  * The platform-detector agent for ONE coverage run. Give it the run's `gate` (`makeRunGate`, the one the careers
- * locator of the same run uses) so both obey one host state; without one it builds its own from `runKey` and `store`.
+ * locator of the same run uses) so both obey one host state; without one it builds its own from `runKey` and `store`
+ * (both required). A host this agent disables is written to the store (`coverage_host_state`) before the step returns:
+ * its one side channel outside its output, run-scoped politeness state, never data.
  */
-export function makePlatformDetector(opts: { readonly gate?: RunGate; readonly runKey?: string; readonly store?: HostStateStore; readonly maxRequests?: number } = {}) {
-  const gate = opts.gate ?? makeRunGate({ ...(opts.runKey !== undefined ? { runKey: opts.runKey } : {}), ...(opts.store !== undefined ? { store: opts.store } : {}) });
+export function makePlatformDetector(opts: GateSource & { readonly maxRequests?: number }) {
+  const gate = gateOf(opts);
   const maxRequests = opts.maxRequests ?? DETECTOR_MAX_REQUESTS;
   return defineAgent(platformDetectorContract, async (site, ctx) => [await detect(site, ctx, gate, maxRequests)]);
 }

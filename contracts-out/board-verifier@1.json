@@ -1,0 +1,422 @@
+{
+  "hash": "9868ed4c1de8f940da829996c65e3bea6306741626a77478983b1586c681cb06",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "boardUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "platform": {
+            "anyOf": [
+              {
+                "enum": [
+                  "workday",
+                  "eightfold",
+                  "oracle",
+                  "icims",
+                  "successfactors",
+                  "smartrecruiters",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem",
+                  "greenhouse",
+                  "lever",
+                  "ashby",
+                  "jsonld-sitemap"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "routedFrom": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "signature": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "site": {
+            "additionalProperties": false,
+            "properties": {
+              "candidate": {
+                "additionalProperties": false,
+                "properties": {
+                  "careersUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "companyKey": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "name": {
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "runDate": {
+                    "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "type": "string"
+                  },
+                  "source": {
+                    "enum": [
+                      "pick",
+                      "remoteintech",
+                      "yc",
+                      "jobs"
+                    ],
+                    "type": "string"
+                  },
+                  "website": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "companyKey",
+                  "name",
+                  "website",
+                  "careersUrl",
+                  "source",
+                  "runDate"
+                ],
+                "type": "object"
+              },
+              "careersUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "method": {
+                "enum": [
+                  "listed",
+                  "homepage-link",
+                  "path",
+                  "subdomain",
+                  "sitemap",
+                  "none"
+                ],
+                "type": "string"
+              },
+              "reasons": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "candidate",
+              "careersUrl",
+              "method",
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "site",
+          "platform",
+          "slug",
+          "boardUrl",
+          "signature",
+          "routedFrom",
+          "evidence"
+        ],
+        "type": "object"
+      },
+      "type": "PlatformGuess@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "coverage:candidate-hosts"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "board-verifier",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "boardName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "guess": {
+            "additionalProperties": false,
+            "properties": {
+              "boardUrl": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "platform": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "workday",
+                      "eightfold",
+                      "oracle",
+                      "icims",
+                      "successfactors",
+                      "smartrecruiters",
+                      "workable",
+                      "recruitee",
+                      "teamtailor",
+                      "personio",
+                      "bamboohr",
+                      "breezy",
+                      "pinpoint",
+                      "rippling",
+                      "gem",
+                      "greenhouse",
+                      "lever",
+                      "ashby",
+                      "jsonld-sitemap"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "routedFrom": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "signature": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "site": {
+                "additionalProperties": false,
+                "properties": {
+                  "candidate": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "careersUrl": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "companyKey": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "name": {
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "runDate": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string"
+                      },
+                      "source": {
+                        "enum": [
+                          "pick",
+                          "remoteintech",
+                          "yc",
+                          "jobs"
+                        ],
+                        "type": "string"
+                      },
+                      "website": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "companyKey",
+                      "name",
+                      "website",
+                      "careersUrl",
+                      "source",
+                      "runDate"
+                    ],
+                    "type": "object"
+                  },
+                  "careersUrl": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "evidence": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "method": {
+                    "enum": [
+                      "listed",
+                      "homepage-link",
+                      "path",
+                      "subdomain",
+                      "sitemap",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  "reasons": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "candidate",
+                  "careersUrl",
+                  "method",
+                  "evidence"
+                ],
+                "type": "object"
+              },
+              "slug": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "site",
+              "platform",
+              "slug",
+              "boardUrl",
+              "signature",
+              "routedFrom",
+              "evidence"
+            ],
+            "type": "object"
+          },
+          "jobsSeen": {
+            "anyOf": [
+              {
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "verified",
+              "proposed",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "guess",
+          "status",
+          "reasons",
+          "boardName",
+          "jobsSeen"
+        ],
+        "type": "object"
+      },
+      "type": "CompanyVerdict@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "coverage-verifier",
+    "timeoutMs": 60000,
+    "version": "1.0.0"
+  }
+}

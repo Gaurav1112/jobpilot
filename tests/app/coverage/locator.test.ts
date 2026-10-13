@@ -15,6 +15,10 @@ import { issueContext } from '../../../src/kernel/broker.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
+import { memoryHostStateStore } from '../../../src/app/coverage/gate.js';
+
+/** A fresh run gate's source: its own key on an explicit memory store. */
+const fresh = () => ({ runKey: 'test', store: memoryHostStateStore() });
 
 const FIX = new URL('../../fixtures/coverage/locator/', import.meta.url);
 const file = (name: string): string => readFileSync(new URL(name, FIX), 'utf8');
@@ -52,7 +56,7 @@ function serve(routes: Record<string, Route | string>) {
   return { fetch, calls };
 }
 
-async function locate(c: CompanyCandidate, fetch: FetchLike, agent = makeCareersLocator(), egressFor: readonly CompanyCandidate[] = [c]): Promise<CareersSite> {
+async function locate(c: CompanyCandidate, fetch: FetchLike, agent = makeCareersLocator(fresh()), egressFor: readonly CompanyCandidate[] = [c]): Promise<CareersSite> {
   const ctx = issueContext({
     contract: careersLocatorContract,
     policy: PRODUCT_POLICY_V1,
@@ -244,7 +248,7 @@ describe('locator: run-scoped host state, status handling, budget (fix round 1)'
   it('one robots.txt fetch per host per run, across candidates', async () => {
     const a = gh('alpha');
     const b = gh('beta');
-    const agent = makeCareersLocator();
+    const agent = makeCareersLocator(fresh());
     const s = serve({ 'https://boards.greenhouse.io/alpha': 'x', 'https://boards.greenhouse.io/beta': 'x' });
     await locate(a, s.fetch, agent, hostsOf(a, b));
     await locate(b, s.fetch, agent, hostsOf(a, b));
@@ -254,7 +258,7 @@ describe('locator: run-scoped host state, status handling, budget (fix round 1)'
   it('a host disabled by one candidate (429) is skipped by the next, with host-disabled:<why>', async () => {
     const a = gh('alpha');
     const b = gh('beta');
-    const agent = makeCareersLocator();
+    const agent = makeCareersLocator(fresh());
     const s = serve({ 'https://boards.greenhouse.io/alpha': { status: 429, body: 'slow' }, 'https://www.beta.test/': file('plain-home.html') });
     await locate(a, s.fetch, agent, hostsOf(a, b));
     const before = s.calls.length;
@@ -334,7 +338,7 @@ describe('locator: run-scoped host state, status handling, budget (fix round 1)'
 
   it('over the request budget: none with budget-exhausted, never a throw', async () => {
     const s = serve({ 'https://www.acme.test/': file('plain-home.html') });
-    const site = await locate(cand('acme.test'), s.fetch, makeCareersLocator({ maxRequests: 4 }));
+    const site = await locate(cand('acme.test'), s.fetch, makeCareersLocator({ ...fresh(), maxRequests: 4 }));
     expect(site).toMatchObject({ method: 'none', careersUrl: null });
     expect(site.reasons).toContain('budget-exhausted');
     expect(s.calls.length).toBeLessThanOrEqual(5);

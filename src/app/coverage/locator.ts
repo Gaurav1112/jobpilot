@@ -1,7 +1,7 @@
 import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import type { EgressSets } from '../../kernel/broker.js';
-import { asHttps, BudgetExhausted, makeRunGate, refuseSiblingDependent, stepFetcher, type Fetched, type HostStateStore, type RunGate } from './gate.js';
+import { asHttps, BudgetExhausted, gateOf, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
 import { CareersSite, CompanyCandidate } from './types.js';
@@ -130,9 +130,9 @@ export function sitemapLocs(xml: string): string[] {
 export const careersLocatorContract = defineContract({
   id: 'careers-locator',
   version: '1.0.0',
-  description: 'Finds a candidate company\'s careers URL by fixed probes that honour robots.txt',
+  description: 'Finds a candidate company\'s careers URL by fixed probes that honour robots.txt; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['careers-locator'],
-  team: 'coverage',
+  team: 'coverage-locator',
   kind: 'io',
   consumes: CompanyCandidate,
   produces: CareersSite,
@@ -148,12 +148,14 @@ export const careersLocatorContract = defineContract({
  * The careers-locator agent for ONE coverage run. Build it inside each run, with that run's key (the run id the
  * supervisor resumes under, e.g. `coverage-2026-10-13`); never keep one in a long-lived process such as the dashboard,
  * whose host state would outlive its run. Give it the run's `gate` (`makeRunGate`) to share the host state with the
- * platform detector of the same run; without one it builds its own from `runKey` and `store`.
+ * platform detector of the same run; without one it builds its own from `runKey` and `store` (both required, so a
+ * resumed run always finds the hosts disabled before a crash).
  *
  * Host state and memoisation (a step is one candidate, and its step key knows nothing of its siblings):
  * - A host that is disabled (challenge, 401, 403, 429, a robots.txt refusal) is written to `store` under `runKey`
  *   BEFORE the candidate that caused it returns, and loaded again when a locator is built for the same key, so a
- *   resumed run still knows every host disabled before the crash. Without a store the state lives in memory only.
+ *   resumed run still knows every host disabled before the crash. This write (`coverage_host_state`, through the
+ *   app's `AppStore`) is the agent's one side channel outside its output: run-scoped politeness state, never data.
  * - A result that carries any `host-disabled:*` reason depends on a sibling's request, not on its own input, so it is
  *   never returned as a finished result: the step fails with `input_rejected` (a failed step is not replayed, it
  *   trips no breaker, and its detail names the reason). It is re-evaluated in every later run. A candidate whose OWN
@@ -162,8 +164,8 @@ export const careersLocatorContract = defineContract({
  * - The shared robots.txt fetch runs under the abort signal of whichever candidate asks first; if that candidate's
  *   step times out mid-fetch, the host becomes robots-unavailable for the run (conservative, intended).
  */
-export function makeCareersLocator(opts: { readonly runKey?: string; readonly store?: HostStateStore; readonly gate?: RunGate; readonly maxRequests?: number } = {}) {
-  const gate = opts.gate ?? makeRunGate({ ...(opts.runKey !== undefined ? { runKey: opts.runKey } : {}), ...(opts.store !== undefined ? { store: opts.store } : {}) });
+export function makeCareersLocator(opts: GateSource & { readonly maxRequests?: number }) {
+  const gate = gateOf(opts);
   const maxRequests = opts.maxRequests ?? MAX_REQUESTS;
   return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, gate, maxRequests)]);
 }

@@ -1,0 +1,132 @@
+{
+  "hash": "37aa0b803028f64b550e504f57af070d86d31829d7d75c56e04de9f3684fa530",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "items": {},
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "picks",
+              "remoteintech",
+              "yc",
+              "jobs"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "runDate",
+          "source"
+        ],
+        "type": "object"
+      },
+      "type": "CoverageRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "codeload.github.com",
+      "yc-oss.github.io"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "company-seed",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "careersUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "companyKey": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "pick",
+              "remoteintech",
+              "yc",
+              "jobs"
+            ],
+            "type": "string"
+          },
+          "website": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "companyKey",
+          "name",
+          "website",
+          "careersUrl",
+          "source",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "CompanyCandidate@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [
+        2000,
+        8000
+      ],
+      "max": 2,
+      "on": [
+        "network",
+        "overloaded",
+        "rate_limit",
+        "timeout"
+      ]
+    },
+    "team": "coverage-seed",
+    "timeoutMs": 60000,
+    "version": "1.0.0"
+  }
+}

@@ -25,8 +25,10 @@ export interface Problem {
    * content or the system failed). `docs-stale` (review I2): ready documents cite a fact the user has since rejected.
    * `source-dead` (freelance §4.5): a gig source with no yield for weeks or failing every fetch; never removed.
    * `mail-quarantined` (freelance §4.3): an alert email no parser recognised, set aside whole; not a failure.
+   * `deferred` (coverage): a step refused with `input_rejected` because a host was disabled in the run
+   * (`host-disabled:<why>`): nothing is wrong with its input, it is asked again in a later run. Not a failure.
    */
-  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead' | 'mail-quarantined';
+  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'deferred' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead' | 'mail-quarantined';
   readonly agent: string;
   /** What the step was working on: the board (company and ats:slug), the career link, the posting or the job. */
   readonly item: string;
@@ -76,6 +78,8 @@ export const qaCause = (failedIds: readonly string[]): 'content' | 'system' =>
   failedIds.some((id) => (QA_CHECK_CAUSE[id] ?? 'system') === 'system') ? 'system' : 'content';
 
 const MAX_TEXT = 200;
+/** The coverage gate's marker of a refusal decided by run state (a disabled host), not by the input (`coverage/gate.ts`). */
+export const HOST_DISABLED_MARK = 'host-disabled:';
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
 const s = (v: unknown): string => (typeof v === 'string' ? v : '?');
 const oneLine = (t: string): string => {
@@ -149,6 +153,17 @@ export function itemOf(env: Pick<Envelope, 'type' | 'payload'>): string {
       return p['platform'] === 'boards' && isObj(p['item']) ? `boards: ${s(p['item']['company'])} — ${s(p['item']['title'])}` : `${s(p['platform'])}${p['query'] ? ` ${s(p['query'])}` : ''}`;
     case 'RawGig@1':
       return `${s(p['platform'])}:${s(p['sourceId'])}`;
+    // coverage (career sites): the company, by name and registrable domain
+    case 'CoverageRequest@1':
+      return `coverage seed ${s(p['source'])}`;
+    case 'CompanyCandidate@1':
+      return `${s(p['name'])} (${s(p['companyKey'])})`;
+    case 'CareersSite@1':
+      return isObj(p['candidate']) ? `${s(p['candidate']['name'])} (${s(p['candidate']['companyKey'])}) ${s(p['careersUrl'])}` : env.type;
+    case 'PlatformGuess@1': {
+      const c = isObj(p['site']) && isObj(p['site']['candidate']) ? p['site']['candidate'] : {};
+      return `${s(c['name'])} (${s(c['companyKey'])}) ${s(p['platform'])}:${s(p['slug'])}`;
+    }
     default: {
       const gig = gigIn(env);
       if (gig) return `${s(gig['title'])} (${s(gig['platform'])} gig ${s(gig['gigKey'])})`;
@@ -216,7 +231,9 @@ export function runProblems(
             : error === 'gone'
               ? 'gone'
               : error === 'input_rejected'
-                ? 'input_rejected'
+                ? s(e?.data['detail']).includes(HOST_DISABLED_MARK)
+                  ? 'deferred'
+                  : 'input_rejected'
                 : 'failed';
     let item: string;
     try {

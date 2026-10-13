@@ -414,7 +414,7 @@ export const companySeedContract = defineContract({
   version: '1.0.0',
   description: 'Builds the candidate companies for a coverage run from one source',
   skills: ['company-seed'],
-  team: 'coverage',
+  team: 'coverage-seed',
   kind: 'io',
   consumes: CoverageRequest,
   produces: CompanyCandidate,

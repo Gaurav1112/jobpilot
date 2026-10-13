@@ -1022,8 +1022,11 @@ export class AppStore {
    * stays `rejected` (only `updated_at` moves), an approved one is `verified` whatever the verdict says short of a
    * failure. A failed verdict keeps the last known platform and board; a verified company that fails 3 weeks running
    * becomes `failing` (shown, never silently removed), and a verified verdict resets the count.
+   * `countFailure: false` (a second coverage run in the same coverage week): a failed verdict on a known company
+   * keeps its fail count, status and failing-since as they are (the week's failure was already counted); only the
+   * reasons and `updated_at` move. Default true.
    */
-  upsertCompanyVerdict(v: CompanyVerdict, at: string): void {
+  upsertCompanyVerdict(v: CompanyVerdict, at: string, opts: { readonly countFailure?: boolean } = {}): void {
     const cand = v.guess.site.candidate;
     this.tx(() => {
       const prev = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(cand.companyKey) as CompanyRowDb | undefined;
@@ -1043,6 +1046,10 @@ export class AppStore {
         lastVerified = at;
       } else if (v.status === 'proposed') {
         status = prev?.user_override === 'approved' ? 'verified' : 'proposed';
+      } else if (opts.countFailure === false && prev !== undefined) {
+        failWeeks = prev.fail_weeks;
+        failingSince = prev.failing_since;
+        status = prev.status;
       } else {
         failWeeks = (prev?.fail_weeks ?? 0) + 1;
         failingSince = prev?.failing_since ?? at;

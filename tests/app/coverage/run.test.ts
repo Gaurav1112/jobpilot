@@ -8,6 +8,7 @@ import { runFreelance } from '../../../src/app/freelance/run.js';
 import { runCoverageCommand } from '../../../src/app/run-command.js';
 import { AppStore } from '../../../src/app/store/app-store.js';
 import { withLock } from '../../../src/app/lock.js';
+import { offlineProviders } from '../../../src/app/offline.js';
 
 const root = join(import.meta.dirname, '../../..');
 const homes: string[] = [];
@@ -24,18 +25,21 @@ function newHome(): string {
 const SUN_0700 = '2026-10-11T01:30:00.000Z';
 const MON_1000 = '2026-10-12T04:30:00.000Z';
 const BAD = 'companies:\n  - {website: https://x.test}\n';
+const FIX = join(root, 'tests/fixtures/coverage/e2e');
+/** The coverage run on the e2e fixtures, never the network. */
+const offline = (now: string) => ({ clock: { now: () => now }, fetch: offlineProviders(FIX).fetch, sleep: async () => {}, codeHash: 'run-test' });
 
-describe('runCoverage (empty pipeline)', () => {
+describe('runCoverage: run id, lock, strict companies.yaml', () => {
   it('takes the lock, runs as coverage-<IST date> and completes; a second run the same day is -2', async () => {
     const home = newHome();
-    const a = await runCoverage({ home, clock: { now: () => SUN_0700 } });
+    const a = await runCoverage({ home, ...offline(SUN_0700) });
     expect(a).toMatchObject({ runId: 'coverage-2026-10-11', resumed: false, exitCode: 0 });
-    const b = await runCoverage({ home, clock: { now: () => SUN_0700 } });
+    const b = await runCoverage({ home, ...offline(SUN_0700) });
     expect(b.runId).toBe('coverage-2026-10-11-2');
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
       expect(app.kernel.getRun('coverage-2026-10-11')).toMatchObject({ pipeline: 'jobpilot-coverage', status: 'completed' });
-      expect(app.kernel.events('coverage-2026-10-11').map((e) => e.kind)).toEqual(['coverage.summary']);
+      expect(app.kernel.events('coverage-2026-10-11').map((e) => e.kind)).toEqual(['coverage.projected', 'coverage.summary']);
     } finally {
       app.close();
     }
@@ -44,14 +48,14 @@ describe('runCoverage (empty pipeline)', () => {
   it('holds the lock while it runs', async () => {
     const home = newHome();
     await withLock(home, 'run', async () => {
-      await expect(runCoverage({ home, clock: { now: () => SUN_0700 } })).rejects.toThrow(/another jobpilot process/);
+      await expect(runCoverage({ home, ...offline(SUN_0700) })).rejects.toThrow(/another jobpilot process/);
     });
   });
 
   it('refuses a malformed companies.yaml, and writes no run', async () => {
     const home = newHome();
     writeFileSync(join(home, 'pack', 'companies.yaml'), BAD);
-    await expect(runCoverage({ home, clock: { now: () => SUN_0700 } })).rejects.toThrow(/companies\.yaml/);
+    await expect(runCoverage({ home, ...offline(SUN_0700) })).rejects.toThrow(/companies\.yaml/);
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
       expect(app.kernel.getRun('coverage-2026-10-11')).toBeUndefined();
@@ -62,16 +66,16 @@ describe('runCoverage (empty pipeline)', () => {
 });
 
 describe('run-coverage --if-due end to end', () => {
-  const deps = (home: string, now: string, out: string[]) => ({ home, clock: { now: () => now }, notifier: async () => {}, out: (l: string) => out.push(l), err: (l: string) => out.push(`ERR ${l}`), online: async () => true });
+  const deps = (home: string, now: string, out: string[]) => ({ home, clock: { now: () => now }, notifier: async () => {}, out: (l: string) => out.push(l), err: (l: string) => out.push(`ERR ${l}`), online: async () => true, sleep: async () => {} });
 
   it('Sunday 05:59 does nothing; Monday catch-up runs once; a later start the same week is not due', async () => {
     const home = newHome();
     const out: string[] = [];
-    expect(await runCoverageCommand({ ifDue: true, notify: false }, deps(home, '2026-10-11T00:29:00.000Z', out))).toBe(0);
+    expect(await runCoverageCommand({ ifDue: true, notify: false, offlineFixtures: FIX }, deps(home, '2026-10-11T00:29:00.000Z', out))).toBe(0);
     expect(out).toEqual(['not due: before Sunday 06:00 IST']);
     out.length = 0;
-    expect(await runCoverageCommand({ ifDue: true, notify: false }, deps(home, MON_1000, out))).toBe(0);
-    expect(out.join('\n')).toMatch(/^run coverage-2026-10-12 for 2026-10-12: completed/);
+    expect(await runCoverageCommand({ ifDue: true, notify: false, offlineFixtures: FIX }, deps(home, MON_1000, out))).toBe(0);
+    expect(out.join('\n')).toMatch(/^run coverage-2026-10-12 for 2026-10-12 \(coverage week 2026-10-11\): completed/);
     expect(due(COVERAGE_DUE, home, '2026-10-14T04:30:00.000Z')).toMatchObject({ due: false, reason: "this coverage week's run completed" });
     const attempts = JSON.parse(readFileSync(join(home, 'coverage-attempts.json'), 'utf8')) as { date: string; attempts: { outcome: string }[] };
     expect(attempts).toMatchObject({ date: '2026-10-11', attempts: [{ outcome: 'done' }] });
@@ -82,7 +86,7 @@ describe('run-coverage --if-due end to end', () => {
     const home = newHome();
     writeFileSync(join(home, 'pack', 'companies.yaml'), BAD);
     const out: string[] = [];
-    expect(await runCoverageCommand({ ifDue: true, notify: false }, deps(home, SUN_0700, out))).toBe(2);
+    expect(await runCoverageCommand({ ifDue: true, notify: false, offlineFixtures: FIX }, deps(home, SUN_0700, out))).toBe(2);
     expect(out.join('\n')).toMatch(/^ERR error: .*companies\.yaml/m);
     expect(JSON.parse(readFileSync(join(home, 'coverage-attempts.json'), 'utf8')).attempts).toMatchObject([{ outcome: 'failed' }]);
   });
@@ -94,6 +98,6 @@ describe('a malformed companies.yaml and the freelance run', () => {
     writeFileSync(join(home, 'pack', 'companies.yaml'), BAD);
     const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: async () => { throw new Error('no network in this test'); }, sleep: async () => {}, pdftotext: '/usr/bin/false' });
     expect(s.warnings.join('\n')).toMatch(/companies\.yaml.*the freelance run ignores this file/);
-    await expect(runCoverage({ home, clock: { now: () => MON_1000 } })).rejects.toThrow(/companies\.yaml/);
+    await expect(runCoverage({ home, ...offline(MON_1000) })).rejects.toThrow(/companies\.yaml/);
   });
 });

@@ -52,3 +52,11 @@
 {"id": "label-matches-board-name", "input": {"a": "Stripe", "b": "stripe", "domainLabel": "stripe"}, "expected": {"same": true}}
 {"id": "label-does-not-rescue-other-company", "input": {"a": "Metaverse Labs", "b": "Meta Labs", "domainLabel": "meta"}, "expected": {"same": false}}
 {"id": "nokia-oyj-not-a-listed-suffix", "input": {"a": "Nokia Oyj", "b": "Nokia", "domainLabel": null}, "expected": {"same": false}}
+{"id": "generic-label-jobs-refused", "input": {"a": "Acme Robotics", "b": "jobs", "domainLabel": "jobs"}, "expected": {"same": false}}
+{"id": "generic-label-careers-refused", "input": {"a": "Northwind Traders", "b": "Careers", "domainLabel": "careers"}, "expected": {"same": false}}
+{"id": "generic-label-app-refused", "input": {"a": "Contoso", "b": "app", "domainLabel": "app"}, "expected": {"same": false}}
+{"id": "generic-label-join-refused", "input": {"a": "Fabrikam", "b": "JOIN", "domainLabel": "join"}, "expected": {"same": false}}
+{"id": "generic-label-team-refused", "input": {"a": "Litware", "b": "team", "domainLabel": "team"}, "expected": {"same": false}}
+{"id": "generic-label-hire-names-match", "input": {"a": "Hire Inc", "b": "Hire", "domainLabel": "hire"}, "expected": {"same": true}}
+{"id": "generic-label-get-names-match", "input": {"a": "Get", "b": "get", "domainLabel": "get"}, "expected": {"same": true}}
+{"id": "non-generic-label-containing-jobs", "input": {"a": "Adatum", "b": "jobsity", "domainLabel": "jobsity"}, "expected": {"same": true}}

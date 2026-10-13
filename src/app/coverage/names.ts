@@ -33,15 +33,26 @@ export function normalCompanyName(s: string): string {
 }
 
 /**
+ * Domain labels that say nothing about which company owns the domain (`jobs.com`, `careers.io`, `app.dev`, ...). A
+ * closed list, never extended at run time. The domain-label route of `sameCompany` is refused for them: a board named
+ * "Jobs" on `jobs.example` proves nothing. The names themselves may still match.
+ */
+export const GENERIC_LABELS: ReadonlySet<string> = new Set([
+  'jobs', 'careers', 'career', 'app', 'apply', 'work', 'hire', 'hiring', 'team', 'inc', 'join', 'talent', 'recruit', 'people', 'hr', 'boards', 'my',
+  'get', 'go', 'try', 'the',
+]);
+
+/**
  * True iff the two names are equal after `normalCompanyName`, or `b` (the name the board gives) with its spaces
- * removed is `domainLabel` (the company's registrable domain without its suffix, e.g. `purestorage`).
+ * removed is `domainLabel` (the company's registrable domain without its suffix, e.g. `purestorage`). The label route
+ * is refused when the label is one of GENERIC_LABELS.
  */
 export function sameCompany(a: string, b: string, domainLabel?: string): boolean {
   const na = normalCompanyName(a);
   const nb = normalCompanyName(b);
   if (na !== '' && na === nb) return true;
   const label = domainLabel?.normalize('NFKC').toLowerCase();
-  return label !== undefined && label !== '' && nb.replace(/ /gu, '') === label;
+  return label !== undefined && label !== '' && !GENERIC_LABELS.has(label) && nb.replace(/ /gu, '') === label;
 }
 
 export const companyNameMatcherContract = defineContract({

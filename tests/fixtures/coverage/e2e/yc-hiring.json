@@ -1,0 +1,20 @@
+[
+ {
+  "name": "Gamma",
+  "slug": "gamma",
+  "website": "https://gamma.test",
+  "all_locations": "Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "W24"
+ },
+ {
+  "name": "Delta Data",
+  "slug": "delta-data",
+  "website": "https://www.delta.test",
+  "all_locations": "Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "S23"
+ }
+]

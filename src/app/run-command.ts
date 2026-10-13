@@ -214,13 +214,23 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
 }
 
 /**
- * `jobpilot run-coverage [--if-due] [--offline-fixtures <dir>] [--no-notify]`, with the exit codes of `run`. `--if-due`
- * follows `COVERAGE_DUE` (owed from Sunday 06:00 IST through Saturday, `coverage-attempts.json`). The pipeline is empty
- * for now (`runCoverage`); `--offline-fixtures` is accepted and will feed the agents once they exist.
+ * `jobpilot run-coverage [--if-due] [--offline-fixtures <dir>] [--no-notify] [--limit <n>]`, with the exit codes of
+ * `run`: 0 clean; 1 when a step failed (other than gone, input-rejected or a host-disabled deferral) or was
+ * quarantined; 2 when the run could not run. `--if-due` follows `COVERAGE_DUE` (owed from Sunday 06:00 IST through
+ * Saturday, `coverage-attempts.json`). `--limit <n>` is for checks: every pick plus the first n other candidates.
  */
-export async function runCoverageCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
+export async function runCoverageCommand(o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number }, d: RunCommandDeps): Promise<0 | 1 | 2> {
   return runWithDue(COVERAGE_DUE, o, d, async (hooks) => {
-    const summary = await runCoverage({ home: d.home, clock: d.clock, ...hooks });
+    const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+    const summary = await runCoverage({
+      home: d.home,
+      clock: d.clock,
+      fetch: offline?.fetch ?? nodeFetch,
+      ...(o.notify ? { notifier: d.notifier } : {}),
+      ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+      ...(o.limit !== undefined ? { limit: o.limit } : {}),
+      ...hooks,
+    });
     return { text: formatCoverageSummary(summary), exitCode: summary.exitCode };
   });
 }

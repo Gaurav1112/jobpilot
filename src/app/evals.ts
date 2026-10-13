@@ -14,6 +14,7 @@ import { coverWriter } from './agents/writing/cover-writer.js';
 import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
 import { detectorEgressSets, makePlatformDetector, platformDetectorContract } from './coverage/detector.js';
+import { memoryHostStateStore } from './coverage/gate.js';
 import { companyNameMatcher } from './coverage/names.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
@@ -223,7 +224,7 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       // its colon), on ≥ 40 recorded, trimmed careers pages served from evals/datasets/coverage-detector/ (never the
       // network). Each case gets a fresh run gate, so one case's robots.txt or disabled host never leaks into another.
       name: 'coverage-detector',
-      agent: defineAgent(platformDetectorContract, (site, ctx) => makePlatformDetector().run(site, ctx)),
+      agent: defineAgent(platformDetectorContract, (site, ctx) => makePlatformDetector({ runKey: 'eval', store: memoryHostStateStore() }).run(site, ctx)),
       cases: loadJsonl(join(datasetDir, 'coverage-detector.jsonl')),
       fixtures: { fetch: offlineProviders(join(datasetDir, 'coverage-detector')).fetch, egressSets: (input) => detectorEgressSets([input as CareersSite]) },
       project: (outs) =>

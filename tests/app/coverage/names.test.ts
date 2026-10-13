@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { appEvalSpecs } from '../../../src/app/evals.js';
-import { companyNameMatcher, normalCompanyName, sameCompany } from '../../../src/app/coverage/names.js';
+import { companyNameMatcher, GENERIC_LABELS, normalCompanyName, sameCompany } from '../../../src/app/coverage/names.js';
 import { runEval } from '../../../src/evals/runner.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 
@@ -37,6 +37,20 @@ describe('sameCompany', () => {
     expect(sameCompany('Pure Storage Inc', 'purestorage', 'purestorage')).toBe(true);
     expect(sameCompany('Pure Storage Inc', 'Pure Storage', 'purestorage')).toBe(true);
     expect(sameCompany('Pure Storage Inc', 'purestorage')).toBe(false);
+  });
+  it('refuses the domain-label route for a generic label unless the names match by normalCompanyName (carry 2)', () => {
+    for (const label of ['jobs', 'careers', 'career', 'app', 'apply', 'work', 'hire', 'hiring', 'team', 'inc', 'join', 'talent', 'recruit', 'people', 'hr', 'boards', 'my', 'get', 'go', 'try', 'the']) {
+      expect(GENERIC_LABELS.has(label)).toBe(true);
+      expect(sameCompany('Acme Robotics', label, label)).toBe(false);
+      expect(sameCompany('Acme Robotics', label.toUpperCase(), label)).toBe(false);
+    }
+    // the names themselves match: the label plays no part
+    expect(sameCompany('Hire Inc', 'Hire', 'hire')).toBe(true);
+    expect(sameCompany('Get', 'get', 'get')).toBe(true);
+    // a label that is not generic still matches
+    expect(sameCompany('Pure Storage Inc', 'purestorage', 'purestorage')).toBe(true);
+    // a generic word inside a longer label is not generic
+    expect(sameCompany('Acme', 'jobsity', 'jobsity')).toBe(true);
   });
   it('does not match prefixes, aliases or look-alikes', () => {
     expect(sameCompany('Meta', 'Metaverse Labs')).toBe(false);

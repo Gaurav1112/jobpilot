@@ -70,23 +70,42 @@ export interface RunGate {
 /**
  * The gate for ONE coverage run. Build it inside each run, with that run's key (the run id the supervisor resumes
  * under, e.g. `coverage-2026-10-13`), and hand the same gate to every agent of the run; never keep one in a long-lived
- * process. With a store, the hosts disabled before a crash are loaded again for the same key. robots.txt verdicts are
- * not persisted: after a crash each host's robots.txt is fetched once more.
+ * process. `runKey` and `store` are required: the hosts disabled before a crash are loaded again for the same key, and
+ * every disable is written to the store before it is visible. Tests and evals pass `memoryHostStateStore()` explicitly.
+ * robots.txt verdicts are not persisted: after a crash each host's robots.txt is fetched once more.
  */
-export function makeRunGate(opts: { readonly runKey?: string; readonly store?: HostStateStore } = {}): RunGate {
+export function makeRunGate(opts: { readonly runKey: string; readonly store: HostStateStore }): RunGate {
   const state: HostState = { robots: new Map(), disabled: new Map() };
-  const runKey = opts.runKey ?? 'unkeyed';
-  if (opts.store !== undefined) for (const [h, why] of opts.store.coverageHostState(runKey)) state.disabled.set(h, why);
+  const { runKey, store } = opts;
+  for (const [h, why] of store.coverageHostState(runKey)) state.disabled.set(h, why);
   return {
     runKey,
     state,
     disable(host, why, at) {
       if (state.disabled.has(host)) return;
-      opts.store?.disableCoverageHost(runKey, host, why, at); // durable first, then visible to the next step
+      store.disableCoverageHost(runKey, host, why, at); // durable first, then visible to the next step
       state.disabled.set(host, why);
     },
   };
 }
+
+/** A HostStateStore held in memory only: for tests and evals, which pass it explicitly. A crash loses it. */
+export function memoryHostStateStore(): HostStateStore {
+  const rows = new Map<string, Map<string, string>>();
+  return {
+    coverageHostState: (runKey) => new Map([...(rows.get(runKey) ?? new Map<string, string>())].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
+    disableCoverageHost(runKey, host, reason) {
+      const m = rows.get(runKey) ?? new Map<string, string>();
+      if (!m.has(host)) m.set(host, reason);
+      rows.set(runKey, m);
+    },
+  };
+}
+
+/** How a coverage agent gets its run's host state: the run's shared gate, or a key and store to build its own from. */
+export type GateSource = { readonly gate: RunGate } | { readonly runKey: string; readonly store: HostStateStore };
+
+export const gateOf = (o: GateSource): RunGate => ('gate' in o ? o.gate : makeRunGate({ runKey: o.runKey, store: o.store }));
 
 export class BudgetExhausted extends Error {}
 

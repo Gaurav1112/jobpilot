@@ -4,7 +4,7 @@ import { capabilityProblems, CAPABILITY_ALLOW_LIST } from '../../../src/app/allo
 import { appEvalSpecs } from '../../../src/app/evals.js';
 import { runEval } from '../../../src/evals/runner.js';
 import { makePlatformDetector, platformDetectorContract, detectorEgressSets, detectorHosts, eightfoldConfigDomain, pageSignals, jobsLink, isSoft404, MAX_SCAN_CHARS } from '../../../src/app/coverage/detector.js';
-import { makeRunGate } from '../../../src/app/coverage/gate.js';
+import { makeRunGate, memoryHostStateStore } from '../../../src/app/coverage/gate.js';
 import { careersLocatorContract, locatorEgressSets, makeCareersLocator } from '../../../src/app/coverage/locator.js';
 import { matchUrl, SIGNATURES } from '../../../src/app/coverage/signatures.js';
 import { CareersSite, CompanyCandidate, Platform, PlatformGuess } from '../../../src/app/coverage/types.js';
@@ -14,6 +14,9 @@ import { fixedClock } from '../../../src/kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
 import { Store } from '../../../src/kernel/store/store.js';
+
+/** A fresh run gate's source: its own key on an explicit memory store. */
+const fresh = () => ({ runKey: 'test', store: memoryHostStateStore() });
 
 const RUN = '2026-10-13';
 const cand = (domain: string, over: Partial<CompanyCandidate> = {}): CompanyCandidate => ({
@@ -67,7 +70,7 @@ function ctxFor(fetch: FetchLike, sites: readonly CareersSite[], contract = plat
   });
 }
 
-async function detect(s: CareersSite, fetch: FetchLike, agent = makePlatformDetector(), egressFor: readonly CareersSite[] = [s]): Promise<PlatformGuess> {
+async function detect(s: CareersSite, fetch: FetchLike, agent = makePlatformDetector(fresh()), egressFor: readonly CareersSite[] = [s]): Promise<PlatformGuess> {
   const ctx = ctxFor(fetch, egressFor);
   const out = await agent.run(s, ctx);
   expect(out).toHaveLength(1);
@@ -506,7 +509,7 @@ describe('platform detector: the shared run gate', () => {
   });
 
   it('one robots.txt fetch per host per run, across the locator and the detector', async () => {
-    const gate = makeRunGate();
+    const gate = makeRunGate(fresh());
     const c = cand('acme.test');
     const net = serve({ 'https://www.acme.test/': page('<a href="/careers">Careers</a>'), 'https://www.acme.test/careers': page('<a href="https://jobs.lever.co/acme">x</a>') });
     const locCtx = issueContext({
@@ -537,7 +540,7 @@ describe('platform detector: contract and egress', () => {
   });
 
   it('the allow-list admits the detector to the candidate egress', () => {
-    expect(CAPABILITY_ALLOW_LIST.candidateEgress).toEqual(['careers-locator', 'platform-detector']);
+    expect(CAPABILITY_ALLOW_LIST.candidateEgress).toEqual(['careers-locator', 'platform-detector', 'board-verifier']);
     expect(capabilityProblems([platformDetectorContract, careersLocatorContract])).toEqual([]);
   });
 });

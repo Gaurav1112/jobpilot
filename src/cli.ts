@@ -278,13 +278,18 @@ program
 
 program
   .command('run-coverage')
-  .description('Run the weekly career-site coverage pipeline (empty for now: it loads the pack, companies.yaml strictly, and records the run). Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
+  .description('Run the weekly career-site coverage pipeline: seed companies, locate their careers sites, detect the platform, verify the board, and fill the companies registry. Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--no-notify', 'do not post the macOS notification')
   .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
+  .option('--limit <n>', 'for checks only: locate every pick plus the first <n> other candidates (companyKey order); the scheduled run never sets it', (v: string) => {
+    const n = Number(v);
+    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--limit must be a whole number, not ${v}`);
+    return n;
+  })
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number }) => {
     process.exitCode = await runCoverageCommand(
-      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}), ...(o.limit !== undefined ? { limit: o.limit } : {}) },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });

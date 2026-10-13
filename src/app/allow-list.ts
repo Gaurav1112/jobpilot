@@ -10,8 +10,13 @@ import type { AnyContract } from '../kernel/contract.js';
  * - `capabilities.files` with `access: 'read-write'`: only the two renderers, which write the documents;
  * - `capabilities.pdfText`: only the qa-gate and gig-qa, which check the PDFs' text layer;
  * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents;
- * - the symbolic egress `coverage:candidate-hosts` (the coverage run's candidate companies): only the careers-locator
- *   and the platform-detector, which fetch through the run's shared politeness gate (`coverage/gate.ts`).
+ * - the symbolic egress `coverage:candidate-hosts` (resolved per coverage stage: the candidates' own sites for the
+ *   locator, the located careers hosts for the detector, the detected boards' read hosts for the verifier; exact
+ *   hosts, never a suffix): only the careers-locator, the platform-detector and the board-verifier, which fetch
+ *   through the run's shared politeness gate (`coverage/gate.ts`). Side channel: these three agents write the hosts
+ *   they disable (challenge, 401, 403, 429, a robots.txt refusal) to the app's `coverage_host_state` table through
+ *   the gate's `HostStateStore` (the `AppStore`), before the step returns. It is run-scoped politeness state keyed by
+ *   the coverage run id, never data, and nothing but the gate reads it.
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -20,7 +25,7 @@ export const CAPABILITY_ALLOW_LIST = {
   /** The symbolic egress whose hosts come from the user's watchlist (review R-I3). */
   careersEgress: ['src-careers-list', 'src-careers-job'],
   /** The symbolic egress whose hosts are the coverage run's candidate companies' own sites. */
-  candidateEgress: ['careers-locator', 'platform-detector'],
+  candidateEgress: ['careers-locator', 'platform-detector', 'board-verifier'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
