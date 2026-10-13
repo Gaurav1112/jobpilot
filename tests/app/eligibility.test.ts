@@ -784,6 +784,49 @@ describe('office cities: onsite or hybrid in one of the pack\'s office cities pa
     expect(decide(onsite('Pune, India', { descriptionText: 'Candidates must be authorized to work in the US.' }), pune)).toEqual(rejected('onsite'));
   });
 
+  it('a generic location field takes the city from an explicit label line in the description, for the office match only', () => {
+    const blr = withOffice(['bengaluru']);
+    const inOffice = (locationText: string, label: string, structured: Posting['remote']['structured'] = null): Partial<Posting> => ({
+      locationText,
+      remote: remote(structured, ['india']),
+      descriptionText: `About the team\nWe build the edge network.\n${label}\nWhat you'll do: build services.`,
+    });
+    // a Cloudflare-like "In-Office" posting
+    expect(decide(inOffice('In-Office', 'Location: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('Hybrid', 'Office - Bangalore, India', 'hybrid'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('India', 'Work location: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('', 'Based in: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('N/A', 'Location: Mumbai; Bengaluru'), blr)).toEqual(officeEligible('Bengaluru')); // any listed city
+    expect(decide(inOffice('In-Office', 'Available Locations: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('Hybrid', 'Available Locations: Mumbai/Bengaluru/New Delhi', 'hybrid'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('N/A', 'Office location — Bengaluru, KA, India'), blr)).toEqual(officeEligible('Bengaluru'));
+    // a label word inside prose is no label line
+    expect(decide(inOffice('India', 'Snacks: on-the-house in the Bangalore office'), blr)).toEqual(rejected('onsite'));
+    expect(decide(inOffice('India', 'This role is Hybrid, based in our Bangalore office 2-3 days/week.'), blr)).toEqual(rejected('hybrid'));
+    // the label names another city: stays onsite
+    expect(decide(inOffice('In-Office', 'Location: Mumbai'), blr)).toEqual(rejected('onsite'));
+    // a non-generic location field wins over the label
+    expect(decide(inOffice('Hyderabad', 'Location: Bengaluru'), blr)).toEqual(rejected('onsite'));
+    // no label line, only prose: stays onsite
+    expect(decide(inOffice('In-Office', 'You will join our Bengaluru team.'), blr)).toEqual(rejected('onsite'));
+    // the label never feeds the remote decision: a remote label on a generic location is not remote
+    expect(decide(inOffice('In-Office', 'Location: Remote - India'), blr)).toEqual(rejected('onsite'));
+    // beyond the first 3000 characters it does not count
+    expect(decide({ ...inOffice('In-Office', ''), descriptionText: `${'x '.repeat(1600)}\nLocation: Bengaluru` }, blr)).toEqual(rejected('onsite'));
+  });
+
+  it('a "work from / based in / report to our <City> office" sentence naming another city keeps the reject', () => {
+    expect(decide(onsite('Pune, India', { descriptionText: 'This role requires working from our Hyderabad office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You will be based in our Mumbai office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You will report to our Chennai office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'This role requires working from our Pune office.' }), pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('knows Mysuru as data only', () => {
+    expect(decide(onsite('Mysore, Karnataka'), withOffice(['mysuru']))).toEqual(officeEligible('Mysuru'));
+    expect(decide(onsite('Mysore, Karnataka'), withOffice(['bengaluru']))).toEqual(rejected('onsite'));
+  });
+
   it('the pack field is optional and absent means none', () => {
     expect(pack.eligibility.officeCities).toBeUndefined();
     expect(decide(onsite('Pune, India'))).toEqual(rejected('onsite'));

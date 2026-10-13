@@ -438,6 +438,7 @@ const OFFICE_CITY_ALIASES: Readonly<Record<string, OfficeCity>> = {
   mumbai: { display: 'Mumbai', aliases: ['mumbai', 'bombay'] },
   'delhi ncr': { display: 'Delhi NCR', aliases: ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'ncr'] },
   chennai: { display: 'Chennai', aliases: ['chennai', 'madras'] },
+  mysuru: { display: 'Mysuru', aliases: ['mysuru', 'mysore'] },
 };
 
 /** A city key in canonical form: trimmed, lower-cased, inner spaces collapsed. */

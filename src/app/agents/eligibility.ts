@@ -64,11 +64,14 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       `eligibility.officeCities`, a posting located in one of them passes, with the note `office/hybrid: <City>`
  *       (`officeNote`). Each key resolves through the office-city alias table (`officeCity`; an unknown key matches only itself), matched on
  *       word boundaries, case-insensitively, in a segment of the location text (split on `; | / &`, "or", "and", new
- *       lines) whose places are none or include India, or in an entry of the structured countries. A city named only in
- *       the description never counts. It needs nothing to exclude India: countries naming none of India or an office
+ *       lines) whose places are none or include India, or in an entry of the structured countries. When the location
+ *       field is generic ("In-Office", "Hybrid", "India", "N/A", empty), the value of an explicit label line in the
+ *       first 3000 characters of the description ("Location: Bengaluru") stands in for it, for this match only. Any
+ *       other city named only in the description never counts. It needs nothing to exclude India: countries naming none of India or an office
  *       city, a `location:excludes:india` signal, India or the city excluded in the location, an exclusion phrase
- *       (rule b) or a time-zone restriction (b1). A relocation or "must be located/based in" sentence in the first
- *       1500 characters naming another city keeps the reject. Rule 6 then applies unchanged.
+ *       (rule b) or a time-zone restriction (b1). A relocation, "must be located/based in" or "work(ing) from / based
+ *       in|at / report(ing) to our <City> office" sentence in the first 1500 characters naming another city keeps the
+ *       reject. Rule 6 then applies unchanged.
  * 6. comp: only a `base` basis with a stated maximum is judged: its maximum in INR (`toInrPerYear`) below
  *    `offers.floor` → `below-floor:<maxInr>`. No comp adds the note `pay not disclosed`; an unknown basis adds
  *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor.
@@ -513,8 +516,25 @@ const namesAlias = (text: string, aliases: readonly string[]): boolean =>
   aliases.some((a) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(a).replace(/ /g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu').test(text));
 /** Location segments: separate locations are joined by these ("Pune, India; Remote US", "Pune or Singapore"). */
 const LOCATION_SPLIT = /[;|\n/&]|\bor\b|\band\b/i;
-/** Sentences that require living in or moving to a place. */
-const RELOCATION = /\brelocat\w*\b|\bmust be (?:located|based)\b/i;
+/** Sentences that require living in or moving to a place, or working from a named office. */
+const RELOCATION = /\brelocat\w*\b|\bmust be (?:located|based)\b|\b(?:work(?:ing)? from|based (?:in|at)|report(?:ing)? to) our [^.;\n]{1,40}?\boffice\b/i;
+/** A location field that names no place of its own ("In-Office", "Hybrid", "India", "N/A"), or an empty one. */
+const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|india|in|n\/a|na|multiple locations?|various)$/i;
+/**
+ * An explicit location label line in the description ("Location: Bengaluru", "Office - Bangalore", "Work location:
+ * Pune"), also "Available Locations: …", "Job location …" and "Office location — …" (a plural label, an em dash).
+ */
+const LOCATION_LABEL = /^\s*(?:(?:available|office|work|job)\s+)?(?:locations?|office|based in)\s*[:\-–—]\s*(.+)$/im;
+const LABEL_HEAD = 3000;
+/**
+ * The location text the office-city match reads: the field itself, or, when the field is generic, the value of the
+ * first label line in the first 3000 characters of the description. Never used for the remote decision.
+ */
+function officeLocationText(p: Posting): string {
+  const field = p.locationText.trim();
+  if (field !== '' && !GENERIC_LOCATION.test(field)) return p.locationText;
+  return LOCATION_LABEL.exec(p.descriptionText.slice(0, LABEL_HEAD))?.[1]?.trim() ?? p.locationText;
+}
 
 /**
  * Rule 5e: the office-city note for an onsite or hybrid posting located in one of the pack's office cities, or null.
@@ -537,8 +557,10 @@ function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
     const named = citiesIn(sentence).filter((c) => !INDIAN_STATES.has(c));
     if (named.some((c) => !namesAlias(c, [...allAliases]))) return null;
   }
-  const excluded = excludedParts(p.locationText);
-  const segments = p.locationText.split(LOCATION_SPLIT).filter((seg) => {
+  const where = officeLocationText(p);
+  if (excludedPlaces(where).includes('india')) return null;
+  const excluded = excludedParts(where);
+  const segments = where.split(LOCATION_SPLIT).filter((seg) => {
     const places = countriesIn(seg);
     return places.length === 0 || places.includes('india');
   });
