@@ -20,7 +20,8 @@ Twice a day (from 07:30 and 19:30 IST, catching up after sleep), with no prompt:
    network application pack or bounty note) **from verified facts only**, within the platform's
    limits;
 5. the dashboard's `/freelance` tab shows all of it; a macOS notification says
-   `N new gigs ≥$40/h · top: $65/h Go API contract (Freelancer)`.
+   `N new gigs, K at ≥$40/h · top: $65/h Go API contract (Freelancer)` (`, K at ≥$40/h` counts only gigs with a
+   known hourly rate at or above the floor and is left out when there are none; final review, 2026-10-13).
 
 The user's only actions: read, copy the proposal, open the gig at its source URL, paste, submit
 there, and set a status. **Nothing is ever submitted by jobpilot** (Upwork's terms forbid

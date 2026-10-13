@@ -194,14 +194,21 @@ describe('the freelance notification', () => {
   const o = { rateFloor: 40, half: 'am' as const, naming: { forbiddenTerms: ['Initech'] }, problems: 0 };
 
   it('names the count, the top hourly rate, the title (at most 40 characters) and the platform', () => {
-    expect(gigNotificationFor([view({})], o)).toBe('1 new gig ≥$40/h · top: $65/h Go API contract (Freelancer)');
+    expect(gigNotificationFor([view({})], o)).toBe('1 new gig, 1 at ≥$40/h · top: $65/h Go API contract (Freelancer)');
     const long = view({ gigKey: 'c'.repeat(16), title: 'Senior TypeScript engineer for a payments platform rewrite', rate: { maxUsdH: 80, minUsdH: 80, method: 'stated', budgetUsd: null }, platform: 'hn-hiring' });
-    expect(gigNotificationFor([view({}), long], { ...o, problems: 2 })).toBe('2 new gigs ≥$40/h · top: $80/h Senior TypeScript engineer for a paymen… (HN) · 2 problems');
+    expect(gigNotificationFor([view({}), long], { ...o, problems: 2 })).toBe('2 new gigs, 2 at ≥$40/h · top: $80/h Senior TypeScript engineer for a paymen… (HN) · 2 problems');
   });
 
   it('a top with an unknown hourly rate (an eligible fixed-price gig) shows its budget instead', () => {
     const fixed = view({ kind: 'gig', list: 'gigs', title: 'Build a Stripe checkout', rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: 1500 } });
-    expect(gigNotificationFor([fixed], o)).toBe('1 new gig ≥$40/h · top: budget $1500 Build a Stripe checkout (Freelancer)');
+    expect(gigNotificationFor([fixed], o)).toBe('1 new gig · top: budget $1500 Build a Stripe checkout (Freelancer)');
+  });
+
+  it('counts "at ≥$40/h" only the gigs with a known hourly maximum at or above the floor (final review M6)', () => {
+    const fixed = view({ gigKey: 'e'.repeat(16), kind: 'gig', list: 'gigs', title: 'Build a Stripe checkout', fit: 90, rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: 1500 } });
+    const low = view({ gigKey: 'f'.repeat(16), title: 'Cheap job', rate: { minUsdH: 20, maxUsdH: 30, method: 'fixed÷stated-hours', fxDate: null, fxSource: null, budgetUsd: 600 } });
+    expect(gigNotificationFor([fixed, low], o)).toMatch(/^2 new gigs · top: /);
+    expect(gigNotificationFor([fixed, low, view({})], o)).toMatch(/^3 new gigs, 1 at ≥\$40\/h · top: \$65\/h Go API contract/);
   });
 
   it('a preset-tier top says "preset tier $X–Y" (final review I1)', () => {
@@ -209,22 +216,22 @@ describe('the freelance notification', () => {
       kind: 'gig', list: 'gigs', title: 'Go backend developer', notes: ['preset bracket - bids may exceed it'], budget: { type: 'fixed', min: 750, max: 1500, currency: 'USD' },
       rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: 1500 },
     });
-    expect(gigNotificationFor([preset], o)).toBe('1 new gig ≥$40/h · top: preset tier $750–1500 Go backend developer (Freelancer)');
+    expect(gigNotificationFor([preset], o)).toBe('1 new gig · top: preset tier $750–1500 Go backend developer (Freelancer)');
     // an INR tier is converted at the budget's own rate: 12,500-37,500 INR with a 449.10 USD top
     const inr = view({ ...preset, budget: { type: 'fixed', min: 12500, max: 37500, currency: 'INR' }, rate: { ...preset.rate as object, budgetUsd: 449.1 } });
-    expect(gigNotificationFor([inr], o)).toBe('1 new gig ≥$40/h · top: preset tier $150–449 Go backend developer (Freelancer)');
+    expect(gigNotificationFor([inr], o)).toBe('1 new gig · top: preset tier $150–449 Go backend developer (Freelancer)');
   });
 
   it('skips a red-flagged top; with no gig: "No new gigs this morning" or "… this evening"', () => {
     const red = view({ gigKey: 'd'.repeat(16), title: 'Pay via crypto first', rate: { maxUsdH: 200, minUsdH: 200, method: 'stated', budgetUsd: null }, flags: [{ id: 'upfront-fee', detail: 'x' }] });
-    expect(gigNotificationFor([red, view({})], o)).toBe('2 new gigs ≥$40/h · top: $65/h Go API contract (Freelancer)');
-    expect(gigNotificationFor([red], o)).toBe('1 new gig ≥$40/h');
+    expect(gigNotificationFor([red, view({})], o)).toBe('2 new gigs, 2 at ≥$40/h · top: $65/h Go API contract (Freelancer)');
+    expect(gigNotificationFor([red], o)).toBe('1 new gig, 1 at ≥$40/h');
     expect(gigNotificationFor([], o)).toBe('No new gigs this morning');
     expect(gigNotificationFor([], { ...o, half: 'pm', problems: 1 })).toBe('No new gigs this evening · 1 problem');
   });
 
   it('never carries a forbidden term', () => {
-    expect(gigNotificationFor([view({ title: 'Initech payments API' })], o)).toBe('1 new gig ≥$40/h');
+    expect(gigNotificationFor([view({ title: 'Initech payments API' })], o)).toBe('1 new gig, 1 at ≥$40/h');
   });
 });
 
@@ -279,4 +286,5 @@ describe('the coverage gate (Task 10 fix round 1)', () => {
       app.close();
     }
   });
+
 });

@@ -116,8 +116,9 @@ export function rankable(g: GigView, list: ScoredGig['list'] = 'gigs'): ScoredGi
 }
 
 /**
- * The notification text (spec §1, Task 9): `<N> new gigs ≥$<floor>/h · top: $<maxUsdH>/h <title ≤ 40> (<Platform>)`
- * (`1 new gig`), where the gigs are the newly shortlisted ones (Contracts or Gigs, documents ready, never announced)
+ * The notification text (spec §1, Task 9): `<N> new gigs, <K> at ≥$<floor>/h · top: $<maxUsdH>/h <title ≤ 40>
+ * (<Platform>)` (`1 new gig`), where `, <K> at ≥$<floor>/h` counts the gigs whose known hourly maximum is at least the
+ * floor and is left out when there are none (final review M6: an unknown rate is never claimed to be above it), where the gigs are the newly shortlisted ones (Contracts or Gigs, documents ready, never announced)
  * and the top is the first of them in `rankGigs` order that has no red flag. When the top's hourly rate is unknown (an
  * eligible fixed-price gig) it shows `budget $<budgetUsd>` instead, or `preset tier $<lo>–<hi>` when the gig was
  * posted in a platform's preset tier (final review I1), and `$?/h` when the budget is unknown too. None:
@@ -130,7 +131,12 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
   const clean = (s: string): string | undefined => (forbiddenTermStrict(s, o.naming) === undefined ? s : undefined);
   const fallback = 'jobpilot freelance run finished';
   if (fresh.length === 0) return clean(`No new gigs this ${o.half === 'am' ? 'morning' : 'evening'}${tail}`) ?? fallback;
-  const count = `${plural(fresh.length, 'new gig', 'new gigs')} ≥$${dollars(o.rateFloor)}/h`;
+  // Final review M6: only gigs with a known hourly maximum at or above the floor are counted as "at ≥$X/h".
+  const atFloor = fresh.filter((g) => {
+    const max = (g.rate as RateLike | null)?.maxUsdH ?? null;
+    return max !== null && max >= o.rateFloor;
+  }).length;
+  const count = `${plural(fresh.length, 'new gig', 'new gigs')}${atFloor > 0 ? `, ${atFloor} at ≥$${dollars(o.rateFloor)}/h` : ''}`;
   const byKey = new Map(fresh.map((g) => [g.gigKey, g]));
   const candidates = rankGigs(fresh.map((g) => rankable(g)), 0).gigs.filter((s) => s.risked.flags.every((f) => !RED.has(f.id)));
   const topRow = candidates[0];

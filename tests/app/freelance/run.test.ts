@@ -59,7 +59,7 @@ describe.skipIf(pdftotext === undefined)('one dead platform never silences the o
     }
     // The HN contract is announced; the problems are Freelancer's own (its failed and skipped queries), never the
     // no-op skips of src-freelancer on other platforms' requests.
-    expect(am.notification).toMatch(/^1 new gig ≥\$40\/h · top: \$70\/h SEEKING FREELANCER \| Remote, worldwide… \(HN\) · \d+ problems$/);
+    expect(am.notification).toMatch(/^1 new gig, 1 at ≥\$40\/h · top: \$70\/h SEEKING FREELANCER \| Remote, worldwide… \(HN\) · \d+ problems$/);
     expect(am.problems.every((p) => p.agent === 'src-freelancer' && /^freelancer /.test(p.item))).toBe(true);
     expect(am.problems.length).toBe(10);
     const dead = runs.map((r) => r.problems.filter((p) => p.kind === 'source-dead').map((p) => p.reason));
