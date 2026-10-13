@@ -13,7 +13,7 @@ import { runDaily } from '../../src/app/run.js';
  * to the one before the registry existed: the same step keys (agent, key, status), the same output envelopes (ids,
  * types, payloads), the same job rows and the same document hashes. The golden file was recorded from the code
  * before the Workday adapter (617d692, whose daily pipeline is main's) with the same fixtures, pack, clock and pinned
- * code hash; `RECORD_DAILY_IDENTITY=1` rewrites it.
+ * code hash. A missing golden FAILS; only `UPDATE_GOLDEN=1` (re)writes it, deliberately, from the code under test.
  *
  * Contract versions and hashes are deliberately not compared: `DiscoveryRequest.ats` and `Posting.ats` gained
  * `workday`, so every contract carrying them took a minor version bump (the step key holds only the major).
@@ -80,9 +80,10 @@ describe.skipIf(pdftotext === undefined)('daily byte-identity with an empty comp
     expect(r.report.status).toBe('completed');
     const got = snapshot(join(home, 'jobpilot.db'));
     expect(got.companies).toBe(0);
-    if (process.env['RECORD_DAILY_IDENTITY'] === '1' || !existsSync(GOLDEN)) {
+    if (process.env['UPDATE_GOLDEN'] === '1') {
       writeFileSync(GOLDEN, `${JSON.stringify({ ...got, fetched: offline.fetch.calls }, null, 2)}\n`);
     }
+    if (!existsSync(GOLDEN)) throw new Error(`${GOLDEN} is missing: the byte-identity golden is never recreated silently; restore it from git, or run with UPDATE_GOLDEN=1 only when the change is meant to alter the daily run`);
     const want = JSON.parse(readFileSync(GOLDEN, 'utf8')) as Snapshot & { fetched: string[] };
     expect(got.steps).toEqual(want.steps);
     expect(got.envelopes).toEqual(want.envelopes);

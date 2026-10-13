@@ -81,6 +81,13 @@ async function detect(s: CareersSite, fetch: FetchLike, agent = makePlatformDete
 const page = (body: string, title = 'Careers'): string => `<html><head><title>${title}</title></head><body>${body}</body></html>`;
 const verdict = (g: PlatformGuess): string => (g.evidence[0] ?? '').split(':')[0] ?? '';
 
+/** HTML entities (named basics, decimal, hex) decoded, for the privacy scan. */
+const decodeEntities = (t: string): string =>
+  t
+    .replace(/&#x([0-9a-f]+);/gi, (_m, h: string) => String.fromCodePoint(Number.parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_m, d: string) => String.fromCodePoint(Number(d)))
+    .replace(/&(amp|lt|gt|quot|apos|equals);/g, (_m, n: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", equals: '=' })[n] as string);
+
 describe('signature table: one example per row, slug and boardUrl', () => {
   const cases: [string, Platform, string, string][] = [
     ['https://mastercard.wd1.myworkdayjobs.com/CorporateCareers/job/Pune-India/Engineer_R-1/apply', 'workday', 'mastercard/CorporateCareers', 'https://mastercard.wd1.myworkdayjobs.com/wday/cxs/mastercard/CorporateCareers/jobs'],
@@ -590,6 +597,8 @@ describe('the coverage-detector golden set', () => {
       ['social-profile', /https?:\/\/(?:www\.)?(?:x\.com|twitter\.com|facebook\.com|instagram\.com|github\.com|threads\.net|bsky\.app)\/[A-Za-z0-9_.-]+|linkedin\.com\/in\//gi],
       ['people-page', /\/(?:team|people|authors?|community\/profiles)\/[A-Za-z0-9_-]+/gi],
       ['cookie-session', /set-cookie|__cf_chl_tk|cf_clearance|jsessionid=|phpsessid/gi],
+      // a Google Analytics client id in a link (_ga=2.139…): a visitor identifier
+      ['analytics-id', /[?&;]_ga=[\w.-]+/gi],
     ];
     const dir = `${root}evals/datasets/coverage-detector`;
     // Task 6: the recorded Workday responses (job descriptions can name a recruiter) and the coverage e2e Workday list
@@ -603,11 +612,14 @@ describe('the coverage-detector golden set', () => {
     // a phone number (an international or a 10-digit Indian mobile) in a job description is personal data too; the
     // detector pages are left out of this one check, their job ids look like mobile numbers
     const PHONE: readonly [string, RegExp][] = [['phone', /(?<![\w.-])\+\d{1,3}[\s-]?\(?\d{2,5}\)?[\s-]?\d{3,5}[\s-]?\d{3,5}(?![\w-])|(?<![\w.-])[6-9]\d{9}(?![\w-])/g]];
+    expect(decodeEntities('a?_ga&#61;2.1-9&amp;x &#x3D; &lt;')).toBe('a?_ga=2.1-9&x = <');
+    expect(decodeEntities('href="x?_ga&#61;2.139086459.9"').match(PRIVATE.find(([k]) => k === 'analytics-id')?.[1] as RegExp)).not.toBeNull();
     for (const planted of ['call +91 98765 43210 today', 'or 9876543210.', '+1 (415) 555-0100']) expect(planted.match(PHONE[0]?.[1] as RegExp), planted).not.toBeNull();
     // file and offset only: a match is never printed, so a failure cannot leak what it found
     const hits: string[] = [];
     for (const path of files) {
-      const text = readFileSync(path, 'utf8');
+      // HTML entities decoded first, so `&#61;` or `&amp;` cannot hide a match
+      const text = decodeEntities(readFileSync(path, 'utf8'));
       const file = path.slice(root.length);
       for (const [kind, re] of [...PRIVATE, ...(path.startsWith(dir) ? [] : PHONE)]) for (const m of text.matchAll(re)) hits.push(`${kind} in ${file} at offset ${m.index}`);
     }
