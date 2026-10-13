@@ -13,6 +13,23 @@ export type Platform = z.infer<typeof Platform>;
 export const CandidateSource = z.enum(['pick', 'remoteintech', 'yc', 'jobs']);
 export type CandidateSource = z.infer<typeof CandidateSource>;
 
+/**
+ * One seed request per source. `items` is how the app layer hands in what only it can read: `pack.companies` for
+ * `picks`, the `seedItemsFromJobs` pairs for `jobs`. The `remoteintech` and `yc` sources fetch their own data.
+ */
+export const CoverageRequest = defineType(
+  'CoverageRequest',
+  1,
+  z
+    .object({
+      runDate: IsoDate,
+      source: z.enum(['picks', 'remoteintech', 'yc', 'jobs']),
+      items: z.unknown().optional(),
+    })
+    .strict(),
+);
+export type CoverageRequest = z.infer<typeof CoverageRequest.schema>;
+
 export const CompanyCandidate = defineType(
   'CompanyCandidate',
   1,

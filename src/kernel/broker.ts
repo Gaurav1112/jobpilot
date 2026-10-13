@@ -17,6 +17,8 @@ export interface HttpTool {
    * A status of 400 or more is not parsed: the result is `{ status, json: null }` and the caller maps it.
    */
   getJson(url: string): Promise<{ status: number; json: unknown }>;
+  /** The raw body (for an archive or other binary file), under the same egress, pacing and size cap as getText. */
+  getBytes(url: string): Promise<{ status: number; bytes: Uint8Array }>;
 }
 
 /** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
@@ -50,7 +52,7 @@ export function createHostPacer(minIntervalMs: number, clock: Clock, sleep: (ms:
 }
 
 /** Reads a response body, refusing it once it passes `maxBytes`. A stream is cancelled at the cap, not read to the end. */
-async function readCapped(res: FetchResponse, maxBytes: number): Promise<string> {
+async function readCappedBytes(res: FetchResponse, maxBytes: number): Promise<Uint8Array> {
   const tooBig = (): KernelError => new KernelError('invalid_output', `response exceeds ${maxBytes} bytes`);
   if (res.body) {
     const reader = res.body.getReader();
@@ -66,11 +68,15 @@ async function readCapped(res: FetchResponse, maxBytes: number): Promise<string>
       }
       chunks.push(value);
     }
-    return new TextDecoder().decode(Buffer.concat(chunks));
+    return Buffer.concat(chunks);
   }
   const text = await res.text();
   if (Buffer.byteLength(text, 'utf8') > maxBytes) throw tooBig();
-  return text;
+  return Buffer.from(text, 'utf8');
+}
+
+async function readCapped(res: FetchResponse, maxBytes: number): Promise<string> {
+  return new TextDecoder().decode(await readCappedBytes(res, maxBytes));
 }
 
 /** Read-only page rendering. The agent names the URL and whether it is a listing; the broker fixes everything else. */
@@ -271,7 +277,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   };
 
   if (a.contract.capabilities.http) {
-    const getText = async (url: string): Promise<{ status: number; body: string }> => {
+    const fetchBody = async <T>(url: string, read: (res: FetchResponse, max: number) => Promise<T>): Promise<{ status: number; body: T }> => {
       const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       await a.hostPacer?.wait(u.hostname);
@@ -285,14 +291,19 @@ export function issueContext(a: IssueArgs): AgentContext {
         }
         if (res.status === 429) throw new KernelError('rate_limit', `429 from ${u.hostname}`);
         if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
-        body = await readCapped(res, a.policy.maxResponseBytes);
+        body = await read(res, a.policy.maxResponseBytes);
       } catch (e) {
         throw mapProviderError(e);
       }
       return { status: res.status, body };
     };
+    const getText = (url: string): Promise<{ status: number; body: string }> => fetchBody(url, readCapped);
     ctx.http = {
       getText,
+      async getBytes(url) {
+        const { status, body } = await fetchBody(url, readCappedBytes);
+        return { status, bytes: body };
+      },
       async getJson(url) {
         const { status, body } = await getText(url);
         if (status >= 400) return { status, json: null };

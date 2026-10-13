@@ -1,0 +1,284 @@
+[
+ {
+  "name": "CircuitHub",
+  "slug": "circuithub",
+  "website": "https://circuithub.com",
+  "all_locations": "London, England, United Kingdom",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2012"
+ },
+ {
+  "name": "Instawork",
+  "slug": "instawork",
+  "website": "http://instawork.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2015"
+ },
+ {
+  "name": "Skyways",
+  "slug": "skyways",
+  "website": "http://skyways.com",
+  "all_locations": "Austin, TX, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2017"
+ },
+ {
+  "name": "Alpha Vantage",
+  "slug": "alpha-vantage",
+  "website": "https://www.alphavantage.co/",
+  "all_locations": "Boston, MA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2018"
+ },
+ {
+  "name": "Rutter",
+  "slug": "rutter",
+  "website": "https://rutter.com",
+  "all_locations": "New York City, NY, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2019"
+ },
+ {
+  "name": "Roboflow",
+  "slug": "roboflow",
+  "website": "https://roboflow.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2020"
+ },
+ {
+  "name": "SpruceID",
+  "slug": "spruceid",
+  "website": "https://www.spruceid.com",
+  "all_locations": "New York City, NY, USA; Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2021"
+ },
+ {
+  "name": "Waydev",
+  "slug": "waydev",
+  "website": "https://waydev.co/",
+  "all_locations": "Bucharest, Romania; Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2021"
+ },
+ {
+  "name": "Aleph",
+  "slug": "aleph",
+  "website": "https://getaleph.com/",
+  "all_locations": "New York City, NY, USA; Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2021"
+ },
+ {
+  "name": "Beam",
+  "slug": "beam",
+  "website": "https://beam.cloud",
+  "all_locations": "New York City, NY, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2022"
+ },
+ {
+  "name": "Clinikally",
+  "slug": "clinikally",
+  "website": "https://www.clinikally.com/",
+  "all_locations": "Gurugram, HR, India",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2022"
+ },
+ {
+  "name": "zudo.work",
+  "slug": "zudowork",
+  "website": "https://zudo.work/",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2023"
+ },
+ {
+  "name": "Rivet",
+  "slug": "rivet",
+  "website": "https://rivet.dev",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2023"
+ },
+ {
+  "name": "GovernGPT",
+  "slug": "governgpt",
+  "website": "https://www.governgpt.com/",
+  "all_locations": "Montreal, QC, Canada",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2024"
+ },
+ {
+  "name": "Poka Labs",
+  "slug": "poka-labs",
+  "website": "https://www.pokalabs.com/",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2024"
+ },
+ {
+  "name": "Ocular AI",
+  "slug": "ocular-ai",
+  "website": "https://useocular.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2024"
+ },
+ {
+  "name": "Substrate",
+  "slug": "substrate",
+  "website": "https://www.substrate.cc/",
+  "all_locations": "San Francisco, CA, USA; Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2024"
+ },
+ {
+  "name": "Syntra",
+  "slug": "syntra",
+  "website": "https://www.syntra.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2024"
+ },
+ {
+  "name": "Maritime Fusion",
+  "slug": "maritime-fusion",
+  "website": "https://maritimefusion.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2025"
+ },
+ {
+  "name": "GroundControl",
+  "slug": "groundcontrol",
+  "website": "https://rungroundcontrol.com/",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Spring 2025"
+ },
+ {
+  "name": "TraceRoot.AI",
+  "slug": "traceroot-ai",
+  "website": "https://traceroot.ai",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2025"
+ },
+ {
+  "name": "Nox Metals",
+  "slug": "nox-metals",
+  "website": "https://noxmetals.co/",
+  "all_locations": "Detroit, MI, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2025"
+ },
+ {
+  "name": "Janeen",
+  "slug": "janeen",
+  "website": "https://janeen.care",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2026"
+ },
+ {
+  "name": "Cardinal",
+  "slug": "trycardinal-ai",
+  "website": "https://trycardinal.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2026"
+ },
+ {
+  "name": "Amplitude",
+  "slug": "amplitude",
+  "website": "https://amplitude.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Public",
+  "isHiring": true,
+  "batch": "Winter 2012"
+ },
+ {
+  "name": "Instacart",
+  "slug": "instacart",
+  "website": "https://www.instacart.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Public",
+  "isHiring": true,
+  "batch": "Summer 2012"
+ },
+ {
+  "name": "DoorDash",
+  "slug": "doordash",
+  "website": "http://doordash.com",
+  "all_locations": "San Francisco, CA, USA",
+  "status": "Public",
+  "isHiring": true,
+  "batch": "Summer 2013"
+ },
+ {
+  "name": "Ginkgo Bioworks",
+  "slug": "ginkgo-bioworks",
+  "website": "http://ginkgobioworks.com",
+  "all_locations": "Boston, MA, USA",
+  "status": "Public",
+  "isHiring": true,
+  "batch": "Summer 2014"
+ },
+ {
+  "name": "PNO\u0112",
+  "slug": "pnoe",
+  "website": "",
+  "all_locations": "Athens, Greece; Miami, FL, USA",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Winter 2019"
+ },
+ {
+  "name": "Roforco",
+  "slug": "roforco",
+  "website": "",
+  "all_locations": "Kristiansand, Agder, Norway",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "Summer 2022"
+ },
+ {
+  "name": "Idle Co",
+  "slug": "idle-co",
+  "website": "https://idle.example.org",
+  "all_locations": "London, England, United Kingdom",
+  "status": "Active",
+  "isHiring": false,
+  "batch": "Winter 2012"
+ },
+ {
+  "slug": "broken-entry"
+ }
+]
