@@ -9,7 +9,8 @@ import type { AnyContract } from '../kernel/contract.js';
  *   fills the proposal's update cadence;
  * - `capabilities.files` with `access: 'read-write'`: only the two renderers, which write the documents;
  * - `capabilities.pdfText`: only the qa-gate and gig-qa, which check the PDFs' text layer;
- * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents.
+ * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents;
+ * - the symbolic egress `coverage:candidate-hosts` (the coverage run's candidate companies): only the careers-locator.
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -17,6 +18,8 @@ export const CAPABILITY_ALLOW_LIST = {
   pdfText: ['qa-gate', 'gig-qa'],
   /** The symbolic egress whose hosts come from the user's watchlist (review R-I3). */
   careersEgress: ['src-careers-list', 'src-careers-job'],
+  /** The symbolic egress whose hosts are the coverage run's candidate companies' own sites. */
+  candidateEgress: ['careers-locator'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -32,6 +35,9 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
     }
     if (c.egress.includes('pack:careers-hosts') && !allowed(CAPABILITY_ALLOW_LIST.careersEgress, c.id)) {
       problems.push(`${c.id} declares egress pack:careers-hosts; only ${CAPABILITY_ALLOW_LIST.careersEgress.join(', ')} may contact the watchlist's careers sites`);
+    }
+    if (c.egress.includes('coverage:candidate-hosts') && !allowed(CAPABILITY_ALLOW_LIST.candidateEgress, c.id)) {
+      problems.push(`${c.id} declares egress coverage:candidate-hosts; only ${CAPABILITY_ALLOW_LIST.candidateEgress.join(', ')} may contact the coverage candidates' sites`);
     }
     if (c.capabilities.pdfText && !allowed(CAPABILITY_ALLOW_LIST.pdfText, c.id)) {
       problems.push(`${c.id} declares capabilities.pdfText; only ${CAPABILITY_ALLOW_LIST.pdfText.join(', ')} may run pdftotext`);

@@ -10,8 +10,10 @@ import type { MessageType } from './types.js';
  * careers sites of the watchlist): the contract, and so its hash, stays the same whatever the hosts are, and the
  * broker resolves the entry at call time from the `egressSets` the supervisor is given (exact hosts, still checked
  * against the policy and its deny lists). A set that is not given resolves to no host at all.
+ * `pack:careers-hosts` is the watchlist's careers hosts; `coverage:candidate-hosts` is the hosts of the weekly coverage
+ * run's candidate companies (the careers locator's plan).
  */
-export const SYMBOLIC_EGRESS = ['pack:careers-hosts'] as const;
+export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts'] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
 

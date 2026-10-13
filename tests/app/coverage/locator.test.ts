@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
-  careersLocator,
+  makeCareersLocator,
   careersLocatorContract,
   findCareersLink,
   isChallenge,
@@ -52,7 +52,7 @@ function serve(routes: Record<string, Route | string>) {
   return { fetch, calls };
 }
 
-async function locate(c: CompanyCandidate, fetch: FetchLike): Promise<CareersSite> {
+async function locate(c: CompanyCandidate, fetch: FetchLike, agent = makeCareersLocator(), egressFor: readonly CompanyCandidate[] = [c]): Promise<CareersSite> {
   const ctx = issueContext({
     contract: careersLocatorContract,
     policy: PRODUCT_POLICY_V1,
@@ -60,9 +60,9 @@ async function locate(c: CompanyCandidate, fetch: FetchLike): Promise<CareersSit
     providers: { fetch },
     clock: fixedClock('2026-10-13T00:00:00Z'),
     signal: new AbortController().signal,
-    egressSets: locatorEgressSets([c]),
+    egressSets: locatorEgressSets(egressFor),
   });
-  const out = await careersLocator.run(c, ctx);
+  const out = await agent.run(c, ctx);
   expect(out).toHaveLength(1);
   expect(ctx.denials()).toEqual([]);
   return CareersSite.schema.parse(out[0]);
@@ -168,7 +168,7 @@ describe('careers locator: rules', () => {
     const s = serve({ 'https://www.acme.test/robots.txt': { status: 503, body: 'down' }, 'https://www.acme.test/': file('drupal-home.html') });
     const site = await locate(cand('acme.test'), s.fetch);
     expect(site.method).toBe('none');
-    expect(site.reasons?.join(' ')).toMatch(/robots-unavailable/);
+    expect(site.reasons?.join(' ')).toMatch(/robots-unavailable|host-disabled:robots-unavailable/);
     expect(s.calls).not.toContain('https://www.acme.test/');
   });
 
@@ -237,7 +237,119 @@ describe('careers locator: rules', () => {
   });
 });
 
+describe('locator: run-scoped host state, status handling, budget (fix round 1)', () => {
+  const gh = (slug: string): CompanyCandidate => cand(`${slug}.test`, { website: `https://www.${slug}.test`, careersUrl: `https://boards.greenhouse.io/${slug}` });
+  const hostsOf = (...cs: CompanyCandidate[]) => cs;
+
+  it('one robots.txt fetch per host per run, across candidates', async () => {
+    const a = gh('alpha');
+    const b = gh('beta');
+    const agent = makeCareersLocator();
+    const s = serve({ 'https://boards.greenhouse.io/alpha': 'x', 'https://boards.greenhouse.io/beta': 'x' });
+    await locate(a, s.fetch, agent, hostsOf(a, b));
+    await locate(b, s.fetch, agent, hostsOf(a, b));
+    expect(s.calls.filter((u) => u === 'https://boards.greenhouse.io/robots.txt')).toHaveLength(1);
+  });
+
+  it('a host disabled by one candidate (429) is skipped by the next, with host-disabled:<why>', async () => {
+    const a = gh('alpha');
+    const b = gh('beta');
+    const agent = makeCareersLocator();
+    const s = serve({ 'https://boards.greenhouse.io/alpha': { status: 429, body: 'slow' }, 'https://www.beta.test/': file('plain-home.html') });
+    await locate(a, s.fetch, agent, hostsOf(a, b));
+    const before = s.calls.length;
+    const site = await locate(b, s.fetch, agent, hostsOf(a, b));
+    expect(s.calls.slice(before).filter((u) => u.includes('boards.greenhouse.io'))).toEqual([]);
+    expect(site.reasons).toContain('listed: host-disabled:http-429');
+  });
+
+  it('a plain 403 on a path disables that host (named http-403) but the careers. subdomain is still probed', async () => {
+    const s = serve({ 'https://www.acme.test/': file('plain-home.html'), 'https://www.acme.test/careers': { status: 403, body: 'Forbidden' }, 'https://careers.acme.test/': 'ok' });
+    const site = await locate(cand('acme.test'), s.fetch);
+    expect(site).toMatchObject({ method: 'subdomain', careersUrl: 'https://careers.acme.test/' });
+    expect(s.calls).not.toContain('https://www.acme.test/jobs');
+    expect(site.reasons?.join(' ')).toMatch(/http-403/);
+  });
+
+  it('a plain 401 on the listed host disables it', async () => {
+    const c = cand('acme.test', { careersUrl: 'https://acme.test/join' });
+    const s = serve({ 'https://acme.test/join': { status: 401, body: 'no' } });
+    const site = await locate(c, s.fetch);
+    expect(site.reasons?.[0]).toMatch(/http-401/);
+  });
+
+  it('robots.txt 404 and 410 allow all', async () => {
+    for (const status of [404, 410]) {
+      const s = serve({ 'https://www.acme.test/robots.txt': { status }, 'https://www.acme.test/': file('drupal-home.html') });
+      expect((await locate(cand('acme.test'), s.fetch)).method).toBe('homepage-link');
+    }
+  });
+
+  it('robots.txt 401/403 is robots-forbidden and disallows the host', async () => {
+    for (const status of [401, 403]) {
+      const s = serve({ 'https://www.acme.test/robots.txt': { status, body: 'no' }, 'https://www.acme.test/': file('drupal-home.html') });
+      const site = await locate(cand('acme.test'), s.fetch);
+      expect(site.method).toBe('none');
+      expect(site.reasons?.join(' ')).toMatch(/robots-forbidden/);
+      expect(s.calls).not.toContain('https://www.acme.test/');
+    }
+  });
+
+  it('robots.txt 400, 5xx are robots-unavailable; 429 disables the host', async () => {
+    for (const status of [400, 500]) {
+      const s = serve({ 'https://www.acme.test/robots.txt': { status }, 'https://www.acme.test/': file('drupal-home.html') });
+      expect((await locate(cand('acme.test'), s.fetch)).reasons?.join(' ')).toMatch(/robots-unavailable/);
+    }
+    const s = serve({ 'https://www.acme.test/robots.txt': { status: 429 }, 'https://www.acme.test/': file('drupal-home.html') });
+    expect((await locate(cand('acme.test'), s.fetch)).reasons?.join(' ')).toMatch(/http-429/);
+    expect(s.calls).not.toContain('https://www.acme.test/');
+  });
+
+  it('the contract declares coverage:candidate-hosts', () => {
+    expect(careersLocatorContract.egress).toEqual(['coverage:candidate-hosts']);
+    expect(Object.keys(locatorEgressSets([cand('acme.test')]))).toEqual(['coverage:candidate-hosts']);
+  });
+
+  it('a listed URL that only redirects (to a platform host) is reported as unfetched', async () => {
+    const c = cand('acme.test', { careersUrl: 'https://acme.test/join' });
+    const s = serve({ 'https://acme.test/join': { status: 302, location: 'https://acme.wd5.myworkdayjobs.com/site' } });
+    const site = await locate(c, s.fetch);
+    expect(site).toMatchObject({ method: 'listed', careersUrl: 'https://acme.wd5.myworkdayjobs.com/site' });
+    expect(site.evidence).toMatch(/unfetched/);
+  });
+
+  it('a listed URL redirecting to a vendor marketing root is not a hit', async () => {
+    const c = cand('acme.test', { careersUrl: 'https://acme.test/join' });
+    const s = serve({ 'https://acme.test/join': { status: 302, location: 'https://www.icims.com/' }, 'https://www.acme.test/': file('plain-home.html') });
+    const site = await locate(c, s.fetch);
+    expect(site.method).toBe('none');
+    expect(site.reasons?.[0]).toMatch(/^listed: redirect to www\.icims\.com/);
+  });
+
+  it('a sitemap hit returns the https-normalised URL', async () => {
+    const s = serve({ 'https://www.acme.test/': file('plain-home.html'), 'https://www.acme.test/sitemap.xml': '<loc>http://www.acme.test/en/jobs/#top</loc>' });
+    const site = await locate(cand('acme.test'), s.fetch);
+    expect(site).toMatchObject({ method: 'sitemap', careersUrl: 'https://www.acme.test/en/jobs/' });
+  });
+
+  it('over the request budget: none with budget-exhausted, never a throw', async () => {
+    const s = serve({ 'https://www.acme.test/': file('plain-home.html') });
+    const site = await locate(cand('acme.test'), s.fetch, makeCareersLocator({ maxRequests: 4 }));
+    expect(site).toMatchObject({ method: 'none', careersUrl: null });
+    expect(site.reasons).toContain('budget-exhausted');
+    expect(s.calls.length).toBeLessThanOrEqual(5);
+  });
+});
+
 describe('locator helpers', () => {
+  it('isChallenge also knows "Just a moment"', () => {
+    expect(isChallenge(503, '<title>Just a moment...</title>')).toBe(true);
+  });
+
+  it('CAREERS_LINK (as briefed) matches a blog link such as steve-jobs', () => {
+    expect(findCareersLink('<a href="/blog/steve-jobs-and-design">Read</a>', 'https://x.test/', () => true)?.url).toBe('https://x.test/blog/steve-jobs-and-design');
+  });
+
   it('isChallenge needs a status in {403,429,503} and a marker', () => {
     expect(isChallenge(403, '<script src="/cdn-cgi/challenge-platform/h/b"></script>')).toBe(true);
     expect(isChallenge(503, '<title>Attention Required</title>')).toBe(true);

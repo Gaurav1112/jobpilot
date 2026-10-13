@@ -4,8 +4,11 @@
  * Group choice: the groups naming the product token (`jobpilot`, case-insensitive, a `/version` suffix ignored) are
  * merged and used alone; without one, the `*` groups; without either, everything is allowed.
  * Rule choice: the longest matching pattern wins, and `Allow` wins a tie. `*` matches any run of characters and a
- * trailing `$` anchors the end. An empty `Disallow` (allow all) and an empty `Allow` are ignored. Patterns are
- * compared with the request's path and query as they are written (no percent-decoding).
+ * trailing `$` anchors the end. An empty `Disallow` (allow all) and an empty `Allow` are ignored.
+ * Matching is linear (no RegExp is built from robots input): the pattern is split at `*` and its pieces are found in
+ * order, each at its leftmost position. Pattern and path are first normalised (RFC 9309 §2.2.2): raw non-ASCII is
+ * percent-encoded as UTF-8, `%xx` hex is upper-cased, `%xx` of an unreserved character (A-Z a-z 0-9 - . _ ~) is decoded,
+ * and everything else (notably `%2F`) stays encoded.
  */
 
 export const PRODUCT_TOKEN = 'jobpilot';
@@ -29,8 +32,7 @@ export interface Robots {
 export type RobotsVerdict =
   | { readonly kind: 'rules'; readonly robots: Robots }
   | { readonly kind: 'allow-all'; readonly why: string }
-  | { readonly kind: 'disallow-all'; readonly why: string }
-  | { readonly kind: 'challenge'; readonly why: string };
+  | { readonly kind: 'disallow-all'; readonly reason: 'robots-unavailable' | 'robots-forbidden'; readonly why: string };
 
 export function parseRobots(text: string): Robots {
   const groups: { agents: string[]; rules: RobotsRule[] }[] = [];
@@ -55,21 +57,51 @@ export function parseRobots(text: string): Robots {
       if (cur !== null && value !== '') cur.rules.push({ allow: key === 'allow', pattern: value });
     } else if (key === 'sitemap') {
       if (value !== '') sitemaps.push(value);
-    } else {
-      collectingAgents = false;
     }
+    // any other line (Crawl-delay, Host, ...) neither opens nor closes a group, as in Google's parser
   }
   return { groups, sitemaps };
 }
 
-const toRegExp = (pattern: string): RegExp => {
+const UNRESERVED = /^[A-Za-z0-9\-._~]$/u;
+
+/** Percent-encoding normal form (see the header); `*` and `$` pass through unchanged. */
+export function normalizeEncoding(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; ) {
+    const ch = s.codePointAt(i) as number;
+    const c = String.fromCodePoint(ch);
+    if (c === '%' && /^[0-9A-Fa-f]{2}$/u.test(s.slice(i + 1, i + 3))) {
+      const hex = s.slice(i + 1, i + 3).toUpperCase();
+      const dec = String.fromCharCode(Number.parseInt(hex, 16));
+      out += UNRESERVED.test(dec) ? dec : `%${hex}`;
+      i += 3;
+      continue;
+    }
+    if (ch > 0x7f) for (const b of Buffer.from(c, 'utf8')) out += `%${b.toString(16).toUpperCase().padStart(2, '0')}`;
+    else out += c;
+    i += c.length;
+  }
+  return out;
+}
+
+/** Linear wildcard match of a normalised pattern at the start of a normalised path. */
+function matches(pattern: string, path: string): boolean {
   const anchored = pattern.endsWith('$');
-  const body = (anchored ? pattern.slice(0, -1) : pattern)
-    .split('*')
-    .map((s) => s.replace(/[.+?^${}()|[\]\\]/gu, '\\$&'))
-    .join('.*');
-  return new RegExp(`^${body}${anchored ? '$' : ''}`, 'u');
-};
+  const parts = (anchored ? pattern.slice(0, -1) : pattern).split('*');
+  if (parts.length === 1) return anchored ? path === parts[0] : path.startsWith(parts[0] as string);
+  const first = parts[0] as string;
+  if (!path.startsWith(first)) return false;
+  let pos = first.length;
+  for (let i = 1; i < parts.length - 1; i++) {
+    const idx = path.indexOf(parts[i] as string, pos);
+    if (idx < 0) return false;
+    pos = idx + (parts[i] as string).length;
+  }
+  const last = parts[parts.length - 1] as string;
+  if (anchored) return path.length - last.length >= pos && path.endsWith(last);
+  return path.indexOf(last, pos) >= 0;
+}
 
 /** The rules that apply to `agent`: its own groups merged, else the `*` groups, else none. */
 export function rulesFor(robots: Robots, agent: string = PRODUCT_TOKEN): RobotsRule[] {
@@ -81,10 +113,12 @@ export function rulesFor(robots: Robots, agent: string = PRODUCT_TOKEN): RobotsR
 
 /** May `agent` fetch `pathAndQuery` (e.g. `/careers?x=1`)? Longest match wins; allow wins a tie; no match means allowed. */
 export function robotsAllows(robots: Robots, pathAndQuery: string, agent: string = PRODUCT_TOKEN): boolean {
-  let best: RobotsRule | null = null;
+  const path = normalizeEncoding(pathAndQuery);
+  let best: { allow: boolean; len: number } | null = null;
   for (const r of rulesFor(robots, agent)) {
-    if (!toRegExp(r.pattern).test(pathAndQuery)) continue;
-    if (best === null || r.pattern.length > best.pattern.length || (r.pattern.length === best.pattern.length && r.allow && !best.allow)) best = r;
+    const pattern = normalizeEncoding(r.pattern);
+    if (!matches(pattern, path)) continue;
+    if (best === null || pattern.length > best.len || (pattern.length === best.len && r.allow && !best.allow)) best = { allow: r.allow, len: pattern.length };
   }
   return best === null || best.allow;
 }
@@ -97,8 +131,6 @@ export function robotsDenial(v: RobotsVerdict, url: URL): string | null {
     case 'rules':
       return robotsAllows(v.robots, url.pathname + url.search) ? null : `robots-disallow ${url.pathname}`;
     case 'disallow-all':
-      return 'robots-unavailable';
-    case 'challenge':
-      return 'challenge';
+      return v.reason;
   }
 }

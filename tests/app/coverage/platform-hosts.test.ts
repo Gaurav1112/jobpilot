@@ -20,4 +20,12 @@ describe('platformForHost', () => {
     for (const p of PLATFORM_HOSTS) expect(Platform.safeParse(p.platform).success).toBe(true);
     expect(PLATFORM_HOSTS).toHaveLength(22);
   });
+
+  it('bare-domain vendor suffixes need a tenant subdomain: not the apex, not www', () => {
+    for (const d of ['icims.com', 'oraclecloud.com', 'bamboohr.com', 'teamtailor.com', 'recruitee.com', 'successfactors.com', 'successfactors.eu', 'eightfold.ai', 'breezy.hr', 'pinpointhq.com']) {
+      expect(platformForHost(d)).toBeNull();
+      expect(platformForHost(`www.${d}`)).toBeNull();
+      expect(platformForHost(`acme.${d}`)).not.toBeNull();
+    }
+  });
 });

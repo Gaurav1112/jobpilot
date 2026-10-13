@@ -1,3 +1,4 @@
+import { careersLocatorContract } from '../../src/app/coverage/locator.js';
 import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -93,6 +94,14 @@ describe('R-I3: only the careers agents may name the symbolic careers egress', (
       /src-lever declares egress pack:careers-hosts; only src-careers-list, src-careers-job may contact the watchlist's careers sites/,
     );
     expect(capabilityProblems(dailyAgents([careersEntry]).map((a) => a.contract))).toEqual([]);
+  });
+});
+
+describe('coverage:candidate-hosts egress', () => {
+  it('only careers-locator may name it', () => {
+    const evil = defineContract({ ...srcLever.contract, id: 'src-lever', egress: ['coverage:candidate-hosts'] });
+    expect(capabilityProblems([evil])).toEqual([expect.stringMatching(/src-lever declares egress coverage:candidate-hosts; only careers-locator may contact/)]);
+    expect(capabilityProblems([careersLocatorContract])).toEqual([]);
   });
 });
 

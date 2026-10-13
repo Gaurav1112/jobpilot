@@ -31,10 +31,19 @@ export const PLATFORM_HOSTS: ReadonlyArray<{ readonly platform: Platform; readon
   { platform: 'ashby', hostSuffix: 'jobs.ashbyhq.com' },
 ];
 
+/**
+ * Vendor suffixes that are the vendor's own marketing domain: `icims.com` and `www.icims.com` are the vendor's site, a
+ * company's board is `<tenant>.icims.com`. These need a tenant subdomain (not the apex, not `www.`).
+ */
+const TENANT_ONLY: ReadonlySet<string> = new Set([
+  'icims.com', 'oraclecloud.com', 'bamboohr.com', 'teamtailor.com', 'recruitee.com', 'successfactors.com', 'successfactors.eu', 'eightfold.ai', 'breezy.hr', 'pinpointhq.com',
+]);
+
 /** The platform a host belongs to (lower-cased, suffix match on a dot boundary), or null. */
 export function platformForHost(host: string): Platform | null {
   const h = host.trim().toLowerCase().replace(/\.+$/u, '');
   for (const p of PLATFORM_HOSTS) {
+    if (TENANT_ONLY.has(p.hostSuffix) && (h === p.hostSuffix || h === `www.${p.hostSuffix}`)) continue;
     if (h === p.hostSuffix || h.endsWith(`.${p.hostSuffix}`)) return p.platform;
   }
   return null;

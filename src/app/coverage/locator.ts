@@ -17,11 +17,15 @@ import { CareersSite, CompanyCandidate } from './types.js';
  *   5. `/sitemap.xml`, then the sitemaps named in robots.txt: the first `<loc>` whose path has `/careers` or `/jobs` -> `sitemap`
  *   6. otherwise `none`, `careersUrl: null`, with the reason of every miss.
  *
- * Politeness: each host's robots.txt is fetched once per candidate (all hosts of a candidate share its registrable
- * domain, and a candidate is one step), and every probe honours it. A missing robots.txt (4xx) allows all; 5xx or
- * unreachable disallows all for the run (RFC 9309). The honest user agent and the 2 s per-host spacing are the
- * broker's (HTTP_HEADERS, the supervisor's host pacer). A challenge page (or a 429) is a stop for that host: no
- * retry, no more probes. A 4xx on the homepage ends the search.
+ * Politeness: the host state is per RUN (`createHostState`, shared by every candidate of a run): each host's robots.txt is
+ * fetched once, and every probe honours it. robots.txt: 404/410 allows all; 401/403 disallows the host
+ * (`robots-forbidden`); any other 4xx, a 5xx or an unreachable host disallows it (`robots-unavailable`, RFC 9309's
+ * conservative choice); 429 disables the host. A host that answers a probe with a challenge page, 401, 403 or 429 is
+ * DISABLED for the rest of the run (no retry, no more probes by any candidate; later candidates get the reason
+ * `host-disabled:<why>`). Candidates must be processed in a fixed order for the run to be deterministic. The honest
+ * user agent and the 2 s per-host spacing are the broker's (HTTP_HEADERS, the supervisor's host pacer). A 4xx on the
+ * homepage ends the search. Each candidate has a request budget (`maxRequests`); beyond it the answer is `none` with
+ * the reason `budget-exhausted`.
  *
  * Redirects are followed by hand, at most 5 hops, and only by fetching hosts this module planned for (see
  * `locatorHosts`, which the app turns into the egress set); a redirect to any other host of the company's registrable
@@ -29,6 +33,8 @@ import { CareersSite, CompanyCandidate } from './types.js';
  */
 
 export const MAX_HOPS = 5;
+/** Requests one candidate may make (robots.txt, redirect hops and probes together). */
+export const MAX_REQUESTS = 16;
 export const CAREERS_PATHS = ['/careers', '/jobs', '/company/careers', '/about/careers'] as const;
 export const CAREERS_SUBDOMAINS = ['careers', 'jobs'] as const;
 
@@ -38,7 +44,7 @@ const SITEMAP_LOC = /\/careers|\/jobs/i;
 
 /** Status codes that may carry a bot wall; with a marker in the body they are a challenge (a closed list, never extended at run time). */
 const CHALLENGE_STATUS: ReadonlySet<number> = new Set([403, 429, 503]);
-const CHALLENGE_MARKERS = /cf-chl|challenge-platform|captcha|Attention Required|px-captcha/i;
+const CHALLENGE_MARKERS = /cf-chl|challenge-platform|captcha|Attention Required|px-captcha|Just a moment/i;
 
 /** A challenge page: 403/429/503 with a known marker in the body. */
 export function isChallenge(status: number, body: string): boolean {
@@ -83,7 +89,7 @@ export function locatorHosts(c: CompanyCandidate): string[] {
 
 /** The egress set for a run: the union of `locatorHosts` over the candidates. */
 export function locatorEgressSets(candidates: readonly CompanyCandidate[]): EgressSets {
-  return { 'pack:careers-hosts': [...new Set(candidates.flatMap(locatorHosts))].sort() };
+  return { 'coverage:candidate-hosts': [...new Set(candidates.flatMap(locatorHosts))].sort() };
 }
 
 const decodeEntities = (s: string): string => s.replace(/&amp;/gi, '&').replace(/&#38;/g, '&').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'");
@@ -141,21 +147,48 @@ export const careersLocatorContract = defineContract({
   consumes: CompanyCandidate,
   produces: CareersSite,
   capabilities: { http: true },
-  egress: ['pack:careers-hosts'],
+  egress: ['coverage:candidate-hosts'],
   dataClasses: { in: ['P0'], out: ['P0'] },
   budget: { usdPerCall: 0, usdPerRun: 0 },
   timeoutMs: 120_000,
   retry: { max: 0, on: [], backoffMs: [] },
 });
 
-export const careersLocator = defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx)]);
+/** What one run knows about hosts: robots.txt (once per host) and which hosts are disabled, and why. */
+export interface HostState {
+  readonly robots: Map<string, Promise<RobotsVerdict>>;
+  readonly disabled: Map<string, string>;
+}
+export const createHostState = (): HostState => ({ robots: new Map(), disabled: new Map() });
 
-async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSite> {
+class BudgetExhausted extends Error {}
+
+/**
+ * The careers-locator agent. Call it ONCE PER RUN: the host state (robots.txt cache, disabled hosts) lives as long as
+ * the returned agent, so a pipeline builds a new one for each coverage run and feeds it the candidates in a fixed order.
+ */
+export function makeCareersLocator(opts: { readonly hosts?: HostState; readonly maxRequests?: number } = {}) {
+  const hosts = opts.hosts ?? createHostState();
+  const maxRequests = opts.maxRequests ?? MAX_REQUESTS;
+  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, hosts, maxRequests)]);
+}
+
+async function locate(c: CompanyCandidate, ctx: AgentContext, state: HostState, maxRequests: number): Promise<CareersSite> {
+  const reasons: string[] = [];
+  try {
+    return await probe(c, ctx, state, maxRequests, reasons);
+  } catch (e) {
+    if (!(e instanceof BudgetExhausted)) throw e;
+    reasons.push('budget-exhausted');
+    return { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
+  }
+}
+
+async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, maxRequests: number, reasons: string[]): Promise<CareersSite> {
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const http = ctx.http;
   const planned = new Set(locatorHosts(c));
-  const reasons: string[] = [];
-  const robots = new Map<string, RobotsVerdict>();
+  let requests = 0;
 
   const web = asHttps(c.website);
   const siteKey = web === null ? null : registrableDomain(web.hostname);
@@ -176,11 +209,17 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
         if (hop > 0 && onCompanyDomain(u)) return { kind: 'moved', url: u.href };
         return { kind: 'miss', reason: hop > 0 ? `redirect to ${host} (off-domain)` : `${host} is not a planned host` };
       }
+      const off = state.disabled.get(host);
+      if (off !== undefined) return { kind: 'miss', reason: `host-disabled:${off}` };
       if (checkRobots) {
-        const verdict = await robotsFor(host);
-        const denial = robotsDenial(verdict, u);
-        if (denial !== null) return denial === 'challenge' ? { kind: 'challenge', reason: `challenge on ${host}` } : { kind: 'miss', reason: `${denial} (${host})` };
+        const denial = robotsDenial(await robotsFor(host), u);
+        if (denial !== null) return { kind: 'miss', reason: `${denial} (${host})` };
+        const off2 = state.disabled.get(host);
+        if (off2 !== undefined) return { kind: 'miss', reason: `host-disabled:${off2}` };
       }
+      // robots.txt is shared by the whole run, so it is counted but never refused by one candidate's budget
+      if (checkRobots && requests >= maxRequests) throw new BudgetExhausted();
+      requests++;
       let page;
       try {
         page = await http.getPage(u.href);
@@ -188,9 +227,13 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
         if (e instanceof KernelError) return { kind: 'miss', reason: `${e.code}: ${u.hostname}${u.pathname}` };
         throw e;
       }
-      if (isChallenge(page.status, page.body) || page.status === 429) {
-        robots.set(host, { kind: 'challenge', why: `status ${page.status}` });
-        return { kind: 'challenge', reason: page.status === 429 && !isChallenge(page.status, page.body) ? `rate-limited (429) on ${host}` : `challenge (${page.status}) on ${host}` };
+      const challenge = isChallenge(page.status, page.body);
+      // For robots.txt itself a plain 401/403 is the robots-forbidden verdict (robotsFor), not a disabled host.
+      const plainDenied = page.status === 401 || page.status === 403;
+      if (challenge || page.status === 429 || (plainDenied && checkRobots)) {
+        const why = challenge ? 'challenge' : `http-${page.status}`;
+        state.disabled.set(host, why);
+        return { kind: 'challenge', reason: page.status === 429 && !challenge ? `rate-limited (429) on ${host}` : `${why} (${page.status}) on ${host}` };
       }
       if (page.status >= 300 && page.status < 400) {
         if (page.location === null) return { kind: 'miss', reason: `${page.status} without Location (${host}${u.pathname})` };
@@ -206,19 +249,21 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
     return { kind: 'miss', reason: `more than ${MAX_HOPS} redirects from ${start.slice(0, 80)}` };
   }
 
-  async function robotsFor(host: string): Promise<RobotsVerdict> {
-    const cached = robots.get(host);
+  /** The host's robots.txt for the run: fetched once, whoever asks first. */
+  function robotsFor(host: string): Promise<RobotsVerdict> {
+    const cached = state.robots.get(host);
     if (cached !== undefined) return cached;
-    const r = await fetchUrl(`https://${host}/robots.txt`, false);
-    let verdict: RobotsVerdict;
-    if (r.kind === 'challenge') verdict = { kind: 'challenge', why: r.reason };
-    else if (r.kind === 'miss' || r.kind === 'moved') verdict = { kind: 'disallow-all', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
-    else if (r.status >= 500) verdict = { kind: 'disallow-all', why: `robots.txt ${r.status}` };
-    else if (r.status >= 400) verdict = { kind: 'allow-all', why: `robots.txt ${r.status}` };
-    else verdict = { kind: 'rules', robots: parseRobots(r.body) };
-    // A challenge in robots.txt was already stored by fetchUrl; every other verdict is cached here.
-    if (!robots.has(host)) robots.set(host, verdict);
-    return robots.get(host) as RobotsVerdict;
+    const p = (async (): Promise<RobotsVerdict> => {
+      const r = await fetchUrl(`https://${host}/robots.txt`, false);
+      if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
+      if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
+      if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
+      if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };
+      if (r.status >= 400) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${r.status}` };
+      return { kind: 'rules', robots: parseRobots(r.body) };
+    })();
+    state.robots.set(host, p);
+    return p;
   }
 
   const miss = (what: string, r: Fetched): void => {
@@ -231,7 +276,7 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
   if (c.careersUrl !== null && c.careersUrl.trim() !== '') {
     const r = await fetchUrl(c.careersUrl, true);
     const url = hit(r);
-    if (url !== null) return found('listed', url, `listed careersUrl answered${r.kind === 'ok' ? ` ${r.status}` : ' (moved)'}`);
+    if (url !== null) return found('listed', url, `listed careersUrl ${r.kind === 'ok' ? `answered ${r.status}` : 'redirected (target unfetched)'}`);
     miss('listed', r);
   }
 
@@ -243,6 +288,10 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
   // 2. homepage link
   const home = await fetchUrl(`${web.origin}/`, true);
   if (home.kind === 'challenge') {
+    reasons.push(`homepage: ${home.reason}`);
+    return none();
+  }
+  if (home.kind === 'miss' && state.disabled.has(web.hostname.toLowerCase())) {
     reasons.push(`homepage: ${home.reason}`);
     return none();
   }
@@ -260,8 +309,9 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
   for (const p of CAREERS_PATHS) {
     const r = await fetchUrl(`${web.origin}${p}`, true);
     const url = hit(r);
-    if (url !== null) return found('path', url, `GET ${p}${r.kind === 'ok' ? ` ${r.status}` : ' (moved)'}`);
+    if (url !== null) return found('path', url, `GET ${p} ${r.kind === 'ok' ? r.status : 'redirected (target unfetched)'}`);
     miss(p, r);
+    if (state.disabled.has(web.hostname.toLowerCase())) break;
   }
 
   // 4. subdomains
@@ -269,7 +319,7 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
     const host = `${s}.${siteKey}`;
     const r = await fetchUrl(`https://${host}/`, true);
     const url = hit(r);
-    if (url !== null) return found('subdomain', url, `GET ${host}/${r.kind === 'ok' ? ` ${r.status}` : ' (moved)'}`);
+    if (url !== null) return found('subdomain', url, `GET ${host}/ ${r.kind === 'ok' ? r.status : 'redirected (target unfetched)'}`);
     miss(host, r);
   }
 
@@ -288,7 +338,7 @@ async function locate(c: CompanyCandidate, ctx: AgentContext): Promise<CareersSi
       for (const loc of sitemapLocs(r.body)) {
         const u = asHttps(loc);
         if (u === null || !onCompanyDomain(u) || !SITEMAP_LOC.test(u.pathname)) continue;
-        return found('sitemap', loc, `first careers <loc> in ${new URL(sm).pathname}`);
+        return found('sitemap', u.href, `first careers <loc> in ${new URL(sm).pathname}`);
       }
       reasons.push(`sitemap ${new URL(sm).pathname}: no careers or jobs <loc>`);
     } else miss(`sitemap ${new URL(sm).pathname}`, r);
