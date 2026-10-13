@@ -19,6 +19,12 @@ export interface HttpTool {
   getJson(url: string): Promise<{ status: number; json: unknown }>;
   /** The raw body (for an archive or other binary file), under the same egress, pacing and size cap as getText. */
   getBytes(url: string): Promise<{ status: number; bytes: Uint8Array }>;
+  /**
+   * One GET whose answer is returned whatever the status: a 3xx comes back with its `Location` (never followed here, and
+   * not a denial), a 429 or 5xx with its body, instead of the errors getText raises. For a caller that has its own rules
+   * for redirects and bot walls (the careers locator). Same egress, https-only, pacing and size cap as getText.
+   */
+  getPage(url: string): Promise<{ status: number; body: string; location: string | null }>;
 }
 
 /** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
@@ -297,9 +303,23 @@ export function issueContext(a: IssueArgs): AgentContext {
       }
       return { status: res.status, body };
     };
+    const getPage = async (url: string): Promise<{ status: number; body: string; location: string | null }> => {
+      const u = checkUrl(url);
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      await a.hostPacer?.wait(u.hostname);
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      try {
+        const res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        const body = await readCapped(res, a.policy.maxResponseBytes);
+        return { status: res.status, body, location: res.headers?.get('location') ?? null };
+      } catch (e) {
+        throw mapProviderError(e);
+      }
+    };
     const getText = (url: string): Promise<{ status: number; body: string }> => fetchBody(url, readCapped);
     ctx.http = {
       getText,
+      getPage,
       async getBytes(url) {
         const { status, body } = await fetchBody(url, readCappedBytes);
         return { status, bytes: body };

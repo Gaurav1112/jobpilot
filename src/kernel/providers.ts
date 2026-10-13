@@ -4,6 +4,8 @@ export interface FetchResponse {
   readonly status: number;
   /** When present the broker reads this stream and stops at the size cap; otherwise it measures text(). */
   readonly body?: ReadableStream<Uint8Array> | null;
+  /** Optional; only `get('location')` is ever read (by `getPage`). A WHATWG `Headers` fits. */
+  readonly headers?: { get(name: string): string | null };
   text(): Promise<string>;
 }
 

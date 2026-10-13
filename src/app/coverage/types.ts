@@ -56,6 +56,8 @@ export const CareersSite = defineType(
       careersUrl: z.string().nullable(),
       method: z.enum(['listed', 'homepage-link', 'path', 'subdomain', 'sitemap', 'none']),
       evidence: z.string().nullable(),
+      /** One short reason per probe that missed (and, for `none`, why nothing was found); absent on sites recorded before the locator. */
+      reasons: z.array(z.string()).optional(),
     })
     .strict(),
 );

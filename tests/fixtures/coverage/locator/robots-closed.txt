@@ -1,0 +1,5 @@
+User-agent: jobpilot
+Disallow: /careers
+
+User-agent: *
+Allow: /

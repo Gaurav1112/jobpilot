@@ -1,0 +1,5 @@
+# Example robots.txt
+User-agent: *
+Disallow: /admin/
+Disallow: /search
+Sitemap: https://www.lumenfield.test/sitemap.xml
