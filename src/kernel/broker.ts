@@ -25,6 +25,14 @@ export interface HttpTool {
    * for redirects and bot walls (the careers locator). Same egress, https-only, pacing and size cap as getText.
    */
   getPage(url: string, opts?: RequestOptions): Promise<{ status: number; body: string; location: string | null }>;
+  /**
+   * One POST of a JSON body (`JSON.stringify(body)`, at most POST_BODY_MAX_BYTES), parsed like getJson: a status of 400
+   * or more is `{ status, json: null }`, a body that is not JSON is `invalid_output`. For a platform whose public page
+   * itself queries its job list with a POST (Workday's CXS search). The same egress, https-only, pacing, size cap,
+   * timeout and honest headers as getJson (plus `content-type: application/json`); a redirect is refused, 429 is
+   * `rate_limit`, a 5xx `overloaded`.
+   */
+  postJson(url: string, body: unknown, opts?: RequestOptions): Promise<{ status: number; json: unknown }>;
 }
 
 /**
@@ -35,7 +43,16 @@ export interface HttpTool {
  */
 export interface RequestOptions {
   readonly timeoutMs?: number;
+  /**
+   * A wider spacing for this request's host than the policy's `minHostIntervalMs` (a platform's own politeness rule,
+   * e.g. Workday's 2 s): the request waits until at least this long after the previous request to the host. It can
+   * only widen the spacing, never narrow it.
+   */
+  readonly minIntervalMs?: number;
 }
+
+/** The largest JSON body `postJson` sends. */
+export const POST_BODY_MAX_BYTES = 64 * 1024;
 
 /** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
 export const HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({
@@ -43,9 +60,13 @@ export const HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   'user-agent': 'jobpilot/0.1 (+local)',
 });
 
+/** `postJson`'s headers: the fixed GET headers plus the JSON content type, nothing configurable. */
+export const POST_HEADERS: Readonly<Record<string, string>> = Object.freeze({ ...HTTP_HEADERS, 'content-type': 'application/json' });
+
 /** Spaces requests to one host by at least `minIntervalMs`; one instance is shared by every context of a supervisor. */
 export interface HostPacer {
-  wait(host: string): Promise<void>;
+  /** `minIntervalMs` widens the spacing for this one request (never below the pacer's own interval). */
+  wait(host: string, minIntervalMs?: number): Promise<void>;
 }
 
 /**
@@ -56,11 +77,12 @@ export interface HostPacer {
 export function createHostPacer(minIntervalMs: number, clock: Clock, sleep: (ms: number) => Promise<void>): HostPacer {
   const lastRequestAt = new Map<string, number>();
   return {
-    async wait(host) {
+    async wait(host, wider) {
       const h = normalizeHost(host);
       const now = Date.parse(clock.now());
       const last = lastRequestAt.get(h);
-      const slot = last === undefined ? now : Math.max(now, last + minIntervalMs);
+      const gap = wider !== undefined && Number.isFinite(wider) && wider > minIntervalMs ? wider : minIntervalMs;
+      const slot = last === undefined ? now : Math.max(now, last + gap);
       lastRequestAt.set(h, slot);
       if (slot > now) await sleep(slot - now);
     },
@@ -314,16 +336,25 @@ export function issueContext(a: IssueArgs): AgentContext {
       };
     };
     const timedOutError = (host: string, ms: number | undefined): KernelError => new KernelError('timeout', `request to ${host} timed out after ${ms ?? 0} ms`);
-    const fetchBody = async <T>(url: string, read: (res: FetchResponse, max: number) => Promise<T>, timeoutMs?: number): Promise<{ status: number; body: T }> => {
+    const fetchBody = async <T>(
+      url: string,
+      read: (res: FetchResponse, max: number) => Promise<T>,
+      opts?: RequestOptions,
+      post?: string,
+    ): Promise<{ status: number; body: T }> => {
       const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
-      await a.hostPacer?.wait(u.hostname);
+      await (opts?.minIntervalMs === undefined ? a.hostPacer?.wait(u.hostname) : a.hostPacer?.wait(u.hostname, opts.minIntervalMs));
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       let res;
       let body;
+      const timeoutMs = opts?.timeoutMs;
       const rq = requestSignal(timeoutMs);
       try {
-        res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        res = await a.providers.fetch(
+          u.href,
+          post === undefined ? { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS } : { signal: rq.signal, redirect: 'manual', headers: POST_HEADERS, method: 'POST', body: post },
+        );
         if (res.status >= 300 && res.status < 400) {
           throw deny(`G-EGRESS: redirect from ${u.hostname} refused`);
         }
@@ -341,7 +372,7 @@ export function issueContext(a: IssueArgs): AgentContext {
     const getPage = async (url: string, opts?: RequestOptions): Promise<{ status: number; body: string; location: string | null }> => {
       const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
-      await a.hostPacer?.wait(u.hostname);
+      await (opts?.minIntervalMs === undefined ? a.hostPacer?.wait(u.hostname) : a.hostPacer?.wait(u.hostname, opts.minIntervalMs));
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       const rq = requestSignal(opts?.timeoutMs);
       try {
@@ -355,7 +386,15 @@ export function issueContext(a: IssueArgs): AgentContext {
         rq.done();
       }
     };
-    const getText = (url: string, timeoutMs?: number): Promise<{ status: number; body: string }> => fetchBody(url, readCapped, timeoutMs);
+    const getText = (url: string, opts?: RequestOptions): Promise<{ status: number; body: string }> => fetchBody(url, readCapped, opts);
+    const parseJson = (url: string, status: number, body: string): { status: number; json: unknown } => {
+      if (status >= 400) return { status, json: null };
+      try {
+        return { status, json: JSON.parse(body) as unknown };
+      } catch {
+        throw new KernelError('invalid_output', `response from ${new URL(url).hostname} is not valid JSON`);
+      }
+    };
     ctx.http = {
       getText: (url) => getText(url),
       getPage,
@@ -364,15 +403,20 @@ export function issueContext(a: IssueArgs): AgentContext {
         return { status, bytes: body };
       },
       async getJson(url, opts) {
-        const { status, body } = await getText(url, opts?.timeoutMs);
-        if (status >= 400) return { status, json: null };
-        let json: unknown;
+        const { status, body } = await getText(url, opts);
+        return parseJson(url, status, body);
+      },
+      async postJson(url, payload, opts) {
+        let text: string | undefined;
         try {
-          json = JSON.parse(body);
+          text = JSON.stringify(payload);
         } catch {
-          throw new KernelError('invalid_output', `response from ${new URL(url).hostname} is not valid JSON`);
+          text = undefined;
         }
-        return { status, json };
+        if (text === undefined) throw new KernelError('invalid_output', 'postJson: the body is not JSON-serialisable');
+        if (Buffer.byteLength(text, 'utf8') > POST_BODY_MAX_BYTES) throw new KernelError('invalid_output', `postJson: the body exceeds ${POST_BODY_MAX_BYTES} bytes`);
+        const { status, body } = await fetchBody(url, readCapped, opts, text);
+        return parseJson(url, status, body);
       },
     };
   }

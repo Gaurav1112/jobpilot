@@ -490,6 +490,79 @@ describe('v1 kernel extensions: broker', () => {
   });
 });
 
+describe('postJson (Workday CXS search) and a wider per-request spacing', () => {
+  it('POSTs the JSON body with the honest headers plus content-type, under the same egress, https, size and status rules', async () => {
+    const inits: Parameters<FetchLike>[1][] = [];
+    const big = 'x'.repeat(PRODUCT_POLICY_V1.maxResponseBytes + 1);
+    const f: FetchLike = async (url, init) => {
+      inits.push(init);
+      if (url.endsWith('/big')) return { status: 200, text: async () => big };
+      if (url.endsWith('/teapot')) return { status: 418, text: async () => 'nope' };
+      if (url.endsWith('/limited')) return { status: 429, text: async () => '' };
+      if (url.endsWith('/down')) return { status: 503, text: async () => '' };
+      if (url.endsWith('/moved')) return { status: 301, text: async () => '' };
+      if (url.endsWith('/html')) return { status: 200, text: async () => '<html>' };
+      return { status: 200, text: async () => JSON.stringify({ echo: init.body ?? null }) };
+    };
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    const got = await ctx.http!.postJson('https://boards-api.greenhouse.io/jobs', { limit: 20, offset: 0 });
+    expect(got).toEqual({ status: 200, json: { echo: '{"limit":20,"offset":0}' } });
+    expect(inits[0]).toMatchObject({
+      method: 'POST',
+      body: '{"limit":20,"offset":0}',
+      redirect: 'manual',
+      headers: { accept: 'application/json, text/plain;q=0.8, */*;q=0.1', 'user-agent': 'jobpilot/0.1 (+local)', 'content-type': 'application/json' },
+    });
+    // a status of 400 or more is returned, not parsed
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/teapot', {})).resolves.toEqual({ status: 418, json: null });
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/limited', {})).rejects.toMatchObject({ code: 'rate_limit' });
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/down', {})).rejects.toMatchObject({ code: 'overloaded' });
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/moved', {})).rejects.toThrow(/redirect from boards-api.greenhouse.io refused/);
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/html', {})).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/big', {})).rejects.toMatchObject({ code: 'invalid_output' });
+    await expect(ctx.http!.postJson('https://evil.example/jobs', {})).rejects.toThrow(/G-EGRESS/);
+    await expect(ctx.http!.postJson('http://boards-api.greenhouse.io/jobs', {})).rejects.toThrow(/only https/);
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/jobs', { s: 'y'.repeat(64 * 1024) })).rejects.toThrow(/exceeds 65536 bytes/);
+    // the refused ones never reached the fetch
+    expect(inits).toHaveLength(7);
+    expect(ctx.denials().length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('GETs are unchanged: no method, no body, the fixed headers', async () => {
+    const inits: Parameters<FetchLike>[1][] = [];
+    const f: FetchLike = async (_url, init) => {
+      inits.push(init);
+      return { status: 200, text: async () => '{}' };
+    };
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    await ctx.http!.getJson('https://boards-api.greenhouse.io/a');
+    await ctx.http!.getPage('https://boards-api.greenhouse.io/b');
+    for (const init of inits) {
+      expect(init.method).toBeUndefined();
+      expect(init.body).toBeUndefined();
+      expect(Object.keys(init.headers).sort()).toEqual(['accept', 'user-agent']);
+    }
+  });
+
+  it('minIntervalMs widens the host spacing for that request only, never narrows it', async () => {
+    let now = Date.parse('2026-10-08T00:00:00Z');
+    const clock = { now: () => new Date(now).toISOString() };
+    const slept: number[] = [];
+    const pacer = createHostPacer(1000, clock, async (ms) => {
+      slept.push(ms);
+      now += ms;
+    });
+    const f: FetchLike = async () => ({ status: 200, text: async () => '{}' });
+    const ctx = issueContext({ contract: fetcher, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: f }, clock, signal: new AbortController().signal, hostPacer: pacer });
+    await ctx.http!.postJson('https://boards-api.greenhouse.io/a', {}, { minIntervalMs: 2000 });
+    await ctx.http!.postJson('https://boards-api.greenhouse.io/a', {}, { minIntervalMs: 2000 });
+    await ctx.http!.getPage('https://boards-api.greenhouse.io/r', { minIntervalMs: 2000 });
+    await ctx.http!.getJson('https://boards-api.greenhouse.io/b', { minIntervalMs: 500 });
+    await ctx.http!.getJson('https://boards-api.greenhouse.io/c');
+    expect(slept).toEqual([2000, 2000, 1000, 1000]);
+  });
+});
+
 describe('per-request timeout (coverage: getPage and getJson take { timeoutMs })', () => {
   /** A fetch that answers only when aborted (it rejects with the signal's reason), or after `ms`. */
   const hanging = (ms = 60_000): FetchLike => (_url, init) =>

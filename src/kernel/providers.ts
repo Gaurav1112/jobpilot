@@ -9,9 +9,13 @@ export interface FetchResponse {
   text(): Promise<string>;
 }
 
+/**
+ * `method` and `body` are set only by the broker's `postJson` (a JSON query the platform's own public page sends, e.g.
+ * Workday's CXS job search); every other request is a GET with neither, exactly as before.
+ */
 export type FetchLike = (
   url: string,
-  init: { signal: AbortSignal; redirect: 'manual'; headers: Readonly<Record<string, string>> },
+  init: { signal: AbortSignal; redirect: 'manual'; headers: Readonly<Record<string, string>>; method?: 'POST'; body?: string },
 ) => Promise<FetchResponse>;
 
 export interface LlmRequest {
@@ -134,4 +138,5 @@ export function pdftotextProvider(binary = 'pdftotext'): PdfTextProvider {
     });
 }
 
-export const nodeFetch: FetchLike = (url, init) => fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers } });
+export const nodeFetch: FetchLike = (url, init) =>
+  fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers }, ...(init.method !== undefined ? { method: init.method, body: init.body ?? '' } : {}) });
