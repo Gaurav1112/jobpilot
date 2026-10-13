@@ -5,7 +5,7 @@ import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
-import { citiesIn, countriesIn, excludedParts, excludedPlaces } from '../text/norm.js';
+import { citiesIn, cityKey, countriesIn, excludedParts, excludedPlaces, officeCity } from '../text/norm.js';
 import { EligibilityVerdict, Posting } from '../types.js';
 
 /**
@@ -62,7 +62,7 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    The watchlist entry is found by (ats, slug), or by company name for a feed.
  *    e. office cities (`officeCityNote`): when the decision is `onsite` or `hybrid` and the pack lists
  *       `eligibility.officeCities`, a posting located in one of them passes, with the note `office/hybrid: <City>`
- *       (`officeNote`). Each key resolves through OFFICE_CITY_ALIASES (an unknown key matches only itself), matched on
+ *       (`officeNote`). Each key resolves through the office-city alias table (`officeCity`; an unknown key matches only itself), matched on
  *       word boundaries, case-insensitively, in a segment of the location text (split on `; | / &`, "or", "and", new
  *       lines) whose places are none or include India, or in an entry of the structured countries. A city named only in
  *       the description never counts. It needs nothing to exclude India: countries naming none of India or an office
@@ -505,27 +505,9 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   return anythingRemote ? 'review' : 'onsite';
 }
 
-/**
- * Office city keys and the spellings each one matches, with the name the note shows. Generic place data: which cities
- * count is the pack's `eligibility.officeCities`.
- */
-const OFFICE_CITY_ALIASES: Readonly<Record<string, { display: string; aliases: readonly string[] }>> = {
-  bengaluru: { display: 'Bengaluru', aliases: ['bengaluru', 'bangalore', 'blr'] },
-  pune: { display: 'Pune', aliases: ['pune'] },
-  hyderabad: { display: 'Hyderabad', aliases: ['hyderabad'] },
-  mumbai: { display: 'Mumbai', aliases: ['mumbai', 'bombay'] },
-  'delhi ncr': { display: 'Delhi NCR', aliases: ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'ncr'] },
-  chennai: { display: 'Chennai', aliases: ['chennai', 'madras'] },
-};
 /** Indian states: a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
 const INDIAN_STATES: ReadonlySet<string> = new Set(['karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat']);
 
-const cityKey = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, ' ');
-function officeCity(raw: string): { display: string; aliases: readonly string[] } {
-  const key = cityKey(raw);
-  const known = Object.hasOwn(OFFICE_CITY_ALIASES, key) ? OFFICE_CITY_ALIASES[key] : undefined;
-  return known ?? { display: key.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()), aliases: [key] };
-}
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const namesAlias = (text: string, aliases: readonly string[]): boolean =>
   aliases.some((a) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(a).replace(/ /g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu').test(text));

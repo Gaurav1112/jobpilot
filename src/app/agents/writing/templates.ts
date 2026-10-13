@@ -184,17 +184,41 @@ export function noticePhrase(notice: string): string {
   return m ? `a ${m[1] as string}-${(m[2] as string).toLowerCase()} notice period` : `a notice period of ${notice}`;
 }
 
-/** The filled p4: the city clause only with a city, the notice clause only with a notice, then `COVER_P4_THANKS`. */
-export function renderP4(city: string | undefined, notice: string | undefined): string {
+/** A notice that means no notice at all: it reads "available to start immediately". */
+const IMMEDIATE_NOTICE = /^(?:immediately|immediate|none|0|0 days?|nil|n\/a)$/i;
+export const isImmediateNotice = (notice: string): boolean => IMMEDIATE_NOTICE.test(notice.trim());
+const AVAILABLE_AFTER = 'available after {notice}';
+export const COVER_P4_IMMEDIATE = 'available to start immediately';
+const FULLY_REMOTE = 'a fully remote role';
+
+/** "A", "A or B", "A, B or C". */
+export const joinOr = (items: readonly string[]): string =>
+  items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1] as string}`;
+
+/**
+ * The filled p4: the city clause only with a city, the notice clause only with a notice, then `COVER_P4_THANKS`. An
+ * immediate notice (`isImmediateNotice`) reads "available to start immediately". With office cities (display names,
+ * from `eligibility.officeCities`) the role reads "a remote role, or an office or hybrid role in A, B or C"; with none
+ * the paragraph is exactly the template.
+ */
+export function renderP4(city: string | undefined, notice: string | undefined, officeCities: readonly string[] = []): string {
+  const immediate = notice !== undefined && isImmediateNotice(notice);
   const n = notice === undefined ? undefined : noticePhrase(notice);
+  const shape = (t: string): string => {
+    const timed = immediate ? t.replace(AVAILABLE_AFTER, COVER_P4_IMMEDIATE) : t;
+    if (officeCities.length === 0) return timed;
+    const role = `a remote role, or an office or hybrid role in ${joinOr(officeCities)}`;
+    // "… role and available …" gains a comma once the role clause has one of its own.
+    return timed.replace(`${FULLY_REMOTE} and `, `${role}, and `).replace(FULLY_REMOTE, role);
+  };
   const first =
     city !== undefined && n !== undefined
-      ? fill(COVER_P4_CITY_NOTICE, { city, notice: n })
+      ? fill(shape(COVER_P4_CITY_NOTICE), { city, notice: n })
       : city !== undefined
-        ? fill(COVER_P4_CITY, { city })
+        ? fill(shape(COVER_P4_CITY), { city })
         : n !== undefined
-          ? fill(COVER_P4_NOTICE, { notice: n })
-          : COVER_P4_NONE;
+          ? fill(shape(COVER_P4_NOTICE), { notice: n })
+          : shape(COVER_P4_NONE);
   return `${first} ${COVER_P4_THANKS}`;
 }
 
