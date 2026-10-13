@@ -22,7 +22,14 @@ import { Posting, RawPosting } from '../types.js';
  * - himalayas: the job without `expiryDate`; `locationRestrictions` (empty = worldwide), `pubDate` in epoch seconds,
  *   `minSalary`/`maxSalary`/`currency`/`salaryPeriod`; a remote-only feed;
  * - jobicy: the job; `jobGeo` (a comma list), `jobType` (a list), `pubDate`, `salary*` fields; a remote-only feed;
- * - careers: `{url, jsonLd: JobPosting | null, title, text}` from the career-site source.
+ * - careers: `{url, jsonLd: JobPosting | null, title, text}` from the career-site source;
+ * - workday: `{title, url, externalPath, locationsText, reqId, detail}` (platforms/workday.ts). With a detail: its
+ *   title, `location` plus `additionalLocations` (joined by `; `), the requisition country (ISO-2), `remoteType`
+ *   (structured: a value naming remote is `remote`, hybrid or flexible `hybrid`, office or on-site `onsite`; any
+ *   other value is kept only as the signal `remoteType:<value>`), `timeType` ("Full time") and the HTML description.
+ *   Without one (past the per-company detail budget, or a title the pre-filter skips): the listed `locationsText`
+ *   ("India, Bengaluru", or a bare "2 Locations", which eligibility treats as a generic location field) and an empty
+ *   description. Workday dates are relative ("Posted Today"): `postedAt` is always null.
  *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
@@ -570,7 +577,37 @@ function careers(raw: RawPosting, r: Rec): Posting {
   });
 }
 
-const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = { greenhouse, lever, ashby, himalayas, jobicy, careers };
+/** Workday `remoteType` (tenant-defined wording: "Remote", "Hybrid", "Office - Based", "Office Tech-Flexible"). */
+function workdayArrangement(v: string | null): Remote['structured'] {
+  if (v === null) return null;
+  if (/\bremote\b/i.test(v)) return 'remote';
+  if (/\b(?:hybrid|flexible)\b/i.test(v)) return 'hybrid';
+  if (/\b(?:office|on[- ]?site|in[- ]office)\b/i.test(v)) return 'onsite';
+  return null;
+}
+
+function workday(raw: RawPosting, r: Rec): Posting {
+  const d = isRec(r.detail) ? r.detail : null;
+  const located = d === null ? [] : [str(d.location), ...arr(d.additionalLocations).map(str)].filter((x): x is string => x !== null).map((x) => x.trim());
+  const locationText = located.length > 0 ? [...new Set(located)].join('; ') : (str(r.locationsText) ?? '');
+  const remoteType = d === null ? null : str(d.remoteType);
+  const country = d === null ? null : str(d.country);
+  const descriptionText = d === null ? '' : htmlToText(str(d.description) ?? '');
+  return assemble(raw, 'workday', {
+    title: (d === null ? null : str(d.title)) ?? str(r.title),
+    url: str(r.url),
+    locationText,
+    structured: workdayArrangement(remoteType),
+    countries: [...countriesIn(locationText), ...(country === null ? [] : places([country]))],
+    signals: remoteType === null ? [] : [`remoteType:${oneLine(remoteType)}`],
+    employmentType: d === null ? null : str(d.timeType),
+    descriptionText,
+    postedAt: null,
+    comp: compFromText(descriptionText),
+  });
+}
+
+const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = { greenhouse, lever, ashby, himalayas, jobicy, careers, workday };
 
 /** Maps one raw posting; throws `invalid_output` for an unknown source, a raw that is not an object, no title or no URL. */
 export function normalize(raw: RawPosting): Posting {
@@ -582,7 +619,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

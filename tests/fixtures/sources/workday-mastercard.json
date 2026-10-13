@@ -1,0 +1,292 @@
+{
+ "recorded": "2026-10-14",
+ "board": "mastercard.wd1.myworkdayjobs.com/mastercard/CorporateCareers",
+ "robots": "Sitemap: https://mastercard.wd1.myworkdayjobs.com/CorporateCareers/siteMap.xml\nSitemap: https://mastercard.wd1.myworkdayjobs.com/Campus/siteMap.xml\nSitemap: https://mastercard.wd1.myworkdayjobs.com/ContractorConversion/siteMap.xml\nSitemap: https://mastercard.wd1.myworkdayjobs.com/RYC/siteMap.xml\n\nUser-agent: *\nAllow: /CorporateCareers/\nAllow: /Campus/\nAllow: /ContractorConversion/\nAllow: /RYC/\nDisallow: /CUOReqSite/\nDisallow: /CampusApplyOnly/\nDisallow: /Public_Posting_Site/\nDisallow: /refreshFacet/",
+ "pages": [
+  {
+   "total": 1101,
+   "jobPostings": [
+    {
+     "title": "Software Engineer II - Full Stack & AI",
+     "externalPath": "/job/OFallon-Missouri/Software-Engineer-II---Full-Stack---AI_R-292355",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292355"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer - Java Full Stack & AI",
+     "externalPath": "/job/OFallon-Missouri/Senior-Software-Engineer---Java-Full-Stack---AI_R-292353",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292353"
+     ]
+    },
+    {
+     "title": "Vice President, Product Management",
+     "externalPath": "/job/Purchase-New-York/Vice-President--Product-Management_R-293388",
+     "locationsText": "Purchase, New York",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-293388"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer - Java Full Stack & AI",
+     "externalPath": "/job/OFallon-Missouri/Senior-Software-Engineer---Java-Full-Stack-and-AI--with-Python--2_R-292354",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292354"
+     ]
+    },
+    {
+     "title": "Lead Software Engineer",
+     "externalPath": "/job/Atlanta-Georgia/Lead-Software-Engineer_R-291493",
+     "locationsText": "Atlanta, Georgia",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-291493"
+     ]
+    },
+    {
+     "title": "Pre-Sales, Go To Market Director",
+     "externalPath": "/job/New-York-City-New-York/Pre-Sales--Go-To-Market-Director_R-287822",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-287822"
+     ]
+    },
+    {
+     "title": "Manager Software Engineering",
+     "externalPath": "/job/OFallon-Missouri/Manager-Software-Engineering_R-292949",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292949"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer",
+     "externalPath": "/job/OFallon-Missouri/Senior-Software-Engineer_R-291630",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-291630"
+     ]
+    },
+    {
+     "title": "Software Engineer II",
+     "externalPath": "/job/OFallon-Missouri/Software-Engineer-II_R-292491",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292491"
+     ]
+    },
+    {
+     "title": "Lead Project Manager",
+     "externalPath": "/job/OFallon-Missouri/Lead-Project-Manager_R-286672",
+     "locationsText": "O'Fallon, Missouri",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-286672"
+     ]
+    },
+    {
+     "title": "Director, Settlement Operations, Brazil",
+     "externalPath": "/job/Sao-Paulo-Brazil/Director--Settlement-Operations--Brazil_R-293524-1",
+     "locationsText": "Sao Paulo, Brazil",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-293524"
+     ]
+    },
+    {
+     "title": "Director, Core Payments Communications",
+     "externalPath": "/job/Purchase-New-York/Director--Core-Payments-Communications_R-291048",
+     "locationsText": "Purchase, New York",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-291048"
+     ]
+    },
+    {
+     "title": "Executive Assistant",
+     "externalPath": "/job/Purchase-New-York/Executive-Assistant_R-289941",
+     "locationsText": "Purchase, New York",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-289941"
+     ]
+    },
+    {
+     "title": "Senior Specialist, Product Development",
+     "externalPath": "/job/Copenhagen-Denmark/Senior-Specialist--Product-Development_R-290329",
+     "locationsText": "Copenhagen, Denmark",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-290329"
+     ]
+    },
+    {
+     "title": "Senior Specialist, Product Management, Global Card Programs",
+     "externalPath": "/job/Lisbon-Portugal/Senior-Specialist--Product-Management--Global-Card-Programs_R-292725",
+     "locationsText": "Lisbon, Portugal",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292725"
+     ]
+    },
+    {
+     "title": "Vice President, European Cybersecurity Engagement",
+     "externalPath": "/job/London-England-Angel-Lane/Vice-President--European-Cybersecurity-Engagement_R-281388-1",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-281388"
+     ]
+    },
+    {
+     "title": "Manager, Product Management, Global Card Programs",
+     "externalPath": "/job/Lisbon-Portugal/Manager--Product-Management--Global-Card-Programs_R-292727",
+     "locationsText": "Lisbon, Portugal",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292727"
+     ]
+    },
+    {
+     "title": "Manager, Legal Compliance",
+     "externalPath": "/job/Mexico-City-Mexico/Manager--Legal-Compliance_R-291935-1",
+     "locationsText": "Mexico City, Mexico",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-291935"
+     ]
+    },
+    {
+     "title": "Lead Technical Program Manager",
+     "externalPath": "/job/Pune-India/Lead-Technical-Program-Manager_R-292398-1",
+     "locationsText": "Pune, India",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-292398"
+     ]
+    },
+    {
+     "title": "Director Product Management - Technical",
+     "externalPath": "/job/New-York-City-New-York/Director-Product-Management---Technical_R-291272",
+     "locationsText": "New York City, New York",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "R-291272"
+     ]
+    }
+   ],
+   "facets": [
+    {
+     "facetParameter": "locationMainGroup",
+     "values": [
+      {
+       "facetParameter": "locations",
+       "descriptor": "Locations",
+       "values": [
+        {
+         "descriptor": "Abidjan, Cote d'ivoire",
+         "id": "ff2e31857adb10c37e220f4339482880",
+         "count": 1
+        },
+        {
+         "descriptor": "Almaty, Kazakhstan",
+         "id": "cfd21509f4084842b98cc1813b2c496d",
+         "count": 2
+        },
+        {
+         "descriptor": "Gurgaon, India",
+         "id": "8eab563831bf10acb97b7fba5feff76e",
+         "count": 42
+        },
+        {
+         "descriptor": "Gurgaon, India",
+         "id": "2e83df2db0851073b1d3be60012912d5",
+         "count": 1
+        },
+        {
+         "descriptor": "Hyderabad, India",
+         "id": "8eab563831bf10acb9d6f1103d78fa67",
+         "count": 8
+        },
+        {
+         "descriptor": "Mumbai, India",
+         "id": "8eab563831bf10acbb7b5bf86d570af1",
+         "count": 1
+        },
+        {
+         "descriptor": "Mumbai, India",
+         "id": "4a21bf4e5285455eb8a0037a87adf523",
+         "count": 1
+        },
+        {
+         "descriptor": "Navi Mumbai, India (Finicity)",
+         "id": "28905a74db1b10019f5bb16c36030000",
+         "count": 14
+        },
+        {
+         "descriptor": "Pune, India",
+         "id": "8eab563831bf10acbc722e4859721571",
+         "count": 182
+        },
+        {
+         "descriptor": "Pune, India",
+         "id": "8ffae25149e210718ae5b2e1cb1993bb",
+         "count": 1
+        },
+        {
+         "descriptor": "Remote - Indiana",
+         "id": "0cdca7f468934b6a9bdb13d7f3c9b67e",
+         "count": 3
+        },
+        {
+         "descriptor": "Vadodara, India",
+         "id": "85a5bdf4e1831035984400a2fb698c94",
+         "count": 4
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "details": {
+  "/job/Pune-India/Lead-Technical-Program-Manager_R-292398-1": {
+   "jobPostingInfo": {
+    "title": "Lead Technical Program Manager",
+    "jobDescription": "<p><span><b>Our Purpose</b></span></p><p></p><p><i>Mastercard powers economies and empowers people in 200&#43; countries and territories worldwide. Together with our customers, we’re helping build a sustainable economy where everyone can prosper. We support a wide range of digital payments choices, making transactions secure, simple, smart and accessible. Our technology and innovation, partnerships and networks combine to deliver a unique set of products and services that help people, businesses and governments realize their greatest potential.</i></p><p></p><p><b>Title and Summary</b></p><h3></h3><p></p>Lead Technical Program Manager<h3></h3><p style=\"text-align:inherit\"></p>An AI‑First Technical Program Manager who organizes and accelerates delivery across agent‑amplified pods, using the written specification as the single source of truth and DORA/Core4 metrics as the primary delivery signal. Operates as a connective role in a shared pool — reaching into every pod to keep the program's coordination, risk, and dependency view current without orchestrating day‑to‑day — while preserving every SOX/PCI control gate. Manifest definitions, release integration, scope, and dependencies are tracked with data so all outputs are production‑ready at launch.<br><br>Responsibilities<br><br>Organizes and accelerates related technology projects across multiple pods, aligning dependent organizations; identifies and removes blockers and always finds the path forward.<br>Charts the pod‑to‑pod relay (which pod builds each Epic stage), aggregates cross‑Big‑Rock risks and dependencies into a single view, and drives execution through the monthly Epic cycle anchored to the user guides.<br>Serves as the source of truth for status; generates the Monthly Technical Review (MTR), RAID Log, and DORA rollup directly from the session record using M365 Copilot, so the ledger stays current without hand‑keeping.<br>Measurably improves, streamlines, and eliminates excess process and ceremony — naming the reader of every artifact before it is kept and retiring legacy ceremonies deliberately.<br>Keeps abreast of the evolving AI‑engineering landscape; understands the practical read of what AI can and cannot do — that AI amplifies engineering judgment and leaves that judgment with the human — and asks the right questions to evaluate scalability, latency, security, performance, and data integrity.<br>Works with ambiguity and limited guidance, comfortable with the indeterminism of agent‑driven delivery, kept honest by the monthly user guides and real‑customer feedback.<br>Transforms raw thoughts into clear, concise communication and can communicate with confidence 3+ levels up; fluent in prompt patterns and agent‑session discipline to produce review‑ready output on the first pass.<br>Understands the needs of engineers and BizOps/SRE teams, including the verification tax and the build‑and‑review, follow‑the‑sun pairing that manages it.<br>Reviews metrics and proactively seeks improved data and mechanisms for visibility, keeping the program aligned to objectives while preserving all control gates — AIFE removes coordination overhead, not controls.<br>Plays an active role in mentoring, recruiting, and growing agent fluency and the Expert‑Generalist skill ladder across pods.<br><br>Experiences<br><br>Anticipate bottlenecks and factor in contingency for unplanned delays, including transition risk from Scrum to the pod model.<br>Define success metrics where they are missing, defaulting to the four DORA/Core4 metrics: Deployment Frequency, Lead Time for Changes, Change Failure Rate, and Failed Deployment Recovery Time.<br>Recognize discordant views and resolve them through constructive dialog; act as the program's anti‑confirmation‑bias check.<br>Continuously assess development processes, test plans, and operations to improve concurrent delivery, including tests‑first/spec‑driven parallelism and same‑session documentation currency.<br>Streamline or eliminate excess process wherever the same efforts or issues repeat year‑over‑year.<br>Expert with scrum delivery and its evolution into the AIFE monthly Epic and pod‑relay operating model, including the shift from story points to spec‑projected slices.<br><br>AI‑First Tooling &amp; Skills<br><br>M365 Copilot fluency: Excel (RAID Log, dependency matrix, DORA dashboards), Word (MTR generation, handoff notes), Loop/OneNote (async session logs).<br>Spec‑as‑ledger discipline: treat the specification as reviewed engineering work; let agents project epic/feature/story records on demand rather than hand‑slicing or pointing.<br>Relay and shared‑pool operating model: chart pod relays, manage follow‑the‑sun handoffs, and steer by feedback at Epic boundaries.<br>Agent accountability and audit‑safety: ensure a named human directs and reviews every agent output, with session logs and control‑role sign‑offs keeping who‑built/who‑approved auditable.<h3></h3><p style=\"text-align:inherit\"></p><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><b>Corporate Security Responsibility</b></p><p style=\"text-align:left\"><br />All activities involving access to Mastercard assets, information, and networks comes with an inherent risk to the organization and, therefore, it is expected that every person working for, or on behalf of, Mastercard is responsible for information security and must:</p><ul><li><p style=\"text-align:left\">Abide by Mastercard’s security policies and practices;</p></li><li><p style=\"text-align:left\">Ensure the confidentiality and integrity of the information being accessed;</p></li><li><p style=\"text-align:left\">Report any suspected information security violation or breach, and</p></li><li><p style=\"text-align:left\">Complete all periodic mandatory security trainings in accordance with Mastercard’s guidelines.</p></li></ul><p style=\"text-align:inherit\"></p><br /><p style=\"text-align:inherit\"></p><br /><p style=\"text-align:inherit\"></p><br /><p style=\"text-align:inherit\"></p>",
+    "location": "Pune, India",
+    "postedOn": "Posted Today",
+    "startDate": "2026-10-13",
+    "timeType": "Full time",
+    "jobReqId": "R-292398",
+    "jobPostingId": "Lead-Technical-Program-Manager_R-292398-1",
+    "jobPostingSiteId": "CorporateCareers",
+    "country": {
+     "descriptor": "India"
+    },
+    "jobRequisitionLocation": {
+     "descriptor": "Pune, India",
+     "country": {
+      "descriptor": "India",
+      "alpha2Code": "IN"
+     }
+    },
+    "externalUrl": "https://mastercard.wd1.myworkdayjobs.com/CorporateCareers/job/Pune-India/Lead-Technical-Program-Manager_R-292398-1",
+    "canApply": true
+   }
+  }
+ }
+}

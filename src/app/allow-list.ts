@@ -16,7 +16,11 @@ import type { AnyContract } from '../kernel/contract.js';
  *   through the run's shared politeness gate (`coverage/gate.ts`). Side channel: these three agents write the hosts
  *   they disable (challenge, 401, 403, 429, a robots.txt refusal) to the app's `coverage_host_state` table through
  *   the gate's `HostStateStore` (the `AppStore`), before the step returns. It is run-scoped politeness state keyed by
- *   the coverage run id, never data, and nothing but the gate reads it.
+ *   the coverage run id, never data, and nothing but the gate reads it;
+ * - the symbolic egress `registry:workday-hosts` (the verified Workday companies' hosts, from the company registry,
+ *   resolved per daily run): only `src-workday`;
+ * - `capabilities.httpPost` (the broker's `postJson`): only the two Workday readers, `src-workday` and the
+ *   `board-verifier`, whose CXS job list is a POST; every other agent reads by GET only (the Gmail source above all).
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -26,6 +30,10 @@ export const CAPABILITY_ALLOW_LIST = {
   careersEgress: ['src-careers-list', 'src-careers-job'],
   /** The symbolic egress whose hosts are the coverage run's candidate companies' own sites. */
   candidateEgress: ['careers-locator', 'platform-detector', 'board-verifier'],
+  /** The symbolic egress whose hosts are the registry's verified Workday companies. */
+  workdayEgress: ['src-workday'],
+  /** The agents that may POST (Workday's CXS list search). */
+  httpPost: ['src-workday', 'board-verifier'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -44,6 +52,12 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
     }
     if (c.egress.includes('coverage:candidate-hosts') && !allowed(CAPABILITY_ALLOW_LIST.candidateEgress, c.id)) {
       problems.push(`${c.id} declares egress coverage:candidate-hosts; only ${CAPABILITY_ALLOW_LIST.candidateEgress.join(', ')} may contact the coverage candidates' sites`);
+    }
+    if (c.egress.includes('registry:workday-hosts') && !allowed(CAPABILITY_ALLOW_LIST.workdayEgress, c.id)) {
+      problems.push(`${c.id} declares egress registry:workday-hosts; only ${CAPABILITY_ALLOW_LIST.workdayEgress.join(', ')} may contact the registry's Workday hosts`);
+    }
+    if (c.capabilities.httpPost && !allowed(CAPABILITY_ALLOW_LIST.httpPost, c.id)) {
+      problems.push(`${c.id} declares capabilities.httpPost; only ${CAPABILITY_ALLOW_LIST.httpPost.join(', ')} may send a POST`);
     }
     if (c.capabilities.pdfText && !allowed(CAPABILITY_ALLOW_LIST.pdfText, c.id)) {
       problems.push(`${c.id} declares capabilities.pdfText; only ${CAPABILITY_ALLOW_LIST.pdfText.join(', ')} may run pdftotext`);

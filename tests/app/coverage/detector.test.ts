@@ -582,7 +582,7 @@ describe('the coverage-detector golden set', () => {
     }
   });
 
-  it('privacy: no e-mail address, mailto:/tel: link, JSON-LD Person, social or people profile URL, cookie or session token in any fixture', () => {
+  it('privacy: no e-mail address, phone number, mailto:/tel: link, JSON-LD Person, social or people profile URL, cookie or session token in any fixture (detector pages, recorded Workday responses)', () => {
     const PRIVATE: readonly [string, RegExp][] = [
       ['email', /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g],
       ['mailto-tel', /\b(?:mailto|tel):/gi],
@@ -592,11 +592,24 @@ describe('the coverage-detector golden set', () => {
       ['cookie-session', /set-cookie|__cf_chl_tk|cf_clearance|jsessionid=|phpsessid/gi],
     ];
     const dir = `${root}evals/datasets/coverage-detector`;
+    // Task 6: the recorded Workday responses (job descriptions can name a recruiter) and the coverage e2e Workday list
+    const sources = `${root}tests/fixtures/sources`;
+    const files = [
+      ...readdirSync(dir).map((f) => `${dir}/${f}`),
+      ...readdirSync(sources).filter((f) => f.startsWith('workday-')).map((f) => `${sources}/${f}`),
+      `${root}tests/fixtures/coverage/e2e/epsilon-cxs.json`,
+    ];
+    expect(files.filter((f) => f.includes('/workday-')).length).toBe(3);
+    // a phone number (an international or a 10-digit Indian mobile) in a job description is personal data too; the
+    // detector pages are left out of this one check, their job ids look like mobile numbers
+    const PHONE: readonly [string, RegExp][] = [['phone', /(?<![\w.-])\+\d{1,3}[\s-]?\(?\d{2,5}\)?[\s-]?\d{3,5}[\s-]?\d{3,5}(?![\w-])|(?<![\w.-])[6-9]\d{9}(?![\w-])/g]];
+    for (const planted of ['call +91 98765 43210 today', 'or 9876543210.', '+1 (415) 555-0100']) expect(planted.match(PHONE[0]?.[1] as RegExp), planted).not.toBeNull();
     // file and offset only: a match is never printed, so a failure cannot leak what it found
     const hits: string[] = [];
-    for (const file of readdirSync(dir)) {
-      const text = readFileSync(`${dir}/${file}`, 'utf8');
-      for (const [kind, re] of PRIVATE) for (const m of text.matchAll(re)) hits.push(`${kind} in ${file} at offset ${m.index}`);
+    for (const path of files) {
+      const text = readFileSync(path, 'utf8');
+      const file = path.slice(root.length);
+      for (const [kind, re] of [...PRIVATE, ...(path.startsWith(dir) ? [] : PHONE)]) for (const m of text.matchAll(re)) hits.push(`${kind} in ${file} at offset ${m.index}`);
     }
     expect(hits).toEqual([]);
   });

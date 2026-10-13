@@ -6,6 +6,7 @@ import { ASHBY_HOST, ashbyParse, ashbyUrl } from '../ashby.js';
 import type { Parsed } from '../common.js';
 import { GREENHOUSE_HOST, greenhouseParse, greenhouseUrl } from '../greenhouse.js';
 import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
+import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workdayListUrl, workdayRef, WorkdayRefused, WORKDAY_PAGE_SIZE, type WorkdayHosts } from './workday.js';
 
 /**
  * The read side of each career platform, shared by the coverage run's board-verifier (Task 5) and the daily adapters
@@ -16,6 +17,8 @@ import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
  * `readBoard` makes ONE request (Lever: the first page of LEVER_PAGE_SIZE, the daily adapter's page 1) and checks the
  * response shape with zod before the daily parser sees it. It throws:
  * - `BoardRefused` on 401 or 403 (the caller disables the host for the run, never retries around it);
+ * - Workday only: `RobotsDenied` when robots.txt refuses the CXS path, `HostDisabled` when the host was disabled earlier
+ *   in the run (both from workday.ts; nothing is fetched);
  * - `KernelError('gone')` on 404, as the daily adapters' `getBoard` does;
  * - `KernelError('invalid_output')` on any other 4xx or a response of the wrong shape;
  * - whatever the broker raises (`rate_limit` on 429, `overloaded` on 5xx, `network`, a timeout).
@@ -28,6 +31,13 @@ import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
  * locator and the platform detector honour it for every request, through the coverage gate. If a board API answers
  * 401, 403 or 429, the verifier disables that API host for the rest of the run, with a named problem (a deferral),
  * and never retries around it.
+ *
+ * Workday (Task 6) is different: its CXS endpoint is the JSON the public careers page itself calls, not a documented
+ * public API, so robots.txt applies to it. Its client reads the board's host from the detected board URL (each tenant
+ * has its own host: `host` is null, `hostOf` gives it), checks that host's robots.txt for the CXS path through the
+ * run's `WorkdayHosts` (the verifier passes one built on the coverage gate), and reads page 1 of the list with the
+ * daily adapter's own request and parser (`fetchListPage`, `pagePostings`). Workday has no company-name field: the
+ * board's name to compare is its tenant (`nameKey`), matched under the generic-label rules like a slug.
  *
  * Agent code (containment): it imports only kernel definitions, so the platform is a plain string here; the coverage
  * types' `Platform` enum is a superset of these keys.
@@ -42,19 +52,33 @@ export interface BoardRead {
   /** Every distinct company name the board's jobs carry, sorted (more than one: the board is not one company's). */
   readonly boardNames: readonly string[];
   readonly jobs: readonly RawPosting[];
-  /** False when the board has more jobs than this one request returned (a full Lever page). */
+  /** False when the board has more jobs than this one request returned (a full Lever page, a Workday total over 20). */
   readonly complete: boolean;
   /** The URL read. */
   readonly url: string;
+  /** When the platform gives no board name: the part of the board id to compare with the company (Workday: the tenant); null to use the slug. */
+  readonly nameKey: string | null;
+}
+
+/** What a read may be given: a per-request timeout, and (Workday) the run's host state for robots.txt and refusals. */
+export interface ReadOptions {
+  readonly timeoutMs?: number;
+  readonly hosts?: WorkdayHosts;
 }
 
 export interface PlatformClient {
   readonly platform: string;
-  /** The one host the client reads from (the verifier's egress for this platform). */
-  readonly host: string;
-  readonly boardUrl: (slug: string) => string;
+  /** The one host the client reads from (the verifier's egress for this platform); null when each board has its own (Workday). */
+  readonly host: string | null;
+  /** Whether robots.txt governs the read (a page's own JSON rather than a documented public API): the caller passes `hosts`. */
+  readonly robots: boolean;
+  /** The board id the client reads, from a detection's slug and board URL (Workday: `<host>/<tenant>/<site>`); null when they name none. */
+  readonly refOf: (slug: string, boardUrl: string | null) => string | null;
+  /** The host a board id is read from. */
+  readonly hostOf: (ref: string) => string | null;
+  readonly boardUrl: (ref: string) => string;
   /** `timeoutMs`: a per-request timeout (the coverage verifier's); absent, only the step timeout applies. */
-  readBoard(slug: string, http: HttpTool, opts?: { readonly timeoutMs?: number }): Promise<BoardRead>;
+  readBoard(ref: string, http: HttpTool, opts?: ReadOptions): Promise<BoardRead>;
 }
 
 /** A 401 or 403 from the platform's host: a refusal of the requester, not a fact about the board. */
@@ -125,12 +149,22 @@ const read = (parsed: Parsed, names: readonly string[], complete: boolean, url: 
   jobs: parsed.postings,
   complete,
   url,
+  nameKey: null,
 });
+
+/** A single-host client's board id is its slug. */
+const singleHost = (host: string) => ({ host, robots: false, refOf: (slug: string) => slug, hostOf: () => host });
+
+/** A Workday board id: the stored board URL's, or `<host>/<tenant>/<site>` itself. */
+const workdayRefOf = (slug: string, boardUrl: string | null): string | null => {
+  const b = (boardUrl === null ? null : workdayBoardOfUrl(boardUrl)) ?? parseWorkdayRef(slug);
+  return b === null ? null : workdayRef(b);
+};
 
 const CLIENTS: Readonly<Record<string, PlatformClient>> = {
   greenhouse: {
     platform: 'greenhouse',
-    host: GREENHOUSE_HOST,
+    ...singleHost(GREENHOUSE_HOST),
     boardUrl: greenhouseUrl,
     async readBoard(slug, http, opts) {
       const url = greenhouseUrl(slug);
@@ -142,7 +176,7 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
   },
   lever: {
     platform: 'lever',
-    host: LEVER_HOST,
+    ...singleHost(LEVER_HOST),
     boardUrl: (slug) => leverUrl(slug, 0),
     async readBoard(slug, http, opts) {
       const url = leverUrl(slug, 0);
@@ -154,7 +188,7 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
   },
   ashby: {
     platform: 'ashby',
-    host: ASHBY_HOST,
+    ...singleHost(ASHBY_HOST),
     boardUrl: ashbyUrl,
     async readBoard(slug, http, opts) {
       const url = ashbyUrl(slug);
@@ -162,6 +196,34 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
       checkShape('ashby', slug, json);
       // Ashby's job-board response carries no company name.
       return read(ashbyParse(json, requestFor('ashby', slug)), [], true, url);
+    },
+  },
+  workday: {
+    platform: 'workday',
+    host: null,
+    robots: true,
+    refOf: workdayRefOf,
+    hostOf: (ref) => parseWorkdayRef(ref)?.host ?? null,
+    boardUrl: (ref) => {
+      const b = parseWorkdayRef(ref);
+      if (b === null) throw new KernelError('invalid_output', `workday: ${ref} is not <host>/<tenant>/<site>`);
+      return workdayListUrl(b);
+    },
+    async readBoard(ref, http, opts) {
+      const b = parseWorkdayRef(ref);
+      if (b === null) throw new KernelError('invalid_output', `workday: ${ref} is not <host>/<tenant>/<site>`);
+      if (opts?.hosts === undefined) throw new KernelError('policy_denied', 'workday: robots.txt applies, and no host state was given');
+      // the daily adapter's own request (POST, page 1, the 2 s spacing, robots.txt) and parser
+      let page;
+      try {
+        page = await fetchListPage(http, opts.hosts, b, 0, {}, opts.timeoutMs);
+      } catch (e) {
+        // the host state has already disabled the host; the caller defers, as for any refused board API
+        if (e instanceof WorkdayRefused) throw new BoardRefused(e.status, e.host);
+        throw e;
+      }
+      const jobs = pagePostings(b, page, { company: b.tenant, slug: ref });
+      return { boardName: null, boardNames: [], jobs, complete: page.total <= WORKDAY_PAGE_SIZE, url: workdayListUrl(b), nameKey: b.tenant };
     },
   },
 };

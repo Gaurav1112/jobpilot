@@ -2,6 +2,7 @@ import type { Envelope } from '../kernel/envelope.js';
 import type { Store } from '../kernel/store/store.js';
 import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
+import { WORKDAY_NOTE_PREFIXES } from './agents/sources/platforms/workday.js';
 
 /**
  * One problem or warning line (rereview R7): control characters dropped and whitespace folded, or a fixed notice when
@@ -309,11 +310,38 @@ export function staleProblems(
     }));
 }
 
+/** Note prefixes of the named skips a source records (`WORKDAY_NOTE_PREFIXES`): never counted as malformed postings. */
+const NAMED_SKIPS: readonly string[] = WORKDAY_NOTE_PREFIXES;
+const isNamedSkip = (note: string): boolean => NAMED_SKIPS.some((p) => note.startsWith(p));
+
+/**
+ * Task 6 (no silent drop): every named skip a source recorded in this run, one warning each, as recorded, in event
+ * order, each step once: `src-workday: robots-disallow <host>: <company> not read today (…)`, `src-workday:
+ * detail-budget <company>: N jobs without detail`, `src-workday: scope <company>: …`. A note holding a forbidden term
+ * is replaced by a fixed notice. Not a failure: the exit code does not change.
+ */
+export function namedSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): string[] {
+  const steps = new Set<string>();
+  const out: string[] = [];
+  for (const ev of kernel.events(runId)) {
+    if (ev.kind !== 'step_done' && ev.kind !== 'step_replayed') continue;
+    const d = JSON.parse(ev.data) as Record<string, unknown>;
+    if (ev.kind === 'step_replayed' && d['status'] !== 'done') continue;
+    const agent = d['agent'];
+    const stepKey = d['stepKey'];
+    if (typeof agent !== 'string' || typeof stepKey !== 'string' || steps.has(stepKey)) continue;
+    steps.add(stepKey);
+    const notes: unknown[] = Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : [];
+    for (const n of notes) if (typeof n === 'string' && isNamedSkip(n)) out.push(safeLine(`${agent}: ${n}`, naming));
+  }
+  return out;
+}
+
 /**
  * Final minor (no silent loss): one warning per source agent that skipped malformed jobs in this run without failing,
  * `N postings skipped by <agent> as malformed (B boards; first: <note>)`, in agent order. It reads the `skipped` count
- * the executor puts in each step_done (and done step_replayed) event; each step counts once. A note holding a
- * forbidden term is replaced by a fixed notice.
+ * the executor puts in each step_done (and done step_replayed) event; each step counts once, less its named skips
+ * (`namedSkipWarnings`). A note holding a forbidden term is replaced by a fixed notice.
  */
 export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>, except: readonly string[] = []): string[] {
   const steps = new Set<string>();
@@ -327,9 +355,13 @@ export function sourceSkipWarnings(kernel: Store, runId: string, naming: Pick<Na
     const stepKey = d['stepKey'];
     if (typeof n !== 'number' || !Number.isSafeInteger(n) || n < 1 || typeof agent !== 'string' || typeof stepKey !== 'string' || steps.has(stepKey) || except.includes(agent)) continue;
     steps.add(stepKey);
-    const notes: unknown[] = Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : [];
+    const all: unknown[] = Array.isArray(d['skippedNotes']) ? d['skippedNotes'] : [];
+    // a named skip (robots.txt, a request budget) is not a malformed posting: `namedSkipWarnings` prints it
+    const notes = all.filter((x) => !(typeof x === 'string' && isNamedSkip(x)));
+    const malformed = n - (all.length - notes.length);
+    if (malformed < 1) continue;
     const a = byAgent.get(agent) ?? { postings: 0, boards: 0, first: undefined };
-    byAgent.set(agent, { postings: a.postings + n, boards: a.boards + 1, first: a.first ?? (typeof notes[0] === 'string' ? notes[0] : undefined) });
+    byAgent.set(agent, { postings: a.postings + malformed, boards: a.boards + 1, first: a.first ?? (typeof notes[0] === 'string' ? notes[0] : undefined) });
   }
   const safe = (t: string): string => safeLine(t, naming);
   return [...byAgent.entries()]

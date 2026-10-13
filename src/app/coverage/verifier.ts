@@ -2,8 +2,10 @@ import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
-import { BoardRefused, platformClient, type BoardRead } from '../agents/sources/platforms/client.js';
-import { gateOf, HOST_DISABLED, REQUEST_TIMEOUT_MS, type GateSource, type RunGate } from './gate.js';
+import { BoardRefused, platformClient, type BoardRead, type PlatformClient } from '../agents/sources/platforms/client.js';
+import { HostDisabled, RobotsDenied, type WorkdayHosts } from '../agents/sources/platforms/workday.js';
+import { gateOf, HOST_DISABLED, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
+import { robotsDenial } from './robots.js';
 import { sameCompany } from './names.js';
 import { CompanyVerdict, PlatformGuess } from './types.js';
 
@@ -23,7 +25,10 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  *   failure. A URL-only detection of a dead board ends here, never verified.
  *
  * Politeness and memo safety (the run's shared gate, `gate.ts`): the read host of a platform is a public job-board API
- * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not). A 401, 403
+ * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not), except
+ * Workday, whose CXS endpoint is the careers page's own JSON: its tenant's robots.txt is checked through the gate (once
+ * per host per run) before page 1 is read; a disallow is `proposed` (`robots-disallow … : the board was not read`).
+ * Workday names no company: its tenant is compared, under the generic-label rules, as a slug is. A 401, 403
  * or 429 from it DISABLES the host for the rest of the run (written to `coverage_host_state` before the step returns,
  * this agent's one side channel outside its output) and the step is deferred: it fails `input_rejected` with
  * `host-disabled:<why> on <host>`, so it is never stored as a finished result and is asked again in a later run. A step that
@@ -32,14 +37,15 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
 
 export const boardVerifierContract = defineContract({
   id: 'board-verifier',
-  version: '1.0.0',
+  // 2.0.0: capabilities.httpPost (Workday's CXS list is read with a POST), a security field, so a major version
+  version: '2.0.0',
   description: 'Reads a detected job board once to confirm its company name, its shape, its open jobs; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['board-verifier'],
   team: 'coverage-verifier',
   kind: 'io',
   consumes: PlatformGuess,
   produces: CompanyVerdict,
-  capabilities: { http: true },
+  capabilities: { http: true, httpPost: true },
   egress: ['coverage:candidate-hosts'],
   dataClasses: { in: ['P0'], out: ['P0'] },
   budget: { usdPerCall: 0, usdPerRun: 0 },
@@ -50,11 +56,26 @@ export const boardVerifierContract = defineContract({
 /** The registrable domain's first label (`purestorage.com` → `purestorage`, `foo.co.uk` → `foo`): the companyKey's. */
 export const domainLabel = (companyKey: string): string => companyKey.split('.')[0] ?? '';
 
-/** The host the verifier reads a guess's board from: the built platform client's host; none for anything else. */
+/** The host the verifier reads a guess's board from: the built platform client's host (Workday: the tenant's own); none for anything else. */
 export function verifierHosts(g: PlatformGuess): string[] {
   if (g.platform === null || g.slug === null) return [];
   const client = platformClient(g.platform);
-  return client === null ? [] : [client.host];
+  const ref = client?.refOf(g.slug, g.boardUrl) ?? null;
+  const host = client === null || ref === null ? null : client.hostOf(ref);
+  return host === null ? [] : [host];
+}
+
+/**
+ * The run gate as a Workday client's host state: robots.txt once per host per run (the gate's own cache and rules), and
+ * the gate's disabled hosts. Only for a platform whose read robots.txt governs (`client.robots`).
+ */
+function gateHosts(ctx: AgentContext, gate: RunGate, host: string, timeoutMs: number): WorkdayHosts {
+  const fetcher = stepFetcher({ ctx, gate, planned: new Set([host]), acceptMoved: () => false, maxRequests: 1, requestTimeoutMs: timeoutMs });
+  return {
+    robots: async (h, path) => robotsDenial(await fetcher.robotsFor(h), new URL(`https://${h}${path}`)),
+    disabledWhy: (h) => gate.disabledWhy(h, ctx.clock.now()),
+    disable: (h, why) => gate.disable(h, why, ctx.clock.now()),
+  };
 }
 
 /** The egress set for the verify stage: the union of `verifierHosts` (exact hosts, never a suffix). */
@@ -79,6 +100,10 @@ export function makeBoardVerifier(opts: GateSource & { readonly requestTimeoutMs
   return defineAgent(boardVerifierContract, async (g, ctx) => [await verify(g, ctx, gate, timeoutMs)]);
 }
 
+/** The read options: the verifier's timeout, plus the gate as host state where robots.txt governs the read (Workday). */
+const readOptions = (client: PlatformClient, ctx: AgentContext, gate: RunGate, host: string, timeoutMs: number) =>
+  client.robots ? { timeoutMs, hosts: gateHosts(ctx, gate, host, timeoutMs) } : { timeoutMs };
+
 const deferred = (why: string, host: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} on ${host} (${detail}); deferred to a later run, never retried around`);
 
 async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeoutMs: number): Promise<CompanyVerdict> {
@@ -94,14 +119,22 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
   if (client === null) return verdict('proposed', [`adapter not built yet: ${g.platform}`, `detected: ${g.platform} ${g.slug ?? '(no slug)'}`]);
   if (g.slug === null || g.slug.trim() === '') return verdict('proposed', [`no board slug for ${g.platform}`]);
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
-  const host = client.host;
+  const ref = client.refOf(g.slug, g.boardUrl);
+  const host = ref === null ? null : client.hostOf(ref);
+  if (ref === null || host === null) return verdict('proposed', [`no readable ${g.platform} board in ${g.boardUrl ?? g.slug}, please confirm`]);
   const off = gate.disabledWhy(host, ctx.clock.now());
   if (off !== undefined) throw deferred(off, host, 'disabled earlier in this run');
 
   let read: BoardRead;
   try {
-    read = await client.readBoard(g.slug, ctx.http, { timeoutMs });
+    read = await client.readBoard(ref, ctx.http, readOptions(client, ctx, gate, host, timeoutMs));
   } catch (e) {
+    if (e instanceof HostDisabled) throw deferred(e.why, e.host, 'disabled earlier in this run');
+    if (e instanceof RobotsDenied) {
+      const why = gate.disabledWhy(e.host, ctx.clock.now());
+      if (why !== undefined) throw deferred(why, e.host, 'its robots.txt refused this run');
+      return verdict('proposed', [`${e.reason} on ${e.host}: the board was not read, please confirm`, `detected: ${g.platform} ${ref}`]);
+    }
     if (e instanceof BoardRefused) {
       gate.disable(host, `http-${e.status}`, ctx.clock.now());
       throw deferred(`http-${e.status}`, host, 'it refused this request');
@@ -128,13 +161,15 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
     sameName = sameCompany(c.name, read.boardName, label);
     if (!sameName) reasons.push(`board name '${read.boardName}' ≈ '${c.name}', please confirm`);
   } else {
-    sameName = sameCompany(c.name, g.slug, label);
-    if (!sameName) reasons.push('board name not available, please confirm', `board slug '${g.slug}' is neither '${c.name}' nor the domain label '${label}'`);
+    const key = read.nameKey ?? g.slug;
+    const what = read.nameKey === null ? 'board slug' : `${g.platform} tenant`;
+    sameName = sameCompany(c.name, key, label);
+    if (!sameName) reasons.push('board name not available, please confirm', `${what} '${key}' is neither '${c.name}' nor the domain label '${label}'`);
   }
   const jobs = read.jobs.length;
   if (jobs === 0) reasons.push('board has 0 open jobs');
   if (sameName && jobs >= 1) {
-    const by = read.boardName !== null ? `board name '${read.boardName}'` : `board slug '${g.slug}'`;
+    const by = read.boardName !== null ? `board name '${read.boardName}'` : read.nameKey !== null ? `${g.platform} tenant '${read.nameKey}'` : `board slug '${g.slug}'`;
     return verdict('verified', [`${g.platform} board ${g.slug}: ${jobs}${read.complete ? '' : '+'} open jobs; ${by} matches '${c.name}'`], read);
   }
   return verdict('proposed', reasons, read);

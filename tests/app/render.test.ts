@@ -731,6 +731,8 @@ describe('capability allow-list', () => {
       pdfText: ['qa-gate', 'gig-qa'],
       careersEgress: ['src-careers-list', 'src-careers-job'],
       candidateEgress: ['careers-locator', 'platform-detector', 'board-verifier'],
+      workdayEgress: ['src-workday'],
+      httpPost: ['src-workday', 'board-verifier'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;

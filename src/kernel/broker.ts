@@ -30,7 +30,8 @@ export interface HttpTool {
    * or more is `{ status, json: null }`, a body that is not JSON is `invalid_output`. For a platform whose public page
    * itself queries its job list with a POST (Workday's CXS search). The same egress, https-only, pacing, size cap,
    * timeout and honest headers as getJson (plus `content-type: application/json`); a redirect is refused, 429 is
-   * `rate_limit`, a 5xx `overloaded`.
+   * `rate_limit`, a 5xx `overloaded`. Only for a contract declaring `capabilities.httpPost`; for any other it is a
+   * policy denial.
    */
   postJson(url: string, body: unknown, opts?: RequestOptions): Promise<{ status: number; json: unknown }>;
 }
@@ -407,6 +408,7 @@ export function issueContext(a: IssueArgs): AgentContext {
         return parseJson(url, status, body);
       },
       async postJson(url, payload, opts) {
+        if (a.contract.capabilities.httpPost !== true) throw deny(`G-EGRESS: ${a.contract.id} may not POST (no capabilities.httpPost)`);
         let text: string | undefined;
         try {
           text = JSON.stringify(payload);

@@ -7,5 +7,6 @@
   "https://gamma.test/": "gamma-home.html",
   "https://gamma.test/careers": "gamma-careers.html",
   "https://boards-api.greenhouse.io/v1/boards/alpharobotics/jobs?content=true&pay_transparency=true": "gh-alpharobotics.json",
-  "https://boards-api.greenhouse.io/v1/boards/betacorp/jobs?content=true&pay_transparency=true": "gh-betacorp.json"
+  "https://boards-api.greenhouse.io/v1/boards/betacorp/jobs?content=true&pay_transparency=true": "gh-betacorp.json",
+  "https://epsilon.wd5.myworkdayjobs.com/wday/cxs/epsilon/External/jobs": "epsilon-cxs.json"
 }

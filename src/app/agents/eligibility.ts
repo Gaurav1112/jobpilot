@@ -65,7 +65,7 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       (`officeNote`). Each key resolves through the office-city alias table (`officeCity`; an unknown key matches only itself), matched on
  *       word boundaries, case-insensitively, in a segment of the location text (split on `; | / &`, "or", "and", new
  *       lines) whose places are none or include India, or in an entry of the structured countries. When the location
- *       field is generic ("In-Office", "Hybrid", "India", "N/A", empty), the value of an explicit label line anywhere
+ *       field is generic ("In-Office", "Hybrid", "India", "N/A", Workday's "2 Locations", empty), the value of an explicit label line anywhere
  *       in the description ("Location: Bengaluru") stands in for it, and "based|located|work(ing) in|at|from our
  *       <city> office" there also counts, for this match only. Any other city named only in the description never
  *       counts. It needs nothing to exclude India: countries naming none of India or an office
@@ -519,8 +519,8 @@ const namesAlias = (text: string, aliases: readonly string[]): boolean =>
 const LOCATION_SPLIT = /[;|\n/&]|\bor\b|\band\b/i;
 /** Sentences that require living in or moving to a place, or working from a named office. */
 const RELOCATION = /\brelocat\w*\b|\bmust be (?:located|based)\b|\b(?:work(?:ing)? from|based (?:in|at)|report(?:ing)? to) our [^.;\n]{1,40}?\boffice\b/i;
-/** A location field that names no place of its own ("In-Office", "Hybrid", "India", "N/A"), or an empty one. */
-const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|india|in|n\/a|na|multiple locations?|various)$/i;
+/** A location field that names no place of its own ("In-Office", "Hybrid", "India", "N/A", Workday's "2 Locations"), or an empty one. */
+const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|india|in|n\/a|na|multiple locations?|\d+ locations?|various)$/i;
 /**
  * An explicit location label line in the description ("Location: Bengaluru", "Office - Bangalore", "Work location:
  * Pune"), also "Available Locations: …", "Job location …" and "Office location — …" (a plural label, an em dash).
@@ -661,7 +661,7 @@ function packOf(pack: unknown): EligibilityPack {
 
 export const eligibilityContract = defineContract({
   id: 'eligibility',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Decides whether one posting is open to the candidate',
   skills: ['eligibility-rules'],
   team: 'evaluation',

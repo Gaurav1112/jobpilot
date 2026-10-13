@@ -14,6 +14,8 @@ import { srcGreenhouse } from './agents/sources/greenhouse.js';
 import { HIMALAYAS_FEED, HIMALAYAS_MAX_PAGES, HIMALAYAS_TIMEOUT_MS, srcHimalayas } from './agents/sources/himalayas.js';
 import { JOBICY_FEED, JOBICY_MAX_REQUESTS, JOBICY_TIMEOUT_MS, srcJobicy } from './agents/sources/jobicy.js';
 import { LEVER_MAX_PAGES, LEVER_TIMEOUT_MS, srcLever } from './agents/sources/lever.js';
+import { makeSrcWorkday, parseWorkdayRef, workdayBoardOfUrl, workdayRef, WORKDAY_EGRESS, WORKDAY_MAX_REQUESTS, WORKDAY_TIMEOUT_MS } from './agents/sources/platforms/workday.js';
+import { dailyWorkdayHosts } from './daily-hosts.js';
 import { writingAgents } from './agents/writing/index.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { qaGate } from './agents/writing/qa-gate.js';
@@ -29,6 +31,7 @@ import { FEED_SOURCES, knownFeeds } from './feeds.js';
  *
  *   DiscoveryRequest@1 ─► src-ashby | src-greenhouse | src-himalayas | src-jobicy | src-lever ─► RawPosting@1
  *                      ─► src-careers-list ─► CareerLink@1 ─► src-careers-job ─► RawPosting@1   (careers entries only)
+ *                      ─► src-workday ─► RawPosting@1   (verified Workday registry companies only; team sourcing-workday)
  *   RawPosting@1 ─► normalizer ─► Posting@1 ─► eligibility ─► EligibilityVerdict@1 ─► scorer-lexicon ─► Scored@1
  *   ─► evidence-matcher ─► Evidence@1 ─► resume-planner ─► ResumePlan@1 ─► cover-writer ─► CoverPlan@1
  *   ─► renderer ─► Rendered@1 ─► qa-gate ─► QaReport@1
@@ -42,23 +45,66 @@ export const DAILY_PIPELINE = { id: 'jobpilot-daily', version: '1.0.0' } as cons
 export { FEED_SOURCES } from './feeds.js';
 
 const API_SOURCES: readonly AnyAgent[] = [srcAshby, srcGreenhouse, srcHimalayas, srcJobicy, srcLever];
-const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as const;
+/** `sourcing-workday` is the Workday adapter's own team (spec §6): a dead tenant opens no breaker elsewhere. */
+const TEAM_ORDER = ['sourcing', 'sourcing-workday', 'understanding', 'evaluation', 'writing'] as const;
 
 type WatchLike = Pick<WatchEntry, 'ats'> & { readonly listUrl?: string | undefined };
+
+/** One verified registry company the daily run reads through a platform adapter: its display name and board ref. */
+export interface RegistryBoard {
+  readonly platform: 'workday';
+  readonly company: string;
+  /** The adapter's DiscoveryRequest slug (Workday: `<host>/<tenant>/<site>`). */
+  readonly ref: string;
+}
+
+/** The registry rows the daily run needs (`AppStore.verifiedCompanies()` gives them). */
+export interface RegistryCompany {
+  readonly name: string;
+  readonly platform: string | null;
+  readonly boardUrl: string | null;
+}
+
+/**
+ * The boards of the verified registry companies (`verifiedCompanies()`: verified or failing, never rejected) whose
+ * platform has a daily adapter in this build (Task 6: Workday), sorted by ref; one per ref (the first name wins). A
+ * row whose stored board URL is not a board of its platform is left out.
+ */
+export function registryBoards(companies: readonly RegistryCompany[]): RegistryBoard[] {
+  const out = new Map<string, RegistryBoard>();
+  for (const c of companies) {
+    if (c.platform !== 'workday' || c.boardUrl === null) continue;
+    const b = workdayBoardOfUrl(c.boardUrl);
+    if (b === null) continue;
+    const ref = workdayRef(b);
+    if (!out.has(ref)) out.set(ref, { platform: 'workday', company: c.name, ref });
+  }
+  return [...out.values()].sort((a, b) => (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0));
+}
 
 /**
  * Every agent of the daily run. The careers agents are left out when the watchlist has no careers entries. Their
  * egress is the symbolic `pack:careers-hosts`, resolved per run from `careersEgressSets(watchlist)`, so their
- * contracts are the same whatever the watchlist holds.
+ * contracts are the same whatever the watchlist holds. Likewise `src-workday` is in only when the registry has a
+ * verified Workday company (`boards`), with the symbolic egress `registry:workday-hosts`; it is built here, once per
+ * call, on a fresh `dailyWorkdayHosts()` (robots.txt once per host per run). With no boards the agents, the wiring
+ * and so every step key are exactly as before the registry existed.
  */
-export function dailyAgents(watchlist: readonly WatchLike[]): AnyAgent[] {
+export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = []): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
-  return [...API_SOURCES, ...careers, normalizer, eligibility, scorerLexicon, ...writingAgents];
+  const platforms: AnyAgent[] = boards.some((b) => b.platform === 'workday') ? [makeSrcWorkday({ hosts: dailyWorkdayHosts() })] : [];
+  return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }
 
 /** The hosts behind the careers agents' symbolic egress, for the supervisor. */
 export function careersEgressSets(watchlist: readonly WatchLike[]): EgressSets {
   return { 'pack:careers-hosts': careersHosts(watchlist) };
+}
+
+/** The hosts behind the registry adapters' symbolic egress (exact hosts); empty, and so absent, with no boards. */
+export function registryEgressSets(boards: readonly RegistryBoard[]): EgressSets {
+  const hosts = [...new Set(boards.filter((b) => b.platform === 'workday').flatMap((b) => parseWorkdayRef(b.ref)?.host ?? []))].sort();
+  return hosts.length === 0 ? {} : { [WORKDAY_EGRESS]: hosts };
 }
 
 /**
@@ -81,6 +127,7 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
   const edges: Edge[] = [
     ...API_SOURCES.map((a) => ({ type: 'DiscoveryRequest@1', to: a.contract.id })),
     ...(has('src-careers-list') ? [{ type: 'DiscoveryRequest@1', to: 'src-careers-list' }, { type: 'CareerLink@1', to: 'src-careers-job' }] : []),
+    ...(has('src-workday') ? [{ type: 'DiscoveryRequest@1', to: 'src-workday' }] : []),
     { type: 'RawPosting@1', to: 'normalizer' },
     { type: 'Posting@1', to: 'eligibility' },
     { type: 'EligibilityVerdict@1', to: 'scorer-lexicon' },
@@ -134,7 +181,11 @@ export function compileDaily(agents: readonly AnyAgent[], guardrails: GuardrailR
  * `minHostIntervalMs`; above this budget the cap arithmetic no longer holds and a big board would time out instead of
  * failing on its own cap.
  */
-const HTTP_BUDGETS: readonly { readonly agent: string; readonly perRequestMs: number; readonly applies: (w: readonly WatchLike[], f: readonly string[]) => boolean }[] = [
+const HTTP_BUDGETS: readonly {
+  readonly agent: string;
+  readonly perRequestMs: number;
+  readonly applies: (w: readonly WatchLike[], f: readonly string[], boards: readonly RegistryBoard[]) => boolean;
+}[] = [
   // the cap pages plus the confirming request and its one re-request
   { agent: srcLever.contract.id, perRequestMs: LEVER_TIMEOUT_MS / (LEVER_MAX_PAGES + 2), applies: (w) => w.some((e) => e.ats === 'lever') },
   { agent: srcJobicy.contract.id, perRequestMs: JOBICY_TIMEOUT_MS / JOBICY_MAX_REQUESTS, applies: (_w, f) => f.includes(JOBICY_FEED) },
@@ -142,6 +193,8 @@ const HTTP_BUDGETS: readonly { readonly agent: string; readonly perRequestMs: nu
   // one request per board, but boards on one host queue behind each other's interval
   { agent: srcGreenhouse.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w) => w.some((e) => e.ats === 'greenhouse') },
   { agent: srcAshby.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w) => w.some((e) => e.ats === 'ashby') },
+  // robots.txt, the list pages (with a scoped re-read) and the detail budget, each at least 2 s apart
+  { agent: 'src-workday', perRequestMs: Math.floor(WORKDAY_TIMEOUT_MS / WORKDAY_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'workday') },
 ];
 
 /**
@@ -150,11 +203,15 @@ const HTTP_BUDGETS: readonly { readonly agent: string; readonly perRequestMs: nu
  * timeouts (75 s a job page, 275 s a listing page) were sized for CAREERS_RENDER_INTERVAL_MS. Each problem names
  * the setting. Empty when the run may start.
  */
-export function pacingProblems(policy: Pick<Policy, 'minHostIntervalMs' | 'minBrowserIntervalMs'>, pack: { readonly watchlist: readonly WatchLike[]; readonly feeds: Pick<Feeds, 'enabled'> }): string[] {
+export function pacingProblems(
+  policy: Pick<Policy, 'minHostIntervalMs' | 'minBrowserIntervalMs'>,
+  pack: { readonly watchlist: readonly WatchLike[]; readonly feeds: Pick<Feeds, 'enabled'> },
+  boards: readonly RegistryBoard[] = [],
+): string[] {
   const problems: string[] = [];
   const host = policy.minHostIntervalMs;
   for (const b of HTTP_BUDGETS) {
-    if (b.applies(pack.watchlist, pack.feeds.enabled) && host > b.perRequestMs) {
+    if (b.applies(pack.watchlist, pack.feeds.enabled, boards) && host > b.perRequestMs) {
       problems.push(`minHostIntervalMs ${host} ms breaks the ${b.agent} timeout arithmetic (at most ${b.perRequestMs} ms per request); lower it in policy.user.yaml`);
     }
   }
@@ -169,7 +226,8 @@ export function pacingProblems(policy: Pick<Policy, 'minHostIntervalMs' | 'minBr
 }
 
 /**
- * The run's seeds: one request per watchlist entry, then one per enabled feed, each dated `runDate` (the IST date).
+ * The run's seeds: one request per watchlist entry, then one per enabled feed, then one per registry board (`boards`,
+ * `registryBoards`: `{ats: 'workday', slug: <ref>, company}`), each dated `runDate` (the IST date).
  * Identical entries are sent once. `attempt` (the run's ordinal on its date, from `run --refresh`) is set only when it
  * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. An unknown feed cannot get here
  * (`loadPack` refuses it) and throws.
@@ -178,6 +236,7 @@ export function dailySeeds(
   pack: { readonly watchlist: readonly Pick<WatchEntry, 'ats' | 'slug' | 'company'>[]; readonly feeds: Pick<Feeds, 'enabled'> },
   runDate: string,
   attempt?: number,
+  boards: readonly RegistryBoard[] = [],
 ): DiscoveryRequest[] {
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
@@ -194,5 +253,6 @@ export function dailySeeds(
     if (!Object.hasOwn(FEED_SOURCES, feed)) throw new Error(`feeds.yaml: unknown feed ${feed} (known: ${knownFeeds().join(', ')})`);
     add({ ats: 'feed', slug: feed, company: feed, runDate });
   }
+  for (const b of boards) add({ ats: b.platform, slug: b.ref, company: b.company, runDate });
   return seeds;
 }

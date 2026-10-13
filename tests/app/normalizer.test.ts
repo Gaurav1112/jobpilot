@@ -736,7 +736,8 @@ describe('unmappable raw postings', () => {
       raw('greenhouse', { id: 1, title: 'Eng' }),
       raw('lever', { id: '1', text: 'Eng', hostedUrl: 'javascript:alert(1)' }),
       raw('ashby', { id: '1', title: 'Eng', jobUrl: 'not a url' }),
-      raw('workday', { title: 'Eng', url: 'https://x.example/1' }),
+      raw('taleo', { title: 'Eng', url: 'https://x.example/1' }),
+      raw('workday', { title: 'Eng', url: 'javascript:alert(1)' }),
       { source: 'greenhouse', sourceId: '1', company: 'A', slug: 'a', raw: 'not an object' },
     ];
     for (const c of cases) {

@@ -1,0 +1,6 @@
+{
+  "https://acme.wd5.myworkdayjobs.com/robots.txt": "robots.txt",
+  "POST https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/jobs {\"appliedFacets\":{},\"limit\":20,\"offset\":0,\"searchText\":\"\"}": "page0.json",
+  "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/India-Bengaluru/Senior-Backend-Engineer_R-501": "detail-501.json",
+  "https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/US-CA-Santa-Clara/Senior-Software-Engineer--Payments-Platform_R-502": "detail-502.json"
+}

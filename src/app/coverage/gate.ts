@@ -1,6 +1,6 @@
 import type { AgentContext } from '../../kernel/agent.js';
 import { KernelError } from '../../kernel/errors.js';
-import { parseRobots, robotsDenial, type RobotsVerdict } from './robots.js';
+import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 
 /**
  * The coverage run's politeness gate, shared by every agent of a run that fetches a company's pages (the careers
@@ -323,10 +323,7 @@ export function stepFetcher(o: {
     if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
     if (r.kind === 'miss' && r.timeout === true) return { kind: 'disallow-all', reason: 'robots-unavailable', why: ROBOTS_TIMEOUT };
     if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
-    if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
-    if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };
-    if (r.status >= 400) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${r.status}` };
-    return { kind: 'rules', robots: parseRobots(r.body) };
+    return robotsVerdictOf(r.status, r.body);
   }
 
   return { fetchUrl, robotsFor };

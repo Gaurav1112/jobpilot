@@ -43,10 +43,12 @@ export function offlineProviders(dir: string): {
 
   const fetchCalls: string[] = [];
   const fetch = Object.assign(
-    async (url: string) => {
+    async (url: string, init?: Parameters<FetchLike>[1]) => {
       fetchCalls.push(url);
-      const file = files.get(url);
-      const recorded = responses.get(url);
+      const postKey = init?.method === 'POST' ? `POST ${url} ${init.body ?? ''}` : undefined;
+      const key = postKey !== undefined && (files.has(postKey) || responses.has(postKey)) ? postKey : url;
+      const file = files.get(key);
+      const recorded = responses.get(key);
       if (file === undefined && recorded === undefined) return { status: 404, text: async (): Promise<string> => 'not found' };
       // Served as bytes through a stream, so a binary fixture (a tar.gz) survives; text fixtures decode to the same text.
       const bytes = file === undefined ? Buffer.alloc(0) : readFileSync(file);

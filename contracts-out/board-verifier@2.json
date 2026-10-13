@@ -1,5 +1,5 @@
 {
-  "hash": "9868ed4c1de8f940da829996c65e3bea6306741626a77478983b1586c681cb06",
+  "hash": "865d4598ef988640ed47d524ed5409855a86214c6dc7b90a4822df1f18b17ffc",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -9,7 +9,8 @@
       "usdPerRun": 0
     },
     "capabilities": {
-      "http": true
+      "http": true,
+      "httpPost": true
     },
     "consumes": {
       "schema": {
@@ -417,6 +418,6 @@
     },
     "team": "coverage-verifier",
     "timeoutMs": 60000,
-    "version": "1.0.0"
+    "version": "2.0.0"
   }
 }

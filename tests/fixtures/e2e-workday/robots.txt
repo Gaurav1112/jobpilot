@@ -1,0 +1,5 @@
+Sitemap: https://acme.wd5.myworkdayjobs.com/External/siteMap.xml
+
+User-agent: *
+Allow: /External/
+Disallow: /refreshFacet/

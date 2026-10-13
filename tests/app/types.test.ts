@@ -77,7 +77,9 @@ describe('message types', () => {
 
   it('validates dates and enums', () => {
     expect(DiscoveryRequest.schema.safeParse({ ats: 'lever', slug: 's', company: 'C', runDate: '09/10/2026' }).success).toBe(false);
-    expect(DiscoveryRequest.schema.safeParse({ ats: 'workday', slug: 's', company: 'C', runDate: '2026-10-09' }).success).toBe(false);
+    expect(DiscoveryRequest.schema.safeParse({ ats: 'taleo', slug: 's', company: 'C', runDate: '2026-10-09' }).success).toBe(false);
+    // Task 6: a verified Workday registry company is read by src-workday
+    expect(DiscoveryRequest.schema.safeParse({ ats: 'workday', slug: 'a.wd1.myworkdayjobs.com/a/b', company: 'C', runDate: '2026-10-09' }).success).toBe(true);
     expect(Posting.schema.safeParse({ ...posting, postedAt: 'yesterday' }).success).toBe(false);
     expect(Posting.schema.safeParse({ ...posting, postedAt: '2026-10-01T10:00:00Z' }).success).toBe(true);
     expect(Scored.schema.safeParse({ ...scored, verdict: 'rejected' }).success).toBe(false);

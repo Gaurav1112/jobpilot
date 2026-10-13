@@ -11,9 +11,10 @@ import type { MessageType } from './types.js';
  * broker resolves the entry at call time from the `egressSets` the supervisor is given (exact hosts, still checked
  * against the policy and its deny lists). A set that is not given resolves to no host at all.
  * `pack:careers-hosts` is the watchlist's careers hosts; `coverage:candidate-hosts` is the hosts of the weekly coverage
- * run's candidate companies (the careers locator's plan).
+ * run's candidate companies (the careers locator's plan); `registry:workday-hosts` is the hosts of the verified
+ * Workday companies in the company registry (the daily Workday adapter's).
  */
-export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts'] as const;
+export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts', 'registry:workday-hosts'] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
 
@@ -22,6 +23,12 @@ export type AgentKind = (typeof AGENT_KINDS)[number];
 
 export interface Capabilities {
   readonly http?: true;
+  /**
+   * `ctx.http.postJson`: one JSON POST to an egress host (a search query a platform's own public page sends, e.g.
+   * Workday's CXS job list). Needs `http`. Without it `postJson` is a policy denial, so an agent that only reads by GET
+   * (the Gmail source, every board API) can never send a POST.
+   */
+  readonly httpPost?: true;
   readonly llm?: { readonly model: string; readonly maxTokens: number };
   /**
    * Read-only access to the user's pack as `ctx.pack` (deep-frozen). `true` is the public pack;
@@ -105,6 +112,7 @@ const Meta = z
     capabilities: z
       .object({
         http: z.literal(true).optional(),
+        httpPost: z.literal(true).optional(),
         llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
         pack: z.union([z.literal(true), z.literal('full')]).optional(),
         browser: z.object({ maxPages: z.number().int().positive().max(500) }).strict().optional(),
@@ -183,6 +191,7 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
     guarantees: [...c.guarantees],
     capabilities: {
       ...(capabilities.http ? { http: capabilities.http } : {}),
+      ...(capabilities.httpPost ? { httpPost: capabilities.httpPost } : {}),
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
       ...(capabilities.pack ? { pack: capabilities.pack } : {}),
       ...(capabilities.browser ? { browser: { maxPages: capabilities.browser.maxPages } } : {}),
@@ -206,6 +215,7 @@ function checkKindCapabilities(c: AnyContract): void {
   const httpKinds: readonly AgentKind[] = ['io', 'io-session', 'effect'];
   if (c.capabilities.http && !httpKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.http`);
   if (c.capabilities.http && c.egress.length === 0) problems.push('capabilities.http requires at least one egress host');
+  if (c.capabilities.httpPost && !c.capabilities.http) problems.push('capabilities.httpPost requires capabilities.http');
   const browserKinds: readonly AgentKind[] = ['io', 'io-session'];
   if (c.capabilities.browser && !browserKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.browser`);
   if (c.capabilities.browser && c.egress.length === 0) problems.push('capabilities.browser requires at least one egress host');

@@ -1,5 +1,5 @@
 {
-  "hash": "41d1f377f7dd383d2af158b96a92d2a17e6a651246c2de197337150b90bd6b06",
+  "hash": "c9043cfb81453a06e2f38f8860cca892f9b48ebe36be78d2cbb09c46c1b01ca7",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -22,7 +22,8 @@
               "lever",
               "ashby",
               "feed",
-              "careers"
+              "careers",
+              "workday"
             ],
             "type": "string"
           },
@@ -123,6 +124,6 @@
     },
     "team": "sourcing",
     "timeoutMs": 30000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

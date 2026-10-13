@@ -13,7 +13,7 @@ describe('contracts-out', () => {
     expect(r.list().map((a) => a.contract.id)).toEqual([
       'board-verifier', 'careers-locator', 'company-seed', 'cover-writer', 'demo-scorer', 'demo-source', 'eligibility', 'evidence-matcher', 'gig-eligibility', 'gig-normalizer', 'gig-qa', 'gig-renderer', 'gig-risk', 'gig-scorer', 'normalizer', 'platform-detector', 'proposal-planner', 'qa-gate', 'rate-normalizer', 'renderer', 'resume-planner',
       'scorer-lexicon', 'src-ashby', 'src-board-contracts', 'src-careers-job', 'src-careers-list', 'src-freelancer', 'src-gig-mail', 'src-greenhouse', 'src-himalayas', 'src-hn', 'src-jobicy', 'src-lever',
-      'src-remotive',
+      'src-remotive', 'src-workday',
     ]);
     expect(checkDrift(r, join(import.meta.dirname, '../../contracts-out'))).toEqual([]);
   });

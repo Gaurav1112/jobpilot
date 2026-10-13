@@ -9,8 +9,8 @@ import { appKernel, loadRunPack, resolvePdftotext, type RunPack } from './kernel
 import { withLock } from './lock.js';
 import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
-import { DAILY_PIPELINE, dailySeeds } from './pipeline.js';
-import { runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
+import { DAILY_PIPELINE, dailySeeds, registryBoards } from './pipeline.js';
+import { namedSkipWarnings, runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
 import { citeable, forbiddenTermStrict, redactText } from './pack/rules.js';
 import type { Pack } from './pack/schema.js';
@@ -203,18 +203,20 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const now = o.clock.now();
       const runDate = istDate(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'daily');
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
+      // the verified registry companies whose platform has a daily adapter (none: the run is exactly as before)
+      const boards = registryBoards(app.verifiedCompanies());
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), boards });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
-      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined);
+      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined, boards);
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });
       markStaleDocs(app, citeableNow(app, loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
-      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming));
+      warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming), ...namedSkipWarnings(app.kernel, runId, loaded.pack.naming));
       const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       o.afterProject?.();
       const fresh = newMatches(app);

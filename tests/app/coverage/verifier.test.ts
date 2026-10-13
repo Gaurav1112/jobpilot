@@ -83,14 +83,22 @@ async function verify(g: PlatformGuess, fetch: FetchLike, agent = makeBoardVerif
 }
 
 describe('platformClient', () => {
-  it('reads Greenhouse, Lever and Ashby with the daily adapters\' own URLs; every other platform is not built', () => {
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'greenhouse', 'lever']);
+  it('reads Greenhouse, Lever, Ashby and Workday with the daily adapters\' own URLs; every other platform is not built', () => {
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'greenhouse', 'lever', 'workday']);
     expect(platformClient('greenhouse')?.boardUrl('acme')).toBe(greenhouseUrl('acme'));
     expect(platformClient('lever')?.boardUrl('acme')).toBe(leverUrl('acme', 0));
     expect(platformClient('ashby')?.boardUrl('Acme Co')).toBe(ashbyUrl('Acme Co'));
     expect(platformClient('greenhouse')?.host).toBe('boards-api.greenhouse.io');
     expect(platformClient('lever')?.host).toBe('api.lever.co');
     expect(platformClient('ashby')?.host).toBe('api.ashbyhq.com');
+    // Workday: one host per tenant, read from the detected board URL; robots.txt governs it
+    const wd = platformClient('workday');
+    expect(wd?.host).toBeNull();
+    expect(wd?.robots).toBe(true);
+    expect(wd?.refOf('nvidia/NVIDIAExternalCareerSite', NV_BOARD)).toBe('nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite');
+    expect(wd?.refOf('nvidia/NVIDIAExternalCareerSite', null)).toBeNull();
+    expect(wd?.boardUrl('nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite')).toBe(NV_BOARD);
+    expect(platformClient('greenhouse')?.robots).toBe(false);
     for (const p of Platform.options.filter((p) => !BUILT_PLATFORMS.includes(p))) expect(platformClient(p)).toBeNull();
   });
 
@@ -102,6 +110,71 @@ describe('platformClient', () => {
     expect(r).toMatchObject({ boardName: 'GitLab', boardNames: ['GitLab'], complete: true, url: greenhouseUrl('gitlab') });
     expect(r.jobs).toHaveLength(json.jobs.length);
     expect(r.jobs[0]).toMatchObject({ source: 'greenhouse', slug: 'gitlab' });
+  });
+});
+
+const NV_HOST = 'nvidia.wd5.myworkdayjobs.com';
+const NV_BOARD = `https://${NV_HOST}/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs`;
+const nvFixture = (): { robots: string; pages: unknown[] } => JSON.parse(readFileSync(new URL('../../fixtures/sources/workday-nvidia.json', import.meta.url), 'utf8')) as { robots: string; pages: unknown[] };
+const nvGuess = (name = 'NVIDIA', key = 'nvidia.com') => guess(cand(key, name), 'workday', 'nvidia/NVIDIAExternalCareerSite', { boardUrl: NV_BOARD });
+
+/** The verifier's Workday read: method and body recorded per request. */
+function serveWorkday(routes: Record<string, Route>) {
+  const calls: string[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    calls.push(`${init.method ?? 'GET'} ${url}${init.body === undefined ? '' : ` ${init.body}`}`);
+    const r = routes[url] ?? { status: 404, body: 'Not Found' };
+    const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body ?? null);
+    return { status: r.status ?? 200, text: async () => body };
+  };
+  return { fetch, calls };
+}
+
+describe('board-verifier: Workday (robots.txt applies; the tenant is the board name)', () => {
+  it('verifies the recorded NVIDIA board: robots.txt first, then page 1 of the CXS list by POST; the tenant matches the domain label', async () => {
+    const fx = nvFixture();
+    const n = serveWorkday({ [`https://${NV_HOST}/robots.txt`]: { body: fx.robots }, [NV_BOARD]: { body: fx.pages[0] } });
+    expect(verifierHosts(nvGuess())).toEqual([NV_HOST]);
+    const v = await verify(nvGuess(), n.fetch);
+    expect(v).toMatchObject({ status: 'verified', boardName: null, jobsSeen: 20 });
+    expect(v.reasons).toEqual(["workday board nvidia/NVIDIAExternalCareerSite: 20+ open jobs; workday tenant 'nvidia' matches 'NVIDIA'"]);
+    expect(n.calls).toEqual([`GET https://${NV_HOST}/robots.txt`, `POST ${NV_BOARD} {"appliedFacets":{},"limit":20,"offset":0,"searchText":""}`]);
+  });
+
+  it('a tenant that is neither the name nor the domain label is proposed: board name not available', async () => {
+    const fx = nvFixture();
+    const n = serveWorkday({ [`https://${NV_HOST}/robots.txt`]: { body: fx.robots }, [NV_BOARD]: { body: fx.pages[0] } });
+    const v = await verify(nvGuess('Mellanox Technologies', 'mellanox.com'), n.fetch);
+    expect(v.status).toBe('proposed');
+    expect(v.reasons).toEqual(['board name not available, please confirm', "workday tenant 'nvidia' is neither 'Mellanox Technologies' nor the domain label 'mellanox'"]);
+  });
+
+  it('a robots.txt disallowing the CXS path: proposed, the board never read', async () => {
+    const n = serveWorkday({ [`https://${NV_HOST}/robots.txt`]: { body: 'User-agent: *\nDisallow: /wday/\n' }, [NV_BOARD]: { body: nvFixture().pages[0] } });
+    const v = await verify(nvGuess(), n.fetch);
+    expect(v.status).toBe('proposed');
+    expect(v.reasons[0]).toBe(`robots-disallow /wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs on ${NV_HOST}: the board was not read, please confirm`);
+    expect(n.calls).toEqual([`GET https://${NV_HOST}/robots.txt`]);
+  });
+
+  it('403 on the list: the host is disabled and the step deferred, never retried around', async () => {
+    const n = serveWorkday({ [`https://${NV_HOST}/robots.txt`]: { body: '' }, [NV_BOARD]: { status: 403, body: '' } });
+    const agent = makeBoardVerifier(fresh());
+    const ctx = ctxFor(n.fetch, [nvGuess()]);
+    await expect(agent.run(nvGuess(), ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-403 on nvidia\.wd5\.myworkdayjobs\.com/) });
+    await expect(agent.run(nvGuess(), ctxFor(n.fetch, [nvGuess()]))).rejects.toMatchObject({ code: 'input_rejected' });
+    expect(n.calls.filter((c) => c.startsWith('POST'))).toHaveLength(1);
+  });
+
+  it('a list missing expected fields fails the board; a guess without a board URL is proposed, nothing fetched', async () => {
+    const n = serveWorkday({ [`https://${NV_HOST}/robots.txt`]: { body: '' }, [NV_BOARD]: { body: { jobPostings: [] } } });
+    const v = await verify(nvGuess(), n.fetch);
+    expect(v.status).toBe('failed');
+    expect(v.reasons[0]).toMatch(/list: response shape is not valid \(total/);
+    const bare = guess(cand('nvidia.com', 'NVIDIA'), 'workday', 'nvidia/NVIDIAExternalCareerSite');
+    const n2 = serveWorkday({});
+    expect(await verify(bare, n2.fetch)).toMatchObject({ status: 'proposed', reasons: ['no readable workday board in nvidia/NVIDIAExternalCareerSite, please confirm'] });
+    expect(n2.calls).toEqual([]);
   });
 });
 
@@ -201,11 +274,11 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
     const n = serve({});
-    const v = await verify(guess(cand('nvidia.com', 'NVIDIA'), 'workday', 'nvidia/NVIDIAExternalCareerSite'), n.fetch);
+    const v = await verify(guess(cand('netflix.com', 'Netflix'), 'eightfold', 'explore.jobs.netflix.net/netflix.com'), n.fetch);
     expect(v).toMatchObject({ status: 'proposed', boardName: null, jobsSeen: null });
-    expect(v.reasons[0]).toBe('adapter not built yet: workday');
+    expect(v.reasons[0]).toBe('adapter not built yet: eightfold');
     expect(n.calls).toEqual([]);
-    expect(verifierHosts(guess(cand('nvidia.com', 'NVIDIA'), 'workday', 'x'))).toEqual([]);
+    expect(verifierHosts(guess(cand('netflix.com', 'Netflix'), 'eightfold', 'x'))).toEqual([]);
   });
 
   it('no platform: proposed, the detector\'s reasons carried, nothing fetched (carry 9)', async () => {

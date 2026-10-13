@@ -138,10 +138,10 @@ describe('coverage time slices: yield to the daily run, a slice cap, resume the 
     expect(slices.length).toBeGreaterThan(2);
     expect(slices.slice(0, -1).every((s) => s.status === 'paused' && s.reason === 'slice limit')).toBe(true);
     expect(new Set(slices.map((s) => s.runId))).toEqual(new Set(['coverage-2026-10-11']));
-    expect(slices.at(-1)).toMatchObject({ status: 'completed', verdicts: { verified: 1, proposed: 2, failed: 1 }, exitCode: 0 });
-    expect(posted).toEqual(['Coverage: 1 verified (+1 new) · 2 proposed · 0 failing']);
+    expect(slices.at(-1)).toMatchObject({ status: 'completed', verdicts: { verified: 2, proposed: 1, failed: 1 }, exitCode: 0 });
+    expect(posted).toEqual(['Coverage: 2 verified (+2 new) · 1 proposed · 0 failing']);
     // every step executed exactly once over all the slices (a cut-short step is replayed, never re-run)
-    // seed 4, locate 5, detect 4 located sites, verify 4 detected platforms (workday included: "adapter not built yet")
+    // seed 4, locate 5, detect 4 located sites, verify 4 detected platforms (workday included, read through its client)
     expect(stepsDone(home, 'coverage-2026-10-11')).toBe(4 + 5 + 4 + 4);
     expect(events(home, 'coverage-2026-10-11').filter((k) => k === 'coverage.projected')).toHaveLength(1);
     // a further run that week replays every step at $0, without a request
@@ -278,7 +278,7 @@ describe('run-coverage --if-due with slices: pauses are not failed attempts', ()
     // more pauses than the cap of 3 failures, and the week was never capped
     expect(a.filter((x) => x === 'paused').length).toBeGreaterThan(3);
     expect(due(COVERAGE_DUE, home, new Date(t).toISOString())).toMatchObject({ due: false, reason: "this coverage week's run completed" });
-    expect(posted).toEqual(['Coverage: 1 verified (+1 new) · 2 proposed · 0 failing']);
+    expect(posted).toEqual(['Coverage: 2 verified (+2 new) · 1 proposed · 0 failing']);
     expect(out.filter((l) => l.includes('paused in'))).toHaveLength(a.length - 1);
   });
 

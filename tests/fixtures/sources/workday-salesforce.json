@@ -1,0 +1,616 @@
+{
+ "recorded": "2026-10-14",
+ "board": "salesforce.wd12.myworkdayjobs.com/salesforce/External_Career_Site",
+ "robots": "Sitemap: https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Futureforce_NewGradRoles/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Mulesoft_Careersite/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Futureforce_Internships/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Salesforce_Research/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Tableau/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Datorama/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Heroku/siteMap.xml\nSitemap: https://salesforce.wd12.myworkdayjobs.com/Slack/siteMap.xml\n\nUser-agent: *\nAllow: /External_Career_Site/\nAllow: /Futureforce_NewGradRoles/\nAllow: /Mulesoft_Careersite/\nAllow: /Futureforce_Internships/\nAllow: /Salesforce_Research/\nAllow: /Tableau/\nAllow: /Datorama/\nAllow: /Heroku/\nAllow: /Slack/\nDisallow: /refreshFacet/",
+ "pages": [
+  {
+   "total": 1522,
+   "jobPostings": [
+    {
+     "title": "Qualified SMB Account Executive",
+     "externalPath": "/job/California---Remote/Qualified-SMB-Account-Executive_JR354059",
+     "locationsText": "14 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR354059"
+     ]
+    },
+    {
+     "title": "Qualified Success Architect, Internal Enablement",
+     "externalPath": "/job/Washington---Remote/Qualified-Success-Architect--Internal-Enablement_JR362329",
+     "locationsText": "Washington - Remote",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR362329"
+     ]
+    },
+    {
+     "title": "Software Engineering PMTS",
+     "externalPath": "/job/California---San-Francisco/Software-Engineering-PMTS_JR363144",
+     "locationsText": "California - San Francisco",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363144"
+     ]
+    },
+    {
+     "title": "Regional Sales Director",
+     "externalPath": "/job/Mexico---Mexico-City/Regional-Sales-Director_JR363256-1",
+     "locationsText": "Mexico - Mexico City",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363256"
+     ]
+    },
+    {
+     "title": "Senior UX Product Designer – Design Systems",
+     "externalPath": "/job/California---San-Francisco/User-Interface-User-Experience-Senior-Designer_JR361319",
+     "locationsText": "California - San Francisco",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR361319"
+     ]
+    },
+    {
+     "title": "Account Partner - Financial Services",
+     "externalPath": "/job/Canada---Vancouver/Account-Partner---Financial-Services_JR364110",
+     "locationsText": "Canada - Vancouver",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR364110"
+     ]
+    },
+    {
+     "title": "Recruiting Coordinator",
+     "externalPath": "/job/California---San-Francisco/Recruiting-Coordinator_JR363046-1",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363046"
+     ]
+    },
+    {
+     "title": "Manager, Sales (Internal Only)",
+     "externalPath": "/job/Mexico---Mexico-City/Manager--Sales--Internal-Only-_JR362993-1",
+     "locationsText": "Mexico - Mexico City",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR362993"
+     ]
+    },
+    {
+     "title": "Member of Technical Staff (MTS), Software Engineer, Identity & Access Management",
+     "externalPath": "/job/Washington---Bellevue/Member-of-Technical-Staff--MTS---Software-Engineer--Identity---Access-Management_JR360867",
+     "locationsText": "Washington - Bellevue",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR360867"
+     ]
+    },
+    {
+     "title": "Lead Forward Deployed Engineer",
+     "externalPath": "/job/United-Arab-Emirates---Dubai/Lead-Forward-Deployed-Engineer_JR348990",
+     "locationsText": "United Arab Emirates - Dubai",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR348990"
+     ]
+    },
+    {
+     "title": "Staff Software Engineer, Data Infrastructure",
+     "externalPath": "/job/California---San-Francisco/Staff-Software-Engineer--Data-Infrastructure_JR363305-1",
+     "locationsText": "4 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363305"
+     ]
+    },
+    {
+     "title": "Account Director – Communications & Media - France",
+     "externalPath": "/job/France---Paris/Global-Account-Manager---Communications---Media---France_JR338819-1",
+     "locationsText": "France - Paris",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR338819"
+     ]
+    },
+    {
+     "title": "Lead Product Designer - Qualified, AI Products",
+     "externalPath": "/job/Washington---Seattle/Lead-Product-Designer--LMTS_JR350894",
+     "locationsText": "Washington - Seattle",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR350894"
+     ]
+    },
+    {
+     "title": "Named Account Executive, DOJ",
+     "externalPath": "/job/Virginia---Mclean/Named-Account-Executive--USPS_JR338518",
+     "locationsText": "Virginia - Mclean",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR338518"
+     ]
+    },
+    {
+     "title": "Manager/Sr. Manager - Product Release Marketing",
+     "externalPath": "/job/Virginia---Washington-DC-Metro---Remote/Product-Release-Marketing-Manager_JR363905",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363905"
+     ]
+    },
+    {
+     "title": "Data Cloud Account Executive",
+     "externalPath": "/job/Brazil---Sao-Paulo/Data-Cloud-Account-Executive_JR362752",
+     "locationsText": "Brazil - Sao Paulo",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR362752"
+     ]
+    },
+    {
+     "title": "Slack Experience Architect",
+     "externalPath": "/job/Colorado---Remote/Slack-Experience-Architect_JR360232",
+     "locationsText": "9 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR360232"
+     ]
+    },
+    {
+     "title": "Senior Data Engineer",
+     "externalPath": "/job/Mexico---Mexico-City/Senior-Data-Engineer_JR336657",
+     "locationsText": "Mexico - Mexico City",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR336657"
+     ]
+    },
+    {
+     "title": "Enterprise Security Senior Analyst, Security Partner",
+     "externalPath": "/job/New-York---New-York/Enterprise-Security-Senior-Analyst--Security-Partner_JR357259",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR357259"
+     ]
+    },
+    {
+     "title": "Senior Product Marketing Manager, Sales Enablement (Qualified)",
+     "externalPath": "/job/California---Remote/Senior-Product-Marketing-Manager--Sales-Enablement--Qualified-_JR362005",
+     "locationsText": "4 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR362005"
+     ]
+    }
+   ],
+   "facets": [
+    {
+     "facetParameter": "CF_-_REC_-_LRV_-_Job_Posting_Anchor_-_Country_from_Job_Posting_Location_Extended",
+     "descriptor": "Country",
+     "values": [
+      {
+       "descriptor": "United States of America",
+       "id": "bc33aa3152ec42d4995f4791a106ed09",
+       "count": 520
+      },
+      {
+       "descriptor": "Ireland",
+       "id": "04a05835925f45b3a59406a2a6b72c8a",
+       "count": 140
+      },
+      {
+       "descriptor": "India",
+       "id": "c4f78be1a8f14da0ab49ce1162348a5e",
+       "count": 110
+      }
+     ]
+    },
+    {
+     "facetParameter": "locationMainGroup",
+     "values": [
+      {
+       "facetParameter": "locations",
+       "descriptor": "Locations",
+       "values": [
+        {
+         "descriptor": "Alabama - Remote",
+         "id": "1038e944b1101012453f52aa5ae90000",
+         "count": 4
+        },
+        {
+         "descriptor": "Alberta - Remote",
+         "id": "1038e944b1101012453a8dbdf2080000",
+         "count": 1
+        },
+        {
+         "descriptor": "India - Bangalore",
+         "id": "1038e944b1101012453f5b10dc370000",
+         "count": 80
+        },
+        {
+         "descriptor": "India - Chennai",
+         "id": "8772d0b5bde71001d43f73ac65140000",
+         "count": 1
+        },
+        {
+         "descriptor": "India - Gurgaon",
+         "id": "1038e944b11010124539eb4950f50000",
+         "count": 33
+        },
+        {
+         "descriptor": "India - Hyderabad",
+         "id": "8ef61f627eb01012453a9ce004d20000",
+         "count": 73
+        },
+        {
+         "descriptor": "India - Jaipur",
+         "id": "1038e944b11010124540abb921b00000",
+         "count": 3
+        },
+        {
+         "descriptor": "India - Mumbai",
+         "id": "2c2bf80869591012453ab08dba870000",
+         "count": 24
+        },
+        {
+         "descriptor": "India - Mumbai - Remote",
+         "id": "1038e944b1101012453d94a739200000",
+         "count": 1
+        },
+        {
+         "descriptor": "Indiana - Chicago Metro - Remote",
+         "id": "1038e944b1101012453bf5e8f2000000",
+         "count": 3
+        },
+        {
+         "descriptor": "Indiana - Indianapolis",
+         "id": "1038e944b11010124540a2b92d130000",
+         "count": 101
+        },
+        {
+         "descriptor": "Indiana - Remote",
+         "id": "1038e944b1101012453eb26824540000",
+         "count": 15
+        },
+        {
+         "descriptor": "India - Pune",
+         "id": "1038e944b1101012453acb52a3810000",
+         "count": 25
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "indiaPages": [
+  {
+   "total": 110,
+   "jobPostings": [
+    {
+     "title": "Agentforce Success Architect - AMER Shift",
+     "externalPath": "/job/India---Hyderabad/Salesforce-Success-Architect--Agentforce-_JR330045-1",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR330045"
+     ]
+    },
+    {
+     "title": "Summer 2027 Intern - UI/UX Designer",
+     "externalPath": "/job/India---Hyderabad/Summer-2027-Intern---UI-UX-Designer_JR363342",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363342"
+     ]
+    },
+    {
+     "title": "Information Security Architect - CSIRT",
+     "externalPath": "/job/India---Hyderabad/Information-Security-Architect---CSIRT_JR361489",
+     "locationsText": "India - Hyderabad",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR361489"
+     ]
+    },
+    {
+     "title": "Account Executive",
+     "externalPath": "/job/India---Mumbai/Account-Executive_JR350379",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR350379"
+     ]
+    },
+    {
+     "title": "Business Development Representative- Enterprise account",
+     "externalPath": "/job/India---Bangalore/Business-Development-Representative_JR351752",
+     "locationsText": "India - Bangalore",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR351752"
+     ]
+    },
+    {
+     "title": "Technical Writer, Critical Incident Communications",
+     "externalPath": "/job/India---Hyderabad/Technical-Writer--Critical-Incident-Communications_JR352053",
+     "locationsText": "India - Hyderabad",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR352053"
+     ]
+    },
+    {
+     "title": "Senior Technical Consultant -Migration-Marketing Cloud",
+     "externalPath": "/job/India---Hyderabad/Senior-Technical-Consultant--Migration-Revenue-Cloud-Marketing-Cloud_JR360365",
+     "locationsText": "India - Hyderabad",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR360365"
+     ]
+    },
+    {
+     "title": "Named Account Executive - Commerce Cloud",
+     "externalPath": "/job/India---Gurgaon/Named-Account-Executive---Commerce-Cloud_JR353624",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR353624"
+     ]
+    },
+    {
+     "title": "Senior Manager, Business Value Services",
+     "externalPath": "/job/India---Bangalore/Senior-Manager--Business-Value-Services_JR363302",
+     "locationsText": "India - Bangalore",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR363302"
+     ]
+    },
+    {
+     "title": "Manager/Senior Manager, Technical Consulting (Salesforce Lifesciences exp mandatory)",
+     "externalPath": "/job/India---Hyderabad/Manager--Technical-Consulting--Salesforce-Lifesciences-exp-mandatory-_JR361157",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR361157"
+     ]
+    },
+    {
+     "title": "Senior Solution Architect-CPQ",
+     "externalPath": "/job/India---Bangalore/Technical-Architect---Agentforce-Revenue-Management_JR350992-1",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR350992"
+     ]
+    },
+    {
+     "title": "Named Account Executive - Retail & Consumer Goods",
+     "externalPath": "/job/India---Gurgaon/Named-Account-Executive---Retail---Consumer-Goods_JR357373",
+     "locationsText": "India - Gurgaon",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR357373"
+     ]
+    },
+    {
+     "title": "Strategic Account Executive - Financial Services/BFSI",
+     "externalPath": "/job/India---Gurgaon/Strategic-Account-Executive---Financial-Services-BFSI_JR356704",
+     "locationsText": "India - Gurgaon",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR356704"
+     ]
+    },
+    {
+     "title": "Named Account Executive - Public Sector (BFSI)",
+     "externalPath": "/job/India---Mumbai/Named-Account-Executive---Public-Sector--BFSI-_JR360340",
+     "locationsText": "India - Mumbai",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR360340"
+     ]
+    },
+    {
+     "title": "Specialist Account Executive - Slack",
+     "externalPath": "/job/India---Gurgaon/Specialist-Account-Executive---Slack_JR360164",
+     "locationsText": "India - Gurgaon",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR360164"
+     ]
+    },
+    {
+     "title": "Territory Account Executive - Mid Market - Mulesoft",
+     "externalPath": "/job/India---Gurgaon/Territory-Account-Executive---Mid-Market---Mulesoft_JR356042",
+     "locationsText": "India - Gurgaon",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR356042"
+     ]
+    },
+    {
+     "title": "Lead Solution Engineer",
+     "externalPath": "/job/India---Gurgaon/Lead-Solution-Engineer_JR358324",
+     "locationsText": "India - Gurgaon",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR358324"
+     ]
+    },
+    {
+     "title": "Senior Technical Consultant — Salesforce DevOps",
+     "externalPath": "/job/India---Bangalore/Senior-Technical-Consultant---Salesforce-DevOps_JR347675",
+     "locationsText": "India - Bangalore",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR347675"
+     ]
+    },
+    {
+     "title": "Lead Software Engineer, Python/Flask",
+     "externalPath": "/job/India---Bangalore/Principal-Sales-Support-Engineer--ES-_JR354838",
+     "locationsText": "India - Bangalore",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR354838"
+     ]
+    },
+    {
+     "title": "Territory Account Executive - IT/ITES",
+     "externalPath": "/job/India---Bangalore/Territory-Account-Executive---IT-ITES_JR342430",
+     "locationsText": "India - Bangalore",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR342430"
+     ]
+    }
+   ],
+   "facets": [
+    {
+     "facetParameter": "CF_-_REC_-_LRV_-_Job_Posting_Anchor_-_Country_from_Job_Posting_Location_Extended",
+     "descriptor": "Country",
+     "values": [
+      {
+       "descriptor": "United States of America",
+       "id": "bc33aa3152ec42d4995f4791a106ed09",
+       "count": 519
+      },
+      {
+       "descriptor": "Ireland",
+       "id": "04a05835925f45b3a59406a2a6b72c8a",
+       "count": 140
+      },
+      {
+       "descriptor": "India",
+       "id": "c4f78be1a8f14da0ab49ce1162348a5e",
+       "count": 110
+      }
+     ]
+    },
+    {
+     "facetParameter": "locationMainGroup",
+     "values": [
+      {
+       "facetParameter": "locations",
+       "descriptor": "Locations",
+       "values": [
+        {
+         "descriptor": "India - Bangalore",
+         "id": "1038e944b1101012453f5b10dc370000",
+         "count": 80
+        },
+        {
+         "descriptor": "India - Hyderabad",
+         "id": "8ef61f627eb01012453a9ce004d20000",
+         "count": 73
+        },
+        {
+         "descriptor": "India - Gurgaon",
+         "id": "1038e944b11010124539eb4950f50000",
+         "count": 33
+        },
+        {
+         "descriptor": "India - Pune",
+         "id": "1038e944b1101012453acb52a3810000",
+         "count": 25
+        },
+        {
+         "descriptor": "India - Mumbai",
+         "id": "2c2bf80869591012453ab08dba870000",
+         "count": 24
+        },
+        {
+         "descriptor": "India - Jaipur",
+         "id": "1038e944b11010124540abb921b00000",
+         "count": 3
+        },
+        {
+         "descriptor": "India - Mumbai - Remote",
+         "id": "1038e944b1101012453d94a739200000",
+         "count": 1
+        },
+        {
+         "descriptor": "India - Chennai",
+         "id": "8772d0b5bde71001d43f73ac65140000",
+         "count": 1
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "indiaFacet": {
+  "CF_-_REC_-_LRV_-_Job_Posting_Anchor_-_Country_from_Job_Posting_Location_Extended": [
+   "c4f78be1a8f14da0ab49ce1162348a5e"
+  ]
+ },
+ "details": {
+  "/job/California---San-Francisco/Staff-Software-Engineer--Data-Infrastructure_JR363305-1": {
+   "jobPostingInfo": {
+    "title": "Staff Software Engineer, Data Infrastructure",
+    "jobDescription": "<p style=\"text-align:left\"><i>To get the best candidate experience, please consider applying for a maximum of 3 roles within 12 months to ensure you are not duplicating efforts.</i></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Job Category</span></p>Software Engineering<p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Job Details</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\"><b><b>About Salesforce</b></b></span></p><p>Salesforce is the #1 AI CRM, where humans with agents drive customer success together. Here, ambition meets action. Tech meets trust. And innovation isn’t a buzzword — it’s a way of life. The world of work as we know it is changing and we&#39;re looking for Trailblazers who are passionate about bettering business and the world through AI, driving innovation, and keeping Salesforce&#39;s core values at the heart of it all.</p><p></p><p>Ready to level-up your career at the company leading workforce transformation in the agentic era? You’re in the right place! Agentforce is the future of AI, and you are the future of Salesforce.</p><p></p><p></p><p></p><p>Slack is looking for a Staff Software Engineer to join the Data Infrastructure team within the broader Data Engineering organization. The mission of our team is to build secure, reliable, performant, scalable, and cost-efficient infrastructure with an AI-forward approach that powers Slack’s data ecosystem. We design and operate the core data platforms that enable data engineers, analysts, and machine learning practitioners to deliver trusted insights and data products across Slack.</p><br /><p>Our systems power critical workflows — from batch and streaming ingestion to real-time analytics and orchestration. We’re looking for strong technical leaders who can combine hands-on expertise with strategic impact and mentorship-driven leadership to scale, and evolve the backbone of Slack’s data infrastructure. </p><br /><p>You’ll play a key role in the design, development, and operation of services that underpin data ingestion, transformation, storage, compute and orchestration at a massive scale. As a Staff Engineer, you’ll be a Directly Responsible Individual (DRI) for multiple core data services, accountable for uptime, reliability, and performance, and a subject matter expert (SME) across multiple systems. Here are a few examples of what we work on:</p><br /><ul><li>Scaling our compute and orchestration layer with an AI-forward and data driven approach.</li><li>Enabling more realtime OLAP capabilities for internal and external customers</li><li>Creating and scaling agents, AI skills, and automation to enable engineers and users on their workflow and data needs</li><li>What you will be doing</li><li>Design, build, and operate reliable and scalable data infrastructure powering Slack’s analytics, ML, and data-driven decision-making.</li><li>Serve as DRI for multiple core data services specifically on our analytics infrastructure (e.g. Pinot, and Trino), ensuring uptime, reliability, and our compute and orchestration services (e.g., Airflow, Spark on Kubernetes, EMR, Hive Metastore). </li><li>Drive improvements in security, cost efficiency, and developer experience across our data infrastructure.</li><li>Build automation and self-service tools that empower our team and other data teams to easily adopt and manage data workflows.</li><li>Collaborate closely with data engineering, platform, and security teams to design scalable, well-governed solutions.</li><li>Build and enhance our observability, monitoring, and alerting on our services via Grafana and related tooling.</li><li>Partner with other staff and senior engineers to define best practices, technical standards, and support models for Slack’s data ecosystem.</li><li>Mentor and coach other engineers, modeling ownership, collaboration, and operational excellence.</li></ul><br /><p>What you should have</p><ul><li>10&#43; years of software, platform, or infrastructure engineering experience, including time spent supporting data-intensive systems or data platforms.</li><li>First-class communication skills and the ability to collaborate across cross-functional teams.</li><li>Proven experience in building, deploying, and operating distributed infrastructure at scale.</li><li>Strong technical background with big data and infrastructure technologies — such as EMR, Airflow, Pinot, Trino, Hive Metastore, Kubernetes, or equivalent systems.</li><li>Proficiency in Python, Golang, Bash, and SQL.</li><li>Proficiency with CI/CD (GitHub Actions), Vault, Terraform, Chef, and Grafana.</li><li>Deep understanding of infrastructure reliability, observability, and cost efficiency principles.</li><li>Hands-on experience supporting data pipelines or data engineering workflows is a strong plus.</li><li>A strong sense of ownership and a drive to deliver high-impact, autonomous results.</li><li>Hands-on experience building, managing, and integrating agentic workflows, custom AI skills, automated software factory pipelines, MCP </li><li>Bachelor’s degree in Computer Science, Engineering, or equivalent practical experience.</li></ul><br /><p>What we value</p><p>Slack has a positive, diverse, and supportive culture—we look for people who are curious, inventive, and collaborative. We seek engineers who care deeply about craftsmanship, reliability, and empowering others. In our work together, we strive to be smart, humble, hardworking, and—above all—collaborative.</p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>This candidate must be a U.S. citizen (U.S. born or naturalized) who does not hold dual citizenship and agrees to complete a U.S. federal government Minimum Background Investigation (MBI) for a Moderate Public Trust position.<p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Unleash Your Potential</span></p><p style=\"text-align:left\"><span>When you join Salesforce, you’ll be limitless in all areas of your life. Our benefits and resources support you to find balance and<span> </span></span><i>be your best</i><span>, and our AI agents accelerate your impact so you can<span> </span></span><i>do your best</i><span>. Together, we’ll bring the power of Agentforce to organizations of all sizes and deliver amazing experiences that customers love. Apply today to not only shape the future — but to redefine what’s possible — for yourself, for AI, and the world.</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Accommodations</span></p><p><span style=\"font-size:inherit\">If you need a reasonable accommodation during the application or the recruiting process, please submit a request via this </span><a target=\"_blank\" href=\"https://careers.mail.salesforce.com/accommodations-request-form?_ga&#61;2.139086459.912759425.1690463420-976932181.1684251251\"><span style=\"color:#0000ff\"><u><span style=\"font-size:inherit\">Accommodations Request Form</span></u></span></a><span style=\"font-size:inherit\">.</span></p><p></p><p><span style=\"font-size:inherit\">Please note that Salesforce uses artificial intelligence (AI) tools to help our recruiters assess and evaluate candidates’ resumes and qualifications throughout the recruiting process. Humans will always make any candidate selection and hiring decisions. Please see our </span><a target=\"_blank\" href=\"https://www.salesforce.com/en-us/wp-content/uploads/sites/4/documents/legal/Privacy/salesforce-candidate-privacy-statement-december-2024.pdf\"><span style=\"color:#0000ff\"><u><span style=\"font-size:inherit\">Candidate Privacy Statement</span></u></span></a><span style=\"font-size:inherit\"> for more information about how we use your personal data and your rights, including with regard to use of AI tools and opt out options.</span></p><p></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Posting Statement</span></p><p style=\"text-align:left\"><span><span>Salesforce is an equal opportunity employer and maintains a policy of non-discrimination with all employees and applicants for employment. What does that mean exactly? It means that at Salesforce, we believe in equality for all. And we believe we can lead the path to equality in part by creating a workplace that’s inclusive, and free from discrimination. </span></span><a target=\"_blank\" href=\"https://www.eeoc.gov/know-your-rights-workplace-discrimination-illegal\">Know your rights: workplace discrimination is illegal.</a><span><span> Any employee or potential employee will be assessed on the basis of merit, competence and qualifications – without regard to race, religion, color, national origin, sex, sexual orientation, gender expression or identity, transgender status, age, disability, veteran or marital status, political viewpoint, or other classifications protected by law. This policy applies to current and prospective employees, no matter where they are in their Salesforce employment journey. It also applies to recruiting, hiring, job assignment, compensation, promotion, benefits, training, assessment of job performance, discipline, termination, and everything in between. Recruiting, hiring, and promotion decisions at Salesforce are fair and based on merit. The same goes for compensation, benefits, promotions, transfers, reduction in workforce, recall, training, and education.</span></span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>In the United States, compensation offered will be determined by factors such as location, job level, job-related knowledge, skills, and experience. Certain roles may be eligible for incentive compensation, equity, and benefits.  Salesforce offers a variety of benefits to help you live well including: time off programs, medical, dental, vision, mental health support, paid parental leave, life and disability insurance, 401(k), and an employee stock purchasing program. More details about company benefits can be found at the following link: https://www.salesforcebenefits.com.Pursuant to the San Francisco Fair Chance Ordinance and the Los Angeles Fair Chance Initiative for Hiring, Salesforce will consider for employment qualified applicants with arrest and conviction records.<p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>At Salesforce, we believe in equitable compensation practices that reflect the dynamic nature of labor markets across various regions.&amp;#xa;&amp;#xa;The typical base salary range for this position is $197,300 - $313,700 annually. In select cities within the San Francisco and New York City metropolitan area, the base salary range for this role is $237,700 - $344,700 annually.&amp;#xa;&amp;#xa;The range represents base salary only, and does not include company bonus, incentive for sales roles, equity or benefits, as applicable.<h3></h3><h3></h3><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>",
+    "location": "California - San Francisco",
+    "additionalLocations": [
+     "Georgia - Atlanta",
+     "Washington - Seattle",
+     "Washington - Bellevue"
+    ],
+    "postedOn": "Posted Today",
+    "startDate": "2026-10-13",
+    "timeType": "Full time",
+    "remoteType": "Office Tech-Flexible",
+    "jobReqId": "JR363305",
+    "jobPostingId": "Staff-Software-Engineer--Data-Infrastructure_JR363305-1",
+    "jobPostingSiteId": "External_Career_Site",
+    "country": {
+     "descriptor": "United States of America"
+    },
+    "jobRequisitionLocation": {
+     "descriptor": "California - San Francisco",
+     "country": {
+      "descriptor": "United States of America",
+      "alpha2Code": "US"
+     }
+    },
+    "externalUrl": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/California---San-Francisco/Staff-Software-Engineer--Data-Infrastructure_JR363305-1",
+    "canApply": true
+   }
+  },
+  "/job/India---Bangalore/Principal-Sales-Support-Engineer--ES-_JR354838": {
+   "jobPostingInfo": {
+    "title": "Lead Software Engineer, Python/Flask",
+    "jobDescription": "<p style=\"text-align:left\"><i>To get the best candidate experience, please consider applying for a maximum of 3 roles within 12 months to ensure you are not duplicating efforts.</i></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Job Category</span></p>User Experience<p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Job Details</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\"><b><b>About Salesforce</b></b></span></p><p>Salesforce is the #1 AI CRM, where humans with agents drive customer success together. Here, ambition meets action. Tech meets trust. And innovation isn’t a buzzword — it’s a way of life. The world of work as we know it is changing and we&#39;re looking for Trailblazers who are passionate about bettering business and the world through AI, driving innovation, and keeping Salesforce&#39;s core values at the heart of it all.</p><p></p><p>Ready to level-up your career at the company leading workforce transformation in the agentic era? You’re in the right place! Agentforce is the future of AI, and you are the future of Salesforce.</p><p></p><p></p><p></p><p><span style=\"color:#1d1c1d\">We support 800&#43; engineers, so every tool, script, and deployment you create can affect hundreds of developers. We are looking for someone who thrives in large-scale engineering environments and can own automation end-to-end with minimal supervision.<br /><br />You&#39;ll be part of a team that builds and maintains internal applications and data platforms that help sales, engineering, operations, and leadership teams work more effectively.<br /><br />Your work will have a direct impact on how teams access information, plan resources, and make business decisions. You will:<br /></span></p><ul><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Build reliable business applications that ensure important sales and operational data is captured, maintained, and easily accessible.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Improve workforce and resource planning by developing tools that help teams manage requests, assignments, staffing, and operational activities.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Work with large-scale data and integrations, connecting information across multiple systems and making it available through useful applications and dashboards.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Automate and simplify business processes by replacing manual or disconnected workflows with scalable, user-friendly solutions.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Enable better decision-making by providing leaders and teams with accurate, timely data for forecasting, planning, and reporting.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Develop intelligent capabilities such as recommendations, data matching, notifications, and AI-assisted workflows that improve productivity and data quality.</span></li></ul><p><span style=\"color:#1d1c1d\"><br /><b>What You&#39;ll Actually Be Doing</b></span></p><ul><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Design, build, and maintain enterprise-grade platforms supporting hundreds of engineers.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Own Infrastructure as Code across AWS, Azure, and GCP via containerization.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Build scalable Python microservices and internal platforms using Flask.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Develop and maintain production-quality self service apps within the platform.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Design secure REST APIs with authentication, authorization, observability, and monitoring.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Integrate enterprise applications using Informatica IICS (CDI, CAI) and rapidly adopt additional integration modules.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Build highly available containerized services using Docker and Kubernetes.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Troubleshoot production issues across networking, cloud infrastructure, containers, CI/CD pipelines, APIs, and enterprise integrations.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Partner with architects and engineering leadership to improve platform reliability and developer productivity.</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Mentor engineers and establish engineering best practices.</span></li></ul><p><span style=\"color:#1d1c1d\"><br /><b>You&#39;re Our Person If...</b></span></p><ul><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">10&#43; years of Total experience</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">5&#43; years of Flask development (Python)</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Certified in at least one of the hyperscalers (AWS, Azure, GCP, Snowflake) and 3&#43; years of relevant experience</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Preferred experience of 3&#43; years in DevOps / Cloud Operations / Application Maintenance</span></li></ul><br /><p><span style=\"color:#1d1c1d\"><b>Even Better If...</b></span></p><ul><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Exposure to DevSecOps practices, including secrets management, IAM policy configuration, vulnerability remediation, and policy automation</span></li><li style=\"color:#1d1c1d !important\"><span style=\"color:#1d1c1d\">Experience using and driving AI-assisted development tools (e.g., Cursor, Claude Code, GitHub Copilot)</span></li></ul><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Unleash Your Potential</span></p><p style=\"text-align:left\"><span>When you join Salesforce, you’ll be limitless in all areas of your life. Our benefits and resources support you to find balance and<span> </span></span><i>be your best</i><span>, and our AI agents accelerate your impact so you can<span> </span></span><i>do your best</i><span>. Together, we’ll bring the power of Agentforce to organizations of all sizes and deliver amazing experiences that customers love. Apply today to not only shape the future — but to redefine what’s possible — for yourself, for AI, and the world.</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Accommodations</span></p><p><span style=\"font-size:inherit\">If you need a reasonable accommodation during the application or the recruiting process, please submit a request via this </span><a target=\"_blank\" href=\"https://careers.mail.salesforce.com/accommodations-request-form?_ga&#61;2.139086459.912759425.1690463420-976932181.1684251251\"><span style=\"color:#0000ff\"><u><span style=\"font-size:inherit\">Accommodations Request Form</span></u></span></a><span style=\"font-size:inherit\">.</span></p><p></p><p><span style=\"font-size:inherit\">Please note that Salesforce uses artificial intelligence (AI) tools to help our recruiters assess and evaluate candidates’ resumes and qualifications throughout the recruiting process. Humans will always make any candidate selection and hiring decisions. Please see our </span><a target=\"_blank\" href=\"https://www.salesforce.com/en-us/wp-content/uploads/sites/4/documents/legal/Privacy/salesforce-candidate-privacy-statement-december-2024.pdf\"><span style=\"color:#0000ff\"><u><span style=\"font-size:inherit\">Candidate Privacy Statement</span></u></span></a><span style=\"font-size:inherit\"> for more information about how we use your personal data and your rights, including with regard to use of AI tools and opt out options.</span></p><p></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span class=\"emphasis-3\">Posting Statement</span></p><p style=\"text-align:left\"><span><span>Salesforce is an equal opportunity employer and maintains a policy of non-discrimination with all employees and applicants for employment. What does that mean exactly? It means that at Salesforce, we believe in equality for all. And we believe we can lead the path to equality in part by creating a workplace that’s inclusive, and free from discrimination. </span></span><a target=\"_blank\" href=\"https://www.eeoc.gov/know-your-rights-workplace-discrimination-illegal\">Know your rights: workplace discrimination is illegal.</a><span><span> Any employee or potential employee will be assessed on the basis of merit, competence and qualifications – without regard to race, religion, color, national origin, sex, sexual orientation, gender expression or identity, transgender status, age, disability, veteran or marital status, political viewpoint, or other classifications protected by law. This policy applies to current and prospective employees, no matter where they are in their Salesforce employment journey. It also applies to recruiting, hiring, job assignment, compensation, promotion, benefits, training, assessment of job performance, discipline, termination, and everything in between. Recruiting, hiring, and promotion decisions at Salesforce are fair and based on merit. The same goes for compensation, benefits, promotions, transfers, reduction in workforce, recall, training, and education.</span></span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h3></h3><h3></h3><h3></h3><h3></h3><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>",
+    "location": "India - Bangalore",
+    "postedOn": "Posted Yesterday",
+    "startDate": "2026-10-12",
+    "timeType": "Full time",
+    "remoteType": "Office - Based",
+    "jobReqId": "JR354838",
+    "jobPostingId": "Principal-Sales-Support-Engineer--ES-_JR354838",
+    "jobPostingSiteId": "External_Career_Site",
+    "country": {
+     "descriptor": "India"
+    },
+    "jobRequisitionLocation": {
+     "descriptor": "India - Bangalore",
+     "country": {
+      "descriptor": "India",
+      "alpha2Code": "IN"
+     }
+    },
+    "externalUrl": "https://salesforce.wd12.myworkdayjobs.com/External_Career_Site/job/India---Bangalore/Principal-Sales-Support-Engineer--ES-_JR354838",
+    "canApply": true
+   }
+  }
+ }
+}

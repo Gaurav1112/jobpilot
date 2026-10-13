@@ -490,7 +490,30 @@ describe('v1 kernel extensions: broker', () => {
   });
 });
 
+const poster = defineContract({
+  ...common,
+  id: 'poster',
+  description: 'Posts one search query to one host',
+  kind: 'io',
+  capabilities: { http: true, httpPost: true },
+  egress: ['boards-api.greenhouse.io'],
+  budget: { usdPerCall: 0, usdPerRun: 0 },
+});
+
 describe('postJson (Workday CXS search) and a wider per-request spacing', () => {
+  it('is a policy denial for a contract without capabilities.httpPost: a GET-only agent can never POST', async () => {
+    const calls: string[] = [];
+    const f: FetchLike = async (url) => {
+      calls.push(url);
+      return { status: 200, text: async () => '{}' };
+    };
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    await expect(ctx.http!.postJson('https://boards-api.greenhouse.io/jobs', {})).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/fetcher may not POST/) });
+    expect(calls).toEqual([]);
+    expect(ctx.denials()).toHaveLength(1);
+    expect(() => defineContract({ ...common, id: 'bad-poster', description: 'Posts without the http capability', kind: 'io', capabilities: { httpPost: true }, egress: [], budget: { usdPerCall: 0, usdPerRun: 0 } })).toThrow(/httpPost requires capabilities.http/);
+  });
+
   it('POSTs the JSON body with the honest headers plus content-type, under the same egress, https, size and status rules', async () => {
     const inits: Parameters<FetchLike>[1][] = [];
     const big = 'x'.repeat(PRODUCT_POLICY_V1.maxResponseBytes + 1);
@@ -504,7 +527,7 @@ describe('postJson (Workday CXS search) and a wider per-request spacing', () => 
       if (url.endsWith('/html')) return { status: 200, text: async () => '<html>' };
       return { status: 200, text: async () => JSON.stringify({ echo: init.body ?? null }) };
     };
-    const ctx = issue(fetcher, 'P0', { fetch: f });
+    const ctx = issue(poster, 'P0', { fetch: f });
     const got = await ctx.http!.postJson('https://boards-api.greenhouse.io/jobs', { limit: 20, offset: 0 });
     expect(got).toEqual({ status: 200, json: { echo: '{"limit":20,"offset":0}' } });
     expect(inits[0]).toMatchObject({
@@ -553,7 +576,7 @@ describe('postJson (Workday CXS search) and a wider per-request spacing', () => 
       now += ms;
     });
     const f: FetchLike = async () => ({ status: 200, text: async () => '{}' });
-    const ctx = issueContext({ contract: fetcher, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: f }, clock, signal: new AbortController().signal, hostPacer: pacer });
+    const ctx = issueContext({ contract: poster, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: f }, clock, signal: new AbortController().signal, hostPacer: pacer });
     await ctx.http!.postJson('https://boards-api.greenhouse.io/a', {}, { minIntervalMs: 2000 });
     await ctx.http!.postJson('https://boards-api.greenhouse.io/a', {}, { minIntervalMs: 2000 });
     await ctx.http!.getPage('https://boards-api.greenhouse.io/r', { minIntervalMs: 2000 });

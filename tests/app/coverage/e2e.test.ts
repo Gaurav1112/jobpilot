@@ -62,7 +62,7 @@ function registry(home: string): Record<string, Pick<Company, 'status' | 'platfo
 }
 
 describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
-  it('yields 1 verified, 1 proposed for a name mismatch, 1 failed for a 404, a workday board proposed, an unlocated seed only counted', async () => {
+  it('yields 2 verified (a Greenhouse and a Workday board), 1 proposed for a name mismatch, 1 failed for a 404, an unlocated seed only counted', async () => {
     const home = newHome();
     const n = net();
     let t = Date.parse(W1);
@@ -71,8 +71,8 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     expect(s.candidates).toEqual({ bySource: { pick: 1, remoteintech: 2, yc: 2, jobs: 0 }, merged: 5, selected: 5, dropped: 1, denied: 0 });
     expect(s.located).toEqual({ listed: 3, 'homepage-link': 1, path: 0, subdomain: 0, sitemap: 0, none: 1 });
     expect(s.platforms).toEqual({ ashby: 1, greenhouse: 2, workday: 1 });
-    expect(s.verdicts).toEqual({ verified: 1, proposed: 2, failed: 1 });
-    expect(s.notification).toBe('Coverage: 1 verified (+1 new) · 2 proposed · 0 failing');
+    expect(s.verdicts).toEqual({ verified: 2, proposed: 1, failed: 1 });
+    expect(s.notification).toBe('Coverage: 2 verified (+2 new) · 1 proposed · 0 failing');
     expect(s.deferred.total).toBe(0);
     // the cross-source merge (carry 1): the yc entry on the pick's domain loses to the pick, and says so
     expect(s.mergeNotes).toEqual(['merge: "Alpha Robotics Inc" (yc) dropped, alpha.test is held by "Alpha Robotics" (pick)']);
@@ -83,8 +83,9 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     expect(r['alpha.test']).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'alpharobotics', source: 'pick' });
     expect(r['beta.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'betacorp', source: 'remoteintech' });
     expect(r['beta.test']?.reasons).toContain("board name 'Betacorp Holdings' ≈ 'Beta Labs', please confirm");
-    expect(r['epsilon.test']).toMatchObject({ status: 'proposed', platform: 'workday', platformSlug: 'epsilon/External' });
-    expect(r['epsilon.test']?.reasons).toContain('adapter not built yet: workday');
+    // Task 6: the Workday board verifies through the Workday client (robots.txt via the gate, page 1 by POST), its tenant matching the domain label
+    expect(r['epsilon.test']).toMatchObject({ status: 'verified', platform: 'workday', platformSlug: 'epsilon/External' });
+    expect(r['epsilon.test']?.reasons).toBe("workday board epsilon/External: 2 open jobs; workday tenant 'epsilon' matches 'Epsilon Freight'");
     expect(r['gamma.test']).toMatchObject({ status: 'failed', platform: 'ashby', platformSlug: 'gamma', source: 'yc' });
     expect(r['gamma.test']?.reasons).toMatch(/board not found \(404\)/);
 
@@ -115,7 +116,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     const s = await run(home, W1_TUE, again.fetch);
     expect(s.runId).toBe('coverage-2026-10-13');
     expect(again.calls).toEqual([]);
-    expect(s.notification).toBe('Coverage: 1 verified (+0 new) · 2 proposed · 0 failing');
+    expect(s.notification).toBe('Coverage: 2 verified (+0 new) · 1 proposed · 0 failing');
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
       for (const st of ['seed', 'locate', 'detect', 'verify']) {
@@ -141,9 +142,9 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
       app.close();
     }
     const s = await run(home, W2, net().fetch);
-    expect(s.verdicts.verified).toBe(1);
+    expect(s.verdicts.verified).toBe(2);
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'rejected', userOverride: 'rejected' });
-    expect(s.notification).toBe('Coverage: 0 verified (+0 new) · 2 proposed · 0 failing');
+    expect(s.notification).toBe('Coverage: 1 verified (+0 new) · 1 proposed · 0 failing');
   });
 
   it('a verified board that fails 3 weeks running becomes failing, and recovers when it answers again', async () => {
@@ -151,7 +152,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     await run(home, W1, net().fetch);
     const s2 = await run(home, W2, net([ALPHA_BOARD]).fetch);
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified', failWeeks: 1 });
-    expect(s2.notification).toBe('Coverage: 1 verified (+0 new) · 2 proposed · 0 failing');
+    expect(s2.notification).toBe('Coverage: 2 verified (+0 new) · 1 proposed · 0 failing');
     // a second run in week 2 does not count week 2's failure again
     await run(home, '2026-10-19T04:30:00.000Z', net([ALPHA_BOARD]).fetch);
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified', failWeeks: 1 });
@@ -159,7 +160,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified', failWeeks: 2 });
     const s4 = await run(home, W4, net([ALPHA_BOARD]).fetch);
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'failing', failWeeks: 3 });
-    expect(s4.notification).toBe('Coverage: 0 verified (+0 new) · 2 proposed · 1 failing');
+    expect(s4.notification).toBe('Coverage: 1 verified (+0 new) · 1 proposed · 1 failing');
     await run(home, '2026-11-08T01:30:00.000Z', net().fetch);
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified', failWeeks: 0 });
   });
@@ -178,7 +179,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     expect(s.exitCode).toBe(0);
     expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1 });
     expect(calls.filter((u) => u.startsWith('https://boards-api.greenhouse.io/v1/'))).toHaveLength(1);
-    expect(s.notification).toBe('Coverage: 0 verified (+0 new) · 1 proposed · 0 failing · not verified this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
+    expect(s.notification).toBe('Coverage: 1 verified (+1 new) · 0 proposed · 0 failing · not verified this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
     expect(s.problems.map((p) => p.kind)).toEqual(['deferred', 'deferred']);
     // nothing is known about the deferred companies this week: not in the registry
     expect(Object.keys(registry(home))).toEqual(['epsilon.test', 'gamma.test']);
@@ -205,7 +206,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     ).rejects.toThrow('crash');
     const resumed = net();
     const s = await run(home, W1, resumed.fetch);
-    expect(s).toMatchObject({ runId: 'coverage-2026-10-11', resumed: true, verdicts: { verified: 1, proposed: 2, failed: 1 } });
+    expect(s).toMatchObject({ runId: 'coverage-2026-10-11', resumed: true, verdicts: { verified: 2, proposed: 1, failed: 1 } });
     // the seed stage finished before the crash: its lists are not fetched again
     expect(resumed.calls.filter((u) => u.includes('codeload.github.com') || u.includes('yc-oss.github.io'))).toEqual([]);
     const app = AppStore.open(join(home, 'jobpilot.db'));

@@ -11,7 +11,7 @@ import { LOCK_FILE, LockError, parseLstartUtc, withLock, type ProcessProbe } fro
 import { spawn, spawnSync } from 'node:child_process';
 import { appleScriptString, notificationFor } from '../../src/app/notify.js';
 import { offlineProviders } from '../../src/app/offline.js';
-import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems } from '../../src/app/pipeline.js';
+import { careersEgressSets, compileDaily, DAILY_PIPELINE, dailyAgents, dailyPipeline, dailySeeds, pacingProblems, registryBoards, registryEgressSets, type RegistryBoard } from '../../src/app/pipeline.js';
 import { failureNotification, istDate, istMonth, pickRunId } from '../../src/app/run.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { loadRunPack, resolvePdftotext } from '../../src/app/kernel.js';
@@ -59,6 +59,86 @@ describe('the daily pipeline wiring', () => {
     // the careers egress is the symbolic set; the supervisor resolves it to the watchlist's careers hosts
     expect(agents.find((a) => a.contract.id === 'src-careers-list')?.contract.egress).toEqual(['pack:careers-hosts']);
     expect(careersEgressSets([ghEntry, careersEntry])).toEqual({ 'pack:careers-hosts': ['careers.example.com'] });
+  });
+
+  it('Task 6: a verified Workday registry company adds src-workday, in its own team, with the symbolic registry egress', () => {
+    const boards: RegistryBoard[] = [{ platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' }];
+    const agents = dailyAgents([ghEntry], boards);
+    const p = dailyPipeline(agents);
+    expect(p.edges.filter((e) => e.type === 'DiscoveryRequest@1').map((e) => e.to)).toEqual(['src-ashby', 'src-greenhouse', 'src-himalayas', 'src-jobicy', 'src-lever', 'src-workday']);
+    const teams = Object.fromEntries(p.teams.map((t) => [t.id, [...t.members].sort()]));
+    // its own team (spec §6): a dead tenant never opens the ATS sources' breaker, nor they its
+    expect(teams['sourcing-workday']).toEqual(['src-workday']);
+    expect(teams['sourcing']).not.toContain('src-workday');
+    const wd = agents.find((a) => a.contract.id === 'src-workday');
+    expect(wd?.contract.egress).toEqual(['registry:workday-hosts']);
+    expect(wd?.contract.capabilities).toEqual({ http: true, httpPost: true, pack: true });
+    expect(registryEgressSets(boards)).toEqual({ 'registry:workday-hosts': ['nvidia.wd5.myworkdayjobs.com'] });
+    expect(() => compileDaily(agents, appGuardrails())).not.toThrow();
+    expect(capabilityProblems(agents.map((a) => a.contract))).toEqual([]);
+    // two runs never share a robots.txt cache: each dailyAgents call builds its own agent
+    expect(dailyAgents([ghEntry], boards).find((a) => a.contract.id === 'src-workday')).not.toBe(wd);
+  });
+
+  it('Task 6, step-key identity: with an empty registry the agents, the wiring and the seeds are exactly as before', () => {
+    for (const w of [[ghEntry, leverEntry], [ghEntry, careersEntry], []]) {
+      const before = dailyAgents(w);
+      const after = dailyAgents(w, []);
+      expect(ids(after)).toEqual(ids(before));
+      expect(ids(after)).not.toContain('src-workday');
+      expect(JSON.stringify(dailyPipeline(after))).toBe(JSON.stringify(dailyPipeline(before)));
+      expect(compileDaily(after, appGuardrails()).compiled.seedHash).toBe(compileDaily(before, appGuardrails()).compiled.seedHash);
+    }
+    const pack = { watchlist: [ghEntry, leverEntry], feeds: { enabled: ['himalayas'] } };
+    expect(dailySeeds(pack, '2026-10-09', undefined, [])).toEqual(dailySeeds(pack, '2026-10-09'));
+    expect(registryEgressSets([])).toEqual({});
+    expect(pacingProblems(PRODUCT_POLICY_V1, pack, [])).toEqual(pacingProblems(PRODUCT_POLICY_V1, pack));
+  });
+
+  it('Task 6: one seed per registry board, after the watchlist and the feeds; registryBoards keeps verified Workday rows with a board URL', () => {
+    const rows = [
+      { name: 'Salesforce', platform: 'workday', boardUrl: 'https://salesforce.wd12.myworkdayjobs.com/wday/cxs/salesforce/External_Career_Site/jobs' },
+      { name: 'NVIDIA', platform: 'workday', boardUrl: 'https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs' },
+      { name: 'NVIDIA again', platform: 'workday', boardUrl: 'https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs' },
+      { name: 'Acme', platform: 'greenhouse', boardUrl: 'https://boards-api.greenhouse.io/v1/boards/acme/jobs' },
+      { name: 'Broken', platform: 'workday', boardUrl: 'https://evil.test/wday/cxs/a/b/jobs' },
+      { name: 'Bare', platform: 'workday', boardUrl: null },
+    ];
+    const boards = registryBoards(rows);
+    expect(boards).toEqual([
+      { platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' },
+      { platform: 'workday', company: 'Salesforce', ref: 'salesforce.wd12.myworkdayjobs.com/salesforce/External_Career_Site' },
+    ]);
+    const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: ['himalayas'] } }, '2026-10-14', undefined, boards);
+    expect(seeds.map((s) => `${s.ats} ${s.slug}`)).toEqual([
+      'greenhouse example-gh',
+      'feed himalayas',
+      'workday nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite',
+      'workday salesforce.wd12.myworkdayjobs.com/salesforce/External_Career_Site',
+    ]);
+    expect(seeds[2]).toEqual({ ats: 'workday', slug: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite', company: 'NVIDIA', runDate: '2026-10-14' });
+    expect(dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', 2, boards)[0]).toMatchObject({ attempt: 2 });
+  });
+
+  it('Task 6: the Workday request budget fits the step timeout at the policy spacing; a slower spacing is refused', () => {
+    const boards: RegistryBoard[] = [{ platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' }];
+    const pack = { watchlist: [], feeds: { enabled: [] } };
+    expect(pacingProblems(PRODUCT_POLICY_V1, pack, boards)).toEqual([]);
+    expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, boards)).toEqual([
+      'minHostIntervalMs 7000 ms breaks the src-workday timeout arithmetic (at most 6338 ms per request); lower it in policy.user.yaml',
+    ]);
+  });
+
+  it('Task 6 allow-list: only src-workday may use the registry egress, only the Workday readers may POST', () => {
+    const base = dailyAgents([], [{ platform: 'workday', company: 'X', ref: 'x.wd1.myworkdayjobs.com/x/y' }]).find((a) => a.contract.id === 'src-workday')?.contract;
+    if (base === undefined) throw new Error('no src-workday');
+    const sneaky = defineContract({ ...base, id: 'src-sneaky' });
+    const poster = defineContract({ ...base, id: 'src-poster', egress: ['api.example.com'] });
+    expect(capabilityProblems([sneaky, poster])).toEqual([
+      'src-poster declares capabilities.httpPost; only src-workday, board-verifier may send a POST',
+      "src-sneaky declares egress registry:workday-hosts; only src-workday may contact the registry's Workday hosts",
+      'src-sneaky declares capabilities.httpPost; only src-workday, board-verifier may send a POST',
+    ]);
   });
 
   it('leaves the careers agents out when the watchlist has no careers entries', () => {

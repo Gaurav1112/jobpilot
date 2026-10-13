@@ -100,7 +100,7 @@ export function makeSrcCareersList(opts: { readonly maxListingPages?: number; re
   const maxLinks = opts.maxLinks ?? CAREERS_MAX_LINKS;
   const contract = defineContract({
     id: 'src-careers-list',
-    version: '1.0.0',
+    version: '1.1.0',
     description: 'Collects the job links of one career site',
     skills: ['job-sourcing'],
     team: 'sourcing',

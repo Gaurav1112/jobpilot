@@ -15,6 +15,8 @@ import { freelanceSeeds, PLATFORM_AGENT } from '../../../src/app/freelance/pipel
 import { runFreelance } from '../../../src/app/freelance/run.js';
 import { REMOTIVE_URL } from '../../../src/app/freelance/sources/remotive.js';
 import { AppStore } from '../../../src/app/store/app-store.js';
+import { CAPABILITY_ALLOW_LIST } from '../../../src/app/allow-list.js';
+import { exportedAgents } from '../../../src/exported-agents.js';
 import type { GigRequest, RawGig } from '../../../src/app/freelance/types.js';
 import { FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
 import { deleteSecret, getSecret, hasSecret, keychain, setSecret, type SecretsRunner } from '../../../src/app/secrets.js';
@@ -497,18 +499,33 @@ const WRITE_PATTERNS = [
   /mail\.google\.com\//, /threads\/[^\s'"`]*\/(?:modify|trash)/, /['"`]trash['"`]/, /['"`](?:modify|send|untrash|batchModify|batchDelete)['"`]/,
 ];
 const METHOD = /method:\s*['"](?:POST|PUT|PATCH|DELETE)['"]/g;
-/** The one request with a non-GET method anywhere in src/: realFormPost to the token endpoint. */
+/** The one request with a non-GET method anywhere in src/ outside the broker: realFormPost to the token endpoint. */
 const ALLOWED_METHOD = { file: 'src/app/freelance/mail/oauth.ts', count: 1, near: 'export const realFormPost' };
+/**
+ * The broker's `postJson` (Task 6, Workday's CXS search): the kernel's one POST, issued only to a contract declaring
+ * `capabilities.httpPost`, which the allow-list grants to the two Workday readers alone (asserted below), never to the
+ * Gmail source.
+ */
+const BROKER_POST = { file: 'src/kernel/broker.ts', count: 1, near: 'const fetchBody = async' };
 
 function writeHits(file: string, text: string): string[] {
   const hits = WRITE_PATTERNS.filter((re) => re.test(text)).map((re) => `${file}: ${re}`);
   const methods = [...text.matchAll(METHOD)];
   if (methods.length > 0) {
-    const allowed = file === ALLOWED_METHOD.file && methods.length === ALLOWED_METHOD.count && text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index) >= 0 && text.slice(text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index), methods[0]?.index).includes('TOKEN_URL');
-    if (!allowed) hits.push(`${file}: ${methods.length} non-GET method(s)`);
+    const oauth = file === ALLOWED_METHOD.file && methods.length === ALLOWED_METHOD.count && text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index) >= 0 && text.slice(text.lastIndexOf(ALLOWED_METHOD.near, methods[0]?.index), methods[0]?.index).includes('TOKEN_URL');
+    const broker = file === BROKER_POST.file && methods.length === BROKER_POST.count && text.lastIndexOf(BROKER_POST.near, methods[0]?.index) >= 0 && text.includes("capabilities.httpPost !== true) throw deny(");
+    if (!oauth && !broker) hits.push(`${file}: ${methods.length} non-GET method(s)`);
   }
   return hits;
 }
+
+describe('read-only: the broker POST is not the Gmail source\'s', () => {
+  it('only the Workday readers may POST; the Gmail source and every other agent read by GET only', () => {
+    expect(CAPABILITY_ALLOW_LIST.httpPost).toEqual(['src-workday', 'board-verifier']);
+    for (const a of exportedAgents) if (a.contract.capabilities.httpPost === true) expect(CAPABILITY_ALLOW_LIST.httpPost, a.contract.id).toContain(a.contract.id);
+    expect(exportedAgents.find((a) => a.contract.id === 'src-gig-mail')?.contract.capabilities.httpPost).toBeUndefined();
+  });
+});
 
 describe('read-only: no Gmail write endpoint anywhere in src/', () => {
   it('finds no modify, trash, delete, send, draft, import or label-change call, and no non-GET but the token POST', () => {
