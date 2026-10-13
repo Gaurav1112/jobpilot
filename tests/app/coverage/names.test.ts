@@ -44,9 +44,13 @@ describe('sameCompany', () => {
       expect(sameCompany('Acme Robotics', label, label)).toBe(false);
       expect(sameCompany('Acme Robotics', label.toUpperCase(), label)).toBe(false);
     }
-    // the names themselves match: the label plays no part
-    expect(sameCompany('Hire Inc', 'Hire', 'hire')).toBe(true);
-    expect(sameCompany('Get', 'get', 'get')).toBe(true);
+    // a name that is itself a generic word never matches by name alone (review minor): it goes to Proposed
+    expect(sameCompany('Hire Inc', 'Hire', 'hire')).toBe(false);
+    expect(sameCompany('Get', 'get', 'get')).toBe(false);
+    expect(sameCompany('Careers', 'Careers')).toBe(false);
+    expect(sameCompany('The', 'THE')).toBe(false);
+    // a generic word inside a longer name is fine
+    expect(sameCompany('Talent Garden', 'Talent Garden')).toBe(true);
     // a label that is not generic still matches
     expect(sameCompany('Pure Storage Inc', 'purestorage', 'purestorage')).toBe(true);
     // a generic word inside a longer label is not generic

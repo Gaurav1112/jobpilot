@@ -1011,6 +1011,17 @@ export class AppStore {
     this.db.prepare(`INSERT OR IGNORE INTO coverage_host_state (run_key, host, reason, at) VALUES (?, ?, ?, ?)`).run(runKey, host, reason, at);
   }
 
+  /** When each host of coverage run `runKey` was disabled, host to ISO time, by host. */
+  coverageHostTimes(runKey: string): Map<string, string> {
+    const rows = this.db.prepare(`SELECT host, at FROM coverage_host_state WHERE run_key = ? ORDER BY host`).all(runKey) as { host: string; at: string }[];
+    return new Map(rows.map((r) => [r.host, r.at]));
+  }
+
+  /** Re-enables `host` for coverage run `runKey` (a 429 disable that expired). */
+  enableCoverageHost(runKey: string, host: string): void {
+    this.db.prepare(`DELETE FROM coverage_host_state WHERE run_key = ? AND host = ?`).run(runKey, host);
+  }
+
   /** The hosts disabled so far in coverage run `runKey`, host to reason, by host. */
   coverageHostState(runKey: string): Map<string, string> {
     const rows = this.db.prepare(`SELECT host, reason FROM coverage_host_state WHERE run_key = ? ORDER BY host`).all(runKey) as { host: string; reason: string }[];

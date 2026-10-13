@@ -193,6 +193,12 @@ export interface CoverageStagesOutcome {
 
 const HOST_DISABLED_DETAIL = 'host-disabled:';
 
+/** The merged candidates of a run's seed stage as stored (empty when its seed stage has not finished a step). */
+export function storedCandidates(store: Store, runId: string): CompanyCandidate[] {
+  const seed = stageResult(store, 'seed', `${runId}.seed`);
+  return mergeCandidates(seed.outputs.map((x) => CompanyCandidate.schema.parse(x)));
+}
+
 /** Done outputs (in queue order) and deferred inputs of one stage run, read from the store. */
 function stageResult(store: Store, stage: StageId, runId: string): StageResult {
   const stepOf = new Map<string, string>();

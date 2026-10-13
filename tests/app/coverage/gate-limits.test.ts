@@ -87,3 +87,44 @@ describe('the gate\'s request timeout and candidate deadline', () => {
     expect(CareersSite.schema.parse(site).reasons).toContain('budget-exhausted');
   });
 });
+
+describe('a 429 disable expires after 24 h within the run; every other disable lasts the run', () => {
+  it('the gate re-enables a 429 host after HTTP_429_EXPIRY_MS (persisted time), never a 403, robots or challenge one', async () => {
+    const { HTTP_429_EXPIRY_MS } = await import('../../../src/app/coverage/gate.js');
+    expect(HTTP_429_EXPIRY_MS).toBe(24 * 60 * 60_000);
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store });
+    const T = '2026-10-11T02:00:00.000Z';
+    const later = (h: number) => new Date(Date.parse(T) + h * 3_600_000).toISOString();
+    gate.disable('api.lever.co', 'http-429', T);
+    gate.disable('www.acme.test', 'http-403', T);
+    gate.disable('www.beta.test', 'challenge', T);
+    gate.disable('www.gamma.test', 'robots-forbidden', T);
+    expect(gate.disabledWhy('api.lever.co', later(23.9))).toBe('http-429');
+    // a resumed run (a new gate on the same key) knows when it was disabled
+    const resumed = makeRunGate({ runKey: 'r', store });
+    expect(resumed.disabledWhy('api.lever.co', later(23.9))).toBe('http-429');
+    expect(resumed.disabledWhy('api.lever.co', later(24))).toBeUndefined();
+    expect([...store.coverageHostState('r')].map(([h]) => h)).not.toContain('api.lever.co');
+    for (const h of ['www.acme.test', 'www.beta.test', 'www.gamma.test']) expect(resumed.disabledWhy(h, later(100))).toBeDefined();
+    // once re-enabled, a new 429 disables it again from its new time
+    resumed.disable('api.lever.co', 'http-429', later(30));
+    expect(resumed.disabledWhy('api.lever.co', later(31))).toBe('http-429');
+  });
+});
+
+describe('the AppStore keeps the disable times (migration 10 coverage_host_state.at)', () => {
+  it('a 429 expiry lifts the row; a re-disable gets the new time', async () => {
+    const { AppStore } = await import('../../../src/app/store/app-store.js');
+    const { Store } = await import('../../../src/kernel/store/store.js');
+    const app = AppStore.on(Store.open(':memory:'));
+    const gate = makeRunGate({ runKey: 'coverage-2026-10-11', store: app });
+    gate.disable('api.lever.co', 'http-429', '2026-10-11T02:00:00.000Z');
+    expect([...app.coverageHostTimes('coverage-2026-10-11')]).toEqual([['api.lever.co', '2026-10-11T02:00:00.000Z']]);
+    expect(makeRunGate({ runKey: 'coverage-2026-10-11', store: app }).disabledWhy('api.lever.co', '2026-10-12T01:59:00.000Z')).toBe('http-429');
+    expect(gate.disabledWhy('api.lever.co', '2026-10-12T02:00:00.000Z')).toBeUndefined();
+    expect([...app.coverageHostState('coverage-2026-10-11')]).toEqual([]);
+    gate.disable('api.lever.co', 'http-429', '2026-10-12T03:00:00.000Z');
+    expect([...app.coverageHostTimes('coverage-2026-10-11')]).toEqual([['api.lever.co', '2026-10-12T03:00:00.000Z']]);
+  });
+});

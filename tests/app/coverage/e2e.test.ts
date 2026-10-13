@@ -178,7 +178,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     expect(s.exitCode).toBe(0);
     expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1 });
     expect(calls.filter((u) => u.startsWith('https://boards-api.greenhouse.io/v1/'))).toHaveLength(1);
-    expect(s.notification).toBe('Coverage: 0 verified (+0 new) · 1 proposed · 0 failing · not located this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
+    expect(s.notification).toBe('Coverage: 0 verified (+0 new) · 1 proposed · 0 failing · not verified this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
     expect(s.problems.map((p) => p.kind)).toEqual(['deferred', 'deferred']);
     // nothing is known about the deferred companies this week: not in the registry
     expect(Object.keys(registry(home))).toEqual(['epsilon.test', 'gamma.test']);

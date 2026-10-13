@@ -87,10 +87,70 @@ describe('projectCoverage: the registry transitions', () => {
   });
 });
 
+describe('projectCoverage: a live company is never demoted by one bad week (review I-1)', () => {
+  const nullGuess = (c: CompanyCandidate, verdictLine: string): CompanyVerdict => ({
+    guess: { site: site(c), platform: null, slug: null, boardUrl: null, signature: null, routedFrom: null, evidence: [verdictLine] },
+    status: 'proposed',
+    reasons: [`no platform detected: ${verdictLine}`],
+    boardName: null,
+    jobsSeen: null,
+  });
+
+  it('a 503 at detect is a failed week: fail_weeks 1, still verified and read by daily; 3 weeks -> failing', () => {
+    const app = open();
+    const a = cand('acme.test');
+    projectCoverage(app, { verdicts: [verdict(a, 'verified')], unlocated: [], at: W1, countFailures: true });
+    projectCoverage(app, { verdicts: [nullGuess(a, 'unavailable: 503')], unlocated: [], at: W2, countFailures: true });
+    expect(row(app, 'acme.test')).toMatchObject({ status: 'verified', failWeeks: 1, platform: 'greenhouse', platformSlug: 'acme' });
+    expect(row(app, 'acme.test')?.reasons.join('\n')).toMatch(/careers page unavailable this week: unavailable: 503/);
+    expect(app.verifiedCompanies().map((c) => c.companyKey)).toEqual(['acme.test']);
+    projectCoverage(app, { verdicts: [nullGuess(a, 'refused: challenge (403) on www.acme.test')], unlocated: [], at: W3, countFailures: true });
+    projectCoverage(app, { verdicts: [nullGuess(a, 'unfetched: redirected to https://x')], unlocated: [], at: W4, countFailures: true });
+    expect(row(app, 'acme.test')).toMatchObject({ status: 'failing', failWeeks: 3 });
+    expect(app.verifiedCompanies().map((c) => c.companyKey)).toEqual(['acme.test']);
+  });
+
+  it('a page that loads but no longer shows the platform, or a board that no longer verifies, is a failed week with "platform signal changed, please confirm"', () => {
+    const app = open();
+    const a = cand('acme.test');
+    projectCoverage(app, { verdicts: [verdict(a, 'verified')], unlocated: [], at: W1, countFailures: true });
+    projectCoverage(app, { verdicts: [nullGuess(a, 'no-signature')], unlocated: [], at: W2, countFailures: true });
+    expect(row(app, 'acme.test')).toMatchObject({ status: 'verified', failWeeks: 1, platform: 'greenhouse' });
+    expect(row(app, 'acme.test')?.reasons[0]).toBe('platform signal changed, please confirm');
+    // a changed platform whose new board does not pass the verifier's gate: same rule, the stored board is kept
+    const changed: CompanyVerdict = { ...verdict(a, 'proposed'), guess: { ...guess(a), platform: 'lever', slug: 'acme-new' }, reasons: ['board name not available, please confirm'] };
+    projectCoverage(app, { verdicts: [changed], unlocated: [], at: W3, countFailures: true });
+    expect(row(app, 'acme.test')).toMatchObject({ status: 'verified', failWeeks: 2, platform: 'greenhouse', platformSlug: 'acme' });
+  });
+
+  it('a changed platform whose new board verifies moves the company to it', () => {
+    const app = open();
+    const a = cand('acme.test');
+    projectCoverage(app, { verdicts: [verdict(a, 'verified')], unlocated: [], at: W1, countFailures: true });
+    const moved: CompanyVerdict = { ...verdict(a, 'verified'), guess: { ...guess(a), platform: 'ashby', slug: 'acme' } };
+    projectCoverage(app, { verdicts: [moved], unlocated: [], at: W2, countFailures: true });
+    expect(row(app, 'acme.test')).toMatchObject({ status: 'verified', platform: 'ashby', failWeeks: 0 });
+  });
+
+  it('a company never verified still goes to Proposed; an approved one stays verified on a proposed verdict', () => {
+    const app = open();
+    const b = cand('beta.test');
+    projectCoverage(app, { verdicts: [nullGuess(b, 'unavailable: 503')], unlocated: [], at: W1, countFailures: true });
+    expect(row(app, 'beta.test')).toMatchObject({ status: 'proposed', failWeeks: 0 });
+  });
+});
+
 describe('the weekly coverage line', () => {
   it('reads exactly "Coverage: N verified (+k new) · p proposed · f failing"', () => {
     expect(coverageNotification({ verified: 12, newVerified: 3, proposed: 40, failing: 1 }, null)).toBe('Coverage: 12 verified (+3 new) · 40 proposed · 1 failing');
     expect(coverageNotification({ verified: 0, newVerified: 0, proposed: 0, failing: 0 }, null)).toBe('Coverage: 0 verified (+0 new) · 0 proposed · 0 failing');
+  });
+
+  it('a verify-stage deferral has its own line, "not verified this week" (review minor)', () => {
+    expect(deferralLine(3, [['api.lever.co', 'http-429']], 'verified')).toBe('not verified this week: 3, host-disabled api.lever.co (http-429)');
+    expect(coverageNotification({ verified: 1, newVerified: 0, proposed: 0, failing: 0 }, ['not located this week: 1, host-disabled a.test (challenge)', 'not verified this week: 3, host-disabled api.lever.co (http-429)'])).toBe(
+      'Coverage: 1 verified (+0 new) · 0 proposed · 0 failing · not located this week: 1, host-disabled a.test (challenge) · not verified this week: 3, host-disabled api.lever.co (http-429)',
+    );
   });
 
   it('names only the hosts that deferred a step, once each, from the deferred steps\' details', () => {

@@ -292,7 +292,8 @@ program
     if (!Number.isFinite(n) || n <= 0) throw new Error(`--slice-minutes must be a positive number, not ${v}`);
     return n;
   })
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number }) => {
+  .option('--no-yield', 'for checks only: never pause for an owed daily or freelance run (the slice limit still applies)')
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number; yield: boolean }) => {
     process.exitCode = await runCoverageCommand(
       {
         ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}),
@@ -301,7 +302,7 @@ program
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
         ...(o.sliceMinutes !== undefined ? { sliceMs: Math.round(o.sliceMinutes * 60_000) } : {}),
       },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), ...(o.yield ? {} : { yieldCheck: () => null }) },
     );
   });
 

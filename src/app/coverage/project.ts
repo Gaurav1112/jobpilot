@@ -1,4 +1,4 @@
-import type { AppStore, CompanyStatus } from '../store/app-store.js';
+import type { AppStore, Company, CompanyStatus } from '../store/app-store.js';
 import type { CareersSite, CompanyVerdict, PlatformGuess } from './types.js';
 
 /**
@@ -15,6 +15,8 @@ import type { CareersSite, CompanyVerdict, PlatformGuess } from './types.js';
  * - A candidate DEFERRED by a disabled host (its step failed `input_rejected`, `host-disabled:*`) is not projected at
  *   all: nothing is known about it this week.
  * - `countFailures: false` for a second coverage run in the same coverage week: its failed verdicts keep the fail count.
+ * - A live company is never demoted by one week (`keepLive`). An APPROVED company still becomes `failing` after 3 failed
+ *   weeks (accepted 2026-10-14): it stays readable by the daily run; the override decides membership, not health.
  */
 
 export interface CoverageProjectInput {
@@ -43,6 +45,27 @@ export interface CoverageProjection {
 
 const LIVE: ReadonlySet<CompanyStatus> = new Set(['verified', 'failing']);
 
+/** A detector verdict that says the careers page could not be read this week (not that the platform changed). */
+const UNAVAILABLE = /^(?:unavailable|refused|unfetched|soft-404)\b|timeout|host-disabled/i;
+
+/**
+ * Review I-1: a company that is already live (verified or failing) is never demoted to Proposed by one week's verdict.
+ * A Proposed verdict for it becomes a FAILED week (the stored platform and board are kept, fail_weeks + 1, 3 in a row
+ * make it `failing`, still read by the daily run), with the reason first:
+ * - `careers page unavailable this week: <why>` when the detector could not read the page (a 4xx/5xx, a refusal, a
+ *   redirect it did not follow, a timeout, a disabled host);
+ * - `platform signal changed, please confirm` when the page loaded but shows no platform, another platform whose board
+ *   did not pass the verifier's gate, or the board itself no longer passes (0 jobs, another name).
+ * A changed platform whose new board VERIFIES is an ordinary verified verdict: the company moves to the new board. An
+ * approved company keeps its override's rule (a Proposed verdict leaves it verified). A company never live is untouched.
+ */
+function keepLive(v: CompanyVerdict, prev: Company | undefined): CompanyVerdict {
+  if (v.status !== 'proposed' || prev === undefined || !LIVE.has(prev.status) || prev.userOverride === 'approved') return v;
+  const why = v.guess.platform === null ? (v.guess.evidence[0] ?? '') : '';
+  const first = v.guess.platform === null && UNAVAILABLE.test(why) ? `careers page unavailable this week: ${why}` : 'platform signal changed, please confirm';
+  return { ...v, status: 'failed', reasons: [first, ...v.reasons] };
+}
+
 const unlocatedGuess = (s: CareersSite): PlatformGuess => ({ site: s, platform: null, slug: null, boardUrl: null, signature: null, routedFrom: null, evidence: ['not located'] });
 const notLocated = (s: CareersSite): string => `careers site not located: ${(s.reasons ?? ['no probe found a careers page']).slice(0, 6).join('; ')}`;
 
@@ -57,7 +80,7 @@ export function projectCoverage(app: AppStore, input: CoverageProjectInput): Cov
   return app.tx(() => {
     const before = new Map(app.listCompanies().map((c) => [c.companyKey, c]));
     const opts = { countFailure: input.countFailures };
-    for (const v of input.verdicts) app.upsertCompanyVerdict(v, input.at, opts);
+    for (const v of input.verdicts) app.upsertCompanyVerdict(keepLive(v, before.get(v.guess.site.candidate.companyKey)), input.at, opts);
     const unlocated = { proposed: 0, failed: 0, counted: 0 };
     for (const s of input.unlocated) {
       const prev = before.get(s.candidate.companyKey);
@@ -93,16 +116,23 @@ export function deferralHosts(details: readonly string[]): [host: string, why: s
  * were deferred because a host was disabled in the run; every host that deferred a step is named once (at most 5, then
  * `and k more hosts`), so a host that refuses every week reads as one line, never as N "input rejected" problems.
  */
-export function deferralLine(deferred: number, hosts: readonly (readonly [host: string, why: string])[]): string | null {
+export function deferralLine(deferred: number, hosts: readonly (readonly [host: string, why: string])[], what: 'located' | 'verified' = 'located'): string | null {
   if (deferred <= 0) return null;
   const sorted = [...hosts].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   const named = sorted.slice(0, MAX_HOSTS).map(([h, why]) => `${h} (${why})`);
   const more = sorted.length > MAX_HOSTS ? ` and ${sorted.length - MAX_HOSTS} more hosts` : '';
-  return `not located this week: ${deferred}${named.length > 0 ? `, host-disabled ${named.join(', ')}${more}` : ''}`;
+  return `not ${what} this week: ${deferred}${named.length > 0 ? `, host-disabled ${named.join(', ')}${more}` : ''}`;
 }
 
-/** The weekly line: `Coverage: N verified (+k new) · p proposed · f failing`, then ` · <deferral line>` when there is one. */
-export function coverageNotification(r: { readonly verified: number; readonly newVerified: number; readonly proposed: number; readonly failing: number }, deferral: string | null): string {
+/**
+ * The weekly line: `Coverage: N verified (+k new) · p proposed · f failing`, then ` · <deferral line>` for each one there
+ * is: `not located this week: …` (locate and detect deferrals, carry 15) and `not verified this week: …` (verify).
+ */
+export function coverageNotification(
+  r: { readonly verified: number; readonly newVerified: number; readonly proposed: number; readonly failing: number },
+  deferral: string | null | readonly (string | null)[],
+): string {
   const line = `Coverage: ${r.verified} verified (+${r.newVerified} new) · ${r.proposed} proposed · ${r.failing} failing`;
-  return deferral === null ? line : `${line} · ${deferral}`;
+  const extra = (Array.isArray(deferral) ? deferral : [deferral]).filter((d): d is string => d !== null);
+  return [line, ...extra].join(' · ');
 }

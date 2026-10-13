@@ -270,20 +270,3 @@ describe('shared lock', () => {
   });
 });
 
-describe('scheduledFor: is a pipeline installed on this home (the coverage run yields only to those)', () => {
-  it('reads the installed plist\'s JOBPILOT_HOME; another home, a missing plist or an unreadable one is not', async () => {
-    const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
-    const { tmpdir } = await import('node:os');
-    const { join } = await import('node:path');
-    const { plistDaily, scheduledFor, DAILY_LABEL, FREELANCE_LABEL } = await import('../../src/app/schedule.js');
-    const dir = mkdtempSync(join(tmpdir(), 'jp-agents-'));
-    try {
-      writeFileSync(join(dir, `${DAILY_LABEL}.plist`), plistDaily({ node: '/usr/bin/node', repo: '/opt/jobpilot', home: '/Users/x/.jobpilot' }));
-      expect(scheduledFor(DAILY_LABEL, '/Users/x/.jobpilot', { agentsDir: dir })).toBe(true);
-      expect(scheduledFor(DAILY_LABEL, '/tmp/check-home', { agentsDir: dir })).toBe(false);
-      expect(scheduledFor(FREELANCE_LABEL, '/Users/x/.jobpilot', { agentsDir: dir })).toBe(false);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-});

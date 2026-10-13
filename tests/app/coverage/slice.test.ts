@@ -3,7 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runCoverage, type CoverageResult } from '../../../src/app/coverage/run.js';
-import { COVERAGE_DUE, due, otherRunOwed } from '../../../src/app/due.js';
+import { COVERAGE_DUE, due, otherRunOwed, YIELD_STARVATION_MS } from '../../../src/app/due.js';
+import { writeFileSync } from 'node:fs';
 import { withLock } from '../../../src/app/lock.js';
 import { offlineProviders } from '../../../src/app/offline.js';
 import { runCoverageCommand } from '../../../src/app/run-command.js';
@@ -65,12 +66,15 @@ const stepsDone = (home: string, runId: string): number => {
 // IST = UTC + 5:30. Sunday 2026-10-11 06:54 IST is 01:24Z.
 const SUN_0654 = '2026-10-11T01:24:00.000Z';
 const SUN_2000 = '2026-10-11T14:30:00.000Z';
+/** An attempts file from an earlier day: what a scheduled `--if-due` run leaves behind on this home. */
+const scheduled = (home: string, file: string): void => writeFileSync(join(home, file), JSON.stringify({ date: '2026-10-10', attempts: [{ at: '2026-10-10T01:30:00.000Z', outcome: 'done' }] }));
 
 describe('coverage time slices: yield to the daily run, a slice cap, resume the same run', () => {
   it('the daily run due at 07:00 (looked ahead 5 minutes) pauses coverage before its next step; the daily run then gets the lock', async () => {
     const home = newHome();
+    scheduled(home, 'daily-attempts.json');
     const clock = ticking(SUN_0654, 2 * 60_000);
-    const r = await runCoverage({ home, clock, fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: (now) => otherRunOwed(home, now, () => true) });
+    const r = await runCoverage({ home, clock, fetch: net().fetch, sleep: async () => {}, codeHash: 'slice' });
     expect(r).toMatchObject({ status: 'paused', runId: 'coverage-2026-10-11', reason: 'yielded to daily', exitCode: 0 });
     expect(runStatus(home, 'coverage-2026-10-11')).not.toBe('completed');
     expect(events(home, 'coverage-2026-10-11')).toContain('coverage.paused');
@@ -79,11 +83,26 @@ describe('coverage time slices: yield to the daily run, a slice cap, resume the 
     await expect(withLock(home, 'run', async () => 'daily ran')).resolves.toBe('daily ran');
   });
 
-  it('the yield ignores pipelines not scheduled on this home', () => {
+  it('the yield rule (review I-2): owed for THIS home and its attempts file exists; never after 2 h owed with no attempt', () => {
+    // 2026-10-11 07:30 IST = 02:00Z: daily owed since 07:00, freelance since 07:30
+    const at = '2026-10-11T02:00:00.000Z';
     const home = newHome();
-    expect(otherRunOwed(home, '2026-10-11T02:00:00.000Z', () => false)).toBeNull();
-    expect(otherRunOwed(home, '2026-10-11T02:00:00.000Z', (p) => p === 'freelance')).toBe('yielded to freelance');
-    expect(otherRunOwed(home, '2026-10-11T02:00:00.000Z', () => true)).toBe('yielded to daily');
+    expect(otherRunOwed(home, at)).toBeNull(); // a fresh check home: no attempts file, never yields
+    scheduled(home, 'freelance-attempts.json');
+    expect(otherRunOwed(home, at)).toBe('yielded to freelance');
+    scheduled(home, 'daily-attempts.json');
+    expect(otherRunOwed(home, at)).toBe('yielded to daily');
+    // a trailing slash or any other spelling of the home is the same directory
+    expect(otherRunOwed(`${home}/`, at)).toBe('yielded to daily');
+    // owed for more than 2 h with no attempt today (the job not loaded, the network down): starvation bound
+    expect(YIELD_STARVATION_MS).toBe(2 * 60 * 60_000);
+    const late = '2026-10-11T03:31:00.000Z'; // 09:01 IST: daily owed 2 h 1 min, freelance 1 h 31 min
+    expect(otherRunOwed(home, late)).toBe('yielded to freelance');
+    expect(otherRunOwed(home, '2026-10-11T04:01:00.000Z')).toBeNull(); // 09:31 IST: both owed over 2 h, no attempt
+    // an attempt today keeps the yield (the job is alive and retrying)
+    writeFileSync(join(home, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-11', attempts: [{ at: '2026-10-11T03:30:00.000Z', outcome: 'failed' }] }));
+    expect(otherRunOwed(home, '2026-10-11T04:01:00.000Z')).toBeNull(); // failed at 09:00 IST, retried from 10:00: not due yet (and freelance starves)
+    expect(otherRunOwed(home, '2026-10-11T04:31:00.000Z')).toBe('yielded to daily'); // its retry is due: yield
   });
 
   it('the slice cap pauses; the next invocation resumes the SAME run id and finishes; the summary line is posted once, on completion', async () => {
@@ -120,6 +139,57 @@ describe('coverage time slices: yield to the daily run, a slice cap, resume the 
     const monday = await runCoverage({ home, clock: ticking('2026-10-12T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null });
     expect(monday).toMatchObject({ status: 'completed', runId: 'coverage-2026-10-11', resumed: true });
     expect(due(COVERAGE_DUE, home, '2026-10-13T04:30:00.000Z')).toMatchObject({ due: false, reason: "this coverage week's run completed" });
+  });
+});
+
+describe('week rollover: a run still paused when the next coverage week starts', () => {
+  it('is closed as incomplete with one line "Coverage last week did not finish: N of M candidates done"; the new week starts its own run', async () => {
+    const home = newHome();
+    // slice until it is paused inside its locate stage
+    let first: CoverageResult | undefined;
+    for (let i = 0; i < 20 && !(first?.status === 'paused' && first.stage === 'locate'); i++) {
+      first = await runCoverage({ home, clock: ticking(SUN_2000, 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', sliceMs: 2_000, yieldCheck: () => null });
+    }
+    expect(first).toMatchObject({ status: 'paused', runId: 'coverage-2026-10-11', stage: 'locate' });
+    const posted: string[] = [];
+    const next = await runCoverage({ home, clock: ticking('2026-10-18T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null, notifier: async (t) => void posted.push(t) });
+    expect(next).toMatchObject({ status: 'completed', runId: 'coverage-2026-10-18' });
+    expect(posted).toHaveLength(2);
+    expect(posted[0]).toMatch(/^Coverage last week did not finish: \d of 5 candidates done$/);
+    expect(next.warnings).toContain(posted[0]);
+    const kinds = events(home, 'coverage-2026-10-11');
+    expect(kinds.filter((k) => k === 'coverage.closed')).toHaveLength(1);
+    // closed once: a later run does not post it again
+    const later: string[] = [];
+    await runCoverage({ home, clock: ticking('2026-10-19T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null, notifier: async (t) => void later.push(t) });
+    expect(later.some((l) => l.startsWith('Coverage last week'))).toBe(false);
+  });
+});
+
+describe('the yield switch and the lock message', () => {
+  it('--no-yield (yieldCheck: () => null) runs to completion while daily is owed on a scheduled home', async () => {
+    const home = newHome();
+    scheduled(home, 'daily-attempts.json');
+    const r = await runCoverage({ home, clock: ticking('2026-10-11T01:40:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null });
+    expect(r.status).toBe('completed');
+    // and without it the same home yields at once
+    const home2 = newHome();
+    scheduled(home2, 'daily-attempts.json');
+    // 07:10 IST: daily owed for 10 minutes (at 20:00 IST it would be starved: owed 13 h with no attempt, no yield)
+    const r2 = await runCoverage({ home: home2, clock: ticking('2026-10-11T01:40:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice' });
+    expect(r2).toMatchObject({ status: 'paused', reason: 'yielded to daily' });
+    const r3 = await runCoverage({ home: home2, clock: ticking(SUN_2000, 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice' });
+    expect(r3.status).toBe('completed');
+  });
+
+  it('a hand run while a coverage slice holds the lock gets the lock error with one more line', async () => {
+    const home = newHome();
+    await withLock(home, 'run-coverage', async () => {
+      await expect(withLock(home, 'run', async () => 0)).rejects.toThrow(/another jobpilot process .*run-coverage[\s\S]*\na coverage slice is running; it yields within one step: try again in a minute$/);
+    });
+    await withLock(home, 'run-freelance', async () => {
+      await expect(withLock(home, 'run', async () => 0)).rejects.toThrow(/wait for it to finish$/);
+    });
   });
 });
 

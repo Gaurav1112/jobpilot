@@ -3,7 +3,6 @@ import { policyHash } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import { codeHash } from '../code-hash.js';
 import { coverageWeek, otherRunOwed } from '../due.js';
-import { DAILY_LABEL, FREELANCE_LABEL, scheduledFor } from '../schedule.js';
 import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
@@ -14,7 +13,7 @@ import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
 import { AppStore } from '../store/app-store.js';
 import { makeRunGate } from './gate.js';
-import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, type CoverageStagesOutcome, type StageId } from './pipeline.js';
+import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, type CoverageStagesOutcome, type StageId } from './pipeline.js';
 import { coverageNotification, deferralHosts, deferralLine, projectCoverage, registryCounts, type CoverageProjection, type RegistryCounts } from './project.js';
 import { seedItemsFromJobs } from './seed.js';
 import type { CandidateSource, CareersSite } from './types.js';
@@ -25,6 +24,8 @@ const PIPELINE = COVERAGE_PIPELINE.id;
 const PROJECTED = 'coverage.projected';
 /** The event of an invocation that paused between steps (it yielded, or hit its slice limit). */
 const PAUSED = 'coverage.paused';
+/** The event closing an earlier week's unfinished run (week rollover). */
+const CLOSED = 'coverage.closed';
 
 /**
  * The incomplete coverage run of this coverage week with this policy, if any (the newest): a paused or crashed run is
@@ -38,17 +39,41 @@ function resumableInWeek(app: AppStore, week: string, pHash: string): string | u
   });
 }
 
-/** The scheduled yield check: the daily and freelance runs installed on this home, read at most every YIELD_CHECK_EVERY_MS. */
+const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Week rollover: an incomplete coverage run of an EARLIER coverage week (paused or crashed, never finished) is closed
+ * as incomplete: a `coverage.closed` event `{status: 'incomplete', done, total}` (the kernel's run row stays `running`,
+ * its only other state being completed), and one line each, `Coverage last week did not finish: N of M candidates
+ * done` (M: the candidates its locate stage had, or its merged seed candidates if it never reached the locator; N:
+ * those whose locate step finished). Nothing of it was projected (a
+ * run projects only when it completes), so the registry keeps last known verdicts. Closed once; never resumed.
+ */
+function closeEarlierWeeks(app: AppStore, week: string, now: string): string[] {
+  const rows = app.kernel.db.prepare(`SELECT run_id, policy_hash FROM runs WHERE pipeline = ? AND status <> 'completed' ORDER BY run_id`).all(PIPELINE) as { run_id: string; policy_hash: string }[];
+  const lines: string[] = [];
+  for (const r of rows) {
+    const date = /^coverage-(\d{4}-\d{2}-\d{2})(?:-\d+)?$/.exec(r.run_id)?.[1];
+    if (date === undefined || coverageWeek(`${date}T12:00:00.000Z`) >= week) continue;
+    if (app.kernel.events(r.run_id).some((e) => e.kind === CLOSED)) continue;
+    const items = app.kernel.queueItems(`${r.run_id}.locate`);
+    const done = items.filter((q) => q.status !== 'pending').length;
+    const total = items.length > 0 ? items.length : storedCandidates(app.kernel, r.run_id).length;
+    app.kernel.appendEvent(r.run_id, now, CLOSED, { status: 'incomplete', done, total }, r.policy_hash);
+    lines.push(`Coverage last week did not finish: ${done} of ${total} candidates done`);
+  }
+  return lines;
+}
+
+/** The default yield check: `otherRunOwed` on this home, read at most every YIELD_CHECK_EVERY_MS of the clock. */
 function defaultYieldCheck(home: string): (now: string) => string | null {
   let last: { at: number; reason: string | null } | undefined;
-  const scheduled = (p: 'daily' | 'freelance'): boolean => scheduledFor(p === 'daily' ? DAILY_LABEL : FREELANCE_LABEL, home);
   return (now) => {
     const t = Date.parse(now);
-    if (last === undefined || t - last.at >= YIELD_CHECK_EVERY_MS) last = { at: t, reason: otherRunOwed(home, now, scheduled) };
+    if (last === undefined || t - last.at >= YIELD_CHECK_EVERY_MS) last = { at: t, reason: otherRunOwed(home, now) };
     return last.reason;
   };
 }
-const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export interface CoverageRunOptions {
   readonly home: string;
@@ -69,8 +94,8 @@ export interface CoverageRunOptions {
   readonly sliceMs?: number;
   /**
    * Asked before each step: a reason to yield (the daily or freelance run is owed now or within 5 minutes), or null.
-   * Default: `otherRunOwed` for the pipelines whose launchd job is installed on this home (`scheduledFor`), asked at
-   * most every YIELD_CHECK_EVERY_MS of the clock. Tests inject their own.
+   * Default: `otherRunOwed` on this home, asked at most every YIELD_CHECK_EVERY_MS of the clock. `--no-yield` (checks)
+   * and tests pass `() => null`.
    */
   readonly yieldCheck?: (now: string) => string | null;
 }
@@ -183,9 +208,17 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
       const policy = coveragePolicy(loaded.pack);
       const pHash = policyHash(policy);
+      const rolled = closeEarlierWeeks(app, week, now);
       const ongoing = resumableInWeek(app, week, pHash);
       const { runId, resume, skipped } = ongoing !== undefined ? { runId: ongoing, resume: true, skipped: [] as string[] } : pickRunId(app.kernel, `coverage-${runDate}`, pHash);
-      const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];
+      const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`), ...rolled];
+      for (const line of rolled) {
+        try {
+          await o.notifier?.(line);
+        } catch (e) {
+          warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
       const gate = makeRunGate({ runKey: runId, store: app });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
@@ -246,7 +279,11 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const totalDeferred = STAGES.reduce((n, s) => n + byStage[s], 0);
       const hosts = deferralHosts(STAGES.flatMap((st) => outcome.stages[st].deferred.map((d) => d.detail)));
       const disabledHosts = app.coverageHostState(runId).size;
-      const deferral = deferralLine(totalDeferred, hosts);
+      const details = (stages: readonly StageId[]) => stages.flatMap((st) => outcome.stages[st].deferred.map((d) => d.detail));
+      const notLocated = details(['seed', 'locate', 'detect']);
+      const notVerified = details(['verify']);
+      const deferrals = [deferralLine(notLocated.length, deferralHosts(notLocated)), deferralLine(notVerified.length, deferralHosts(notVerified), 'verified')];
+      const deferral = deferrals.filter((d): d is string => d !== null);
       const notification = coverageNotification({ ...registry, newVerified: projection.newVerified }, deferral);
       const problems = STAGES.flatMap((s) => runProblems(app.kernel, outcome.stages[s].runId, loaded.pack.naming));
       let notified = false;
@@ -285,7 +322,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         warnings,
       };
       const exitCode: 0 | 1 = STAGES.some((s) => outcome.stages[s].broken > 0) ? 1 : 0;
-      app.recordRun({ runId, at: now, counts: coverageCounts(app, outcome), packHash: loaded.companiesHash, policyHash: pHash, warnings: [...warnings, ...(deferral === null ? [] : [deferral])], problems });
+      app.recordRun({ runId, at: now, counts: coverageCounts(app, outcome), packHash: loaded.companiesHash, policyHash: pHash, warnings: [...warnings, ...deferral], problems });
       app.kernel.appendEvent(runId, now, 'coverage.summary', { picks: summary.picks, companiesHash: loaded.companiesHash, candidates: summary.candidates, mergeNotes: outcome.dropped, located, platforms: summary.platforms, verdicts, deferred: summary.deferred, registry, notification }, pHash);
       app.kernel.finishRun(runId, o.clock.now());
       return { ...summary, exitCode };

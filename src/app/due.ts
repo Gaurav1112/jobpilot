@@ -309,19 +309,35 @@ const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Frid
 
 /** How far ahead the coverage run looks for an owed daily or freelance run: it yields before their window opens. */
 export const YIELD_LOOKAHEAD_MS = 5 * 60_000;
+/**
+ * Starvation bound: coverage stops yielding to a pipeline that has been owed for more than this with no attempt in its
+ * current window (its job is not loaded, or it is waiting all day for a network that is down).
+ */
+export const YIELD_STARVATION_MS = 2 * 60 * 60_000;
+
+/** The start (ms) of `spec`'s window in force at `t`, or undefined before its first window. */
+function windowStartAt(spec: DueSpec, t: string): number | undefined {
+  const w = currentWindow(spec, t);
+  return w === undefined ? undefined : startOfIstDay(t) + minutesOf(w.fromIst) * 60_000;
+}
 
 /**
- * Whether the daily or the freelance run (only those `scheduled` on this home) is owed at `now`, or will be within YIELD_LOOKAHEAD_MS (their own due rules
- * and attempt files; the lock holder, which is the coverage run itself, is ignored): the reason to yield, or null. A due
- * check that cannot be read never makes coverage yield (the run it guards counts that failure itself).
+ * Review I-2, the fail-safe yield rule: the daily or freelance run is owed for THIS home at `now`, or within
+ * YIELD_LOOKAHEAD_MS (their own due rules; the lock holder, the coverage run itself, is ignored), AND that pipeline's
+ * attempts file exists in this home (only scheduled `--if-due` runs write it, so a fresh check home never yields),
+ * AND it has not been owed for more than YIELD_STARVATION_MS with no attempt in its window. The reason to yield
+ * (`yielded to daily` / `yielded to freelance`), or null. A due check that cannot be read never makes coverage yield.
  */
-export function otherRunOwed(home: string, now: string, scheduled: (pipeline: 'daily' | 'freelance') => boolean): string | null {
+export function otherRunOwed(home: string, now: string): string | null {
   const ahead = new Date(Date.parse(now) + YIELD_LOOKAHEAD_MS).toISOString();
   for (const [spec, name] of [[DAILY_DUE, 'daily'], [FREELANCE_DUE, 'freelance']] as const) {
-    if (!scheduled(name)) continue;
+    if (!existsSync(join(home, spec.attemptsFile))) continue;
     for (const at of [now, ahead]) {
       try {
-        if (due(spec, home, at, { ignoreHolder: true }).due) return `yielded to ${name}`;
+        if (!due(spec, home, at, { ignoreHolder: true }).due) continue;
+        const since = windowStartAt(spec, at);
+        const starved = since !== undefined && Date.parse(now) - since > YIELD_STARVATION_MS && read(spec, home, at).attempts.length === 0;
+        if (!starved) return `yielded to ${name}`;
       } catch {
         // unreadable: not a reason to yield
       }

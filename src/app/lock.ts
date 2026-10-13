@@ -130,7 +130,10 @@ function acquire(home: string, command: string, probe: ProcessProbe): () => void
   const guard = `${path}.takeover`;
   const started = probe.startTime(process.pid);
   const body: LockBody = { pid: process.pid, command, at: new Date().toISOString(), token: randomUUID(), ...(started !== undefined ? { started } : {}) };
-  const heldError = (h: LockBody) => new LockError(`another jobpilot process (pid ${h.pid}, ${h.command}) holds ${path} since ${h.at}; wait for it to finish`);
+  const heldError = (h: LockBody) =>
+    new LockError(
+      `another jobpilot process (pid ${h.pid}, ${h.command}) holds ${path} since ${h.at}; wait for it to finish${h.command === 'run-coverage' ? '\na coverage slice is running; it yields within one step: try again in a minute' : ''}`,
+    );
 
   if (!createWhole(path, body)) {
     const held = readBody(path);

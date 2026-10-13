@@ -45,11 +45,14 @@ export const GENERIC_LABELS: ReadonlySet<string> = new Set([
 /**
  * True iff the two names are equal after `normalCompanyName`, or `b` (the name the board gives) with its spaces
  * removed is `domainLabel` (the company's registrable domain without its suffix, e.g. `purestorage`). The label route
- * is refused when the label is one of GENERIC_LABELS.
+ * is refused when the label is one of GENERIC_LABELS, and nothing matches when either NAME normalises to one of them
+ * (such a company goes to Proposed).
  */
 export function sameCompany(a: string, b: string, domainLabel?: string): boolean {
   const na = normalCompanyName(a);
   const nb = normalCompanyName(b);
+  // a name that is itself a generic word ("Careers", "Jobs Inc") identifies no company: never a match on its own
+  if (GENERIC_LABELS.has(na.replace(/ /gu, '')) || GENERIC_LABELS.has(nb.replace(/ /gu, ''))) return false;
   if (na !== '' && na === nb) return true;
   const label = domainLabel?.normalize('NFKC').toLowerCase();
   return label !== undefined && label !== '' && !GENERIC_LABELS.has(label) && nb.replace(/ /gu, '') === label;

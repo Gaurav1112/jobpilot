@@ -12,13 +12,13 @@
 {"id": "ampersand-vs-and", "input": {"a": "Ben & Jerry's", "b": "Ben and Jerry's", "domainLabel": null}, "expected": {"same": true}}
 {"id": "ampersand-att", "input": {"a": "AT&T", "b": "AT and T", "domainLabel": null}, "expected": {"same": true}}
 {"id": "ampersand-jj", "input": {"a": "Johnson & Johnson", "b": "Johnson and Johnson", "domainLabel": null}, "expected": {"same": true}}
-{"id": "fullwidth-letters", "input": {"a": "\uff2f\uff4b\uff54\uff41", "b": "Okta", "domainLabel": null}, "expected": {"same": true}}
-{"id": "fullwidth-llc", "input": {"a": "\uff27\uff4f\uff4f\uff47\uff4c\uff45 \uff2c\uff2c\uff23", "b": "Google", "domainLabel": null}, "expected": {"same": true}}
-{"id": "accent-kept-suffix", "input": {"a": "Caf\u00e9 Nero Ltd", "b": "Caf\u00e9 Nero", "domainLabel": null}, "expected": {"same": true}}
-{"id": "accent-not-folded", "input": {"a": "Caf\u00e9 Nero", "b": "Cafe Nero", "domainLabel": null}, "expected": {"same": false}}
-{"id": "accent-sa", "input": {"a": "Nestl\u00e9 S.A.", "b": "Nestl\u00e9", "domainLabel": null}, "expected": {"same": true}}
-{"id": "ring-above-technologies", "input": {"a": "\u00c5ngstr\u00f6m Technologies", "b": "\u00c5ngstr\u00f6m", "domainLabel": null}, "expected": {"same": true}}
-{"id": "cjk-no-alias", "input": {"a": "\u65e5\u672c\u96fb\u7523\u682a\u5f0f\u4f1a\u793e", "b": "\u65e5\u672c\u96fb\u7523", "domainLabel": null}, "expected": {"same": false}}
+{"id": "fullwidth-letters", "input": {"a": "Ｏｋｔａ", "b": "Okta", "domainLabel": null}, "expected": {"same": true}}
+{"id": "fullwidth-llc", "input": {"a": "Ｇｏｏｇｌｅ ＬＬＣ", "b": "Google", "domainLabel": null}, "expected": {"same": true}}
+{"id": "accent-kept-suffix", "input": {"a": "Café Nero Ltd", "b": "Café Nero", "domainLabel": null}, "expected": {"same": true}}
+{"id": "accent-not-folded", "input": {"a": "Café Nero", "b": "Cafe Nero", "domainLabel": null}, "expected": {"same": false}}
+{"id": "accent-sa", "input": {"a": "Nestlé S.A.", "b": "Nestlé", "domainLabel": null}, "expected": {"same": true}}
+{"id": "ring-above-technologies", "input": {"a": "Ångström Technologies", "b": "Ångström", "domainLabel": null}, "expected": {"same": true}}
+{"id": "cjk-no-alias", "input": {"a": "日本電産株式会社", "b": "日本電産", "domainLabel": null}, "expected": {"same": false}}
 {"id": "zoho-pvt-ltd", "input": {"a": "Zoho Corporation Pvt Ltd", "b": "Zoho", "domainLabel": null}, "expected": {"same": true}}
 {"id": "infosys-limited", "input": {"a": "Infosys Limited", "b": "Infosys", "domainLabel": null}, "expected": {"same": true}}
 {"id": "wipro-private-limited", "input": {"a": "Wipro Private Limited", "b": "Wipro", "domainLabel": null}, "expected": {"same": true}}
@@ -38,12 +38,12 @@
 {"id": "google-vs-alphabet", "input": {"a": "Google", "b": "Alphabet", "domainLabel": null}, "expected": {"same": false}}
 {"id": "gitlab-case", "input": {"a": "Gitlab Inc.", "b": "GitLab", "domainLabel": null}, "expected": {"same": true}}
 {"id": "block-comma-inc", "input": {"a": "Block Inc", "b": "Block, Inc.", "domainLabel": null}, "expected": {"same": true}}
-{"id": "oreilly-apostrophes", "input": {"a": "O'Reilly Media", "b": "O\u2019Reilly Media", "domainLabel": null}, "expected": {"same": true}}
+{"id": "oreilly-apostrophes", "input": {"a": "O'Reilly Media", "b": "O’Reilly Media", "domainLabel": null}, "expected": {"same": true}}
 {"id": "oreilly-dropped-apostrophe", "input": {"a": "O'Reilly Media", "b": "OReilly Media", "domainLabel": null}, "expected": {"same": true}}
 {"id": "rippling-people-center", "input": {"a": "Rippling People Center, Inc.", "b": "Rippling People Center", "domainLabel": null}, "expected": {"same": true}}
 {"id": "digits-kept", "input": {"a": "1Password", "b": "1password", "domainLabel": null}, "expected": {"same": true}}
 {"id": "whitespace-noise", "input": {"a": "  Okta   Inc  ", "b": "okta", "domainLabel": null}, "expected": {"same": true}}
-{"id": "cyrillic-lookalike-o", "input": {"a": "Okta", "b": "\u041ekta", "domainLabel": null}, "expected": {"same": false}}
+{"id": "cyrillic-lookalike-o", "input": {"a": "Okta", "b": "Оkta", "domainLabel": null}, "expected": {"same": false}}
 {"id": "zero-for-o", "input": {"a": "Microsoft", "b": "Micros0ft", "domainLabel": null}, "expected": {"same": false}}
 {"id": "rn-for-m", "input": {"a": "Microsoft", "b": "Rnicrosoft", "domainLabel": null}, "expected": {"same": false}}
 {"id": "hyphen-is-a-separator", "input": {"a": "Wal-Mart", "b": "Walmart", "domainLabel": null}, "expected": {"same": false}}
@@ -57,6 +57,9 @@
 {"id": "generic-label-app-refused", "input": {"a": "Contoso", "b": "app", "domainLabel": "app"}, "expected": {"same": false}}
 {"id": "generic-label-join-refused", "input": {"a": "Fabrikam", "b": "JOIN", "domainLabel": "join"}, "expected": {"same": false}}
 {"id": "generic-label-team-refused", "input": {"a": "Litware", "b": "team", "domainLabel": "team"}, "expected": {"same": false}}
-{"id": "generic-label-hire-names-match", "input": {"a": "Hire Inc", "b": "Hire", "domainLabel": "hire"}, "expected": {"same": true}}
-{"id": "generic-label-get-names-match", "input": {"a": "Get", "b": "get", "domainLabel": "get"}, "expected": {"same": true}}
+{"id": "generic-label-hire-generic-name-refused", "input": {"a": "Hire Inc", "b": "Hire", "domainLabel": "hire"}, "expected": {"same": false}}
+{"id": "generic-label-get-generic-name-refused", "input": {"a": "Get", "b": "get", "domainLabel": "get"}, "expected": {"same": false}}
 {"id": "non-generic-label-containing-jobs", "input": {"a": "Adatum", "b": "jobsity", "domainLabel": "jobsity"}, "expected": {"same": true}}
+{"id": "generic-name-careers-refused", "input": {"a": "Careers", "b": "Careers", "domainLabel": null}, "expected": {"same": false}}
+{"id": "generic-name-jobs-inc-refused", "input": {"a": "Jobs Inc", "b": "Jobs", "domainLabel": "jobsboard"}, "expected": {"same": false}}
+{"id": "generic-word-inside-a-name-ok", "input": {"a": "Talent Garden", "b": "Talent Garden", "domainLabel": null}, "expected": {"same": true}}

@@ -95,7 +95,7 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
   if (g.slug === null || g.slug.trim() === '') return verdict('proposed', [`no board slug for ${g.platform}`]);
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const host = client.host;
-  const off = gate.state.disabled.get(host);
+  const off = gate.disabledWhy(host, ctx.clock.now());
   if (off !== undefined) throw deferred(off, host, 'disabled earlier in this run');
 
   let read: BoardRead;

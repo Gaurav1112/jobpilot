@@ -63,12 +63,25 @@ export function asHttps(raw: string): URL | null {
 export interface HostState {
   readonly robots: Map<string, Promise<RobotsVerdict>>;
   readonly disabled: Map<string, string>;
+  /** When each disabled host was disabled (ISO): a 429 disable expires after HTTP_429_EXPIRY_MS. */
+  readonly since: Map<string, string>;
 }
+
+/**
+ * A 429 ("slow down") disable is lifted after this long within the run, so a week-long run is not barred from a host
+ * for the rest of the week by one rate limit. Every other disable (401, 403, a challenge, a robots.txt refusal) lasts
+ * the whole run.
+ */
+export const HTTP_429_EXPIRY_MS = 24 * 60 * 60_000;
 
 /** Where a run's disabled hosts are kept durably (the app's `AppStore` implements it). */
 export interface HostStateStore {
   coverageHostState(runKey: string): ReadonlyMap<string, string>;
+  /** When each host was disabled (ISO). */
+  coverageHostTimes(runKey: string): ReadonlyMap<string, string>;
   disableCoverageHost(runKey: string, host: string, reason: string, at: string): void;
+  /** Lifts a disable (an expired 429). */
+  enableCoverageHost(runKey: string, host: string): void;
 }
 
 /** One coverage run's host state, shared by every fetching agent of the run. */
@@ -77,6 +90,8 @@ export interface RunGate {
   readonly state: HostState;
   /** Disables `host` for the run: durable first (when a store is given), then visible to the next step. Idempotent. */
   disable(host: string, why: string, at: string): void;
+  /** Why `host` is disabled at `now`, or undefined; an expired 429 disable is lifted (durably) here. */
+  disabledWhy(host: string, now: string): string | undefined;
 }
 
 /**
@@ -87,9 +102,10 @@ export interface RunGate {
  * robots.txt verdicts are not persisted: after a crash each host's robots.txt is fetched once more.
  */
 export function makeRunGate(opts: { readonly runKey: string; readonly store: HostStateStore }): RunGate {
-  const state: HostState = { robots: new Map(), disabled: new Map() };
+  const state: HostState = { robots: new Map(), disabled: new Map(), since: new Map() };
   const { runKey, store } = opts;
   for (const [h, why] of store.coverageHostState(runKey)) state.disabled.set(h, why);
+  for (const [h, at] of store.coverageHostTimes(runKey)) state.since.set(h, at);
   return {
     runKey,
     state,
@@ -97,19 +113,35 @@ export function makeRunGate(opts: { readonly runKey: string; readonly store: Hos
       if (state.disabled.has(host)) return;
       store.disableCoverageHost(runKey, host, why, at); // durable first, then visible to the next step
       state.disabled.set(host, why);
+      state.since.set(host, at);
+    },
+    disabledWhy(host, now) {
+      const why = state.disabled.get(host);
+      if (why !== 'http-429') return why;
+      const since = Date.parse(state.since.get(host) ?? '');
+      if (Number.isNaN(since) || Date.parse(now) - since < HTTP_429_EXPIRY_MS) return why;
+      store.enableCoverageHost(runKey, host);
+      state.disabled.delete(host);
+      state.since.delete(host);
+      return undefined;
     },
   };
 }
 
 /** A HostStateStore held in memory only: for tests and evals, which pass it explicitly. A crash loses it. */
 export function memoryHostStateStore(): HostStateStore {
-  const rows = new Map<string, Map<string, string>>();
+  const rows = new Map<string, Map<string, { reason: string; at: string }>>();
+  const sorted = (runKey: string) => [...(rows.get(runKey) ?? new Map<string, { reason: string; at: string }>())].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return {
-    coverageHostState: (runKey) => new Map([...(rows.get(runKey) ?? new Map<string, string>())].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
-    disableCoverageHost(runKey, host, reason) {
-      const m = rows.get(runKey) ?? new Map<string, string>();
-      if (!m.has(host)) m.set(host, reason);
+    coverageHostState: (runKey) => new Map(sorted(runKey).map(([h, v]) => [h, v.reason])),
+    coverageHostTimes: (runKey) => new Map(sorted(runKey).map(([h, v]) => [h, v.at])),
+    disableCoverageHost(runKey, host, reason, at) {
+      const m = rows.get(runKey) ?? new Map<string, { reason: string; at: string }>();
+      if (!m.has(host)) m.set(host, { reason, at });
       rows.set(runKey, m);
+    },
+    enableCoverageHost(runKey, host) {
+      rows.get(runKey)?.delete(host);
     },
   };
 }
@@ -216,12 +248,12 @@ export function stepFetcher(o: {
         if (hop > 0 && acceptMoved(u)) return { kind: 'moved', url: u.href };
         return { kind: 'miss', reason: hop > 0 ? `redirect to ${host} (off-domain)` : `${host} is not a planned host` };
       }
-      const off = state.disabled.get(host);
+      const off = gate.disabledWhy(host, ctx.clock.now());
       if (off !== undefined) return { kind: 'miss', reason: skipReason(host, off) };
       if (checkRobots) {
         const denial = robotsDenial(await robotsFor(host), u);
         if (denial !== null) return { kind: 'miss', reason: `${denial} (${host})` };
-        const off2 = state.disabled.get(host);
+        const off2 = gate.disabledWhy(host, ctx.clock.now());
         if (off2 !== undefined) return { kind: 'miss', reason: skipReason(host, off2) };
       }
       // robots.txt is shared by the whole run, so it is counted but never refused by one step's budget

@@ -43,6 +43,7 @@ const guess = (c: CompanyCandidate, platform: Platform | null, slug: string | nu
 interface Route {
   readonly status?: number;
   readonly body?: unknown;
+  readonly location?: string;
 }
 function serve(routes: Record<string, Route>) {
   const calls: string[] = [];
@@ -50,7 +51,7 @@ function serve(routes: Record<string, Route>) {
     calls.push(url);
     const r = routes[url] ?? { status: 404, body: 'Not Found' };
     const body = typeof r.body === 'string' ? r.body : JSON.stringify(r.body ?? null);
-    return { status: r.status ?? 200, headers: { get: () => null }, text: async () => body };
+    return { status: r.status ?? 200, headers: { get: (n: string) => (n.toLowerCase() === 'location' ? (r.location ?? null) : null) }, text: async () => body };
   };
   return { fetch, calls };
 }
@@ -181,6 +182,21 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
     expect(v.status).toBe('failed');
     expect(v.reasons.join('\n')).toMatch(/timed out after 20 ms/);
     expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+
+  it('a board API that redirects is a failed verdict "board API redirected off-platform", never a policy denial or a step error', async () => {
+    const g = guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme');
+    const n = serve({ [greenhouseUrl('acme')]: { status: 301, location: 'https://www.acme.test/careers' } });
+    const v = await verify(g, n.fetch); // verify() also asserts ctx.denials() is empty
+    expect(v.status).toBe('failed');
+    expect(v.reasons.join('\n')).toMatch(/board API redirected off-platform \(301 to www\.acme\.test\)/);
+    expect(n.calls).toEqual([greenhouseUrl('acme')]);
+  });
+
+  it('a 5xx still reads as the broker\'s code through the page read: a failed verdict', async () => {
+    const v = await verify(guess(cand('acme.test', 'Acme'), 'lever', 'acme'), serve({ [leverUrl('acme', 0)]: { status: 503, body: 'down' } }).fetch);
+    expect(v.status).toBe('failed');
+    expect(v.reasons.join('\n')).toMatch(/503/);
   });
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {

@@ -78,13 +78,33 @@ const SHAPES = {
 /** The daily parsers read only `slug` and `company` of the request; the rest is a placeholder. */
 const requestFor = (ats: 'greenhouse' | 'lever' | 'ashby', slug: string): DiscoveryRequest => ({ ats, slug, company: slug, runDate: '1970-01-01' });
 
+/**
+ * One GET of the board, read with the broker's `getPage` (the same URL, method, headers, pacing and size cap as the
+ * daily adapter's `getJson`; redirects are never followed by either). `getPage` reports a 3xx instead of recording a
+ * policy denial, so a board API that redirects (off-platform, a retired board) is a finding about the board, not a
+ * failure of the step: `invalid_output` "board API redirected off-platform". 429 and 5xx keep the broker's codes.
+ */
 async function getJson(http: HttpTool, url: string, host: string, slug: string, timeoutMs?: number): Promise<unknown> {
-  const { status, json } = await http.getJson(url, timeoutMs === undefined ? undefined : { timeoutMs });
+  const { status, body, location } = await http.getPage(url, timeoutMs === undefined ? undefined : { timeoutMs });
+  if (status >= 300 && status < 400) {
+    let to = 'nowhere';
+    try {
+      to = location === null ? to : new URL(location, url).hostname;
+    } catch {
+      to = 'an invalid Location';
+    }
+    throw new KernelError('invalid_output', `board API redirected off-platform (${status} to ${to})`);
+  }
+  if (status === 429) throw new KernelError('rate_limit', `429 from ${host}`);
+  if (status >= 500) throw new KernelError('overloaded', `${status} from ${host}`);
   if (status === 401 || status === 403) throw new BoardRefused(status, host);
   if (status === 404) throw new KernelError('gone', `board not found: ${slug}`);
-  // any other non-2xx (the broker raises on 3xx, 429 and 5xx itself)
   if (status < 200 || status >= 300) throw new KernelError('invalid_output', `${host} returned ${status} for ${slug}`);
-  return json;
+  try {
+    return JSON.parse(body) as unknown;
+  } catch {
+    throw new KernelError('invalid_output', `response from ${host} is not valid JSON`);
+  }
 }
 
 function checkShape(platform: keyof typeof SHAPES, slug: string, json: unknown): void {

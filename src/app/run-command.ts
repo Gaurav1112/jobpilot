@@ -6,7 +6,6 @@ import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { lookup } from 'node:dns/promises';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
-import { DAILY_LABEL, FREELANCE_LABEL, scheduledFor } from './schedule.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
@@ -251,8 +250,8 @@ export async function runCoverageCommand(
   });
 }
 
-/** The yield check of a scheduled coverage start: the daily or freelance run installed on this home is owed now or soon. */
+/** The yield check of a scheduled coverage start: the daily or freelance run is owed on this home now or soon (`otherRunOwed`). */
 export const scheduledYieldCheck =
   (home: string) =>
   (now: string): string | null =>
-    otherRunOwed(home, now, (p) => scheduledFor(p === 'daily' ? DAILY_LABEL : FREELANCE_LABEL, home));
+    otherRunOwed(home, now);
