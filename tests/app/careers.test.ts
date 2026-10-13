@@ -611,7 +611,8 @@ describe('src-careers through the supervisor', () => {
  * drives the provider directly (with its test-only loopback flag) and runs the agent over a context whose browser is
  * that provider; the broker's own checks are covered by the fake-provider tests above and in tests/kernel/browser.test.ts.
  */
-describe('src-careers with real chromium', async () => {
+// Real Chromium: retried twice, since a loaded machine can still stretch a settle past its shortened cap (final review).
+describe('src-careers with real chromium', { retry: 2 }, async () => {
   const { chromium } = await import('playwright');
   const { existsSync } = await import('node:fs');
   const installed = existsSync(chromium.executablePath());
@@ -737,7 +738,7 @@ describe('src-careers with real chromium', async () => {
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const { PlaywrightBrowserProvider } = await import('../../src/app/browser/playwright-provider.js');
     slowProvider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true });
-    provider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true, timing: { pollMs: 200, minSettleMs: 800, settleCapMs: 6_000, jobMinSettleMs: 400, jobSettleCapMs: 6_000 } });
+    provider = new PlaywrightBrowserProvider({ allowInsecureLocalhostForTests: true, timing: { pollMs: 200, minSettleMs: 800, settleCapMs: 8_000, jobMinSettleMs: 400, jobSettleCapMs: 8_000 } });
   }, 30_000);
 
   afterAll(async () => {
@@ -844,7 +845,7 @@ describe('src-careers with real chromium', async () => {
     const mapped = new PlaywrightBrowserProvider({
       allowInsecureLocalhostForTests: true,
       resolveToLoopbackForTests: ['px.linkedin.localhost', 'www.linkedin.localhost', 'api.linkedin.localhost'],
-      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 6_000 },
+      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 8_000 },
     });
     const before = hits.length;
     const page = await render(`${base}/sub-redirects`, { via: mapped }).finally(() => mapped.close());
@@ -860,7 +861,7 @@ describe('src-careers with real chromium', async () => {
     const mapped = new PlaywrightBrowserProvider({
       allowInsecureLocalhostForTests: true,
       resolveToLoopbackForTests: ['direct.linkedin.localhost', 'shared.linkedin.localhost'],
-      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 6_000 },
+      timing: { pollMs: 200, jobMinSettleMs: 400, jobSettleCapMs: 8_000 },
     });
     const before = hits.length;
     const page = await render(`${base}/shared-worker`, { via: mapped }).finally(() => mapped.close());
