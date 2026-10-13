@@ -1,5 +1,5 @@
 import { KernelError } from '../kernel/errors.js';
-import { WORKDAY_MIN_INTERVAL_MS, type HttpTool, type WorkdayHosts } from './agents/sources/platforms/workday.js';
+import { WORKDAY_MIN_INTERVAL_MS, type HttpTool, type WorkdayHosts, type WorkdayScopes } from './agents/sources/platforms/workday.js';
 import { isChallenge } from './coverage/gate.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/robots.js';
 
@@ -12,10 +12,13 @@ import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/ro
  *   that fails to arrive (network, timeout) is not cached: the step fails and its retry asks again.
  * - A host that answers a robots.txt with a challenge page or 429, or any request with 401, 403 or 429, is disabled
  *   for the rest of the run (in memory: a daily run is one process); the adapter never asks it again in this run.
+ * - Each board's discovered facet scopes (`workdayScopes`) are kept for the run only, never persisted: a retry of the
+ *   company skips the discovery page, the next run discovers again.
  */
 export function dailyWorkdayHosts(): WorkdayHosts {
   const robots = new Map<string, Promise<RobotsVerdict>>();
   const disabled = new Map<string, string>();
+  const scopes = new Map<string, WorkdayScopes>();
 
   async function verdictOf(host: string, http: HttpTool): Promise<RobotsVerdict> {
     const r = await http.getPage(`https://${host}/robots.txt`, { minIntervalMs: WORKDAY_MIN_INTERVAL_MS });
@@ -41,6 +44,7 @@ export function dailyWorkdayHosts(): WorkdayHosts {
       }
       return robotsDenial(await p, new URL(`https://${host}${path}`));
     },
+    scopes,
     disabledWhy: (host) => disabled.get(host),
     disable(host, why) {
       if (!disabled.has(host)) disabled.set(host, why);

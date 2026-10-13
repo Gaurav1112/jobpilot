@@ -125,7 +125,7 @@ describe('the daily pipeline wiring', () => {
     const pack = { watchlist: [], feeds: { enabled: [] } };
     expect(pacingProblems(PRODUCT_POLICY_V1, pack, boards)).toEqual([]);
     expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, boards)).toEqual([
-      'minHostIntervalMs 7000 ms breaks the src-workday timeout arithmetic (at most 6338 ms per request); lower it in policy.user.yaml',
+      'minHostIntervalMs 7000 ms breaks the src-workday timeout arithmetic (at most 2356 ms per request); lower it in policy.user.yaml',
     ]);
   });
 

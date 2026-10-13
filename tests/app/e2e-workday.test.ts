@@ -10,7 +10,7 @@ import { AppStore } from '../../src/app/store/app-store.js';
 
 /**
  * Task 6 end to end: a verified Workday company in the registry is read by the daily run (offline fixtures of a
- * fictional tenant: robots.txt, one CXS list page by POST, two details), its postings go through the existing
+ * fictional tenant: robots.txt, the facet-discovery page and the India-scoped list by POST, two details), its postings go through the existing
  * normalizer, eligibility and scorer, and the same day's second run fetches nothing.
  */
 const root = join(import.meta.dirname, '../..');
@@ -64,6 +64,8 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with a verified Workday c
     expect(r.counts.totals.failed).toBe(0);
     expect(offline.fetch.calls).toEqual([
       'https://acme.wd5.myworkdayjobs.com/robots.txt',
+      // facet discovery, then the India-scoped list (the fixture's facets name no remote type)
+      BOARD,
       BOARD,
       'https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/India-Bengaluru/Senior-Backend-Engineer_R-501',
       'https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/US-CA-Santa-Clara/Senior-Software-Engineer--Payments-Platform_R-502',

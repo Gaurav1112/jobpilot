@@ -317,7 +317,7 @@ const isNamedSkip = (note: string): boolean => NAMED_SKIPS.some((p) => note.star
 /**
  * Task 6 (no silent drop): every named skip a source recorded in this run, one warning each, as recorded, in event
  * order, each step once: `src-workday: robots-disallow <host>: <company> not read today (…)`, `src-workday:
- * detail-budget <company>: N jobs without detail`, `src-workday: scope <company>: …`. A note holding a forbidden term
+ * detail-budget <company>: N jobs without detail`, `src-workday: no-india-or-remote-facet <company>: …`. A note holding a forbidden term
  * is replaced by a fixed notice. Not a failure: the exit code does not change.
  */
 export function namedSkipWarnings(kernel: Store, runId: string, naming: Pick<Naming, 'forbiddenTerms'>): string[] {

@@ -29,7 +29,9 @@ import { Posting, RawPosting } from '../types.js';
  *   other value is kept only as the signal `remoteType:<value>`), `timeType` ("Full time") and the HTML description.
  *   Without one (past the per-company detail budget, or a title the pre-filter skips): the listed `locationsText`
  *   ("India, Bengaluru", or a bare "2 Locations", which eligibility treats as a generic location field) and an empty
- *   description. Workday dates are relative ("Posted Today"): `postedAt` is always null.
+ *   description; a job the adapter saw under an office city's location facet value appends those values
+ *   (`officeLocations`: "2 Locations; India, Bengaluru"). Workday dates are relative ("Posted Today"): `postedAt` is
+ *   always null.
  *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
@@ -589,7 +591,10 @@ function workdayArrangement(v: string | null): Remote['structured'] {
 function workday(raw: RawPosting, r: Rec): Posting {
   const d = isRec(r.detail) ? r.detail : null;
   const located = d === null ? [] : [str(d.location), ...arr(d.additionalLocations).map(str)].filter((x): x is string => x !== null).map((x) => x.trim());
-  const locationText = located.length > 0 ? [...new Set(located)].join('; ') : (str(r.locationsText) ?? '');
+  // without a detail, an office-city location value the job is listed under ("India, Bengaluru") joins the listed text
+  const listed = str(r.locationsText) ?? '';
+  const offices = arr(r.officeLocations).filter((x): x is string => typeof x === 'string' && x.trim() !== '' && !listed.includes(x));
+  const locationText = located.length > 0 ? [...new Set(located)].join('; ') : [listed, ...new Set(offices)].filter((x) => x !== '').join('; ');
   const remoteType = d === null ? null : str(d.remoteType);
   const country = d === null ? null : str(d.country);
   const descriptionText = d === null ? '' : htmlToText(str(d.description) ?? '');
