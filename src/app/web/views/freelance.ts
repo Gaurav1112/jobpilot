@@ -361,14 +361,16 @@ const HEALTH_COLUMNS = [
 
 function sourceTable(t: SourceTable): Html {
   return html`<section class="card wide" aria-labelledby="src-${t.platform}"><h2 id="src-${t.platform}">${platformName(t.platform)}${t.probeFailures > 0 ? pill(String(t.probeFailures) + (t.probeFailures === 1 ? ' failed run in a row' : ' failed runs in a row'), 'critical') : ''}</h2>
-<div class="table-wrap"><table class="counts"><thead><tr><th scope="col">Week</th>${HEALTH_COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}<th scope="col" class="num">Applied</th><th scope="col" class="num">Replied</th><th scope="col" class="num">Won</th></tr></thead>
+<div class="table-wrap"><table class="counts"><thead><tr><td></td><th scope="colgroup" colspan="2">Runs</th><th scope="colgroup" colspan="4">Shortlisted and the rest: summed per run</th><th scope="colgroup" colspan="3">Applied and the rest: distinct gigs, from your status changes</th></tr>
+<tr><th scope="col">Week</th>${HEALTH_COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}<th scope="col" class="num">Applied</th><th scope="col" class="num">Replied</th><th scope="col" class="num">Won</th></tr></thead>
 <tbody>${t.rows.map(
     (r) => html`<tr><th scope="row" class="num">${r.week}</th>${HEALTH_COLUMNS.map(([k]) => html`<td class="num${r[k] === 0 ? ' zero' : ''}${k === 'failedRuns' && r[k] > 0 ? ' bad' : ''}">${r[k]}</td>`)}${(['applied', 'replied', 'won'] as const).map((k) => html`<td class="num${r.outcomes[k] === 0 ? ' zero' : ''}">${r.outcomes[k]}</td>`)}</tr>`,
   )}</tbody></table></div></section>`;
 }
 
 export function sourcesBody(d: SourcesData): Html {
-  const lede = html`What each source found in the last 8 weeks (IST weeks). Applied, replied and won count your own status changes.`;
+  // Final review M8: the two kinds of count are labelled apart, so a shortlisted figure is never read as distinct gigs.
+  const lede = html`What each source found in the last 8 weeks (IST weeks). Fetched, eligible, above floor and shortlisted are summed per run: a gig seen in two runs counts twice. Applied, replied and won count distinct gigs, from your own status changes.`;
   return html`${head('sources', d.counts, lede)}
 <div class="stack">
 <section class="card wide" aria-labelledby="disabled-h"><h2 id="disabled-h">Not fetched</h2>

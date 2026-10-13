@@ -417,6 +417,10 @@ describe('freelance: sources', () => {
       expect(t).toContain('freelancer: 3 requests skipped after 5 failures');
       expect(t).not.toContain('freelancer q6');
       expect(t).toContain('source remotive looks dead');
+      // final review M8: per-run sums and distinct status counts are labelled apart
+      expect(body).toContain('<th scope="colgroup" colspan="4">Shortlisted and the rest: summed per run</th>');
+      expect(body).toContain('<th scope="colgroup" colspan="3">Applied and the rest: distinct gigs, from your status changes</th>');
+      expect(t).toContain('a gig seen in two runs counts twice');
     }
   });
 
