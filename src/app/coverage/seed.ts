@@ -30,15 +30,23 @@ export const MAX_COMPRESSED_BYTES = 20_000_000;
 export const MAX_EXPANDED_BYTES = 80_000_000;
 
 /**
- * Hosting suffixes and multi-part public suffixes, as a small built-in list instead of the full Public Suffix List.
- * A host under one of these is registered one label deeper (`careers.foo.co.in` is `foo.co.in`, `x.github.io` is
- * `x.github.io`, since every GitHub Pages site is its own company). A suffix not on this list is treated as one
- * label (`.com`, `.io`, `.ai`, ...), so an unlisted multi-part suffix (say `com.mx`) would give the suffix itself as
- * the key. The list is part of the contract: extend it, never guess.
+ * The registrable domain is found by a fixed rule, not the full Public Suffix List:
+ * 1. a host with 3 or more labels whose TLD is a 2-letter ccTLD and whose second-to-last label is one of
+ *    `CC_SECOND_LEVEL` (`co`, `com`, `org`, `ac`, `gov`, ...) is registered one label deeper: `foo.co.za` is
+ *    `foo.co.za`, `www.bar.com.mx` is `bar.com.mx`, `jobs.x.gov.uk` is `x.gov.uk`;
+ * 2. a hosting suffix (`HOSTING_SUFFIXES`: GitHub Pages, Vercel, Netlify, ...) gives each tenant its own key:
+ *    `x.github.io` is `x.github.io`;
+ * 3. `MULTI_PART_SUFFIXES` are explicit additions (kept for the suffixes the brief named);
+ * 4. any other host is its last two labels (`www.okta.com` is `okta.com`).
+ * A host that IS a suffix (`co.uk`, `github.io`, `co.za`) has no registrable domain (null; the caller notes it).
+ * A ccTLD second level outside the set (say `foo.ltd.xx`) would be keyed as `ltd.xx`: extend the sets, never guess.
  */
+const CC_SECOND_LEVEL: ReadonlySet<string> = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu', 'ne', 'or', 'go', 'gob', 'nic', 'mil', 'ltd', 'plc', 'sch']);
+export const HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
+  'herokuapp.com', 'netlify.app', 'pages.dev', 'web.app', 'vercel.app', 'github.io', 'firebaseapp.com', 'azurewebsites.net', 'onrender.com',
+]);
 export const MULTI_PART_SUFFIXES: ReadonlySet<string> = new Set([
   'co.in', 'co.uk', 'com.au', 'com.br', 'co.jp', 'co.nz', 'com.sg', 'com.cn', 'org.uk', 'ac.in', 'net.in', 'firm.in', 'gen.in', 'ind.in',
-  'github.io', 'vercel.app',
 ]);
 
 const IPV4 = /^\d{1,3}(?:\.\d{1,3}){3}$/u;
@@ -49,8 +57,12 @@ export function registrableDomain(host: string): string | null {
   if (h === '' || h === 'localhost' || h.includes(':') || h.startsWith('[') || IPV4.test(h)) return null;
   const labels = h.split('.');
   if (labels.length < 2 || labels.some((l) => l === '')) return null;
-  const last2 = labels.slice(-2).join('.');
-  if (MULTI_PART_SUFFIXES.has(last2)) return labels.length >= 3 ? labels.slice(-3).join('.') : null;
+  const tld = labels[labels.length - 1] as string;
+  const second = labels[labels.length - 2] as string;
+  const last2 = `${second}.${tld}`;
+  if (HOSTING_SUFFIXES.has(last2) || MULTI_PART_SUFFIXES.has(last2) || (/^[a-z]{2}$/u.test(tld) && CC_SECOND_LEVEL.has(second))) {
+    return labels.length >= 3 ? labels.slice(-3).join('.') : null;
+  }
   return last2;
 }
 
@@ -92,10 +104,19 @@ export interface Parsed {
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
-/** One candidate per companyKey (the first by name wins), sorted by companyKey. */
-function finish(candidates: readonly CompanyCandidate[]): CompanyCandidate[] {
+const collision = (where: string, dropped: CompanyCandidate, kept: CompanyCandidate): string =>
+  `${where}: "${dropped.name}" (${dropped.source}) dropped, ${dropped.companyKey} is held by "${kept.name}" (${kept.source})`;
+
+/** One candidate per companyKey (the first by name wins), sorted by companyKey. Every drop is named in `notes`. */
+function finish(candidates: readonly CompanyCandidate[], notes: string[]): CompanyCandidate[] {
   const sorted = [...candidates].sort((a, b) => cmp(a.companyKey, b.companyKey) || cmp(a.name, b.name));
-  return sorted.filter((c, i) => i === 0 || (sorted[i - 1] as CompanyCandidate).companyKey !== c.companyKey);
+  const out: CompanyCandidate[] = [];
+  for (const c of sorted) {
+    const last = out[out.length - 1];
+    if (last !== undefined && last.companyKey === c.companyKey) notes.push(collision('same key', c, last));
+    else out.push(c);
+  }
+  return out;
 }
 
 /** A source with entries where every one failed is schema drift: fail the step instead of reporting no companies. */
@@ -110,12 +131,22 @@ const RANK: Record<CandidateSource, number> = { pick: 0, remoteintech: 1, yc: 2,
 /**
  * Joins the sources: one candidate per companyKey, the highest source wins (pick > remoteintech > yc > jobs; ties by
  * name), and its name, website and careersUrl are used as they are. Sorted by companyKey, independent of input order.
+ * `onDropped` receives a note for every candidate that lost its key to another (naming both); none is dropped silently.
  */
-export function mergeCandidates(all: readonly CompanyCandidate[]): CompanyCandidate[] {
+export function mergeCandidates(all: readonly CompanyCandidate[], onDropped?: (note: string) => void): CompanyCandidate[] {
   const best = new Map<string, CompanyCandidate>();
+  const drops: { readonly dropped: CompanyCandidate; readonly keptKey: string }[] = [];
   for (const c of all) {
     const cur = best.get(c.companyKey);
-    if (cur === undefined || RANK[c.source] < RANK[cur.source] || (c.source === cur.source && cmp(c.name, cur.name) < 0)) best.set(c.companyKey, c);
+    if (cur === undefined) best.set(c.companyKey, c);
+    else if (RANK[c.source] < RANK[cur.source] || (c.source === cur.source && cmp(c.name, cur.name) < 0)) {
+      best.set(c.companyKey, c);
+      drops.push({ dropped: cur, keptKey: c.companyKey });
+    } else drops.push({ dropped: c, keptKey: c.companyKey });
+  }
+  if (onDropped !== undefined) {
+    const notes = drops.map((d) => collision('merge', d.dropped, best.get(d.keptKey) as CompanyCandidate));
+    for (const n of notes.sort(cmp)) onDropped(n);
   }
   return [...best.values()].sort((a, b) => cmp(a.companyKey, b.companyKey));
 }
@@ -210,7 +241,7 @@ export function readTar(tar: Uint8Array, keep: (name: string) => boolean): TarFi
 // ---------------------------------------------------------------------------------------------------------------
 
 /** `<archive root>/src/companies/<slug>.md`, as in the archive of 2026-10-13. */
-const COMPANY_FILE = /^[^/]+\/src\/companies\/[^/]+\.md$/u;
+const COMPANY_FILE = /^[^/.][^/]*\/src\/companies\/[^/]+\.md$/u;
 const FRONTMATTER = /^﻿?---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/u;
 
 /** The archive's company files as candidates. Caps: 20 MB compressed, 80 MB expanded (`invalid_output` beyond). */
@@ -257,7 +288,7 @@ export function parseRemoteIntech(gz: Uint8Array, runDate: string): Parsed {
     candidates.push({ companyKey: site.key, name: title.trim(), website: site.origin, careersUrl: httpUrlOrNull(meta.careers_url), source: 'remoteintech', runDate });
   }
   checkAllFailed('remoteintech', 'company files', files.length, skipped.length);
-  return { candidates: finish(candidates), skipped, notes };
+  return { candidates: finish(candidates, notes), skipped, notes };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -287,7 +318,8 @@ export function parseYc(json: unknown, runDate: string): Parsed {
   });
   checkAllFailed('yc', 'entries', json.length, skipped.length);
   if (candidates.length === 0) throw new KernelError('invalid_output', `yc: no Active, hiring company with a website among ${json.length} entries`);
-  return { candidates: finish(candidates), skipped, notes: [] };
+  const notes: string[] = [];
+  return { candidates: finish(candidates, notes), skipped, notes };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -329,7 +361,7 @@ function fromItems<T extends { readonly name: string; readonly website?: string 
   });
   if (unkeyed > 0) notes.push(`jobs: ${unkeyed} companies have no known website`);
   checkAllFailed(source, 'items', items.length, skipped.length);
-  return { candidates: finish(candidates), skipped, notes };
+  return { candidates: finish(candidates, notes), skipped, notes };
 }
 
 export const parsePicksItems = (items: unknown, runDate: string): Parsed => fromItems('picks', 'pick', PickItem, items, runDate);

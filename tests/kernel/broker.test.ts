@@ -58,6 +58,20 @@ describe('capability broker', () => {
     expect(f.calls).toHaveLength(1);
   });
 
+  it('getBytes keeps binary bodies intact under the same egress and size rules', async () => {
+    const bytes = Uint8Array.from({ length: 256 }, (_, i) => i);
+    const stream = (b: Uint8Array) => new ReadableStream<Uint8Array>({ start(c) { c.enqueue(b); c.close(); } });
+    const f: FetchLike = async (url) => ({ status: 200, body: stream(url.endsWith('/big') ? new Uint8Array(PRODUCT_POLICY_V1.maxResponseBytes + 1) : bytes), text: async () => '' });
+    const ctx = issue(fetcher, 'P0', { fetch: f });
+    const got = await ctx.http!.getBytes('https://boards-api.greenhouse.io/bin');
+    expect(got.status).toBe(200);
+    expect(Buffer.from(got.bytes).equals(Buffer.from(bytes))).toBe(true);
+    await expect(ctx.http!.getBytes('https://evil.example/bin')).rejects.toThrow(/G-EGRESS/);
+    await expect(ctx.http!.getBytes('http://boards-api.greenhouse.io/bin')).rejects.toThrow(/only https/);
+    await expect(ctx.http!.getBytes('https://boards-api.greenhouse.io/big')).rejects.toMatchObject({ code: 'invalid_output' });
+    expect(ctx.denials().length).toBeGreaterThanOrEqual(2);
+  });
+
   it('maps 429 and 5xx to retryable codes', async () => {
     const f = fakeFetch({
       'https://boards-api.greenhouse.io/a': { status: 429, body: '' },

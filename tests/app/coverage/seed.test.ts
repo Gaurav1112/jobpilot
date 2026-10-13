@@ -22,6 +22,7 @@ import { fixedClock } from '../../../src/kernel/clock.js';
 import { KernelError } from '../../../src/kernel/errors.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
+import { offlineProviders } from '../../../src/app/offline.js';
 import { jobRow } from '../../support/app-fixtures.js';
 import { buildTar } from '../../support/tar.js';
 
@@ -91,8 +92,21 @@ describe('registrableDomain', () => {
     expect(registrableDomain('jobs.bbc.co.uk')).toBe('bbc.co.uk');
     expect(registrableDomain('okta.com.')).toBe('okta.com');
   });
+  it('applies the ccTLD rule and the hosting suffixes', () => {
+    expect(registrableDomain('www.foo.co.za')).toBe('foo.co.za');
+    expect(registrableDomain('a.b.bar.com.mx')).toBe('bar.com.mx');
+    expect(registrableDomain('www.x.org.au')).toBe('x.org.au');
+    expect(registrableDomain('jobs.hmrc.gov.uk')).toBe('hmrc.gov.uk');
+    expect(registrableDomain('www.ox.ac.uk')).toBe('ox.ac.uk');
+    expect(registrableDomain('careers.y.com.hk')).toBe('y.com.hk');
+    expect(registrableDomain('acme.herokuapp.com')).toBe('acme.herokuapp.com');
+    for (const h of ['a.netlify.app', 'a.pages.dev', 'a.web.app', 'a.firebaseapp.com', 'a.azurewebsites.net', 'a.onrender.com']) expect(registrableDomain(h)).toBe(h);
+    expect(registrableDomain('www.foo.com')).toBe('foo.com');
+    expect(registrableDomain('careers.bar.co.in')).toBe('bar.co.in');
+    expect(registrableDomain('example.co')).toBe('example.co');
+  });
   it('refuses IPs, localhost, single labels and bare suffixes', () => {
-    for (const h of ['127.0.0.1', '10.1.2.3', '[::1]', '::1', 'localhost', 'intranet', 'co.uk', 'github.io', '']) {
+    for (const h of ['127.0.0.1', '10.1.2.3', '[::1]', '::1', 'localhost', 'intranet', 'co.uk', 'github.io', 'co.za', 'com.mx', 'gov.uk', 'herokuapp.com', '']) {
       expect(registrableDomain(h)).toBeNull();
     }
   });
@@ -260,6 +274,41 @@ describe('picks and jobs items', () => {
     } finally {
       app.close();
     }
+  });
+});
+
+describe('collisions are never silent', () => {
+  it('a source reports a company dropped for a shared key, naming both', async () => {
+    const s = serve({ [YC_URL]: JSON.stringify([
+      { name: 'Beta Inc', status: 'Active', isHiring: true, website: 'https://www.shared.io' },
+      { name: 'Alpha', status: 'Active', isHiring: true, website: 'https://shared.io/x' },
+    ]) });
+    const { out, skips } = await seed({ source: 'yc' }, s);
+    expect(out.map((c) => c.name)).toEqual(['Alpha']);
+    expect(skips).toHaveLength(1);
+    expect(skips[0]).toMatch(/"Beta Inc".*shared\.io.*"Alpha"/);
+  });
+  it('mergeCandidates reports every loser', () => {
+    const notes: string[] = [];
+    const out = mergeCandidates([cand({ name: 'J', source: 'jobs' }), cand({ name: 'Y', source: 'yc' }), cand({ name: 'P', source: 'pick' })], (n) => notes.push(n));
+    expect(out.map((c) => c.name)).toEqual(['P']);
+    expect(notes).toHaveLength(2);
+    expect(notes.join('\n')).toMatch(/"J"[^\n]*"P"/);
+    expect(notes.join('\n')).toMatch(/"Y"[^\n]*"P"/);
+  });
+});
+
+describe('offline provider', () => {
+  it('serves the binary tar.gz fixture and the JSON fixture through seed', async () => {
+    const dir = new URL('../../fixtures/coverage/seed/', import.meta.url).pathname;
+    const off = offlineProviders(dir);
+    const run = async (source: 'remoteintech' | 'yc') => {
+      const ctx = issueContext({ contract: companySeedContract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: off.fetch }, clock: fixedClock('2026-10-13T00:00:00Z'), signal: new AbortController().signal });
+      return companySeed.run({ runDate: RUN, source }, ctx);
+    };
+    expect(await run('remoteintech')).toHaveLength(20);
+    expect(await run('yc')).toHaveLength(24);
+    expect(off.fetch.calls).toEqual([REMOTEINTECH_URL, YC_URL]);
   });
 });
 
