@@ -115,6 +115,8 @@ export interface RateBasis {
   readonly weeks: number | null;
   readonly hours: number | null;
   readonly budgetType: string;
+  /** The preset tier in USD when the gig was posted in one (`presetTierUsd`), else null or absent. */
+  readonly presetTier?: { readonly lo: number; readonly hi: number } | null;
 }
 
 const num1 = (n: number): string => n.toFixed(1).replace(/\.0$/, '');
@@ -132,7 +134,8 @@ function perHour(r: GigRate): string {
  * The rate as the user reads it, always with how it was reached (spec §5: a derived rate is never shown without its
  * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
  * "$50/h from ~60 hours stated" or "$25/h from 3 weeks × 20 h stated"; `monthly÷hours`: "$46.19/h from a monthly
- * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"). A rate the
+ * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"), or for a
+ * preset tier (final review I1) "preset tier $750–1,500 (client picked a range; bids may exceed it)". A rate the
  * platform's own exchange rate converted ends with " · via platform FX". When a derived rate's basis is not on record
  * the label says so instead of guessing it.
  */
@@ -140,6 +143,8 @@ export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
   const fx = rate?.fxSource === 'platform' ? ' · via platform FX' : '';
   if (rate === null || rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
     const b = rate?.budgetUsd ?? null;
+    const t = basis.presetTier ?? null;
+    if (t !== null) return `preset tier ${usdText(Math.round(t.lo))}–${usdText(Math.round(t.hi)).slice(1)} (client picked a range; bids may exceed it)${fx}`;
     const kind = basis.budgetType === 'monthly' ? 'monthly' : basis.budgetType === 'fixed' ? 'fixed' : null;
     return b !== null && kind !== null ? `rate unknown - ${kind} budget ${usdText(b)}${fx}` : `rate unknown${fx}`;
   }

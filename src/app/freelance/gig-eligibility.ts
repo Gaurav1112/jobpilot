@@ -55,7 +55,8 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  * 8. budget-below-floor: kind `gig`, rate unknown, `budgetUsd` below `fixedBudgetFloorUsd`. A kind `gig` with a budget
  *    at or above the floor is eligible on that, with the rate left unknown. A fixed budget whose raw currency, minimum
  *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
- *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected.
+ *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected; at or above the floor
+ *    (user decision 2026-10-13) it stays eligible with that note, so every surface labels it a preset tier.
  * 9. rate-below-floor:<maxUsdH>: `maxUsdH` below `rateFloorUsdHour`, for a `stated` rate, or for a derived one
  *    (`derivedRateCountsForFloor`; when false it is a note). A rate with no maximum cannot be below the floor. An
  *    unknown rate (contract, or a gig with no budget) is `rate unknown - verify`.
@@ -107,6 +108,18 @@ export const NOTE_OVERLAP = 'overlap stated - verify';
 export const NOTE_OTHER_WORK = 'restriction on other work - verify';
 export const NOTE_EXCLUSIVITY = 'exclusivity wording - verify';
 export const NOTE_PRESET = 'preset bracket - bids may exceed it';
+/**
+ * The preset tier a stored gig was posted in, in US dollars (final review I1): the gig carries `NOTE_PRESET`, a fixed
+ * budget with a raw minimum and maximum, and a converted `budgetUsd` (the raw maximum in USD), so the minimum is
+ * converted at the same rate. Null for any other gig. The dashboard's rate label and the notification's top use it.
+ */
+export function presetTierUsd(g: { readonly notes: readonly string[]; readonly budget: unknown; readonly rate: unknown }): { readonly lo: number; readonly hi: number } | null {
+  if (!g.notes.includes(NOTE_PRESET)) return null;
+  const b = g.budget as { type?: unknown; min?: unknown; max?: unknown } | null;
+  const hi = (g.rate as { budgetUsd?: unknown } | null)?.budgetUsd;
+  if (b === null || typeof b !== 'object' || b.type !== 'fixed' || typeof b.min !== 'number' || typeof b.max !== 'number' || b.max <= 0 || typeof hi !== 'number') return null;
+  return { lo: (hi * b.min) / b.max, hi };
+}
 export const NOTE_ROLE_FILTER = 'title matches your role filter: ';
 export const NOTE_PARTIAL_SCOPE = 'stated hours may cover part of the scope - verify';
 export const NOTE_RATE_NEGOTIABLE = 'rate negotiable - verify';
@@ -530,7 +543,8 @@ function payOutcome(r: RatedGig, f: GigPack['freelance'], tiers: readonly Tier[]
   const preset = isPreset(gig, tiers);
   if (rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
     if (gig.kind === 'gig' && rate.budgetUsd !== null) {
-      if (rate.budgetUsd >= f.fixedBudgetFloorUsd) return PASS;
+      // A preset at or above the floor stays eligible, labelled (spec §13 D1b, user decision 2026-10-13).
+      if (rate.budgetUsd >= f.fixedBudgetFloorUsd) return preset ? noteOf(NOTE_PRESET) : PASS;
       if (preset) return reviewOf('budget-preset', NOTE_PRESET);
       return hedged(gig.description) ? negotiable() : rejectOf('budget-below-floor');
     }

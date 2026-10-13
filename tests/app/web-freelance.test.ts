@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Gig, GigRendered } from '../../src/app/freelance/types.js';
 import { AppStore, type GigDoc, type GigUpsert } from '../../src/app/store/app-store.js';
 import { rateLabel } from '../../src/app/web/copy.js';
+import { presetTierUsd } from '../../src/app/freelance/gig-eligibility.js';
 import { createDashboard } from '../../src/app/web/server.js';
 import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { NOTE_ONE_SKILL } from '../../src/app/freelance/project.js';
@@ -261,6 +262,12 @@ describe('freelance tabs: the rows', () => {
     expect(rateLabel(r({ minUsdH: 46.19, maxUsdH: 46.19, method: 'monthly÷hours', budgetUsd: 4000 }), { description: '', weeks: null, hours: 20, budgetType: 'monthly' })).toBe('$46.19/h from a monthly $4,000 at 20 h/week stated');
     expect(rateLabel(r({ budgetUsd: 750 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $750');
     expect(rateLabel(r({ budgetUsd: 1500, fxSource: 'platform' }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $1,500 · via platform FX');
+    // a preset tier is labelled as one (final review I1)
+    expect(rateLabel(r({ budgetUsd: 1500 }), { description: '', weeks: null, hours: null, budgetType: 'fixed', presetTier: { lo: 750, hi: 1500 } })).toBe('preset tier $750–1,500 (client picked a range; bids may exceed it)');
+    const preset = { notes: ['preset bracket - bids may exceed it'], budget: { type: 'fixed', min: 750, max: 1500, currency: 'USD' }, rate: r({ budgetUsd: 1500 }) };
+    expect(presetTierUsd(preset)).toEqual({ lo: 750, hi: 1500 });
+    expect(presetTierUsd({ ...preset, notes: [] })).toBeNull(); // only a gig the eligibility agent labelled
+    expect(presetTierUsd({ ...preset, budget: { type: 'hourly', min: 60, max: 68, currency: 'CAD' } })).toBeNull();
     expect(rateLabel(null, { description: '', weeks: null, hours: null, budgetType: 'unknown' })).toBe('rate unknown');
     // a derived rate whose basis cannot be shown is not shown at all
     expect(rateLabel(r({ minUsdH: 75, maxUsdH: 75, method: 'derived-from-duration', budgetUsd: 3000 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('$75/h derived from the duration (the basis is not on record)');

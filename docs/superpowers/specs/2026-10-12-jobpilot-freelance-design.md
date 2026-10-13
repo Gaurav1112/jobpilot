@@ -343,6 +343,9 @@ read); session-browse of any marketplace.
   preset bracket (`platform-rules.yaml: freelancer.presetBrackets`, derived from recordings: same bracket for at least 3
   distinct clients) goes to review with the note `preset bracket - bids may exceed it`, never `budget-below-floor`.
   Found on 2026-10-12: 33 of 91 floor rejects sat at Freelancer's stock ₹12,500–37,500 cap.
+  (User decision, 2026-10-13: a preset bracket at or above `fixedBudgetFloorUsd` stays eligible but carries the same
+  note and is labelled a preset everywhere: the rate label "preset tier $750–1,500 (client picked a range; bids may
+  exceed it)" and the notification's top "preset tier $X–Y".)
 - **Role filter on gigs → review (controller, 2026-10-12):** `filters.roleDeny` was written for job titles and misfires
   on gig titles (about 6 of 35 wrong), so for gigs a match is `review` with the pattern named, never a reject.
 - **D2: the full-time pipeline accepts full-time B2B contractor roles, labelled.** A posting whose

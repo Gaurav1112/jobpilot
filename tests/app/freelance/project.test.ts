@@ -204,6 +204,17 @@ describe('the freelance notification', () => {
     expect(gigNotificationFor([fixed], o)).toBe('1 new gig ≥$40/h · top: budget $1500 Build a Stripe checkout (Freelancer)');
   });
 
+  it('a preset-tier top says "preset tier $X–Y" (final review I1)', () => {
+    const preset = view({
+      kind: 'gig', list: 'gigs', title: 'Go backend developer', notes: ['preset bracket - bids may exceed it'], budget: { type: 'fixed', min: 750, max: 1500, currency: 'USD' },
+      rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: 1500 },
+    });
+    expect(gigNotificationFor([preset], o)).toBe('1 new gig ≥$40/h · top: preset tier $750–1500 Go backend developer (Freelancer)');
+    // an INR tier is converted at the budget's own rate: 12,500-37,500 INR with a 449.10 USD top
+    const inr = view({ ...preset, budget: { type: 'fixed', min: 12500, max: 37500, currency: 'INR' }, rate: { ...preset.rate as object, budgetUsd: 449.1 } });
+    expect(gigNotificationFor([inr], o)).toBe('1 new gig ≥$40/h · top: preset tier $150–449 Go backend developer (Freelancer)');
+  });
+
   it('skips a red-flagged top; with no gig: "No new gigs this morning" or "… this evening"', () => {
     const red = view({ gigKey: 'd'.repeat(16), title: 'Pay via crypto first', rate: { maxUsdH: 200, minUsdH: 200, method: 'stated', budgetUsd: null }, flags: [{ id: 'upfront-fee', detail: 'x' }] });
     expect(gigNotificationFor([red, view({})], o)).toBe('2 new gigs ≥$40/h · top: $65/h Go API contract (Freelancer)');

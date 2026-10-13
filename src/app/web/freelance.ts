@@ -4,6 +4,7 @@ import { NETWORK_FILES } from '../freelance/networks-command.js';
 import { isoWeek } from '../freelance/health.js';
 import { ALERT_PARSERS } from '../freelance/mail/parsers/index.js';
 import { PLATFORM_AGENT } from '../freelance/pipeline.js';
+import { presetTierUsd } from '../freelance/gig-eligibility.js';
 import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
 import { rankable } from '../freelance/run.js';
@@ -149,7 +150,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const bids = numOrNull(g.breakdown?.['bids']) ?? numOrNull(x.gig?.['bids']);
     return {
       gig: g,
-      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType }),
+      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType, presetTier: presetTierUsd(g) }),
       hours: hoursText(hours),
       overlap: overlap === null ? null : text(overlap),
       istWindow: `${rules.istWindow.replace('-', '–')} IST`,

@@ -125,7 +125,11 @@ describe('gig-eligibility: role filter and preset brackets', () => {
     const fixed = (currency: 'INR' | 'USD' | 'EUR', min: number, max: number, budgetUsd: number) =>
       decide(rated({ kind: 'gig', hoursPerWeek: { min: null, max: null, source: null }, budget: { type: 'fixed', min, max, currency, usdPerUnit: null } }, { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd }));
     expect(fixed('INR', 12500, 37500, 449.1)).toEqual({ verdict: 'review', reasons: ['budget-preset'], notes: ['preset bracket - bids may exceed it'] });
-    expect(fixed('INR', 12500, 37500, 4491)).toEqual({ verdict: 'eligible', reasons: [], notes: [] }); // whatever the fx said, the top is above the floor
+    // whatever the fx said, the top is above the floor: eligible, but labelled a preset (user decision 2026-10-13)
+    expect(fixed('INR', 12500, 37500, 4491)).toEqual({ verdict: 'eligible', reasons: [], notes: ['preset bracket - bids may exceed it'] });
+    expect(fixed('USD', 250, 750, 750)).toEqual({ verdict: 'eligible', reasons: [], notes: ['preset bracket - bids may exceed it'] });
+    expect(fixed('USD', 750, 1500, 1500)).toEqual({ verdict: 'eligible', reasons: [], notes: ['preset bracket - bids may exceed it'] });
+    expect(fixed('USD', 600, 900, 900)).toEqual({ verdict: 'eligible', reasons: [], notes: [] }); // not a preset: no label
     expect(fixed('INR', 12500, 30000, 359.28).reasons).toEqual(['budget-below-floor']);
     expect(fixed('USD', 300, 300, 300).reasons).toEqual(['budget-below-floor']);
     // a pack without presets rejects the same INR bracket

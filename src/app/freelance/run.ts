@@ -16,6 +16,7 @@ import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
 import { foreignSourceStep, recordSourceHealth } from './health.js';
 import { GMAIL_LABEL_MISSING } from './mail/google.js';
 import { GMAIL_OFF, type GmailRunAccess } from './mail/oauth.js';
+import { presetTierUsd } from './gig-eligibility.js';
 import { freelanceSeeds } from './pipeline.js';
 import { projectFreelanceRun, type GigProjectResult } from './project.js';
 import { rankGigs, RED } from './rank.js';
@@ -118,7 +119,8 @@ export function rankable(g: GigView, list: ScoredGig['list'] = 'gigs'): ScoredGi
  * The notification text (spec §1, Task 9): `<N> new gigs ≥$<floor>/h · top: $<maxUsdH>/h <title ≤ 40> (<Platform>)`
  * (`1 new gig`), where the gigs are the newly shortlisted ones (Contracts or Gigs, documents ready, never announced)
  * and the top is the first of them in `rankGigs` order that has no red flag. When the top's hourly rate is unknown (an
- * eligible fixed-price gig) it shows `budget $<budgetUsd>` instead (`$?/h` when that is unknown too). None:
+ * eligible fixed-price gig) it shows `budget $<budgetUsd>` instead, or `preset tier $<lo>–<hi>` when the gig was
+ * posted in a platform's preset tier (final review I1), and `$?/h` when the budget is unknown too. None:
  * `No new gigs this morning` (am) or `… this evening` (pm). Then ` · <k> problems` when the run had any. One line,
  * never a forbidden term: if the top holds one only the count is shown, and if even that would, `jobpilot freelance
  * run finished`.
@@ -135,7 +137,12 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
   const top = topRow === undefined ? undefined : byKey.get(topRow.risked.verdict.rated.gig.gigKey);
   if (top === undefined) return clean(`${count}${tail}`) ?? fallback;
   const rate = (top.rate ?? { maxUsdH: null, budgetUsd: null }) as RateLike;
-  const pay = rate.maxUsdH !== null ? `$${dollars(rate.maxUsdH)}/h` : rate.budgetUsd !== null ? `budget $${dollars(rate.budgetUsd)}` : '$?/h';
+  const tier = rate.maxUsdH === null ? presetTierUsd(top) : null;
+  const pay =
+    rate.maxUsdH !== null ? `$${dollars(rate.maxUsdH)}/h`
+    : tier !== null ? `preset tier $${dollars(Math.round(tier.lo))}–${dollars(Math.round(tier.hi))}`
+    : rate.budgetUsd !== null ? `budget $${dollars(rate.budgetUsd)}`
+    : '$?/h';
   const full = oneLine(`${count} · top: ${pay} ${shortTitle(top.title)} (${PLATFORM_NAME[top.platform as Platform] ?? top.platform})${tail}`);
   return clean(full) ?? clean(`${count}${tail}`) ?? fallback;
 }
