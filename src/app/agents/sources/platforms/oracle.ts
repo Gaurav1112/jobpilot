@@ -60,8 +60,9 @@ import {
  *   board, which the bounds refuse loudly);
  * - each scoped first page's `TotalJobsCount` is checked against the counts (`scopeMiss`: the sum + max(5, 5%), the
  *   largest − max(5, 5%)): outside them the step fails `input_rejected` `scope-not-applied`, nothing read from it;
- * - no office-city lists: every requisition names its locations (`PrimaryLocation`, `secondaryLocations`), so an
- *   office city is read from the job's own location values, never invented;
+ * - no office-city lists (an accepted deviation): every requisition names its locations (`PrimaryLocation`,
+ *   `secondaryLocations`), so an office city is read from the platform's own location values, never invented; the
+ *   office-subset rule stays Workday's;
  * - location facets naming neither India nor a remote type: the named skip `no-india-or-remote-facet`; no location
  *   facets at all: the unscoped list, read from that first page (within the same 10 pages);
  * - one requisition in two lists is one posting (by its Id): the one naming an office city, then India, then the first;

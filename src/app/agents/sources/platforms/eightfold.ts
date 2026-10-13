@@ -33,22 +33,29 @@ import {
  *   (once per host per run, by the injected host state). Both recorded tenants say `Disallow: /` with `Allow:
  *   /careers`, `Allow: /api/apply`, `Allow: /api/pcsx` (seen live 2026-10-14). A disallow is the named skip
  *   `robots-disallow <host>: <company> not read today (…)`, nothing fetched;
- * - every request waits EIGHTFOLD_MIN_INTERVAL_MS (5 s) after the previous one to the host. Seen live 2026-10-14:
- *   Microsoft answered 429 to requests 2.5 s and 4 s apart, and 200 to API requests 6, 8 and 15 s apart; but the live
- *   daily check at 5 s was refused (429) about 20 s into the company, and a probe at 10 s answered 429 for about 30 s
- *   after the careers page, then 200 again. Microsoft's PCSX host throttles beyond what a fixed spacing avoids: the
- *   adapter does not work around it (the host is disabled for the run, a named problem), Netflix is not throttled;
+ * - pacing per API variant (Fix round 1, a controller decision): v2 requests wait EIGHTFOLD_V2_MIN_INTERVAL_MS (2 s)
+ *   after the previous one to the host, PCSX API requests EIGHTFOLD_PCSX_MIN_INTERVAL_MS (10 s; robots.txt and the
+ *   careers page keep 2 s), with a detail budget of 40 (v2) or 20 (PCSX). Seen live 2026-10-14: Microsoft (PCSX)
+ *   answered 429 at 2.5 s and 4 s, 200 at 6 to 20 s, refused the 5 s live run about 20 s in, and answered 429 for about
+ *   30 s after its careers page in a 10 s probe; Netflix (v2) was never throttled;
  * - a 401, 403 or 429 (or a challenge/429 robots.txt) disables the host for the run: the step fails `challenged` (401,
  *   403) or `rate_limit` (429), is never retried around, and a later company on the same host is deferred
- *   (`input_rejected`, `host-disabled:<why> on <host>`) without a request.
+ *   (`input_rejected`, `host-disabled:<why> on <host>`) without a request. Retry-After is never honoured: a throttled
+ *   tenant (Microsoft) is a named problem that day, nothing more.
  *
  * Two APIs, one per tenant (the research, and seen live): the older `v2` (`GET /api/apply/v2/jobs?domain=<d>&start=<n>
  * &num=10`, Netflix) and the newer `pcsx` (`GET /api/pcsx/search?domain=<d>&query=&location=<loc>&start=<n>
  * &sort_by=relevance`, Microsoft). Each tenant answers 403 on the other one ("PCSX is not enabled for this user",
- * "Not authorized for PCSX"), and a 403 disables the host, so the adapter never guesses: it reads the tenant's own
- * careers page (`/careers?domain=<d>`, allowed by robots.txt) once per company per run and takes the API from the
- * configuration element the page embeds (`id="pcsx-data"` → pcsx, `id="smartApplyData"` → v2, the markers the
- * platform detector already reads). A page naming neither is `input_rejected` (`eightfold-api-unknown`), never a guess.
+ * "Not authorized for PCSX"), and a 403 disables the host, so the API is never guessed. It is detected per tenant (an
+ * accepted deviation) from the configuration element its careers page (`/careers?domain=<d>`, allowed by robots.txt)
+ * embeds (`id="pcsx-data"` → pcsx, `id="smartApplyData"` → v2, the markers the platform detector already reads):
+ * - once a week, by the coverage verifier, which stores it in the registry row's slug (`pcsx:<host>/<domain>`,
+ *   `v2:<host>/<domain>`; no migration) with that API's board URL. The daily run's ref carries it, and the adapter calls
+ *   the API directly, with no careers-page request (Fix round 1);
+ * - a registry row from before that (a plain `<host>/<domain>` slug): the adapter reads the careers page once per run,
+ *   until the next weekly verify stores the variant.
+ * A page naming neither marker is `input_rejected` (`eightfold-api-unknown`); a stale stored variant answers 403, which
+ * disables the host for the run (`challenged`, named), never a guess at the other API.
  *
  * Scope (as Task 6, Decision A): the user can take a job located in India or a remote one, so the reads are scoped
  * with the platform's own location filter, from the facets of the unscoped first page (start 0, read for its facets
@@ -63,8 +70,9 @@ import {
  *   read from it. Seen live: Netflix India 9 (facet 9), remote 113 (facet 112); Microsoft India 253 (Bengaluru 131 +
  *   Hyderabad 117: the PCSX facet list shows only its top values, so a board whose India values are not among them
  *   has no India list);
- * - no office-city lists: unlike Workday's "2 Locations", every Eightfold job lists each of its locations by name
- *   (`locations`), so an office city is read from the job's own location values, never invented;
+ * - no office-city lists (an accepted deviation): unlike Workday's "2 Locations", every Eightfold job lists each of its
+ *   locations by name (`locations`), so an office city is read from the platform's own location values, never invented;
+ *   the office-subset rule stays Workday's;
  * - a `locations` facet naming neither India nor a remote type: the named skip `no-india-or-remote-facet`; no
  *   `locations` facet at all: the unscoped list, read from that first page;
  * - the union is deduped by the platform job id: the posting naming an office city wins, then one naming India, then
@@ -72,14 +80,14 @@ import {
  * - by design, a job located only outside India and not of a remote type is never read.
  *
  * Paging: `start` += EIGHTFOLD_PAGE_SIZE (10, fixed: `num` is ignored) until a page is empty or `start >= count` (the
- * first page's), at most `eightfoldPagesPerList()` pages per list (EIGHTFOLD_MAX_PAGES, less so the whole step stays
- * within EIGHTFOLD_MAX_REQUESTS, 90% of the step timeout at the 5 s spacing); a longer list fails loudly (`page cap
+ * first page's), at most `eightfoldPagesPerList(api)` pages per list (EIGHTFOLD_MAX_PAGES, less so the whole step stays
+ * within `eightfoldMaxRequests(api)`, 90% of the step timeout at the variant's spacing: v2 405, PCSX 81); a longer list fails loudly (`page cap
  * reached`, `input_rejected`). A page whose jobs were all seen before is `invalid_output` (the API ignored `start`). A
  * list ending before its count gets the note `short-list <company>: count N, listed M`.
  *
  * Detail (v2 `GET /api/apply/v2/jobs/<id>?domain=<d>`, pcsx `GET /api/pcsx/position_details?position_id=<id>
  * &domain=<d>&hl=en`): only for rank-0 jobs (a location naming India, India-remote included) whose title passes the
- * pre-filter, at most EIGHTFOLD_MAX_DETAILS per company per run, ties by id; the rest flow without one, with the named
+ * pre-filter, at most `eightfoldMaxDetails(api)` per company per run (v2 40, PCSX 20), ties by id; the rest flow without one, with the named
  * note `detail-budget <company>: …`. A detail answering 404/410 is a gone job: dropped, with a `detail-gone` note.
  *
  * Every response is zod-checked first; one missing an expected field (a page without `count` or `positions`, a detail
@@ -93,17 +101,23 @@ import {
 
 export const EIGHTFOLD_PAGE_SIZE = 10;
 export const EIGHTFOLD_MAX_PAGES = 100;
-export const EIGHTFOLD_MAX_DETAILS = 40;
-/** The spacing of requests to one Eightfold host (Microsoft answered 429 at 2.5 s and 4 s; spec §4: at least 2 s). */
-export const EIGHTFOLD_MIN_INTERVAL_MS = 5000;
+/** Spacing of requests to a v2 tenant's host (spec §4: at least 2 s; Netflix was never throttled). Also robots.txt and the careers page. */
+export const EIGHTFOLD_V2_MIN_INTERVAL_MS = 2000;
+/** Spacing of the API requests to a PCSX tenant's host (Fix round 1: Microsoft throttled 5 s; a controller decision). */
+export const EIGHTFOLD_PCSX_MIN_INTERVAL_MS = 10_000;
+/** Details per company per run: v2 40; PCSX 20, so a PCSX company's step stays within its timeout at the 10 s spacing. */
+export const EIGHTFOLD_V2_MAX_DETAILS = 40;
+export const EIGHTFOLD_PCSX_MAX_DETAILS = 20;
 export const EIGHTFOLD_TIMEOUT_MS = 900_000;
-/** The requests one step may make at most: 90% of the step timeout at the 5 s spacing. */
-export const EIGHTFOLD_MAX_REQUESTS = Math.floor((EIGHTFOLD_TIMEOUT_MS * 0.9) / EIGHTFOLD_MIN_INTERVAL_MS);
+export const eightfoldMinIntervalMs = (api: EightfoldApi): number => (api === 'pcsx' ? EIGHTFOLD_PCSX_MIN_INTERVAL_MS : EIGHTFOLD_V2_MIN_INTERVAL_MS);
+export const eightfoldMaxDetails = (api: EightfoldApi): number => (api === 'pcsx' ? EIGHTFOLD_PCSX_MAX_DETAILS : EIGHTFOLD_V2_MAX_DETAILS);
+/** The requests one step may make at most: 90% of the step timeout at the variant's spacing (v2 405, PCSX 81). */
+export const eightfoldMaxRequests = (api: EightfoldApi): number => Math.floor((EIGHTFOLD_TIMEOUT_MS * 0.9) / eightfoldMinIntervalMs(api));
 /** robots.txt, the careers page and the discovery page, set aside with the details before the lists share the rest. */
 const FIXED_REQUESTS = 3;
 /** The page cap of each list: the India and remote lists share what robots.txt, the careers page, discovery and the details leave. */
-export function eightfoldPagesPerList(lists = 2): number {
-  return Math.min(EIGHTFOLD_MAX_PAGES, Math.floor((EIGHTFOLD_MAX_REQUESTS - FIXED_REQUESTS - EIGHTFOLD_MAX_DETAILS) / Math.max(1, lists)));
+export function eightfoldPagesPerList(api: EightfoldApi, lists = 2): number {
+  return Math.min(EIGHTFOLD_MAX_PAGES, Math.floor((eightfoldMaxRequests(api) - FIXED_REQUESTS - eightfoldMaxDetails(api)) / Math.max(1, lists)));
 }
 /** A facet count at or above this is a sentinel ("Remote": 999999), never a count. */
 export const EIGHTFOLD_COUNT_SENTINEL = 999_999;
@@ -116,19 +130,28 @@ export interface EightfoldBoard {
   readonly host: string;
   /** The tenant's `domain` parameter (`netflix.com`). */
   readonly domain: string;
+  /** The tenant's API, when the registry stored it (Fix round 1: the verifier's detection, in the slug); absent: detected from the careers page. */
+  readonly api?: EightfoldApi;
 }
 
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/u;
 
-/** `<host>/<domain>` → the board; null when it is not one. */
+/** `[v2:|pcsx:]<host>/<domain>` → the board (the prefix: the stored API variant); null when it is not one. */
 export function parseEightfoldRef(ref: string): EightfoldBoard | null {
-  const [host, domain, ...rest] = ref.split('/');
+  const m = /^(?:(v2|pcsx):)?([^:]*)$/u.exec(ref);
+  if (m === null) return null;
+  const [host, domain, ...rest] = (m[2] as string).split('/');
   if (host === undefined || domain === undefined || rest.length > 0) return null;
   if (!HOSTNAME.test(host) || !HOSTNAME.test(domain)) return null;
-  return { host, domain };
+  return m[1] === undefined ? { host, domain } : { host, domain, api: m[1] as EightfoldApi };
 }
 
-export const eightfoldRef = (b: EightfoldBoard): string => `${b.host}/${b.domain}`;
+/** The board's ref, with its API variant prefix when known (`pcsx:apply.careers.microsoft.com/microsoft.com`). */
+export const eightfoldRef = (b: EightfoldBoard): string => `${b.api === undefined ? '' : `${b.api}:`}${b.host}/${b.domain}`;
+
+/** The board URL the registry stores for a board of a known API: its list endpoint, without paging. */
+export const eightfoldStoredBoardUrl = (b: EightfoldBoard, api: EightfoldApi): string =>
+  api === 'v2' ? `https://${b.host}/api/apply/v2/jobs?${qs([['domain', b.domain]])}` : `https://${b.host}/api/pcsx/search?${qs([['domain', b.domain]])}`;
 
 /** The board of a stored board URL (`https://<host>/api/apply/v2/jobs?domain=<d>`, the registry's board_url, or a PCSX search URL). */
 export function eightfoldBoardOfUrl(boardUrl: string): EightfoldBoard | null {
@@ -363,7 +386,7 @@ export interface EightfoldDiscovery {
 }
 export type EightfoldHosts = PlatformHosts<EightfoldDiscovery>;
 
-const reqOpts = (timeoutMs: number | undefined) => ({ minIntervalMs: EIGHTFOLD_MIN_INTERVAL_MS, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
+const reqOpts = (api: EightfoldApi, timeoutMs: number | undefined) => ({ minIntervalMs: eightfoldMinIntervalMs(api), ...(timeoutMs === undefined ? {} : { timeoutMs }) });
 
 const PCSX_MARKER = /\bid\s*=\s*["']pcsx-data["']/u;
 const V2_MARKER = /\bid\s*=\s*["']smartApplyData["']/u;
@@ -378,7 +401,7 @@ export function eightfoldApiOfPage(html: string): EightfoldApi | null {
 /** The tenant's API, from its careers page (one GET, robots.txt checked). A 404 is a retired board (`gone`). */
 export async function fetchApi(http: HttpTool, hosts: EightfoldHosts, b: EightfoldBoard, company: string, timeoutMs?: number): Promise<EightfoldApi> {
   const url = eightfoldCareersUrl(b);
-  const r = await hostRequest(http, hosts, b.host, url, () => http.getPage(url, reqOpts(timeoutMs)));
+  const r = await hostRequest(http, hosts, b.host, url, () => http.getPage(url, reqOpts('v2', timeoutMs)));
   if (r.status === 404 || r.status === 410) throw new KernelError('gone', `eightfold board not found: ${eightfoldRef(b)}`);
   if (r.status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${r.status} for the ${b.domain} careers page`);
   const api = eightfoldApiOfPage(r.body);
@@ -389,7 +412,7 @@ export async function fetchApi(http: HttpTool, hosts: EightfoldHosts, b: Eightfo
 /** One list page, shape-checked. A 404 is a retired board (`gone`), any other 4xx `invalid_output`. */
 export async function fetchListPage(http: HttpTool, hosts: EightfoldHosts, b: EightfoldBoard, api: EightfoldApi, start: number, query: EightfoldQuery = {}, timeoutMs?: number): Promise<EightfoldListPage> {
   const url = eightfoldListUrl(b, api, start, query);
-  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.getJson(url, reqOpts(timeoutMs)));
+  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.getJson(url, reqOpts(api, timeoutMs)));
   if (status === 404 || status === 410) throw new KernelError('gone', `eightfold board not found: ${eightfoldRef(b)}`);
   if (status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${status} for the ${b.domain} list at start ${start}`);
   return parseListPage(api, json, `eightfold ${eightfoldRef(b)}`);
@@ -398,7 +421,7 @@ export async function fetchListPage(http: HttpTool, hosts: EightfoldHosts, b: Ei
 /** One job's detail, shape-checked; null when the job is gone (404/410). */
 export async function fetchDetail(http: HttpTool, hosts: EightfoldHosts, b: EightfoldBoard, api: EightfoldApi, id: string, timeoutMs?: number): Promise<EightfoldDetailRaw | null> {
   const url = eightfoldDetailUrl(b, api, id);
-  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.getJson(url, reqOpts(timeoutMs)));
+  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.getJson(url, reqOpts(api, timeoutMs)));
   if (status === 404 || status === 410) return null;
   if (status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${status} for a ${b.domain} job detail`);
   return parseDetail(api, json, `eightfold ${eightfoldRef(b)}`);
@@ -476,8 +499,10 @@ export const srcEightfoldContract = defineContract({
 export interface SrcEightfoldOptions {
   readonly hosts: EightfoldHosts;
   readonly maxPages?: number;
+  /** Overrides the variant's detail budget (tests). */
   readonly maxDetails?: number;
 }
+type AdapterOptions = { readonly hosts: EightfoldHosts; readonly maxPages: number; readonly maxDetails: number | undefined };
 
 const rawOf = (p: RawPosting): EightfoldRaw => p.raw as EightfoldRaw;
 const placesOf = (r: EightfoldRaw): readonly string[] => [...r.locations, ...r.standardizedLocations];
@@ -485,7 +510,7 @@ const placesOf = (r: EightfoldRaw): readonly string[] => [...r.locations, ...r.s
 const indiaNamed = (p: RawPosting): boolean => placesOf(rawOf(p)).some(namesIndia);
 
 /** Pages one list from start 0, its first page already read: at most `maxPages` pages, never truncated silently. */
-async function readList(http: HttpTool, o: Required<SrcEightfoldOptions>, b: EightfoldBoard, api: EightfoldApi, req: DiscoveryRequest, query: EightfoldQuery, first: EightfoldListPage, ctx: AgentContext, label: string): Promise<RawPosting[]> {
+async function readList(http: HttpTool, o: AdapterOptions, b: EightfoldBoard, api: EightfoldApi, req: DiscoveryRequest, query: EightfoldQuery, first: EightfoldListPage, ctx: AgentContext, label: string): Promise<RawPosting[]> {
   const what = `eightfold ${req.company}`;
   const all: RawPosting[] = [];
   const seen = new Set<string>();
@@ -509,7 +534,7 @@ async function readList(http: HttpTool, o: Required<SrcEightfoldOptions>, b: Eig
   return all;
 }
 
-async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<SrcEightfoldOptions>): Promise<RawPosting[]> {
+async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: AdapterOptions): Promise<RawPosting[]> {
   const http = ctx.http;
   if (!http) throw new KernelError('policy_denied', 'no http capability issued');
   const b = parseEightfoldRef(req.slug);
@@ -517,18 +542,19 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   const pack = titlePackOf(ctx.pack, 'src-eightfold');
   const offices = pack.eligibility?.officeCities ?? [];
   try {
-    const key = eightfoldRef(b);
+    const key = `${b.host}/${b.domain}`;
     let found = o.hosts.scopes?.get(key);
     let first: EightfoldListPage | undefined;
     if (found === undefined) {
-      const api = await fetchApi(http, o.hosts, b, req.company);
+      // the stored variant (the coverage verifier's weekly detection); a row from before it: the careers page, once
+      const api = b.api ?? (await fetchApi(http, o.hosts, b, req.company));
       first = await fetchListPage(http, o.hosts, b, api, 0);
       found = { api, scopes: eightfoldScopes(api, first) };
       o.hosts.scopes?.set(key, found);
     }
     const { api, scopes } = found;
     const lists = ([['india', scopes.india], ['remote', scopes.remote]] as const).filter((x): x is readonly ['india' | 'remote', EightfoldScope] => x[1] !== null);
-    const maxPages = Math.min(o.maxPages, eightfoldPagesPerList(lists.length));
+    const maxPages = Math.min(o.maxPages, eightfoldPagesPerList(api, lists.length));
     const all: RawPosting[] = [];
     if (lists.length > 0) {
       for (const [name, sc] of lists) {
@@ -542,12 +568,12 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       return [];
     } else {
       first ??= await fetchListPage(http, o.hosts, b, api, 0);
-      all.push(...(await readList(http, { ...o, maxPages: Math.min(o.maxPages, eightfoldPagesPerList(1)) }, b, api, req, {}, first, ctx, '')));
+      all.push(...(await readList(http, { ...o, maxPages: Math.min(o.maxPages, eightfoldPagesPerList(api, 1)) }, b, api, req, {}, first, ctx, '')));
     }
     // one posting per job id: the one naming an office city, then one naming India, then the first seen
     const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices)) ? 0 : indiaNamed(p) ? 1 : 2));
 
-    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails, company: req.company, ctx });
+    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails ?? eightfoldMaxDetails(api), company: req.company, ctx });
     const details = new Map<string, EightfoldDetailRaw | null>();
     for (const p of chosen) details.set(p.sourceId, await fetchDetail(http, o.hosts, b, api, p.sourceId));
     const gone = [...details.entries()].filter(([, d]) => d === null).map(([id]) => id);
@@ -566,6 +592,6 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
 
 /** Builds `src-eightfold` for one run, on the run's host state (robots.txt cache, disabled hosts, discovery). */
 export function makeSrcEightfold(o: SrcEightfoldOptions): Agent<DiscoveryRequest, RawPosting> {
-  const opts: Required<SrcEightfoldOptions> = { hosts: o.hosts, maxPages: o.maxPages ?? EIGHTFOLD_MAX_PAGES, maxDetails: o.maxDetails ?? EIGHTFOLD_MAX_DETAILS };
+  const opts: AdapterOptions = { hosts: o.hosts, maxPages: o.maxPages ?? EIGHTFOLD_MAX_PAGES, maxDetails: o.maxDetails };
   return defineAgent(srcEightfoldContract, (req, ctx) => (req.ats === 'eightfold' ? runCompany(req, ctx, opts) : Promise.resolve([])));
 }

@@ -378,6 +378,24 @@ describe('board-verifier: Eightfold (the careers page names the API; the domain 
     expect(n.calls).toEqual([`https://${NF}/robots.txt`, `https://${NF}/careers?domain=netflix.com`, `https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]);
   });
 
+  it('fix round 1: a verified Eightfold verdict stores the detected API variant in its slug and the matching board URL (no migration)', async () => {
+    const fx = recorded<EfFixture>('eightfold-netflix');
+    const n = serve({ [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: { body: fx.careersPage }, [`https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]: { body: fx.discovery } });
+    const v = await verify(nfGuess(), n.fetch);
+    expect(v.guess.slug).toBe('v2:explore.jobs.netflix.net/netflix.com');
+    expect(v.guess.boardUrl).toBe('https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com');
+    const ms = recorded<EfFixture>('eightfold-microsoft');
+    const pcsx = `https://${MS}/api/pcsx/search?domain=microsoft.com&query=&location=&start=0&sort_by=relevance`;
+    const m = serve({ [`https://${MS}/robots.txt`]: { body: ms.robots }, [`https://${MS}/careers?domain=microsoft.com`]: { body: ms.careersPage }, [pcsx]: { body: ms.discovery } });
+    const mv = await verify(guess(cand('microsoft.com', 'Microsoft'), 'eightfold', `${MS}/microsoft.com`, { boardUrl: `https://${MS}/api/apply/v2/jobs?domain=microsoft.com` }), m.fetch);
+    expect(mv.status).toBe('verified');
+    expect(mv.guess.slug).toBe('pcsx:apply.careers.microsoft.com/microsoft.com');
+    expect(mv.guess.boardUrl).toBe('https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com');
+    // a re-verify of a stored variant detects again (weekly) and keeps one variant prefix
+    const again = await verify(guess(cand('microsoft.com', 'Microsoft'), 'eightfold', 'pcsx:apply.careers.microsoft.com/microsoft.com', { boardUrl: mv.guess.boardUrl }), serve({ [`https://${MS}/robots.txt`]: { body: ms.robots }, [`https://${MS}/careers?domain=microsoft.com`]: { body: ms.careersPage }, [pcsx]: { body: ms.discovery } }).fetch);
+    expect(again.guess.slug).toBe('pcsx:apply.careers.microsoft.com/microsoft.com');
+  });
+
   it('verifies the recorded Microsoft board through PCSX only (its v2 answers 403, never asked)', async () => {
     const fx = recorded<EfFixture>('eightfold-microsoft');
     const pcsx = `https://${MS}/api/pcsx/search?domain=microsoft.com&query=&location=&start=0&sort_by=relevance`;

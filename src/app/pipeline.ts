@@ -14,7 +14,7 @@ import { srcGreenhouse } from './agents/sources/greenhouse.js';
 import { HIMALAYAS_FEED, HIMALAYAS_MAX_PAGES, HIMALAYAS_TIMEOUT_MS, srcHimalayas } from './agents/sources/himalayas.js';
 import { JOBICY_FEED, JOBICY_MAX_REQUESTS, JOBICY_TIMEOUT_MS, srcJobicy } from './agents/sources/jobicy.js';
 import { LEVER_MAX_PAGES, LEVER_TIMEOUT_MS, srcLever } from './agents/sources/lever.js';
-import { eightfoldBoardOfUrl, eightfoldRef, EIGHTFOLD_EGRESS, EIGHTFOLD_MAX_REQUESTS, EIGHTFOLD_TIMEOUT_MS, makeSrcEightfold, parseEightfoldRef } from './agents/sources/platforms/eightfold.js';
+import { eightfoldBoardOfUrl, eightfoldMaxRequests, eightfoldRef, EIGHTFOLD_EGRESS, EIGHTFOLD_TIMEOUT_MS, makeSrcEightfold, parseEightfoldRef } from './agents/sources/platforms/eightfold.js';
 import { makeSrcOracle, oracleBoardOfUrl, oracleRef, ORACLE_EGRESS, ORACLE_MAX_REQUESTS, ORACLE_TIMEOUT_MS, parseOracleRef } from './agents/sources/platforms/oracle.js';
 import { makeSrcWorkday, parseWorkdayRef, workdayBoardOfUrl, workdayRef, WORKDAY_EGRESS, WORKDAY_MAX_REQUESTS, WORKDAY_TIMEOUT_MS } from './agents/sources/platforms/workday.js';
 import { dailyEightfoldHosts, dailyOracleHosts, dailyWorkdayHosts } from './daily-hosts.js';
@@ -65,10 +65,23 @@ export interface RegistryBoard {
 /** The registry platforms with a daily adapter in this build: each one's stored-board-URL reader, ref parser and egress. */
 const REGISTRY_PLATFORMS = {
   workday: { ref: (url: string) => mapNull(workdayBoardOfUrl(url), workdayRef), host: (ref: string) => parseWorkdayRef(ref)?.host ?? null, egress: WORKDAY_EGRESS },
-  eightfold: { ref: (url: string) => mapNull(eightfoldBoardOfUrl(url), eightfoldRef), host: (ref: string) => parseEightfoldRef(ref)?.host ?? null, egress: EIGHTFOLD_EGRESS },
+  eightfold: { ref: eightfoldRegistryRef, host: (ref: string) => parseEightfoldRef(ref)?.host ?? null, egress: EIGHTFOLD_EGRESS },
   oracle: { ref: (url: string) => mapNull(oracleBoardOfUrl(url), oracleRef), host: (ref: string) => parseOracleRef(ref)?.host ?? null, egress: ORACLE_EGRESS },
 } as const;
 export type RegistryPlatform = keyof typeof REGISTRY_PLATFORMS;
+
+/**
+ * An Eightfold board's ref from its stored board URL, with the API variant the coverage verifier stored in the slug
+ * (`pcsx:<host>/<domain>`, Fix round 1) when the slug names the same board; else the plain ref (a row verified before
+ * the variant was stored: the adapter detects it from the careers page until the next weekly verify).
+ */
+function eightfoldRegistryRef(url: string, slug: string | null | undefined): string | null {
+  const b = eightfoldBoardOfUrl(url);
+  if (b === null) return null;
+  const s = slug === null || slug === undefined ? null : parseEightfoldRef(slug);
+  const api = s !== null && s.host === b.host && s.domain === b.domain ? s.api : undefined;
+  return eightfoldRef(api === undefined ? b : { ...b, api });
+}
 const isRegistryPlatform = (p: string | null): p is RegistryPlatform => p !== null && Object.hasOwn(REGISTRY_PLATFORMS, p);
 function mapNull<A, B>(a: A | null, f: (a: A) => B): B | null {
   return a === null ? null : f(a);
@@ -79,6 +92,8 @@ export interface RegistryCompany {
   readonly name: string;
   readonly platform: string | null;
   readonly boardUrl: string | null;
+  /** The stored platform slug (Eightfold: `pcsx:<host>/<domain>` carries the API variant); absent or null: none. */
+  readonly platformSlug?: string | null;
 }
 
 /**
@@ -91,12 +106,13 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
   const out = new Map<string, RegistryBoard>();
   for (const c of companies) {
     if (!isRegistryPlatform(c.platform) || c.boardUrl === null) continue;
-    const ref = REGISTRY_PLATFORMS[c.platform].ref(c.boardUrl);
+    const ref = REGISTRY_PLATFORMS[c.platform].ref(c.boardUrl, c.platformSlug);
     if (ref === null) continue;
     const key = `${c.platform} ${ref}`;
     if (!out.has(key)) out.set(key, { platform: c.platform, company: c.name, ref });
   }
-  const order = (b: RegistryBoard): string => `${Object.keys(REGISTRY_PLATFORMS).indexOf(b.platform)} ${b.ref}`;
+  // by platform, then the board itself (an Eightfold API variant prefix does not move a board)
+  const order = (b: RegistryBoard): string => `${Object.keys(REGISTRY_PLATFORMS).indexOf(b.platform)} ${b.ref.replace(/^(?:v2|pcsx):/u, '')}`;
   return [...out.values()].sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
 }
 
@@ -225,8 +241,8 @@ const HTTP_BUDGETS: readonly {
   { agent: srcAshby.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w) => w.some((e) => e.ats === 'ashby') },
   // robots.txt, the list pages (with a scoped re-read) and the detail budget, each at least 2 s apart
   { agent: 'src-workday', perRequestMs: Math.floor(WORKDAY_TIMEOUT_MS / WORKDAY_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'workday') },
-  // robots.txt, the careers page, discovery, the list pages and the details, each at least 5 s apart
-  { agent: 'src-eightfold', perRequestMs: Math.floor(EIGHTFOLD_TIMEOUT_MS / EIGHTFOLD_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'eightfold') },
+  // robots.txt, the careers page, discovery, the list pages and the details, at the variant's spacing (v2 2 s, PCSX 10 s): the tighter v2 budget
+  { agent: 'src-eightfold', perRequestMs: Math.floor(EIGHTFOLD_TIMEOUT_MS / Math.max(eightfoldMaxRequests('v2'), eightfoldMaxRequests('pcsx'))), applies: (_w, _f, b) => b.some((x) => x.platform === 'eightfold') },
   // robots.txt, at most 10 list pages and the details, each at least 5 s apart
   { agent: 'src-oracle', perRequestMs: Math.floor(ORACLE_TIMEOUT_MS / ORACLE_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'oracle') },
 ];

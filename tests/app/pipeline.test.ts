@@ -200,13 +200,28 @@ describe('the daily pipeline wiring', () => {
     expect(seeds[4]).toEqual({ ats: 'oracle', slug: 'jpmc.fa.oraclecloud.com/CX_1001', company: 'JPMorgan Chase', runDate: '2026-10-14' });
   });
 
+  it('Task 7 fix round 1: the Eightfold API variant comes from the stored slug (`pcsx:<host>/<domain>`); a row without one keeps the plain ref', () => {
+    const rows = [
+      { name: 'Microsoft', platform: 'eightfold', platformSlug: 'pcsx:apply.careers.microsoft.com/microsoft.com', boardUrl: 'https://apply.careers.microsoft.com/api/pcsx/search?domain=microsoft.com' },
+      { name: 'Netflix', platform: 'eightfold', platformSlug: 'v2:explore.jobs.netflix.net/netflix.com', boardUrl: 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com' },
+      // from before the change: no variant in the slug
+      { name: 'Old', platform: 'eightfold', platformSlug: 'old.eightfold.ai/old.com', boardUrl: 'https://old.eightfold.ai/api/apply/v2/jobs?domain=old.com' },
+      // a slug naming another board than the URL is not trusted for the variant
+      { name: 'Mixed', platform: 'eightfold', platformSlug: 'pcsx:other.eightfold.ai/mixed.com', boardUrl: 'https://mixed.eightfold.ai/api/apply/v2/jobs?domain=mixed.com' },
+    ];
+    const boards = registryBoards(rows);
+    expect(boards.map((b) => b.ref)).toEqual(['pcsx:apply.careers.microsoft.com/microsoft.com', 'v2:explore.jobs.netflix.net/netflix.com', 'mixed.eightfold.ai/mixed.com', 'old.eightfold.ai/old.com']);
+    expect(registryEgressSets(boards)).toEqual({ 'registry:eightfold-hosts': ['apply.careers.microsoft.com', 'explore.jobs.netflix.net', 'mixed.eightfold.ai', 'old.eightfold.ai'] });
+    expect(dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', undefined, boards)[0]).toEqual({ ats: 'eightfold', slug: 'pcsx:apply.careers.microsoft.com/microsoft.com', company: 'Microsoft', runDate: '2026-10-14' });
+  });
+
   it('Task 7: the Eightfold and Oracle request budgets fit the step timeout at the policy spacing; a slower spacing is refused', () => {
     const pack = { watchlist: [], feeds: { enabled: [] } };
     const ef: RegistryBoard[] = [{ platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' }];
     const oc: RegistryBoard[] = [{ platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' }];
     expect(pacingProblems(PRODUCT_POLICY_V1, pack, [...ef, ...oc])).toEqual([]);
     expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, ef)).toEqual([
-      'minHostIntervalMs 7000 ms breaks the src-eightfold timeout arithmetic (at most 5555 ms per request); lower it in policy.user.yaml',
+      'minHostIntervalMs 7000 ms breaks the src-eightfold timeout arithmetic (at most 2222 ms per request); lower it in policy.user.yaml',
     ]);
     expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, oc)).toEqual([]);
   });

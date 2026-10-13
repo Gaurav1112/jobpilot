@@ -8,11 +8,14 @@ import {
   eightfoldDetailUrl,
   eightfoldJobUrl,
   eightfoldListUrl,
-  EIGHTFOLD_MAX_DETAILS,
-  EIGHTFOLD_MAX_REQUESTS,
-  EIGHTFOLD_MIN_INTERVAL_MS,
+  EIGHTFOLD_PCSX_MAX_DETAILS,
+  EIGHTFOLD_PCSX_MIN_INTERVAL_MS,
   EIGHTFOLD_TIMEOUT_MS,
+  EIGHTFOLD_V2_MAX_DETAILS,
+  EIGHTFOLD_V2_MIN_INTERVAL_MS,
+  eightfoldMaxRequests,
   eightfoldPagesPerList,
+  eightfoldRef,
   eightfoldScopes,
   makeSrcEightfold,
   parseEightfoldRef,
@@ -130,7 +133,7 @@ function eightfold(tenants: readonly EfTenant[]) {
       if (v2 || pcsx) {
         // each tenant answers 403 on the other API (seen live)
         if ((v2 && t.api !== 'v2') || (pcsx && t.api !== 'pcsx')) return json(403, { message: 'PCSX is not enabled for this user.' });
-        if (t.listStatus !== undefined) return json(t.listStatus, '');
+        if (t.listStatus !== undefined) return { ...json(t.listStatus, 'Please try again later'), headers: { get: (n: string) => (n.toLowerCase() === 'retry-after' ? '600' : null) } };
         if (v2) expect(u.searchParams.get('num')).toBe('10');
         const start = t.ignoreStart === true ? 0 : Number(u.searchParams.get('start'));
         const filters = [...u.searchParams.entries()].filter(([k, v]) => !['domain', 'start', 'num', 'query', 'sort_by'].includes(k) && v !== '');
@@ -361,7 +364,7 @@ describe('src-eightfold details: rank 0, the title pre-filter and the budget', (
     expect(efDetails(calls).map((c) => new URL(c).pathname.split('/').pop())).toEqual(['1000', '1001']);
     expect(skips).toContain('detail-budget Acme: 4 jobs without detail (3 over the budget, 1 not India-named)');
     expect(out.filter((p) => (p.raw as EightfoldRaw).detail !== null).map((p) => p.sourceId)).toEqual(['1000', '1001']);
-    expect(EIGHTFOLD_MAX_DETAILS).toBe(40);
+    expect(EIGHTFOLD_V2_MAX_DETAILS).toBe(40);
   });
 
   it('a PCSX standardized location ("Gurugram, HR, IN") counts as India-named', async () => {
@@ -411,19 +414,23 @@ describe('src-eightfold robots.txt, refusals and spacing', () => {
     expect(srcEightfoldContract.team).toBe('sourcing-eightfold');
   });
 
-  it('every request to the host is at least 5 s after the previous one', async () => {
+  it('v2: every request to the host is at least 2 s after the previous one', async () => {
     const { calls, slept } = await runEf([tenant({ jobs: efJobs(3), facets: v2Facets(3), scopes: { 'location=India': { jobs: efJobs(3) } }, anyDetail: true })]);
     expect(calls.length).toBe(1 + 1 + 1 + 1 + 3);
     expect(slept).toHaveLength(calls.length - 1);
-    expect(slept.every((ms) => ms >= EIGHTFOLD_MIN_INTERVAL_MS)).toBe(true);
-    expect(EIGHTFOLD_MIN_INTERVAL_MS).toBe(5000);
+    expect(slept.every((ms) => ms >= EIGHTFOLD_V2_MIN_INTERVAL_MS)).toBe(true);
+    expect(EIGHTFOLD_V2_MIN_INTERVAL_MS).toBe(2000);
   });
 
-  it('the per-list page cap keeps the worst case within the step timeout at the 5 s spacing', () => {
-    const worst = 3 + EIGHTFOLD_MAX_DETAILS + 2 * eightfoldPagesPerList(2);
-    expect(worst).toBeLessThanOrEqual(EIGHTFOLD_MAX_REQUESTS);
-    expect(worst * EIGHTFOLD_MIN_INTERVAL_MS).toBeLessThan(EIGHTFOLD_TIMEOUT_MS);
-    expect(eightfoldPagesPerList(1)).toBeLessThanOrEqual(100);
+  it('the per-list page cap keeps the worst case within the step timeout at each variant\'s spacing', () => {
+    for (const [api, gap, details, lists] of [['v2', EIGHTFOLD_V2_MIN_INTERVAL_MS, EIGHTFOLD_V2_MAX_DETAILS, 2], ['pcsx', EIGHTFOLD_PCSX_MIN_INTERVAL_MS, EIGHTFOLD_PCSX_MAX_DETAILS, 1]] as const) {
+      const worst = 3 + details + lists * eightfoldPagesPerList(api, lists);
+      expect(worst, api).toBeLessThanOrEqual(eightfoldMaxRequests(api));
+      expect(worst * gap, api).toBeLessThan(EIGHTFOLD_TIMEOUT_MS);
+      expect(eightfoldPagesPerList(api, 1)).toBeLessThanOrEqual(100);
+    }
+    // Microsoft's India list (253 jobs, 26 pages) fits the PCSX cap
+    expect(eightfoldPagesPerList('pcsx', 1)).toBeGreaterThanOrEqual(26);
   });
 
   it('a host outside the run egress is refused by the broker', async () => {
@@ -431,6 +438,89 @@ describe('src-eightfold robots.txt, refusals and spacing', () => {
     const { ctx } = context(srcEightfoldContract, 'registry:eightfold-hosts', net.fetch, ['other.eightfold.ai']);
     await expect(makeSrcEightfold({ hosts: dailyEightfoldHosts() }).run(efReq(tenant()), ctx)).rejects.toThrow(/G-EGRESS/);
     expect(net.calls).toEqual([]);
+  });
+});
+
+describe('Fix round 1: the API variant stored in the registry, gentler PCSX pacing', () => {
+  const stored = (t: { host: string; domain: string }, api: EightfoldApi, company = 'Acme'): DiscoveryRequest => ({ ats: 'eightfold', slug: `${api}:${t.host}/${t.domain}`, company, runDate: '2026-10-14' });
+
+  it('parses the variant from the stored slug (`pcsx:<host>/<domain>`, `v2:…`); a plain ref has none; anything else is refused', () => {
+    expect(parseEightfoldRef('pcsx:apply.careers.microsoft.com/microsoft.com')).toEqual({ host: 'apply.careers.microsoft.com', domain: 'microsoft.com', api: 'pcsx' });
+    expect(parseEightfoldRef('v2:explore.jobs.netflix.net/netflix.com')).toEqual({ host: 'explore.jobs.netflix.net', domain: 'netflix.com', api: 'v2' });
+    expect(parseEightfoldRef('explore.jobs.netflix.net/netflix.com')).toEqual({ host: 'explore.jobs.netflix.net', domain: 'netflix.com' });
+    for (const r of ['pcsx:apply.careers.microsoft.com/microsoft.com', 'v2:explore.jobs.netflix.net/netflix.com', 'explore.jobs.netflix.net/netflix.com']) expect(eightfoldRef(parseEightfoldRef(r)!)).toBe(r);
+    for (const bad of ['v3:acme.eightfold.ai/acme.com', 'pcsx:', 'pcsx:acme.eightfold.ai', ':acme.eightfold.ai/acme.com', 'PCSX:acme.eightfold.ai/acme.com']) expect(parseEightfoldRef(bad), bad).toBeNull();
+  });
+
+  it('a stored variant: the daily path calls the API directly, never the careers page', async () => {
+    for (const api of ['pcsx', 'v2'] as const) {
+      const t = tenant({ api, jobs: efJobs(2, () => 'Account Executive', () => ['Austin, TX, United States']) });
+      const { out, calls } = await runEf([t], { req: stored(t, api) });
+      expect(out, api).toHaveLength(2);
+      expect(calls.some((c) => new URL(c).pathname === '/careers'), api).toBe(false);
+      expect(paths(calls)[0]).toBe('/robots.txt');
+      expect(new URL(calls[1] as string).pathname).toBe(api === 'pcsx' ? '/api/pcsx/search' : '/api/apply/v2/jobs');
+      // the postings keep the stored ref as their slug
+      expect(out[0]?.slug).toBe(`${api}:${t.host}/${t.domain}`);
+    }
+  });
+
+  it('no stored variant (a row from before this change): the careers-page detection is the fallback', async () => {
+    const t = tenant({ api: 'pcsx', jobs: efJobs(1, () => 'Account Executive', () => ['Austin, TX, United States']) });
+    const { out, calls } = await runEf([t]);
+    expect(out).toHaveLength(1);
+    expect(paths(calls).slice(0, 3)).toEqual(['/robots.txt', '/careers?domain=acme.com', '/api/pcsx/search?domain=acme.com&query=&location=&start=0&sort_by=relevance']);
+  });
+
+  it('a stale stored variant (the tenant answers 403 on it) is a named refusal: the host disabled, never a guess at the other API', async () => {
+    const t = tenant({ api: 'v2', jobs: efJobs(1) });
+    const hosts = dailyEightfoldHosts();
+    await expect(runEf([t], { req: stored(t, 'pcsx'), hosts })).rejects.toMatchObject({ code: 'challenged' });
+    expect(hosts.disabledWhy(EF_HOST)).toBe('http-403');
+  });
+
+  it('PCSX: every request at least 10 s after the previous one; v2 keeps 2 s', async () => {
+    const jobs = efJobs(3);
+    const t = tenant({ api: 'pcsx', jobs, facets: { locations: [['Bengaluru, KA, India', 3]] }, scopes: { 'location=India': { jobs } }, anyDetail: true });
+    const { calls, slept } = await runEf([t], { req: stored(t, 'pcsx') });
+    expect(calls).toHaveLength(1 + 1 + 1 + 3);
+    expect(slept).toHaveLength(calls.length - 1);
+    expect(slept.every((ms) => ms >= EIGHTFOLD_PCSX_MIN_INTERVAL_MS)).toBe(true);
+    expect(EIGHTFOLD_PCSX_MIN_INTERVAL_MS).toBe(10_000);
+    const v = tenant({ api: 'v2', jobs, facets: v2Facets(3), scopes: { 'location=India': { jobs } }, anyDetail: true });
+    const r2 = await runEf([v], { req: stored(v, 'v2') });
+    expect(r2.slept.length).toBeGreaterThan(0);
+    expect(r2.slept.every((ms) => ms >= EIGHTFOLD_V2_MIN_INTERVAL_MS && ms < EIGHTFOLD_PCSX_MIN_INTERVAL_MS)).toBe(true);
+  });
+
+  it('PCSX detail budget 20, v2 40: the rest named, never silent', async () => {
+    const jobs = efJobs(45);
+    const p = tenant({ api: 'pcsx', jobs, facets: { locations: [['Bengaluru, KA, India', 45]] }, scopes: { 'location=India': { jobs } }, anyDetail: true });
+    const rp = await runEf([p], { req: stored(p, 'pcsx') });
+    expect(efDetails(rp.calls)).toHaveLength(20);
+    expect(rp.skips).toContain('detail-budget Acme: 25 jobs without detail (25 over the budget, 0 not India-named)');
+    expect(EIGHTFOLD_PCSX_MAX_DETAILS).toBe(20);
+    const v = tenant({ api: 'v2', jobs, facets: v2Facets(45), scopes: { 'location=India': { jobs } }, anyDetail: true });
+    const rv = await runEf([v], { req: stored(v, 'v2') });
+    expect(efDetails(rv.calls)).toHaveLength(40);
+    expect(rv.skips).toContain('detail-budget Acme: 5 jobs without detail (5 over the budget, 0 not India-named)');
+  });
+
+  it('a 429 (with Retry-After) disables the host for the run: one request, no retry, Retry-After never honoured; a sibling is deferred', async () => {
+    const t = tenant({ api: 'pcsx', listStatus: 429 });
+    const net = eightfold([t]);
+    const hosts = dailyEightfoldHosts();
+    const agent = makeSrcEightfold({ hosts });
+    const { ctx, slept } = context(srcEightfoldContract, 'registry:eightfold-hosts', net.fetch, [EF_HOST]);
+    await expect(agent.run(stored(t, 'pcsx'), ctx)).rejects.toMatchObject({ code: 'rate_limit' });
+    expect(efLists(net.calls)).toHaveLength(1);
+    expect(hosts.disabledWhy(EF_HOST)).toBe('http-429');
+    // the Retry-After of 600 s is never slept: no wait beyond the spacing
+    expect(Math.max(0, ...slept)).toBeLessThanOrEqual(EIGHTFOLD_PCSX_MIN_INTERVAL_MS);
+    const before = net.calls.length;
+    await expect(agent.run(stored({ host: EF_HOST, domain: 'other.com' }, 'pcsx'), ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-429 on acme\.eightfold\.ai/) });
+    expect(net.calls.length).toBe(before);
+    expect(srcEightfoldContract.retry.on).not.toContain('rate_limit');
   });
 });
 

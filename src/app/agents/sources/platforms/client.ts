@@ -45,7 +45,8 @@ import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workda
  * Eightfold and Oracle Recruiting Cloud (Task 7) read the same way, with their daily adapters' own requests and
  * parsers, robots.txt governing (the careers page's own JSON; Oracle's REST resource):
  * - Eightfold: the tenant's careers page first (its embedded configuration names the API, v2 or PCSX: the other one
- *   answers 403), then page 1 of the unscoped list (2 requests). Neither API has a company-name field: the name to
+ *   answers 403), then page 1 of the unscoped list (2 requests). The detected API is returned as `stored` (slug
+ *   `pcsx:<host>/<domain>` and that API's board URL), so the registry keeps it and the daily run skips the careers page. Neither API has a company-name field: the name to
  *   compare is the `domain` parameter's first label (`netflix.com` → `netflix`), under the generic-label rules;
  * - Oracle: page 1 of the unscoped requisition list. Its robots.txt answers 403 (the WAF): for this REST API that is
  *   "unknown", read at the minimal rate (`robotsUnreadable: 'allow'`, a controller decision; the coverage page crawler
@@ -71,6 +72,11 @@ export interface BoardRead {
   readonly url: string;
   /** When the platform gives no board name: the part of the board id to compare with the company (Workday: the tenant); null to use the slug. */
   readonly nameKey: string | null;
+  /**
+   * What the registry should store for this board instead of the detection's slug and board URL (Eightfold: the API
+   * variant detected at verify time, `pcsx:<host>/<domain>`, and that API's list URL); absent: the detection's.
+   */
+  readonly stored?: { readonly slug: string; readonly boardUrl: string };
 }
 
 /** What a read may be given: a per-request timeout, and (Workday, Eightfold, Oracle) the run's host state for robots.txt and refusals. */
@@ -260,7 +266,17 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
         return { api: a, page: await ef.fetchListPage(http, hosts, b, a, 0, {}, opts?.timeoutMs) };
       });
       const jobs = ef.pagePostings(b, api, page, { company: b.domain, slug: ref });
-      return { boardName: null, boardNames: [], jobs, complete: page.count <= ef.EIGHTFOLD_PAGE_SIZE, url: ef.eightfoldListUrl(b, api, 0), nameKey: b.domain.split('.')[0] ?? b.domain };
+      const plain = { host: b.host, domain: b.domain };
+      return {
+        boardName: null,
+        boardNames: [],
+        jobs,
+        complete: page.count <= ef.EIGHTFOLD_PAGE_SIZE,
+        url: ef.eightfoldListUrl(b, api, 0),
+        nameKey: b.domain.split('.')[0] ?? b.domain,
+        // the variant, detected here once a week, is stored for the daily run (Fix round 1)
+        stored: { slug: ef.eightfoldRef({ ...plain, api }), boardUrl: ef.eightfoldStoredBoardUrl(plain, api) },
+      };
     },
   },
   oracle: {

@@ -1,5 +1,5 @@
 import { KernelError } from '../kernel/errors.js';
-import { EIGHTFOLD_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
+import { EIGHTFOLD_V2_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
 import { ORACLE_MIN_INTERVAL_MS, type OracleHosts } from './agents/sources/platforms/oracle.js';
 import type { HttpTool, PlatformHosts } from './agents/sources/platforms/shared.js';
 import { WORKDAY_MIN_INTERVAL_MS, type WorkdayHosts } from './agents/sources/platforms/workday.js';
@@ -67,9 +67,12 @@ export function dailyWorkdayHosts(): WorkdayHosts {
   return dailyPlatformHosts({ minIntervalMs: WORKDAY_MIN_INTERVAL_MS });
 }
 
-/** The Eightfold adapter's host state (Task 7): robots.txt at the 5 s Eightfold spacing; a 401/403 robots.txt refuses. */
+/**
+ * The Eightfold adapter's host state (Task 7): robots.txt at the 2 s spacing (the API requests widen it per variant:
+ * PCSX 10 s); a 401/403 robots.txt refuses.
+ */
 export function dailyEightfoldHosts(): EightfoldHosts {
-  return dailyPlatformHosts({ minIntervalMs: EIGHTFOLD_MIN_INTERVAL_MS });
+  return dailyPlatformHosts({ minIntervalMs: EIGHTFOLD_V2_MIN_INTERVAL_MS });
 }
 
 /** The Oracle Recruiting Cloud adapter's host state (Task 7): a 401/403 robots.txt is unreadable, read at the minimal 5 s rate. */

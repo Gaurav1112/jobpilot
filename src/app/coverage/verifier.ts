@@ -122,7 +122,8 @@ const deferred = (why: string, host: string, detail: string): KernelError => new
 
 async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeoutMs: number): Promise<CompanyVerdict> {
   const verdict = (status: CompanyVerdict['status'], reasons: string[], read?: BoardRead): CompanyVerdict => ({
-    guess: g,
+    // a read may name what to store instead of the detection's slug and board URL (Eightfold: its API variant)
+    guess: read?.stored === undefined ? g : { ...g, slug: read.stored.slug, boardUrl: read.stored.boardUrl },
     status,
     reasons,
     boardName: read?.boardName ?? null,
