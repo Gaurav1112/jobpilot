@@ -9,7 +9,9 @@ import { resolvePdftotext } from '../../src/app/kernel.js';
 const root = join(import.meta.dirname, '../..');
 let home: string;
 const cli = (...args: string[]) =>
-  spawnSync(process.execPath, ['--import', 'tsx', join(root, 'src/bin.ts'), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: home } });
+  // JOBPILOT_CODE_HASH (a test seam, honoured only under test): every subprocess shares one code hash, so a second
+  // run replays even if src/ is written between the subprocesses (the "qa-gate replayed 0, expected 2" flake).
+  spawnSync(process.execPath, ['--import', 'tsx', join(root, 'src/bin.ts'), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: home, JOBPILOT_CODE_HASH: 'cli-daily-test', VITEST: 'true' } });
 const hasPdftotext = (() => {
   try {
     resolvePdftotext();

@@ -27,6 +27,17 @@ const base = {
   'assets/fonts/Font.ttf': 'font-bytes',
 };
 
+describe('the JOBPILOT_CODE_HASH test seam', () => {
+  it('is honoured only under test (NODE_ENV=test or VITEST), and ignored by a real run', () => {
+    const real = codeHashOf(CODE_ROOT);
+    expect(codeHash({ JOBPILOT_CODE_HASH: 'pinned', VITEST: 'true' })).toBe('pinned');
+    expect(codeHash({ JOBPILOT_CODE_HASH: 'pinned', NODE_ENV: 'test' })).toBe('pinned');
+    expect(codeHash({ JOBPILOT_CODE_HASH: 'pinned' })).toBe(real);
+    expect(codeHash({ JOBPILOT_CODE_HASH: 'pinned', NODE_ENV: 'production' })).toBe(real);
+    expect(codeHash({ JOBPILOT_CODE_HASH: '', VITEST: 'true' })).toBe(real);
+  });
+});
+
 describe('I4: the code hash in every app step key', () => {
   it('is 16 hex characters, and the same code gives the same hash', () => {
     const h = codeHashOf(tree(base));

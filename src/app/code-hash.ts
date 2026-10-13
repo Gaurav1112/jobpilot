@@ -46,8 +46,24 @@ export function codeHashOf(root: string): string {
 
 let cached: string | undefined;
 
-/** `codeHashOf(CODE_ROOT)`, computed once per process (at the first run or rebuild). */
-export function codeHash(): string {
+/**
+ * The test seam's variable: under test only, a fixed code hash shared by a test and the CLI subprocesses it spawns.
+ * Without it, each subprocess hashes src/** for itself, so a test that spawns two runs saw different hashes (and no
+ * replay) whenever another test or an editor wrote src/ between them (the cli-daily flake).
+ */
+export const CODE_HASH_ENV = 'JOBPILOT_CODE_HASH';
+
+/** Whether this process is a test run: vitest sets VITEST, and NODE_ENV=test is the usual flag. */
+const underTest = (env: NodeJS.ProcessEnv): boolean => env['NODE_ENV'] === 'test' || (env['VITEST'] !== undefined && env['VITEST'] !== '');
+
+/**
+ * `codeHashOf(CODE_ROOT)`, computed once per process (at the first run or rebuild). TEST SEAM: when the process runs
+ * under test (`NODE_ENV=test` or `VITEST` set) and `JOBPILOT_CODE_HASH` is set, that value is the code hash instead.
+ * Outside a test the variable is ignored, so a real run always fingerprints the real code.
+ */
+export function codeHash(env: NodeJS.ProcessEnv = process.env): string {
+  const pinned = env[CODE_HASH_ENV];
+  if (pinned !== undefined && pinned !== '' && underTest(env)) return pinned;
   cached ??= codeHashOf(CODE_ROOT);
   return cached;
 }
