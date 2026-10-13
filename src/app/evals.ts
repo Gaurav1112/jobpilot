@@ -13,6 +13,7 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
+import { companyNameMatcher } from './coverage/names.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
 import { gigRisk } from './freelance/gig-risk.js';
@@ -24,6 +25,7 @@ import { proposalPlanner } from './freelance/writing/proposal-planner.js';
 import { appGuardrails } from './guardrails.js';
 import { loadPack } from './pack/load.js';
 import type { GigDocsPlan, GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
+import type { NameMatch } from './coverage/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -204,6 +206,15 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       min: 1,
       pack,
       packHash: hash,
+    },
+    {
+      // NamePair@1 to whether two company names are one company; the labels are hand-written (no alias guessing, no accent folding).
+      name: 'coverage-names',
+      agent: companyNameMatcher,
+      cases: loadJsonl(join(datasetDir, 'coverage-names.jsonl')),
+      project: (outs) => one(outs, (o: NameMatch) => ({ same: o.same })),
+      metric: 'exactMatch',
+      min: 1,
     },
   ];
 }

@@ -12,6 +12,7 @@ import type { CompiledPipeline } from '../kernel/wiring.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import { codeHash } from './code-hash.js';
 import { appGuardrails } from './guardrails.js';
+import type { CompanyPick } from './pack/companies-schema.js';
 import { loadPack, PackError, withoutFreelance, type LoadMode } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
@@ -64,6 +65,10 @@ export interface RunPack {
   readonly freelancePackHash: string;
   /** Hash of the full pack (contact, answers, render.nonce) including the freelance files; the freelance renderer's key. */
   readonly freelanceFullPackHash: string;
+  /** companies.yaml's picks (empty when absent or, in mode `daily`, ignored); in neither pack hash. */
+  readonly companies: readonly CompanyPick[];
+  /** Hash of `companies`; the coverage pipeline's own pack hash input. */
+  readonly companiesHash: string;
   readonly asOf: string;
   readonly nonce: number | undefined;
   /** Mode `daily` only: the freelance files the load ignored, one redacted line each (the run records them). */
@@ -82,8 +87,8 @@ export interface RunPack {
  * `pack check`.
  */
 export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce: number | undefined, mode: LoadMode): RunPack {
-  const { pack, hash, freelancePackHash, warnings } = loadPack(dir, overrides, { asOf, mode });
-  const text = packTextProblems(pack);
+  const { pack, hash, freelancePackHash, companies, companiesHash, warnings } = loadPack(dir, overrides, { asOf, mode });
+  const text = packTextProblems({ ...pack, companies });
   // rereview R11: the first line (the failure notification's text) gives the count and where to look, never a term
   if (text.length > 0) {
     const n = text.length === 1 ? '1 text problem' : `${text.length} text problems`;
@@ -91,7 +96,7 @@ export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact
   }
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
-  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), asOf, nonce, warnings };
+  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), companies, companiesHash, asOf, nonce, warnings };
 }
 
 export interface AppKernelOptions {

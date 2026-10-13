@@ -43,6 +43,10 @@ export const GIG_LISTS = ['contracts', 'gigs', 'review', 'below-floor'] as const
 export const GIG_DOCS_STATES = ['ready', 'blocked', 'missing', 'none'] as const;
 export const NETWORK_STATUSES = ['todo', 'applied', 'screening', 'passed', 'rejected'] as const;
 
+/** Career-site coverage (spec §3): a company's registry status and the user's override of it. A change needs a new migration (a table rebuild for its CHECK). */
+export const COMPANY_STATUSES = ['verified', 'proposed', 'rejected', 'failing', 'failed'] as const;
+export const COMPANY_OVERRIDES = ['approved', 'rejected'] as const;
+
 /**
  * A migration: SQL run in one transaction, or (for a table rebuild, which SQLite needs to change a CHECK) a function run
  * in one transaction with foreign keys off, after which `PRAGMA foreign_key_check` must be empty (SQLite's documented
@@ -305,5 +309,28 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     status TEXT NOT NULL CHECK (status IN (${list(V8_NETWORK_STATUSES)})),
     updated_at TEXT NOT NULL
   );
+  `,
+  // Career-site coverage Task 0: the company registry the weekly coverage pipeline fills and the daily adapters read.
+  // A literal on purpose (no interpolated lists): it must never change, whatever the current lists become.
+  `
+  CREATE TABLE companies (
+    company_key TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    website TEXT NOT NULL,
+    careers_url TEXT,
+    platform TEXT,
+    platform_slug TEXT,
+    board_url TEXT,
+    status TEXT NOT NULL CHECK (status IN ('verified', 'proposed', 'rejected', 'failing', 'failed')),
+    reasons TEXT NOT NULL DEFAULT '[]',
+    source TEXT NOT NULL,
+    jobs_seen INTEGER,
+    last_verified TEXT,
+    failing_since TEXT,
+    fail_weeks INTEGER NOT NULL DEFAULT 0,
+    user_override TEXT CHECK (user_override IS NULL OR user_override IN ('approved', 'rejected')),
+    updated_at TEXT NOT NULL
+  );
+  CREATE INDEX companies_by_status ON companies (status, company_key);
   `,
 ];

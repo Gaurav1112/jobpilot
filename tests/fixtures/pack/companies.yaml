@@ -1,0 +1,5 @@
+# Company picks for the career-site coverage: public companies on three different platforms.
+companies:
+  - {name: Example Workday Co, website: 'https://workday-co.example.com', careersUrl: 'https://workday-co.example.com/careers'}
+  - {name: Example Eightfold Co, website: 'https://eightfold-co.example.com'}
+  - {name: Example Greenhouse Co, website: 'https://greenhouse-co.example.com', careersUrl: 'https://greenhouse-co.example.com/jobs'}

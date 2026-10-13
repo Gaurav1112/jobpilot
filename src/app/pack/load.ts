@@ -5,10 +5,11 @@ import type { ZodType } from 'zod';
 import { hashOf } from '../../kernel/canonical.js';
 import { sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
 import { FEED_SOURCES, knownFeeds } from '../feeds.js';
+import { CompaniesFile, type CompanyPick } from './companies-schema.js';
 import { DEFAULT_FX } from './defaults.js';
 import { FreelanceFile, NetworkFile, PlatformRulesFile, type Network } from './freelance-schema.js';
 import { redactText } from './rules.js';
-import { freelanceFileProblems, networkLabel } from './scan.js';
+import { companiesFileProblems, freelanceFileProblems, networkLabel } from './scan.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -152,6 +153,27 @@ function readFreelanceLeniently(dir: string, naming: Pick<Pack['naming'], 'forbi
   return { freelance, platformRules, networks };
 }
 
+/**
+ * companies.yaml (the career-site coverage's company picks), read apart from the pack: only the coverage reads it, so
+ * it is in neither the daily hash nor `freelancePackHash`, and an absent file is no companies. `strict` throws on a
+ * parse or schema problem; `daily` ignores a file with any problem, with a redacted warning, so it can never stop
+ * the daily run (as the freelance files, final review C1). Forbidden terms and glyphs are `packTextProblems`' job
+ * when strict; the daily load also checks them here and ignores the file.
+ */
+function readCompanies(dir: string, mode: LoadMode, naming: Pick<Pack['naming'], 'forbiddenTerms'>, warnings: string[]): CompanyPick[] {
+  if (mode !== 'daily') return readYaml(dir, 'companies.yaml', CompaniesFile, {}).companies;
+  try {
+    const v = readYaml(dir, 'companies.yaml', CompaniesFile, {});
+    const text = companiesFileProblems(v.companies, naming);
+    if (text.length === 0) return v.companies;
+    warnings.push(redactText(`${text.join('; ')} (the daily run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
+  } catch (e) {
+    const why = e instanceof PackError ? e.message : `companies.yaml: could not be read: ${e instanceof Error ? e.message : String(e)}`;
+    warnings.push(redactText(`${why} (the daily run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
+  }
+  return [];
+}
+
 function withKey(g: LexiconGroup): LexiconGroup {
   return { key: g.key, synonyms: [g.key, ...g.synonyms.filter((s) => s !== g.key)], ...(g.display !== undefined ? { display: g.display } : {}) };
 }
@@ -220,7 +242,7 @@ export function loadPack(
   dir: string,
   overrides: Readonly<Record<string, Fact['status']>> = {},
   opts: LoadOptions = {},
-): { pack: Pack; hash: string; freelancePackHash: string; warnings: string[] } {
+): { pack: Pack; hash: string; freelancePackHash: string; companies: CompanyPick[]; companiesHash: string; warnings: string[] } {
   const facts = readYaml(dir, 'facts.yaml', FactsFile).facts;
   const seen = new Set<string>();
   for (const f of facts) {
@@ -272,6 +294,7 @@ export function loadPack(
           platformRules: readYaml(dir, 'platform-rules.yaml', PlatformRulesFile, {}),
           networks: readNetworks(dir),
         };
+  const companies = readCompanies(dir, opts.mode ?? 'strict', base.naming, warnings);
   const pack: Pack = { ...base, ...freelanceParts };
   checkDates(pack);
   // A feed with no source agent would be configuration the run silently never honours (review I2).
@@ -279,7 +302,7 @@ export function loadPack(
   checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
-  return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack), warnings };
+  return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack), companies, companiesHash: hashOf({ companies }), warnings };
 }
 
 export { assertNoForbidden, citeable, ForbiddenTermError } from './rules.js';

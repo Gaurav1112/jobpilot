@@ -25,7 +25,10 @@ function* stringsIn(v: unknown, path: string): Generator<{ path: string; text: s
 type ScannedPack = Pick<
   Pack,
   'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser' | 'freelance' | 'platformRules' | 'networks'
->;
+> & {
+  /** companies.yaml's picks (not part of `Pack`: only the coverage reads them); absent means none. */
+  readonly companies?: readonly unknown[];
+};
 
 /** How a network file is named in a problem: `networks/<id>.yaml`, or `networks #<n>` when the id holds a forbidden term. */
 export function networkLabel(id: string, index: number, naming: Pick<NamingRules, 'forbiddenTerms'>): string {
@@ -45,6 +48,11 @@ export function freelanceFileProblems(file: string, value: unknown, naming: Pick
     p.push(...glyphProblems(s.text, `${file}: ${s.path}`));
   }
   return p;
+}
+
+/** The strict forbidden-term check and the glyph check over companies.yaml's picks, as `companies.yaml: companies[0].name holds forbidden term #<n>`. */
+export function companiesFileProblems(companies: readonly unknown[], naming: Pick<NamingRules, 'forbiddenTerms'>): string[] {
+  return freelanceFileProblems('companies.yaml', { companies }, naming);
 }
 
 /** What to write instead of a character Noto Sans cannot draw. */
@@ -146,6 +154,7 @@ export function packTextProblems(pack: ScannedPack): string[] {
     ...pack.networks.map((n, i) => [networkLabel(n.id, i, pack.naming), n] as const),
   ];
   for (const [file, value] of freelanceFiles) p.push(...freelanceFileProblems(file, value, pack.naming));
+  p.push(...companiesFileProblems(pack.companies ?? [], pack.naming));
   for (const [file, value] of files) for (const s of stringsIn(value, '')) term(s.text, `${file}: ${s.path}`);
   return p;
 }

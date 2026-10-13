@@ -1,0 +1,89 @@
+import { z } from 'zod';
+import { defineType } from '../../kernel/types.js';
+import { IsoDate } from '../types.js';
+
+/** The career-site platforms the coverage pipeline can tell apart (spec §3). */
+export const Platform = z.enum([
+  'workday', 'eightfold', 'oracle', 'icims', 'successfactors', 'smartrecruiters', 'workable', 'recruitee', 'teamtailor', 'personio',
+  'bamboohr', 'breezy', 'pinpoint', 'rippling', 'gem', 'greenhouse', 'lever', 'ashby', 'jsonld-sitemap',
+]);
+export type Platform = z.infer<typeof Platform>;
+
+/** Where a candidate company came from; `pick` (the user's own `companies.yaml`) has the highest priority. */
+export const CandidateSource = z.enum(['pick', 'remoteintech', 'yc', 'jobs']);
+export type CandidateSource = z.infer<typeof CandidateSource>;
+
+export const CompanyCandidate = defineType(
+  'CompanyCandidate',
+  1,
+  z
+    .object({
+      /** The registrable domain, lowercase. */
+      companyKey: z.string().min(1),
+      name: z.string().min(1),
+      website: z.string(),
+      careersUrl: z.string().nullable(),
+      source: CandidateSource,
+      runDate: IsoDate,
+    })
+    .strict(),
+);
+export type CompanyCandidate = z.infer<typeof CompanyCandidate.schema>;
+
+export const CareersSite = defineType(
+  'CareersSite',
+  1,
+  z
+    .object({
+      candidate: CompanyCandidate.schema,
+      careersUrl: z.string().nullable(),
+      method: z.enum(['listed', 'homepage-link', 'path', 'subdomain', 'sitemap', 'none']),
+      evidence: z.string().nullable(),
+    })
+    .strict(),
+);
+export type CareersSite = z.infer<typeof CareersSite.schema>;
+
+export const PlatformGuess = defineType(
+  'PlatformGuess',
+  1,
+  z
+    .object({
+      site: CareersSite.schema,
+      platform: Platform.nullable(),
+      /** The tenant, site or board id. */
+      slug: z.string().nullable(),
+      boardUrl: z.string().nullable(),
+      signature: z.string().nullable(),
+      /** The front-end that was routed through to the back-end ATS, e.g. `phenom` or `drupal-jsonld`. */
+      routedFrom: z.string().nullable(),
+    })
+    .strict(),
+);
+export type PlatformGuess = z.infer<typeof PlatformGuess.schema>;
+
+export const CompanyVerdict = defineType(
+  'CompanyVerdict',
+  1,
+  z
+    .object({
+      guess: PlatformGuess.schema,
+      status: z.enum(['verified', 'proposed', 'failed']),
+      reasons: z.array(z.string()),
+      boardName: z.string().nullable(),
+      jobsSeen: z.number().int().nonnegative().nullable(),
+    })
+    .strict(),
+);
+export type CompanyVerdict = z.infer<typeof CompanyVerdict.schema>;
+
+/** The name-match question: `domainLabel` is the registrable domain's first label (e.g. `purestorage`). */
+export const NamePair = defineType(
+  'NamePair',
+  1,
+  z.object({ a: z.string(), b: z.string(), domainLabel: z.string().nullable() }).strict(),
+);
+export type NamePair = z.infer<typeof NamePair.schema>;
+
+export const NameMatch = defineType('NameMatch', 1, z.object({ same: z.boolean() }).strict());
+export type NameMatch = z.infer<typeof NameMatch.schema>;

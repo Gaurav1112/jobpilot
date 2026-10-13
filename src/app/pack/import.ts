@@ -895,7 +895,7 @@ function importLocked(o: ImportOptions, deps: ImportDeps): ImportReport {
         const n = forbiddenTermIn(readFileSync(join(staging, name), 'utf8'), built.naming);
         return n === undefined ? [] : [`${name} holds forbidden term #${n}; nothing was written`];
       });
-    hits.push(...packTextProblems(loaded.pack));
+    hits.push(...packTextProblems({ ...loaded.pack, companies: loaded.companies }));
     if (hits.length > 0) throw new ImportError(hits);
   } catch (e) {
     rmSync(staging, { recursive: true, force: true });

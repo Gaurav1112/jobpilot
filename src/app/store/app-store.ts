@@ -4,7 +4,8 @@ import type { Posting } from '../types.js';
 import { dirname } from 'node:path';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
-import { APP_MIGRATIONS, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
+import type { CompanyVerdict, Platform } from '../coverage/types.js';
+import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
 /**
@@ -1005,6 +1006,96 @@ export class AppStore {
       .run(networkId, status, at);
   }
 
+  /**
+   * Records one coverage verdict for a company (the weekly run). The user's override always wins: a rejected company
+   * stays `rejected` (only `updated_at` moves), an approved one is `verified` whatever the verdict says short of a
+   * failure. A failed verdict keeps the last known platform and board; a verified company that fails 3 weeks running
+   * becomes `failing` (shown, never silently removed), and a verified verdict resets the count.
+   */
+  upsertCompanyVerdict(v: CompanyVerdict, at: string): void {
+    const cand = v.guess.site.candidate;
+    this.tx(() => {
+      const prev = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(cand.companyKey) as CompanyRowDb | undefined;
+      if (prev?.user_override === 'rejected') {
+        this.db.prepare(`UPDATE companies SET updated_at = ? WHERE company_key = ?`).run(at, cand.companyKey);
+        return;
+      }
+      const failed = v.status === 'failed';
+      const keep = <T>(fresh: T | null, old: T | null | undefined): T | null => (failed ? (old ?? fresh) : fresh);
+      const wasLive = prev !== undefined && (prev.status === 'verified' || prev.status === 'failing');
+      let status: CompanyStatus;
+      let failWeeks = 0;
+      let failingSince: string | null = null;
+      let lastVerified = prev?.last_verified ?? null;
+      if (v.status === 'verified') {
+        status = 'verified';
+        lastVerified = at;
+      } else if (v.status === 'proposed') {
+        status = prev?.user_override === 'approved' ? 'verified' : 'proposed';
+      } else {
+        failWeeks = (prev?.fail_weeks ?? 0) + 1;
+        failingSince = prev?.failing_since ?? at;
+        status = wasLive ? (failWeeks >= FAIL_WEEKS_TO_FAILING ? 'failing' : 'verified') : 'failed';
+      }
+      this.db
+        .prepare(
+          `INSERT INTO companies (company_key, name, website, careers_url, platform, platform_slug, board_url, status, reasons, source, jobs_seen, last_verified, failing_since, fail_weeks, user_override, updated_at)
+           VALUES (@key, @name, @website, @careersUrl, @platform, @slug, @boardUrl, @status, @reasons, @source, @jobsSeen, @lastVerified, @failingSince, @failWeeks, @override, @at)
+           ON CONFLICT (company_key) DO UPDATE SET name = excluded.name, website = excluded.website, careers_url = excluded.careers_url, platform = excluded.platform,
+             platform_slug = excluded.platform_slug, board_url = excluded.board_url, status = excluded.status, reasons = excluded.reasons, source = excluded.source,
+             jobs_seen = excluded.jobs_seen, last_verified = excluded.last_verified, failing_since = excluded.failing_since, fail_weeks = excluded.fail_weeks,
+             updated_at = excluded.updated_at`,
+        )
+        .run({
+          key: cand.companyKey, name: cand.name, website: cand.website,
+          careersUrl: v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
+          platform: keep(v.guess.platform, prev?.platform), slug: keep(v.guess.slug, prev?.platform_slug), boardUrl: keep(v.guess.boardUrl, prev?.board_url),
+          status, reasons: JSON.stringify(v.reasons), source: cand.source, jobsSeen: keep(v.jobsSeen, prev?.jobs_seen),
+          lastVerified, failingSince, failWeeks, override: prev?.user_override ?? null, at,
+        });
+    });
+  }
+
+  /**
+   * The user's approve or reject of a company (null clears it). Rejecting sets the status `rejected`; approving
+   * promotes a proposed or rejected company that has a platform to `verified`; clearing a rejection returns it to
+   * `proposed` until the next verdict. False when there is no such company.
+   */
+  setCompanyOverride(companyKey: string, override: CompanyOverride | null, at: string): boolean {
+    if (override !== null && !(COMPANY_OVERRIDES as readonly string[]).includes(override)) throw new Error(`not a company override: ${String(override)}`);
+    return this.tx(() => {
+      const prev = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(companyKey) as CompanyRowDb | undefined;
+      if (prev === undefined) return false;
+      let status = prev.status;
+      if (override === 'rejected') status = 'rejected';
+      else if (override === 'approved' && (prev.status === 'proposed' || prev.status === 'rejected')) status = prev.platform !== null ? 'verified' : 'proposed';
+      else if (override === null && prev.status === 'rejected') status = 'proposed';
+      this.db.prepare(`UPDATE companies SET user_override = ?, status = ?, updated_at = ? WHERE company_key = ?`).run(override, status, at, companyKey);
+      return true;
+    });
+  }
+
+  /** The companies the daily adapters read: verified, or failing (shown and still tried so they can recover). Never rejected, proposed or failed. By key. */
+  verifiedCompanies(): Company[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM companies WHERE status IN ('verified', 'failing') AND (user_override IS NULL OR user_override <> 'rejected') ORDER BY company_key`)
+      .all() as CompanyRowDb[];
+    return rows.map(companyOf);
+  }
+
+  /** Every company, or those with the given status, platform or source; by key. */
+  listCompanies(filter: { readonly status?: CompanyStatus; readonly platform?: Platform; readonly source?: string } = {}): Company[] {
+    const where: string[] = [];
+    const args: string[] = [];
+    for (const [col, val] of [['status', filter.status], ['platform', filter.platform], ['source', filter.source]] as const) {
+      if (val === undefined) continue;
+      where.push(`${col} = ?`);
+      args.push(val);
+    }
+    const sql = `SELECT * FROM companies${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY company_key`;
+    return (this.db.prepare(sql).all(...args) as CompanyRowDb[]).map(companyOf);
+  }
+
   /** Replaces a job's documents and their state (docs rebuild): no other column is touched. False when there is no such job. */
   setDocs(jobKey: string, state: DocsState, detail: string | null, docs: readonly Doc[], citedFacts: readonly string[] | null = null): boolean {
     return this.tx(() => {
@@ -1020,6 +1111,45 @@ export type GigStatus = (typeof GIG_STATUSES)[number];
 export type GigDocsState = (typeof GIG_DOCS_STATES)[number];
 export type GigList = (typeof GIG_LISTS)[number];
 export type NetworkStatus = (typeof NETWORK_STATUSES)[number];
+export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
+export type CompanyOverride = (typeof COMPANY_OVERRIDES)[number];
+
+/** A verified company that fails this many weeks running becomes `failing` (spec §3). */
+const FAIL_WEEKS_TO_FAILING = 3;
+
+interface CompanyRowDb {
+  company_key: string; name: string; website: string; careers_url: string | null; platform: Platform | null; platform_slug: string | null;
+  board_url: string | null; status: CompanyStatus; reasons: string; source: string; jobs_seen: number | null; last_verified: string | null;
+  failing_since: string | null; fail_weeks: number; user_override: CompanyOverride | null; updated_at: string;
+}
+
+/** One registry row. */
+export interface Company {
+  readonly companyKey: string;
+  readonly name: string;
+  readonly website: string;
+  readonly careersUrl: string | null;
+  readonly platform: Platform | null;
+  readonly platformSlug: string | null;
+  readonly boardUrl: string | null;
+  readonly status: CompanyStatus;
+  readonly reasons: string[];
+  readonly source: string;
+  readonly jobsSeen: number | null;
+  readonly lastVerified: string | null;
+  readonly failingSince: string | null;
+  readonly failWeeks: number;
+  readonly userOverride: CompanyOverride | null;
+  readonly updatedAt: string;
+}
+
+function companyOf(r: CompanyRowDb): Company {
+  return {
+    companyKey: r.company_key, name: r.name, website: r.website, careersUrl: r.careers_url, platform: r.platform, platformSlug: r.platform_slug,
+    boardUrl: r.board_url, status: r.status, reasons: JSON.parse(r.reasons) as string[], source: r.source, jobsSeen: r.jobs_seen,
+    lastVerified: r.last_verified, failingSince: r.failing_since, failWeeks: r.fail_weeks, userOverride: r.user_override, updatedAt: r.updated_at,
+  };
+}
 
 export interface GigHistoryEntry {
   readonly from: GigStatus | null;

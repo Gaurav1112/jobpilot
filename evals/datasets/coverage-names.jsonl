@@ -1,0 +1,54 @@
+{"id": "okta-inc-vs-bare", "input": {"a": "Okta, Inc.", "b": "Okta", "domainLabel": null}, "expected": {"same": true}}
+{"id": "microsoft-corporation", "input": {"a": "Microsoft Corporation", "b": "Microsoft", "domainLabel": null}, "expected": {"same": true}}
+{"id": "domain-label-joined", "input": {"a": "Pure Storage Inc", "b": "purestorage", "domainLabel": "purestorage"}, "expected": {"same": true}}
+{"id": "domain-label-spaced-board-name", "input": {"a": "Pure Storage", "b": "Pure Storage Inc", "domainLabel": "purestorage"}, "expected": {"same": true}}
+{"id": "meta-vs-metaverse", "input": {"a": "Meta", "b": "Metaverse Labs", "domainLabel": null}, "expected": {"same": false}}
+{"id": "meta-platforms-vs-meta", "input": {"a": "Meta Platforms Inc", "b": "Meta", "domainLabel": null}, "expected": {"same": false}}
+{"id": "hcl-technologies", "input": {"a": "HCL Technologies", "b": "HCL", "domainLabel": null}, "expected": {"same": true}}
+{"id": "tcs-no-alias", "input": {"a": "Tata Consultancy Services", "b": "TCS", "domainLabel": null}, "expected": {"same": false}}
+{"id": "tcs-with-limited", "input": {"a": "Tata Consultancy Services", "b": "Tata Consultancy Services Limited", "domainLabel": null}, "expected": {"same": true}}
+{"id": "case-only", "input": {"a": "Okta", "b": "okta", "domainLabel": null}, "expected": {"same": true}}
+{"id": "upper-and-dotted-suffix", "input": {"a": "OKTA INC", "b": "Okta Inc.", "domainLabel": null}, "expected": {"same": true}}
+{"id": "ampersand-vs-and", "input": {"a": "Ben & Jerry's", "b": "Ben and Jerry's", "domainLabel": null}, "expected": {"same": true}}
+{"id": "ampersand-att", "input": {"a": "AT&T", "b": "AT and T", "domainLabel": null}, "expected": {"same": true}}
+{"id": "ampersand-jj", "input": {"a": "Johnson & Johnson", "b": "Johnson and Johnson", "domainLabel": null}, "expected": {"same": true}}
+{"id": "fullwidth-letters", "input": {"a": "\uff2f\uff4b\uff54\uff41", "b": "Okta", "domainLabel": null}, "expected": {"same": true}}
+{"id": "fullwidth-llc", "input": {"a": "\uff27\uff4f\uff4f\uff47\uff4c\uff45 \uff2c\uff2c\uff23", "b": "Google", "domainLabel": null}, "expected": {"same": true}}
+{"id": "accent-kept-suffix", "input": {"a": "Caf\u00e9 Nero Ltd", "b": "Caf\u00e9 Nero", "domainLabel": null}, "expected": {"same": true}}
+{"id": "accent-not-folded", "input": {"a": "Caf\u00e9 Nero", "b": "Cafe Nero", "domainLabel": null}, "expected": {"same": false}}
+{"id": "accent-sa", "input": {"a": "Nestl\u00e9 S.A.", "b": "Nestl\u00e9", "domainLabel": null}, "expected": {"same": true}}
+{"id": "ring-above-technologies", "input": {"a": "\u00c5ngstr\u00f6m Technologies", "b": "\u00c5ngstr\u00f6m", "domainLabel": null}, "expected": {"same": true}}
+{"id": "cjk-no-alias", "input": {"a": "\u65e5\u672c\u96fb\u7523\u682a\u5f0f\u4f1a\u793e", "b": "\u65e5\u672c\u96fb\u7523", "domainLabel": null}, "expected": {"same": false}}
+{"id": "zoho-pvt-ltd", "input": {"a": "Zoho Corporation Pvt Ltd", "b": "Zoho", "domainLabel": null}, "expected": {"same": true}}
+{"id": "infosys-limited", "input": {"a": "Infosys Limited", "b": "Infosys", "domainLabel": null}, "expected": {"same": true}}
+{"id": "wipro-private-limited", "input": {"a": "Wipro Private Limited", "b": "Wipro", "domainLabel": null}, "expected": {"same": true}}
+{"id": "siemens-ag", "input": {"a": "Siemens AG", "b": "Siemens", "domainLabel": null}, "expected": {"same": true}}
+{"id": "spotify-technology-sa", "input": {"a": "Spotify Technology SA", "b": "Spotify", "domainLabel": null}, "expected": {"same": true}}
+{"id": "shell-plc", "input": {"a": "Shell plc", "b": "Shell", "domainLabel": null}, "expected": {"same": true}}
+{"id": "philips-bv", "input": {"a": "Philips BV", "b": "Philips", "domainLabel": null}, "expected": {"same": true}}
+{"id": "dell-technologies", "input": {"a": "Dell Technologies Inc.", "b": "Dell", "domainLabel": null}, "expected": {"same": true}}
+{"id": "zomato-ltd-vs-limited", "input": {"a": "Zomato Ltd", "b": "Zomato Limited", "domainLabel": null}, "expected": {"same": true}}
+{"id": "acme-corp-vs-corporation", "input": {"a": "Acme Corp.", "b": "Acme Corporation", "domainLabel": null}, "expected": {"same": true}}
+{"id": "acme-co", "input": {"a": "Acme Co", "b": "Acme", "domainLabel": null}, "expected": {"same": true}}
+{"id": "acme-labs-differs", "input": {"a": "Acme Labs", "b": "Acme", "domainLabel": null}, "expected": {"same": false}}
+{"id": "stripe-vs-stripe-payments", "input": {"a": "Stripe, Inc", "b": "Stripe Payments", "domainLabel": null}, "expected": {"same": false}}
+{"id": "okta-vs-okta-identity", "input": {"a": "Okta", "b": "Okta Identity", "domainLabel": null}, "expected": {"same": false}}
+{"id": "adobe-systems-kept", "input": {"a": "Adobe Systems", "b": "Adobe", "domainLabel": null}, "expected": {"same": false}}
+{"id": "cisco-systems-kept", "input": {"a": "Cisco Systems Inc", "b": "Cisco", "domainLabel": null}, "expected": {"same": false}}
+{"id": "google-vs-alphabet", "input": {"a": "Google", "b": "Alphabet", "domainLabel": null}, "expected": {"same": false}}
+{"id": "gitlab-case", "input": {"a": "Gitlab Inc.", "b": "GitLab", "domainLabel": null}, "expected": {"same": true}}
+{"id": "block-comma-inc", "input": {"a": "Block Inc", "b": "Block, Inc.", "domainLabel": null}, "expected": {"same": true}}
+{"id": "oreilly-apostrophes", "input": {"a": "O'Reilly Media", "b": "O\u2019Reilly Media", "domainLabel": null}, "expected": {"same": true}}
+{"id": "oreilly-dropped-apostrophe", "input": {"a": "O'Reilly Media", "b": "OReilly Media", "domainLabel": null}, "expected": {"same": true}}
+{"id": "rippling-people-center", "input": {"a": "Rippling People Center, Inc.", "b": "Rippling People Center", "domainLabel": null}, "expected": {"same": true}}
+{"id": "digits-kept", "input": {"a": "1Password", "b": "1password", "domainLabel": null}, "expected": {"same": true}}
+{"id": "whitespace-noise", "input": {"a": "  Okta   Inc  ", "b": "okta", "domainLabel": null}, "expected": {"same": true}}
+{"id": "cyrillic-lookalike-o", "input": {"a": "Okta", "b": "\u041ekta", "domainLabel": null}, "expected": {"same": false}}
+{"id": "zero-for-o", "input": {"a": "Microsoft", "b": "Micros0ft", "domainLabel": null}, "expected": {"same": false}}
+{"id": "rn-for-m", "input": {"a": "Microsoft", "b": "Rnicrosoft", "domainLabel": null}, "expected": {"same": false}}
+{"id": "hyphen-is-a-separator", "input": {"a": "Wal-Mart", "b": "Walmart", "domainLabel": null}, "expected": {"same": false}}
+{"id": "capgemini-split", "input": {"a": "Capgemini", "b": "Cap Gemini", "domainLabel": null}, "expected": {"same": false}}
+{"id": "label-redhat", "input": {"a": "Red Hat Inc", "b": "RedHat", "domainLabel": "redhat"}, "expected": {"same": true}}
+{"id": "label-matches-board-name", "input": {"a": "Stripe", "b": "stripe", "domainLabel": "stripe"}, "expected": {"same": true}}
+{"id": "label-does-not-rescue-other-company", "input": {"a": "Metaverse Labs", "b": "Meta Labs", "domainLabel": "meta"}, "expected": {"same": false}}
+{"id": "nokia-oyj-not-a-listed-suffix", "input": {"a": "Nokia Oyj", "b": "Nokia", "domainLabel": null}, "expected": {"same": false}}
