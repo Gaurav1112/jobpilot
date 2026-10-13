@@ -108,6 +108,25 @@ describe('runEval', () => {
     expect(calls).toEqual([]);
   });
 
+  it('serves a spec\'s recorded fixtures (never env.providers.fetch), with the symbolic egress resolved per case', async () => {
+    const live: string[] = [];
+    const liveEnv = { ...env, providers: { fetch: async (url: string) => (live.push(url), { status: 200, text: async () => 'live' }) } };
+    const served: string[] = [];
+    const fixtures = { fetch: async (url: string) => (served.push(url), { status: 200, text: async () => 'recorded' }), egressSets: (input: unknown) => ({ 'coverage:candidate-hosts': [`${(input as { id: string }).id}.example.test`] }) };
+    const reader = defineAgent(
+      defineContract({
+        id: 'mini-reader', version: '1.0.0', description: 'Reads one recorded page for the item', skills: ['x'], team: 'sourcing', kind: 'io',
+        consumes: Padded, produces: Padded, capabilities: { http: true }, egress: ['coverage:candidate-hosts'],
+        dataClasses: { in: ['P0'], out: ['P0'] }, budget: { usdPerCall: 0, usdPerRun: 0 }, timeoutMs: 1_000,
+      }),
+      async (item, ctx) => [{ id: item.id, tag: (await ctx.http!.getPage(`https://${item.id}.example.test/`)).body }],
+    );
+    const r = await runEval({ ...miniSpec(reader), fixtures, project: (outs) => outs, cases: [{ id: 'c', input: { id: 'a', tag: 'x' }, expected: [{ id: 'a', tag: 'recorded' }] }] }, liveEnv);
+    expect(r.failures).toEqual([]);
+    expect(served).toEqual(['https://a.example.test/']);
+    expect(live).toEqual([]);
+  });
+
   it('enforces the timeout even when the agent ignores its signal', async () => {
     const agent = defineAgent(mini(20), () => new Promise<never>(() => {}));
     const r = await runEval(miniSpec(agent), env);

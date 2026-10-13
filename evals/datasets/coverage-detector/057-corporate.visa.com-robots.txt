@@ -1,0 +1,4 @@
+User-Agent: *
+Disallow: /content_library/modal/
+
+Sitemap: https://corporate.visa.com/en/sitemap.xml

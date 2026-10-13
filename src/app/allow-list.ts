@@ -10,7 +10,8 @@ import type { AnyContract } from '../kernel/contract.js';
  * - `capabilities.files` with `access: 'read-write'`: only the two renderers, which write the documents;
  * - `capabilities.pdfText`: only the qa-gate and gig-qa, which check the PDFs' text layer;
  * - the symbolic egress `pack:careers-hosts` (hosts taken from the watchlist): only the two careers agents;
- * - the symbolic egress `coverage:candidate-hosts` (the coverage run's candidate companies): only the careers-locator.
+ * - the symbolic egress `coverage:candidate-hosts` (the coverage run's candidate companies): only the careers-locator
+ *   and the platform-detector, which fetch through the run's shared politeness gate (`coverage/gate.ts`).
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -19,7 +20,7 @@ export const CAPABILITY_ALLOW_LIST = {
   /** The symbolic egress whose hosts come from the user's watchlist (review R-I3). */
   careersEgress: ['src-careers-list', 'src-careers-job'],
   /** The symbolic egress whose hosts are the coverage run's candidate companies' own sites. */
-  candidateEgress: ['careers-locator'],
+  candidateEgress: ['careers-locator', 'platform-detector'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */

@@ -18,7 +18,7 @@ describe('platformForHost', () => {
   });
   it('every entry names a real Platform', () => {
     for (const p of PLATFORM_HOSTS) expect(Platform.safeParse(p.platform).success).toBe(true);
-    expect(PLATFORM_HOSTS).toHaveLength(22);
+    expect(PLATFORM_HOSTS).toHaveLength(23); // 22 from Task 3, plus careers.smartrecruiters.com (Task 4 signature table)
   });
 
   it('bare-domain vendor suffixes need a tenant subdomain: not the apex, not www', () => {

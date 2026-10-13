@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /NVIDIAExternalCareerSite/
+Disallow: /NVIDIAExternalCareerSiteResearch/
+Disallow: /talentcommunity/
+Disallow: /refreshFacet/
+
+Sitemap: https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/siteMap.xml

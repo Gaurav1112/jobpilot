@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /api
+Disallow: /us/en/results
+Disallow: /us/es/results
+Disallow: /results
+Disallow: /cms
+Disallow: /debug
+Disallow: /docs
+
+Sitemap: https://careers.walmart.com/sitemap.xml

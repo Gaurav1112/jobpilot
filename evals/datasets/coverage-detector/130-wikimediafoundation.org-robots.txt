@@ -1,0 +1,29 @@
+User-agent: *
+Disallow:
+
+Sitemap: https://wikimediafoundation.org/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ar/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/zh-hant/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/fr/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ru/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/es/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/de/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/it/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ja/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/nl/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/cs/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/sv/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/da/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/nb/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/el/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/pl/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/zh-hans/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ca/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/hu/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/lv/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ro/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/sk/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/uk/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/vi/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/he/sitemap_index.xml
+Sitemap: https://wikimediafoundation.org/ms/sitemap_index.xml

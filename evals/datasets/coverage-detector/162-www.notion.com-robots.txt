@@ -1,0 +1,25 @@
+User-Agent: *
+Allow: /
+Disallow: /invite/
+Disallow: /*/invite/
+Disallow: /templates/search?query=*
+Disallow: /*/templates/search?query=*
+Disallow: /lp/webinars/
+Disallow: /lp/webinars/*
+Disallow: /_vercel/insights/view
+Disallow: /embed/*
+Disallow: /*/embed/*
+Disallow: /product/agents-homepage
+
+Sitemap: https://www.notion.com/sitemap.xml
+Sitemap: https://sitemaps.notion.com/sitemap-categories.xml
+Sitemap: https://sitemaps.notion.com/sitemap-collections.xml
+Sitemap: https://www.notion.com/sitemap-root.xml
+Sitemap: https://www.notion.com/blog/sitemap.xml
+Sitemap: https://www.notion.com/customers/sitemap.xml
+Sitemap: https://www.notion.com/help/sitemap.xml
+Sitemap: https://www.notion.com/md/sitemap.xml
+Sitemap: https://www.notion.com/releases/sitemap.xml
+Sitemap: https://www.notion.com/use-case/sitemap.xml
+Sitemap: https://www.notion.com/feature/sitemap.xml
+Sitemap: https://www.notion.com/front-static/sitemap.xml

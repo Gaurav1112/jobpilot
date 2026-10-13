@@ -1,0 +1,5 @@
+User-Agent: *
+Allow: /
+Host: https://jobs.sap.com
+
+Sitemap: https://jobs.sap.com/sitemap.xml

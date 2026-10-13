@@ -1,0 +1,9 @@
+User-Agent: *
+Disallow: /app/
+Disallow: /messages/
+Disallow: /messenger/
+Disallow: /facebook/tab/
+Disallow: /jobs/internal/
+Content-Signal: search=yes, ai-train=no, ai-input=yes
+
+Sitemap: https://career.teamtailor.com/sitemap.xml

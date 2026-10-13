@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /targetcareers/
+Disallow: /refreshFacet/
+
+Sitemap: https://target.wd5.myworkdayjobs.com/targetcareers/siteMap.xml

@@ -1,0 +1,1 @@
+Sitemap: https://careers.datadoghq.com/sitemap.xml

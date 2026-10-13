@@ -1,0 +1,7 @@
+User-agent: *
+Disallow:
+
+Sitemap: https://careers.airbnb.com/sitemap_index.xml
+Sitemap: https://airbnb.olypara.com/sitemap_index.xml
+Sitemap: https://impact.airbnb.com/sitemap_index.xml
+Sitemap: https://news.airbnb.com/sitemap_index.xml

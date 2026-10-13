@@ -1,0 +1,13 @@
+User-agent: *
+Allow: /docs
+Allow: /docs$
+Disallow: /bitcoin/refund
+Disallow: /sources/refund
+Disallow: /sources/sepa_mandate
+Disallow: /sources/test_source
+Disallow: /sources/test_klarna
+Disallow: /unsupported-browser
+Disallow: /handoff-healthcheck
+Disallow: /handoff
+
+Sitemap: https://stripe.com/sitemap/sitemap.xml

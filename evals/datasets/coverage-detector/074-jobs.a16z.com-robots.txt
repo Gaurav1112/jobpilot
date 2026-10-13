@@ -1,0 +1,4 @@
+User-Agent: *
+Allow: /
+
+Sitemap: https://jobs.a16z.com/sitemap.xml

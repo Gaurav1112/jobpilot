@@ -1,0 +1,14 @@
+User-agent: *
+Disallow: /lite
+Disallow: /html
+Disallow: /*?
+Allow: /?*
+Allow: /search.html
+Disallow: /chrome_newtab
+Disallow: /email/
+Allow: /email/$
+Allow: /email/privacy-guarantees
+Allow: /email/privacy-terms
+
+Sitemap: https://duckduckgo.com/sitemap.xml
+Sitemap: https://duckduckgo.com/duckduckgo-help-pages/sitemap.xml

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { loadJsonl, type EvalSpec } from '../evals/runner.js';
-import type { AnyAgent } from '../kernel/agent.js';
+import { defineAgent, type AnyAgent } from '../kernel/agent.js';
 import { freezePack, issueContext } from '../kernel/broker.js';
 import { fixedClock } from '../kernel/clock.js';
 import { hashOf } from '../kernel/canonical.js';
@@ -13,6 +13,7 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
+import { detectorEgressSets, makePlatformDetector, platformDetectorContract } from './coverage/detector.js';
 import { companyNameMatcher } from './coverage/names.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
@@ -23,9 +24,10 @@ import { gigQaChecks } from './freelance/writing/gig-qa.js';
 import { gigTexts } from './freelance/writing/gig-text.js';
 import { proposalPlanner } from './freelance/writing/proposal-planner.js';
 import { appGuardrails } from './guardrails.js';
+import { offlineProviders } from './offline.js';
 import { loadPack } from './pack/load.js';
 import type { GigDocsPlan, GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
-import type { NameMatch } from './coverage/types.js';
+import type { CareersSite, NameMatch, PlatformGuess } from './coverage/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
 /** Exactly one output, projected; any other number of outputs is reported as `{outputs: n}`, never as a verdict or score. */
@@ -213,6 +215,19 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: companyNameMatcher,
       cases: loadJsonl(join(datasetDir, 'coverage-names.jsonl')),
       project: (outs) => one(outs, (o: NameMatch) => ({ same: o.same })),
+      metric: 'exactMatch',
+      min: 1,
+    },
+    {
+      // CareersSite@1 to the platform, slug, boardUrl, routedFrom and the verdict code (the evidence's first line up to
+      // its colon), on ≥ 40 recorded, trimmed careers pages served from evals/datasets/coverage-detector/ (never the
+      // network). Each case gets a fresh run gate, so one case's robots.txt or disabled host never leaks into another.
+      name: 'coverage-detector',
+      agent: defineAgent(platformDetectorContract, (site, ctx) => makePlatformDetector().run(site, ctx)),
+      cases: loadJsonl(join(datasetDir, 'coverage-detector.jsonl')),
+      fixtures: { fetch: offlineProviders(join(datasetDir, 'coverage-detector')).fetch, egressSets: (input) => detectorEgressSets([input as CareersSite]) },
+      project: (outs) =>
+        one(outs, (o: PlatformGuess) => ({ platform: o.platform, slug: o.slug, boardUrl: o.boardUrl, routedFrom: o.routedFrom, verdict: (o.evidence[0] ?? '').split(':')[0] })),
       metric: 'exactMatch',
       min: 1,
     },

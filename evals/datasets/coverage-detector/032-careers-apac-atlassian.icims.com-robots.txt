@@ -1,0 +1,15 @@
+User-agent: *
+Disallow: /jobs/*referral
+Disallow: /jobs/referral
+Disallow: /jobs/*login
+Disallow: /jobs/login
+Disallow: /jobs/*candidate
+Disallow: /jobs/candidate
+Disallow: /jobs/reminder
+Disallow: /connect
+Disallow: /connect/*interest
+Disallow: /connect/interest
+Disallow: /connect/*resume
+Disallow: /connect/resume
+
+Sitemap: https://careers-apac-atlassian.icims.com/sitemap.xml

@@ -73,9 +73,12 @@ export const PlatformGuess = defineType(
       /** The tenant, site or board id. */
       slug: z.string().nullable(),
       boardUrl: z.string().nullable(),
+      /** The signal that decided the platform, `<platform>:<where>` (e.g. `workday:inline`); null when no platform was decided. */
       signature: z.string().nullable(),
-      /** The front-end that was routed through to the back-end ATS, e.g. `phenom` or `drupal-jsonld`. */
+      /** The front-end that was routed through to the back-end ATS: `phenom`, or `jsonld` (a company page with JobPosting JSON-LD). */
       routedFrom: z.string().nullable(),
+      /** Why: the verdict first (`detected: …`, or the reason for a null platform), then the signals seen, in document order. */
+      evidence: z.array(z.string()),
     })
     .strict(),
 );

@@ -1,0 +1,427 @@
+{
+ "https://1password.com/careers": "001-1password.com.html",
+ "https://1password.com/robots.txt": "002-1password.com-robots.txt",
+ "https://about.gitlab.com/jobs/": "003-about.gitlab.com.html",
+ "https://about.gitlab.com/jobs/all-jobs/": "004-about.gitlab.com.html",
+ "https://about.gitlab.com/robots.txt": "005-about.gitlab.com-robots.txt",
+ "https://apply.careers.microsoft.com/careers?domain=microsoft.com": "006-apply.careers.microsoft.com.html",
+ "https://apply.careers.microsoft.com/robots.txt": "007-apply.careers.microsoft.com-robots.txt",
+ "https://apply.workable.com/huggingface/": "009-apply.workable.com.html",
+ "https://apply.workable.com/huggingface/j/NOSUCHJOB0/": {
+  "status": 302,
+  "location": "https://apply.workable.com/huggingface/"
+ },
+ "https://apply.workable.com/no-such-account-jobpilot-test/": {
+  "status": 302,
+  "location": "https://apply.workable.com/oops"
+ },
+ "https://apply.workable.com/oops": "010-apply.workable.com.html",
+ "https://apply.workable.com/robots.txt": "011-apply.workable.com-robots.txt",
+ "https://asana.com/jobs/all": "012-asana.com.html",
+ "https://asana.com/jobs/apply/8165477?gh_jid=8165477": "013-asana.com.html",
+ "https://asana.com/robots.txt": "014-asana.com-robots.txt",
+ "https://ats.rippling.com/no-such-board-jobpilot-test/jobs": {
+  "status": 404,
+  "file": "015-ats.rippling.com.html"
+ },
+ "https://ats.rippling.com/rippling/jobs": {
+  "status": 307,
+  "location": "http://www.rippling.com/careers/open-roles"
+ },
+ "https://ats.rippling.com/robots.txt": "016-ats.rippling.com-robots.txt",
+ "https://automattic.com/jobs/": {
+  "status": 301,
+  "location": "https://automattic.com/work-with-us/jobs/"
+ },
+ "https://automattic.com/robots.txt": "017-automattic.com-robots.txt",
+ "https://automattic.com/work-with-us/": "018-automattic.com.html",
+ "https://automattic.com/work-with-us/jobs/": "019-automattic.com.html",
+ "https://basecamp.com/about/jobs": {
+  "status": 301,
+  "location": "https://37signals.com/jobs"
+ },
+ "https://basecamp.com/robots.txt": "020-basecamp.com-robots.txt",
+ "https://boards.greenhouse.io/nosuchboardjobpilottest": {
+  "status": 301,
+  "location": "https://job-boards.greenhouse.io/nosuchboardjobpilottest"
+ },
+ "https://boards.greenhouse.io/robots.txt": "021-boards.greenhouse.io-robots.txt",
+ "https://breezy.breezy.hr/": "022-breezy.breezy.hr.html",
+ "https://breezy.breezy.hr/robots.txt": "023-breezy.breezy.hr-robots.txt",
+ "https://bunq.recruitee.com/": {
+  "status": 302,
+  "location": "https://careers.bunq.com/"
+ },
+ "https://bunq.recruitee.com/robots.txt": {
+  "status": 302,
+  "location": "https://careers.bunq.com/robots.txt"
+ },
+ "https://canonical.com/careers/all": "024-canonical.com.html",
+ "https://canonical.com/careers/no-such-role-jobpilot": {
+  "status": 404,
+  "file": "025-canonical.com.html"
+ },
+ "https://canonical.com/robots.txt": "026-canonical.com-robots.txt",
+ "https://career.teamtailor.com/": "027-career.teamtailor.com.html",
+ "https://career.teamtailor.com/jobs/0000000-no-such-job": {
+  "status": 404,
+  "file": "028-career.teamtailor.com.html"
+ },
+ "https://career.teamtailor.com/robots.txt": "029-career.teamtailor.com-robots.txt",
+ "https://careers-apac-atlassian.icims.com/jobs/99999/no-such-job/job": {
+  "status": 410,
+  "file": "030-careers-apac-atlassian.icims.com.html"
+ },
+ "https://careers-apac-atlassian.icims.com/jobs/intro": "031-careers-apac-atlassian.icims.com.html",
+ "https://careers-apac-atlassian.icims.com/robots.txt": "032-careers-apac-atlassian.icims.com-robots.txt",
+ "https://careers.airbnb.com/positions": {
+  "status": 301,
+  "location": "https://careers.airbnb.com/positions/"
+ },
+ "https://careers.airbnb.com/positions/": "033-careers.airbnb.com.html",
+ "https://careers.airbnb.com/robots.txt": "034-careers.airbnb.com-robots.txt",
+ "https://careers.bunq.com/": "035-careers.bunq.com.html",
+ "https://careers.bunq.com/robots.txt": "036-careers.bunq.com-robots.txt",
+ "https://careers.datadoghq.com/": "037-careers.datadoghq.com.html",
+ "https://careers.datadoghq.com/all-jobs": {
+  "status": 301,
+  "location": "https://careers.datadoghq.com/all-jobs/"
+ },
+ "https://careers.datadoghq.com/all-jobs/": "038-careers.datadoghq.com.html",
+ "https://careers.datadoghq.com/robots.txt": "039-careers.datadoghq.com-robots.txt",
+ "https://careers.equinix.com/": "040-careers.equinix.com.html",
+ "https://careers.equinix.com/corporate-functions": "041-careers.equinix.com.html",
+ "https://careers.equinix.com/robots.txt": "042-careers.equinix.com-robots.txt",
+ "https://careers.hcltech.com/": "043-careers.hcltech.com.html",
+ "https://careers.hcltech.com/no-such-page-jobpilot": "044-careers.hcltech.com.html",
+ "https://careers.hcltech.com/robots.txt": "045-careers.hcltech.com-robots.txt",
+ "https://careers.jpmorgan.com/global/en/home": {
+  "status": 301,
+  "location": "https://www.jpmorganchase.com/careers"
+ },
+ "https://careers.jpmorgan.com/robots.txt": {
+  "status": 404,
+  "file": "046-careers.jpmorgan.com.html"
+ },
+ "https://careers.mastercard.com/robots.txt": "047-careers.mastercard.com-robots.txt",
+ "https://careers.mastercard.com/us/en/job/R-000000/no-such-job": {
+  "status": 410,
+  "file": "048-careers.mastercard.com.html"
+ },
+ "https://careers.mastercard.com/us/en/no-such-page-jobpilot": {
+  "status": 404,
+  "file": "049-careers.mastercard.com.html"
+ },
+ "https://careers.mastercard.com/us/en/search-results": "050-careers.mastercard.com.html",
+ "https://careers.pypl.com/home/": {
+  "status": 403,
+  "file": "051-careers.pypl.com.html"
+ },
+ "https://careers.pypl.com/robots.txt": "052-careers.pypl.com-robots.txt",
+ "https://careers.robinhood.com/": "053-careers.robinhood.com.html",
+ "https://careers.robinhood.com/robots.txt": {
+  "status": 404,
+  "file": "054-careers.robinhood.com.html"
+ },
+ "https://careers.salesforce.com/en/jobs/": {
+  "status": 301,
+  "location": "https://www.salesforce.com/company/careers/jobs/"
+ },
+ "https://careers.salesforce.com/robots.txt": {
+  "status": 301,
+  "location": "https://www.salesforce.com/404/"
+ },
+ "https://careers.smartrecruiters.com/robots.txt": {
+  "status": 302,
+  "location": "https://jobs.smartrecruiters.com/"
+ },
+ "https://careers.walmart.com/": {
+  "status": 308,
+  "location": "https://careers.walmart.com/us/en/home"
+ },
+ "https://careers.walmart.com/robots.txt": "055-careers.walmart.com-robots.txt",
+ "https://careers.walmart.com/us/en/home": "056-careers.walmart.com.html",
+ "https://corporate.visa.com/en/jobs/": {
+  "status": 301,
+  "location": "https://visa.wd5.myworkdayjobs.com/Visa"
+ },
+ "https://corporate.visa.com/robots.txt": "057-corporate.visa.com-robots.txt",
+ "https://discord.com/careers": "058-discord.com.html",
+ "https://discord.com/robots.txt": "059-discord.com-robots.txt",
+ "https://doist.com/robots.txt": {
+  "status": 301,
+  "location": "https://www.todoist.com/about-us"
+ },
+ "https://duckduckgo.com/hiring": "060-duckduckgo.com.html",
+ "https://duckduckgo.com/robots.txt": "061-duckduckgo.com-robots.txt",
+ "https://explore.jobs.netflix.net/careers": "062-explore.jobs.netflix.net.html",
+ "https://explore.jobs.netflix.net/robots.txt": "063-explore.jobs.netflix.net-robots.txt",
+ "https://grasshopper.pinpointhq.com/": "064-grasshopper.pinpointhq.com.html",
+ "https://grasshopper.pinpointhq.com/robots.txt": "065-grasshopper.pinpointhq.com-robots.txt",
+ "https://greylock.com/jobs/portfolio-jobs": {
+  "status": 308,
+  "location": "https://greylock.com/jobs/portfolio-jobs/"
+ },
+ "https://greylock.com/jobs/portfolio-jobs/": "066-greylock.com.html",
+ "https://greylock.com/robots.txt": "067-greylock.com-robots.txt",
+ "https://gusto.com/robots.txt": {
+  "status": 403,
+  "file": "068-gusto.com.html"
+ },
+ "https://huggingface.co/jobs": {
+  "status": 302,
+  "location": "https://huggingface.co/settings/jobs"
+ },
+ "https://huggingface.co/login": "069-huggingface.co.html",
+ "https://huggingface.co/robots.txt": "070-huggingface.co-robots.txt",
+ "https://huggingface.co/settings/jobs": {
+  "status": 302,
+  "location": "https://huggingface.co/login"
+ },
+ "https://job-boards.greenhouse.io/gitlab": "071-job-boards.greenhouse.io.html",
+ "https://job-boards.greenhouse.io/robots.txt": "072-job-boards.greenhouse.io-robots.txt",
+ "https://jobs.a16z.com/jobs": "073-jobs.a16z.com.html",
+ "https://jobs.a16z.com/robots.txt": "074-jobs.a16z.com-robots.txt",
+ "https://jobs.accel.com/jobs": "075-jobs.accel.com.html",
+ "https://jobs.accel.com/robots.txt": "076-jobs.accel.com-robots.txt",
+ "https://jobs.ashbyhq.com/no-such-board-jobpilot-test": "077-jobs.ashbyhq.com.html",
+ "https://jobs.ashbyhq.com/ramp": "078-jobs.ashbyhq.com.html",
+ "https://jobs.ashbyhq.com/robots.txt": "079-jobs.ashbyhq.com-robots.txt",
+ "https://jobs.dell.com/": {
+  "status": 301,
+  "location": "https://enterpriseplatform.dell.com/hcmUI/CandidateExperience/"
+ },
+ "https://jobs.dell.com/robots.txt": "080-jobs.dell.com-robots.txt",
+ "https://jobs.dropbox.com/robots.txt": {
+  "status": 301,
+  "location": "https://www.dropbox.jobs/robots.txt"
+ },
+ "https://jobs.elastic.co/": "081-jobs.elastic.co.html",
+ "https://jobs.elastic.co/robots.txt": "082-jobs.elastic.co-robots.txt",
+ "https://jobs.gem.com/gem": "083-jobs.gem.com.html",
+ "https://jobs.gem.com/robots.txt": {
+  "status": 404,
+  "file": "084-jobs.gem.com.html"
+ },
+ "https://jobs.generalcatalyst.com/jobs": "085-jobs.generalcatalyst.com.html",
+ "https://jobs.generalcatalyst.com/robots.txt": "086-jobs.generalcatalyst.com-robots.txt",
+ "https://jobs.greylock.com/jobs": {
+  "status": 301,
+  "location": "https://greylock.com/jobs/portfolio-jobs"
+ },
+ "https://jobs.greylock.com/robots.txt": {
+  "status": 301,
+  "location": "https://greylock.com/jobs/portfolio-jobs"
+ },
+ "https://jobs.intel.com/robots.txt": {
+  "status": 301,
+  "location": "https://corpredirect.intel.com/Redirector/404Redirector.aspx"
+ },
+ "https://jobs.lever.co/no-such-board-jobpilot-test": {
+  "status": 404,
+  "file": "087-jobs.lever.co.html"
+ },
+ "https://jobs.lever.co/palantir": "088-jobs.lever.co.html",
+ "https://jobs.lever.co/robots.txt": "089-jobs.lever.co-robots.txt",
+ "https://jobs.nvidia.com/careers": "090-jobs.nvidia.com.html",
+ "https://jobs.nvidia.com/robots.txt": "091-jobs.nvidia.com-robots.txt",
+ "https://jobs.sap.com/": {
+  "status": 403,
+  "file": "092-jobs.sap.com.html"
+ },
+ "https://jobs.sap.com/robots.txt": "093-jobs.sap.com-robots.txt",
+ "https://jobs.smartrecruiters.com/BoschGroup": {
+  "status": 301,
+  "location": "https://careers.smartrecruiters.com/BoschGroup"
+ },
+ "https://jobs.smartrecruiters.com/BoschGroup/000000000000000-no-such-job": {
+  "status": 404,
+  "file": "094-jobs.smartrecruiters.com.html"
+ },
+ "https://jobs.smartrecruiters.com/BoschGroup/744000155167930-senior-data-scientist-ai-data-engineering-intelligent-automation": "095-jobs.smartrecruiters.com.html",
+ "https://jobs.smartrecruiters.com/robots.txt": {
+  "status": 404,
+  "file": "096-jobs.smartrecruiters.com.html"
+ },
+ "https://jobs.twilio.com/": {
+  "status": 302,
+  "location": "https://jobs.twilio.com/careers"
+ },
+ "https://jobs.twilio.com/careers": "097-jobs.twilio.com.html",
+ "https://jobs.twilio.com/robots.txt": "098-jobs.twilio.com-robots.txt",
+ "https://linear.app/careers": "099-linear.app.html",
+ "https://linear.app/careers/no-such-role": {
+  "status": 404,
+  "file": "100-linear.app.html"
+ },
+ "https://linear.app/robots.txt": "101-linear.app-robots.txt",
+ "https://nosuchboardjobpilottest.breezy.hr/": {
+  "status": 404,
+  "file": "102-nosuchboardjobpilottest.breezy.hr.html"
+ },
+ "https://nosuchboardjobpilottest.breezy.hr/robots.txt": "103-nosuchboardjobpilottest.breezy.hr-robots.txt",
+ "https://nosuchboardjobpilottest.pinpointhq.com/robots.txt": "104-nosuchboardjobpilottest.pinpointhq.com-robots.txt",
+ "https://nosuchboardjobpilottest.recruitee.com/robots.txt": {
+  "status": 301,
+  "location": "https://recruitee.com/careers_not_hosted"
+ },
+ "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite": "105-nvidia.wd5.myworkdayjobs.com.html",
+ "https://nvidia.wd5.myworkdayjobs.com/robots.txt": "106-nvidia.wd5.myworkdayjobs.com-robots.txt",
+ "https://ottonova.jobs.personio.de/": "107-ottonova.jobs.personio.de.html",
+ "https://ottonova.jobs.personio.de/robots.txt": "108-ottonova.jobs.personio.de-robots.txt",
+ "https://personio.jobs.personio.com/": {
+  "status": 404,
+  "file": "109-personio.jobs.personio.com.html"
+ },
+ "https://personio.jobs.personio.com/robots.txt": "110-personio.jobs.personio.com-robots.txt",
+ "https://personio.jobs.personio.de/": {
+  "status": 404,
+  "file": "111-personio.jobs.personio.de.html"
+ },
+ "https://personio.jobs.personio.de/robots.txt": "112-personio.jobs.personio.de-robots.txt",
+ "https://posthog.com/careers": "113-posthog.com.html",
+ "https://posthog.com/careers/no-such-role": "114-posthog.com.html",
+ "https://posthog.com/robots.txt": "115-posthog.com-robots.txt",
+ "https://redditinc.com/careers": "116-redditinc.com.html",
+ "https://redditinc.com/robots.txt": "117-redditinc.com-robots.txt",
+ "https://rednucleus.bamboohr.com/careers": "118-rednucleus.bamboohr.com.html",
+ "https://rednucleus.bamboohr.com/robots.txt": "119-rednucleus.bamboohr.com-robots.txt",
+ "https://stripe.com/careers/search": "120-stripe.com.html",
+ "https://stripe.com/careers/search/redirect": {
+  "status": 307,
+  "location": "https://stripe.com/careers/search"
+ },
+ "https://stripe.com/jobs/search": {
+  "status": 307,
+  "location": "https://stripe.com/careers/search/redirect"
+ },
+ "https://stripe.com/robots.txt": "121-stripe.com-robots.txt",
+ "https://tado.jobs.personio.de/": "122-tado.jobs.personio.de.html",
+ "https://tado.jobs.personio.de/robots.txt": "123-tado.jobs.personio.de-robots.txt",
+ "https://target.wd5.myworkdayjobs.com/robots.txt": "124-target.wd5.myworkdayjobs.com-robots.txt",
+ "https://target.wd5.myworkdayjobs.com/targetcareers": "125-target.wd5.myworkdayjobs.com.html",
+ "https://vercel.com/careers": "126-vercel.com.html",
+ "https://vercel.com/robots.txt": "127-vercel.com-robots.txt",
+ "https://wikimediafoundation.org/about/jobs/": {
+  "status": 301,
+  "location": "https://wikimediafoundation.org/jobs/"
+ },
+ "https://wikimediafoundation.org/jobs/": "128-wikimediafoundation.org.html",
+ "https://wikimediafoundation.org/jobs/no-such-role-jobpilot/": {
+  "status": 404,
+  "file": "129-wikimediafoundation.org.html"
+ },
+ "https://wikimediafoundation.org/robots.txt": "130-wikimediafoundation.org-robots.txt",
+ "https://www.adobe.com/careers.html": "131-www.adobe.com.html",
+ "https://www.adobe.com/robots.txt": "132-www.adobe.com-robots.txt",
+ "https://www.asana.com/jobs/apply/8165477?gh_jid=8165477": {
+  "status": 301,
+  "location": "https://asana.com/jobs/apply/8165477?gh_jid=8165477"
+ },
+ "https://www.asana.com/robots.txt": {
+  "status": 301,
+  "location": "https://asana.com/robots.txt"
+ },
+ "https://www.atlassian.com/company/careers/all-jobs": "133-www.atlassian.com.html",
+ "https://www.atlassian.com/company/careers/no-such-team-jobpilot": {
+  "status": 404,
+  "file": "134-www.atlassian.com.html"
+ },
+ "https://www.atlassian.com/robots.txt": "135-www.atlassian.com-robots.txt",
+ "https://www.atlassian.com/zh/company/careers/all-jobs": "136-www.atlassian.com.html",
+ "https://www.cloudflare.com/careers/jobs/": "137-www.cloudflare.com.html",
+ "https://www.cloudflare.com/robots.txt": "138-www.cloudflare.com-robots.txt",
+ "https://www.coinbase.com/careers/positions": {
+  "status": 403,
+  "file": "139-www.coinbase.com.html"
+ },
+ "https://www.coinbase.com/robots.txt": "140-www.coinbase.com-robots.txt",
+ "https://www.elastic.co/about/careers/": {
+  "status": 301,
+  "location": "https://www.elastic.co/careers"
+ },
+ "https://www.elastic.co/careers": "141-www.elastic.co.html",
+ "https://www.elastic.co/robots.txt": "142-www.elastic.co-robots.txt",
+ "https://www.figma.com/careers/": "143-www.figma.com.html",
+ "https://www.figma.com/robots.txt": "144-www.figma.com-robots.txt",
+ "https://www.grammarly.com/careers": {
+  "status": 301,
+  "location": "https://superhuman.com/company/careers"
+ },
+ "https://www.grammarly.com/jobs": {
+  "status": 301,
+  "location": "https://www.grammarly.com/careers"
+ },
+ "https://www.grammarly.com/robots.txt": "145-www.grammarly.com-robots.txt",
+ "https://www.hashicorp.com/robots.txt": {
+  "status": 429,
+  "file": "146-www.hashicorp.com.html"
+ },
+ "https://www.hubspot.com/careers/jobs": "148-www.hubspot.com.html",
+ "https://www.hubspot.com/robots.txt": "149-www.hubspot.com-robots.txt",
+ "https://www.jpmorganchase.com/careers": "150-www.jpmorganchase.com.html",
+ "https://www.jpmorganchase.com/robots.txt": "151-www.jpmorganchase.com-robots.txt",
+ "https://www.lyft.com/careers": "152-www.lyft.com.html",
+ "https://www.lyft.com/robots.txt": "153-www.lyft.com-robots.txt",
+ "https://www.mongodb.com/careers/job/?gh_jid=8258279": {
+  "status": 302,
+  "location": "https://www.mongodb.com/careers/job?gh_jid=8258279"
+ },
+ "https://www.mongodb.com/careers/job?gh_jid=8258279": {
+  "status": 302,
+  "location": "https://www.mongodb.com/careers/jobs/8258279"
+ },
+ "https://www.mongodb.com/careers/jobs/8258279": "154-www.mongodb.com.html",
+ "https://www.mongodb.com/company/careers": "155-www.mongodb.com.html",
+ "https://www.mongodb.com/company/careers/see-jobs": "156-www.mongodb.com.html",
+ "https://www.mongodb.com/robots.txt": "157-www.mongodb.com-robots.txt",
+ "https://www.mozilla.org/en-US/careers/feed/": "158-www.mozilla.org.html",
+ "https://www.mozilla.org/en-US/careers/listings/": "159-www.mozilla.org.html",
+ "https://www.mozilla.org/robots.txt": "160-www.mozilla.org-robots.txt",
+ "https://www.notion.com/careers": "161-www.notion.com.html",
+ "https://www.notion.com/robots.txt": "162-www.notion.com-robots.txt",
+ "https://www.nvidia.com/en-us/about-nvidia/careers/": "163-www.nvidia.com.html",
+ "https://www.nvidia.com/robots.txt": "164-www.nvidia.com-robots.txt",
+ "https://www.okta.com/company/careers/": "165-www.okta.com.html",
+ "https://www.okta.com/company/careers/customer-first/technical-architect-auth0-8201733/": "166-www.okta.com.html",
+ "https://www.okta.com/company/careers/job-listing/": "167-www.okta.com.html",
+ "https://www.okta.com/company/careers/no-such-team-page/": {
+  "status": 404,
+  "file": "168-www.okta.com.html"
+ },
+ "https://www.okta.com/robots.txt": "169-www.okta.com-robots.txt",
+ "https://www.redditinc.com/careers": {
+  "status": 301,
+  "location": "https://redditinc.com/careers"
+ },
+ "https://www.redditinc.com/robots.txt": {
+  "status": 301,
+  "location": "https://redditinc.com/robots.txt"
+ },
+ "https://www.redhat.com/en/jobs": "170-www.redhat.com.html",
+ "https://www.redhat.com/en/jobs/no-such-page-jobpilot": {
+  "status": 404,
+  "file": "171-www.redhat.com.html"
+ },
+ "https://www.redhat.com/robots.txt": "172-www.redhat.com-robots.txt",
+ "https://www.rippling.com/careers/open-roles": "173-www.rippling.com.html",
+ "https://www.rippling.com/robots.txt": "174-www.rippling.com-robots.txt",
+ "https://www.salesforce.com/404/": {
+  "status": 404,
+  "file": "175-www.salesforce.com.html"
+ },
+ "https://www.salesforce.com/company/careers/jobs/": "176-www.salesforce.com.html",
+ "https://www.salesforce.com/company/careers/no-such-team-jobpilot/": {
+  "status": 404,
+  "file": "177-www.salesforce.com.html"
+ },
+ "https://www.salesforce.com/robots.txt": "178-www.salesforce.com-robots.txt",
+ "https://www.twilio.com/en-us/company/jobs": {
+  "status": 301,
+  "location": "https://jobs.twilio.com/"
+ },
+ "https://www.twilio.com/robots.txt": "179-www.twilio.com-robots.txt",
+ "https://zapier.com/jobs": "180-zapier.com.html",
+ "https://zapier.com/jobs/culture-and-values-at-zapier": "181-zapier.com.html",
+ "https://zapier.com/robots.txt": "182-zapier.com-robots.txt"
+}

@@ -1,9 +1,8 @@
 import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
-import { KernelError } from '../../kernel/errors.js';
 import type { EgressSets } from '../../kernel/broker.js';
+import { asHttps, BudgetExhausted, makeRunGate, refuseSiblingDependent, stepFetcher, type Fetched, type HostStateStore, type RunGate } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
-import { parseRobots, robotsDenial, type RobotsVerdict } from './robots.js';
 import { registrableDomain } from './seed.js';
 import { CareersSite, CompanyCandidate } from './types.js';
 
@@ -17,7 +16,7 @@ import { CareersSite, CompanyCandidate } from './types.js';
  *   5. `/sitemap.xml`, then the sitemaps named in robots.txt: the first `<loc>` whose path has `/careers` or `/jobs` -> `sitemap`
  *   6. otherwise `none`, `careersUrl: null`, with the reason of every miss.
  *
- * Politeness: the host state is per RUN (`createHostState`, shared by every candidate of a run): each host's robots.txt is
+ * Politeness (the shared run gate, `gate.ts`): the host state is per RUN (shared by every candidate of a run): each host's robots.txt is
  * fetched once, and every probe honours it. robots.txt: 404/410 allows all; 401/403 disallows the host
  * (`robots-forbidden`); any other 4xx, a 5xx or an unreachable host disallows it (`robots-unavailable`, RFC 9309's
  * conservative choice); 429 disables the host. A host that answers a probe with a challenge page, 401, 403 or 429 is
@@ -32,7 +31,6 @@ import { CareersSite, CompanyCandidate } from './types.js';
  * domain, or to a known platform host, ends the probe as a hit on that Location, unfetched. Any other redirect is a miss.
  */
 
-export const MAX_HOPS = 5;
 /** Requests one candidate may make (robots.txt, redirect hops and probes together). */
 export const MAX_REQUESTS = 16;
 export const CAREERS_PATHS = ['/careers', '/jobs', '/company/careers', '/about/careers'] as const;
@@ -42,36 +40,7 @@ export const CAREERS_SUBDOMAINS = ['careers', 'jobs'] as const;
 export const CAREERS_LINK = /\b(careers?|jobs|join (?:us|our team)|work with us|open positions)\b/i;
 const SITEMAP_LOC = /\/careers|\/jobs/i;
 
-/** Status codes that may carry a bot wall; with a marker in the body they are a challenge (a closed list, never extended at run time). */
-const CHALLENGE_STATUS: ReadonlySet<number> = new Set([403, 429, 503]);
-const CHALLENGE_MARKERS = /cf-chl|challenge-platform|captcha|Attention Required|px-captcha|Just a moment/i;
-
-/** A challenge page: 403/429/503 with a known marker in the body. */
-export function isChallenge(status: number, body: string): boolean {
-  return CHALLENGE_STATUS.has(status) && CHALLENGE_MARKERS.test(body);
-}
-
-const hostOf = (u: string): string | null => {
-  try {
-    return new URL(u).hostname.toLowerCase().replace(/\.+$/u, '');
-  } catch {
-    return null;
-  }
-};
-
-/** `https://host/...` for an http(s) URL string; null otherwise. A bare scheme-less value is not guessed. */
-function asHttps(raw: string): URL | null {
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return null;
-  }
-  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null;
-  u.protocol = 'https:';
-  u.hash = '';
-  return u;
-}
+export { HOST_DISABLED, isChallenge, MAX_HOPS, type HostState, type HostStateStore } from './gate.js';
 
 /** Every host the locator may contact for a candidate: the website, its apex and www, careers./jobs. subdomains, and the listed careersUrl's. */
 export function locatorHosts(c: CompanyCandidate): string[] {
@@ -126,16 +95,37 @@ export function findCareersLink(html: string, base: string, accept: (u: URL) => 
   return null;
 }
 
-/** The `<loc>` values of a sitemap, in document order. */
+/**
+ * The `<loc>` values of a sitemap, in document order: trimmed, an optional CDATA wrapper removed, entities decoded;
+ * empty values and values holding `<` or `]` are skipped. Linear: each `<loc>` and `</loc>` is found by a forward
+ * literal search, a found `</loc>` is reused until passed, and a missing one ends the scan.
+ */
 export function sitemapLocs(xml: string): string[] {
-  return [...xml.matchAll(/<loc>\s*(?:<!\[CDATA\[)?\s*([^<\]]+?)\s*(?:\]\]>)?\s*<\/loc>/gi)].map((m) => decodeEntities(m[1] ?? ''));
+  const out: string[] = [];
+  const open = /<loc>/gi;
+  const close = /<\/loc>/gi;
+  let end = -1; // where the next </loc> starts (reused until an opening passes it)
+  let o = open.exec(xml);
+  while (o !== null) {
+    const from = open.lastIndex;
+    if (end < from) {
+      close.lastIndex = from;
+      const c = close.exec(xml);
+      if (c === null) break; // no </loc> after here: no later <loc> can close either
+      end = c.index;
+    }
+    const n = open.exec(xml);
+    if (n === null || n.index > end) {
+      let v = xml.slice(from, end).trim();
+      if (v.startsWith('<![CDATA[')) v = v.slice('<![CDATA['.length);
+      if (v.endsWith(']]>')) v = v.slice(0, -']]>'.length);
+      v = v.trim();
+      if (v !== '' && !v.includes('<') && !v.includes(']')) out.push(decodeEntities(v));
+    }
+    o = n; // a <loc> opening before this one closed leaves this one without a value
+  }
+  return out;
 }
-
-type Fetched =
-  | { readonly kind: 'ok'; readonly status: number; readonly body: string; readonly url: string }
-  | { readonly kind: 'moved'; readonly url: string }
-  | { readonly kind: 'miss'; readonly reason: string }
-  | { readonly kind: 'challenge'; readonly reason: string };
 
 export const careersLocatorContract = defineContract({
   id: 'careers-locator',
@@ -154,27 +144,11 @@ export const careersLocatorContract = defineContract({
   retry: { max: 0, on: [], backoffMs: [] },
 });
 
-/** What one run knows about hosts: robots.txt (once per host) and which hosts are disabled, and why. */
-export interface HostState {
-  readonly robots: Map<string, Promise<RobotsVerdict>>;
-  readonly disabled: Map<string, string>;
-}
-
-/** Where a run's disabled hosts are kept durably (the app's `AppStore` implements it). */
-export interface HostStateStore {
-  coverageHostState(runKey: string): ReadonlyMap<string, string>;
-  disableCoverageHost(runKey: string, host: string, reason: string, at: string): void;
-}
-
-class BudgetExhausted extends Error {}
-
-/** The step refused because of state another candidate set: never stored as a finished step (see makeCareersLocator). */
-const HOST_DISABLED = 'host-disabled:';
-
 /**
  * The careers-locator agent for ONE coverage run. Build it inside each run, with that run's key (the run id the
  * supervisor resumes under, e.g. `coverage-2026-10-13`); never keep one in a long-lived process such as the dashboard,
- * whose host state would outlive its run.
+ * whose host state would outlive its run. Give it the run's `gate` (`makeRunGate`) to share the host state with the
+ * platform detector of the same run; without one it builds its own from `runKey` and `store`.
  *
  * Host state and memoisation (a step is one candidate, and its step key knows nothing of its siblings):
  * - A host that is disabled (challenge, 401, 403, 429, a robots.txt refusal) is written to `store` under `runKey`
@@ -188,136 +162,37 @@ const HOST_DISABLED = 'host-disabled:';
  * - The shared robots.txt fetch runs under the abort signal of whichever candidate asks first; if that candidate's
  *   step times out mid-fetch, the host becomes robots-unavailable for the run (conservative, intended).
  */
-export function makeCareersLocator(opts: { readonly runKey?: string; readonly store?: HostStateStore; readonly maxRequests?: number } = {}) {
-  const state: HostState = { robots: new Map(), disabled: new Map() };
-  const runKey = opts.runKey ?? 'unkeyed';
-  if (opts.store !== undefined) for (const [h, why] of opts.store.coverageHostState(runKey)) state.disabled.set(h, why);
+export function makeCareersLocator(opts: { readonly runKey?: string; readonly store?: HostStateStore; readonly gate?: RunGate; readonly maxRequests?: number } = {}) {
+  const gate = opts.gate ?? makeRunGate({ ...(opts.runKey !== undefined ? { runKey: opts.runKey } : {}), ...(opts.store !== undefined ? { store: opts.store } : {}) });
   const maxRequests = opts.maxRequests ?? MAX_REQUESTS;
-  const disable = (host: string, why: string, at: string): void => {
-    if (state.disabled.has(host)) return;
-    opts.store?.disableCoverageHost(runKey, host, why, at); // durable first, then visible to the next candidate
-    state.disabled.set(host, why);
-  };
-  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, state, disable, maxRequests)]);
+  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, gate, maxRequests)]);
 }
 
-async function locate(c: CompanyCandidate, ctx: AgentContext, state: HostState, disable: (host: string, why: string, at: string) => void, maxRequests: number): Promise<CareersSite> {
+async function locate(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, maxRequests: number): Promise<CareersSite> {
   const reasons: string[] = [];
   let site: CareersSite;
   try {
-    site = await probe(c, ctx, state, disable, maxRequests, reasons);
+    site = await probe(c, ctx, gate, maxRequests, reasons);
   } catch (e) {
     if (!(e instanceof BudgetExhausted)) throw e;
     reasons.push('budget-exhausted');
     site = { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
   }
-  const skipped = (site.reasons ?? []).filter((r) => r.includes(HOST_DISABLED));
-  if (skipped.length > 0) {
-    throw new KernelError('input_rejected', `skipped by run state set by another candidate (${skipped.join('; ')})${site.careersUrl === null ? '' : `; found ${site.careersUrl}`}`);
-  }
+  refuseSiblingDependent(site.reasons ?? [], site.careersUrl);
   return site;
 }
 
-async function probe(c: CompanyCandidate, ctx: AgentContext, state: HostState, disableHost: (host: string, why: string, at: string) => void, maxRequests: number, reasons: string[]): Promise<CareersSite> {
-  /** Hosts THIS candidate's own requests disabled: its refusals are its own outcome, unlike a sibling's. */
-  const own = new Set<string>();
-  const disable = (host: string, why: string, at: string): void => {
-    if (!state.disabled.has(host)) own.add(host);
-    disableHost(host, why, at);
-  };
-  const skipReason = (host: string, why: string): string => (own.has(host) ? `${why} (${host})` : `${HOST_DISABLED}${why}`);
-  if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
-  const http = ctx.http;
+async function probe(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, maxRequests: number, reasons: string[]): Promise<CareersSite> {
+  const state = gate.state;
   const planned = new Set(locatorHosts(c));
-  let requests = 0;
 
   const web = asHttps(c.website);
   const siteKey = web === null ? null : registrableDomain(web.hostname);
   const onCompanyDomain = (u: URL): boolean => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
+  const { fetchUrl, robotsFor } = stepFetcher({ ctx, gate, planned, acceptMoved: onCompanyDomain, maxRequests });
 
   const found = (method: CareersSite['method'], careersUrl: string, evidence: string): CareersSite => ({ candidate: c, careersUrl, method, evidence, ...(reasons.length > 0 ? { reasons } : {}) });
   const none = (): CareersSite => ({ candidate: c, careersUrl: null, method: 'none', evidence: null, reasons: reasons.length > 0 ? reasons : ['no probe applied'] });
-
-  /** One request with up to MAX_HOPS manual redirects. `checkRobots` is off only for robots.txt itself. */
-  async function fetchUrl(start: string, checkRobots: boolean): Promise<Fetched> {
-    let url = start;
-    for (let hop = 0; hop <= MAX_HOPS; hop++) {
-      const u = asHttps(url);
-      if (u === null) return { kind: 'miss', reason: `not an http(s) URL: ${url.slice(0, 80)}` };
-      if (u.port !== '' || u.username !== '' || u.password !== '') return { kind: 'miss', reason: `port or credentials in URL: ${u.hostname}` };
-      const host = u.hostname.toLowerCase();
-      if (!planned.has(host)) {
-        if (hop > 0 && onCompanyDomain(u)) return { kind: 'moved', url: u.href };
-        return { kind: 'miss', reason: hop > 0 ? `redirect to ${host} (off-domain)` : `${host} is not a planned host` };
-      }
-      const off = state.disabled.get(host);
-      if (off !== undefined) return { kind: 'miss', reason: skipReason(host, off) };
-      if (checkRobots) {
-        const denial = robotsDenial(await robotsFor(host), u);
-        if (denial !== null) return { kind: 'miss', reason: `${denial} (${host})` };
-        const off2 = state.disabled.get(host);
-        if (off2 !== undefined) return { kind: 'miss', reason: skipReason(host, off2) };
-      }
-      // robots.txt is shared by the whole run, so it is counted but never refused by one candidate's budget
-      if (checkRobots && requests >= maxRequests) throw new BudgetExhausted();
-      requests++;
-      let page;
-      try {
-        page = await http.getPage(u.href);
-      } catch (e) {
-        if (e instanceof KernelError) return { kind: 'miss', reason: `${e.code}: ${u.hostname}${u.pathname}` };
-        throw e;
-      }
-      const challenge = isChallenge(page.status, page.body);
-      // For robots.txt itself a plain 401/403 is the robots-forbidden verdict (robotsFor), not a disabled host.
-      const plainDenied = page.status === 401 || page.status === 403;
-      if (challenge || page.status === 429 || (plainDenied && checkRobots)) {
-        const why = challenge ? 'challenge' : `http-${page.status}`;
-        disable(host, why, ctx.clock.now());
-        return { kind: 'challenge', reason: page.status === 429 && !challenge ? `rate-limited (429) on ${host}` : `${why} (${page.status}) on ${host}` };
-      }
-      if (page.status >= 300 && page.status < 400) {
-        if (page.location === null) return { kind: 'miss', reason: `${page.status} without Location (${host}${u.pathname})` };
-        try {
-          url = new URL(page.location, u).href;
-        } catch {
-          return { kind: 'miss', reason: `bad redirect Location (${host}${u.pathname})` };
-        }
-        continue;
-      }
-      return { kind: 'ok', status: page.status, body: page.body, url: u.href };
-    }
-    return { kind: 'miss', reason: `more than ${MAX_HOPS} redirects from ${start.slice(0, 80)}` };
-  }
-
-  /** The host's robots.txt for the run: fetched once, whoever asks first. Only settled verdicts are cached. */
-  function robotsFor(host: string): Promise<RobotsVerdict> {
-    const cached = state.robots.get(host);
-    if (cached !== undefined) return cached;
-    const p = (async (): Promise<RobotsVerdict> => {
-      let verdict: RobotsVerdict;
-      try {
-        verdict = await robotsVerdict(host);
-      } catch (e) {
-        // e.g. a TimeoutError rethrown by the broker: the host is robots-unavailable for the run, never a cached rejection
-        verdict = { kind: 'disallow-all', reason: 'robots-unavailable', why: e instanceof Error ? e.name : 'error' };
-      }
-      if (verdict.kind === 'disallow-all') disable(host, verdict.reason, ctx.clock.now());
-      return verdict;
-    })();
-    state.robots.set(host, p);
-    return p;
-  }
-
-  async function robotsVerdict(host: string): Promise<RobotsVerdict> {
-    const r = await fetchUrl(`https://${host}/robots.txt`, false);
-    if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
-    if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
-    if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
-    if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };
-    if (r.status >= 400) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${r.status}` };
-    return { kind: 'rules', robots: parseRobots(r.body) };
-  }
 
   const miss = (what: string, r: Fetched): void => {
     if (r.kind === 'miss' || r.kind === 'challenge') reasons.push(`${what}: ${r.reason}`);

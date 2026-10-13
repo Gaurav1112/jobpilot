@@ -1,0 +1,21 @@
+User-Agent: *
+Content-Signal: search=yes, ai-input=yes, ai-train=no
+Allow: /api/og/*
+Allow: /api/docs-og*
+Allow: /api/product-og*
+Allow: /api/dynamic-og*
+Allow: /api/model-og*
+Allow: /api/www/avatar/*
+Disallow:
+Disallow: /api/
+Disallow: /oauth
+Disallow: /confirm
+Disallow: /notifications
+Disallow: /old-browser.html
+Disallow: /preauthorize
+Disallow: /signup?*
+Disallow: /invites/
+Disallow: /blog/authors
+Disallow: /changelog/authors
+
+Sitemap: https://vercel.com/sitemap.xml

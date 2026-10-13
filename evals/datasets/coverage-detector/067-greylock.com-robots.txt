@@ -1,0 +1,5 @@
+User-Agent: *
+Allow: /
+Content-Signal: search=yes,ai-train=no,use=reference
+
+Sitemap: https://greylock.com/sitemap.xml

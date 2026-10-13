@@ -640,7 +640,7 @@ describe('capability allow-list', () => {
       filesWrite: ['renderer', 'gig-renderer'],
       pdfText: ['qa-gate', 'gig-qa'],
       careersEgress: ['src-careers-list', 'src-careers-job'],
-      candidateEgress: ['careers-locator'],
+      candidateEgress: ['careers-locator', 'platform-detector'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;

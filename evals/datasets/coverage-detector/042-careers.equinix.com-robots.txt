@@ -1,0 +1,8 @@
+User-agent: *
+Disallow: /v1/candidate_details
+Disallow: /me/
+Disallow: /api/
+Disallow: /pages/*/blocks/
+Crawl-delay: 5
+
+Sitemap: https://careers.equinix.com/sitemap.xml

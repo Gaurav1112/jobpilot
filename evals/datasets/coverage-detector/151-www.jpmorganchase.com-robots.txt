@@ -1,0 +1,10 @@
+User-agent: *
+Disallow: /careers/explore-opportunities/tech-data-product
+Disallow: /about-us/aisymposium
+Disallow: /content/dam/jpm/ts-change-readiness/documents/
+Disallow: /careers/explore-opportunities/tech-data-product/job-details
+Disallow: /content/dam/jpmorgan/documents/JPMC-LCAW-2025-Key-Takeaways.pdf
+Disallow: /content/dam/jpm/structured-products-documents/
+Allow: /sitemap.xml
+
+Sitemap: https://www.jpmorganchase.com/sitemap.xml

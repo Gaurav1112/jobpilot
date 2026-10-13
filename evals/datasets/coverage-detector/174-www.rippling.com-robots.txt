@@ -1,0 +1,15 @@
+User-agent: *
+Allow: /
+Disallow: /api
+Disallow: /utility
+Disallow: /i18n-change-viewer
+Disallow: /generator-globals
+Disallow: /generator-sitemap
+Disallow: /generator-transcend
+Disallow: /phrase-asset-preview
+Disallow: /reusables-library
+Disallow: /visual-sitemap
+Disallow: /cdn-cgi/
+Content-Signal: ai-train=no, search=yes, ai-input=yes
+
+Sitemap: https://www.rippling.com/sitemap.xml

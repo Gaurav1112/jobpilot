@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import type { AnyAgent } from '../kernel/agent.js';
-import { issueContext } from '../kernel/broker.js';
+import { issueContext, type EgressSets } from '../kernel/broker.js';
 import { canonicalJson } from '../kernel/canonical.js';
 import { fixedClock } from '../kernel/clock.js';
 import { classify, KernelError } from '../kernel/errors.js';
@@ -31,6 +31,12 @@ export interface EvalSpec {
   readonly pack?: unknown;
   /** The hash of `pack`, carried into the report so a gate result names the pack it was measured on. */
   readonly packHash?: string;
+  /**
+   * Recorded responses for an `io` agent's golden set: `fetch` must serve fixture bytes only (`offlineProviders` over
+   * a fixture directory), never the network; `egressSets` resolves the contract's symbolic egress for each case's
+   * input. Without it every request fails with `policy_denied`.
+   */
+  readonly fixtures?: { readonly fetch: FetchLike /* offline only: recorded bytes, never a network fetch */; readonly egressSets?: (input: unknown) => EgressSets };
 }
 
 export interface EvalReport {
@@ -105,11 +111,11 @@ const same = (a: unknown, b: unknown): boolean => canonicalJson(a) === canonical
 /**
  * Runs each case through the agent with the same broker it gets in production; schema failures count as wrong.
  * Evals are forced offline: `env.providers.fetch` and `env.providers.browser` are ignored, and every HTTP request
- * or browser render fails with `policy_denied`.
+ * or browser render fails with `policy_denied`, unless the spec brings recorded `fixtures`, which then answer.
  */
 export async function runEval(spec: EvalSpec, env: { providers: Providers; policy: Policy }): Promise<EvalReport> {
   const c = spec.agent.contract;
-  const providers: Providers = { ...env.providers, fetch: offlineFetch, browser: offlineBrowser };
+  const providers: Providers = { ...env.providers, fetch: spec.fixtures?.fetch ?? offlineFetch, browser: offlineBrowser };
   if (spec.cases.length === 0) throw new Error(`eval ${c.id}: no cases`);
   if (!(spec.min > 0 && spec.min <= 1)) throw new Error(`eval ${c.id}: min must be in (0, 1]`);
   const hasPack = spec.pack !== undefined && spec.pack !== null;
@@ -128,7 +134,8 @@ export async function runEval(spec: EvalSpec, env: { providers: Providers; polic
     } else {
       try {
         const signal = AbortSignal.timeout(c.timeoutMs);
-        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal, ...(hasPack ? { pack: spec.pack } : {}) });
+        const egressSets = spec.fixtures?.egressSets?.(k.input);
+        const ctx = issueContext({ contract: c, policy: env.policy, inputClass: 'P0', providers, clock: fixedClock('2026-01-01T00:00:00Z'), signal, ...(hasPack ? { pack: spec.pack } : {}), ...(egressSets !== undefined ? { egressSets } : {}) });
         const outs = await raceAbort(spec.agent.run(k.input, ctx), signal);
         const parsed = outs.map((o) => ({ o, r: c.produces.schema.safeParse(o) }));
         if (parsed.some((p) => !p.r.success)) actual = { error: 'output does not match the produced schema' };

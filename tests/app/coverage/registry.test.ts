@@ -42,6 +42,7 @@ function verdict(over: { key?: string; status?: Status; platform?: Platform | nu
       boardUrl: 'https://boards.example.test/exampleone',
       signature: null,
       routedFrom: null,
+      evidence: [],
     },
     status: over.status ?? 'verified',
     reasons: ['name matches'],

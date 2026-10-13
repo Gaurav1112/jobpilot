@@ -1,0 +1,17 @@
+User-agent: *
+Disallow: */phenomtrack.min.js
+Disallow: */jobcart
+Disallow: */chatbot
+Disallow: */apply$
+Disallow: */apply/
+Disallow: */lifeatphenom
+Disallow: */workingatphenom
+Disallow: */chatbot
+Disallow: */pxhomelead
+Disallow: */pxhomeapplicant
+Disallow: */pxhomequalifiedlead
+Disallow: */pxhomevisitor
+Disallow: */pxhomestranger
+Disallow: */glassdoor
+
+Sitemap: https://careers.mastercard.com/us/en/sitemap_index.xml

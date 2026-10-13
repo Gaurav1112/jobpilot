@@ -1,0 +1,21 @@
+User-agent: *
+Disallow: /search/
+Disallow: /de-de/search/
+Disallow: /es/search/
+Disallow: /fr-fr/search/
+Disallow: /it-it/search/
+Disallow: /ja-jp/search/
+Disallow: /ko-kr/search/
+Disallow: /pt-br/search/
+Disallow: /api/
+Disallow: /exp/
+Disallow: /de-de/exp/
+Disallow: /es/exp/
+Disallow: /fr-fr/exp/
+Disallow: /it-it/exp/
+Disallow: /ja-jp/exp/
+Disallow: /ko-kr/exp/
+Disallow: /pt-br/exp/
+
+Sitemap: https://about.gitlab.com/sitemap.xml
+Sitemap: https://about.gitlab.com/sitemap_index.xml

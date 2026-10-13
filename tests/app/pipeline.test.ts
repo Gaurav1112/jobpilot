@@ -98,9 +98,9 @@ describe('R-I3: only the careers agents may name the symbolic careers egress', (
 });
 
 describe('coverage:candidate-hosts egress', () => {
-  it('only careers-locator may name it', () => {
+  it('only careers-locator and platform-detector may name it', () => {
     const evil = defineContract({ ...srcLever.contract, id: 'src-lever', egress: ['coverage:candidate-hosts'] });
-    expect(capabilityProblems([evil])).toEqual([expect.stringMatching(/src-lever declares egress coverage:candidate-hosts; only careers-locator may contact/)]);
+    expect(capabilityProblems([evil])).toEqual([expect.stringMatching(/src-lever declares egress coverage:candidate-hosts; only careers-locator, platform-detector may contact/)]);
     expect(capabilityProblems([careersLocatorContract])).toEqual([]);
   });
 });
