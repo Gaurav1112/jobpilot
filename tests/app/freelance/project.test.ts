@@ -287,4 +287,17 @@ describe('the coverage gate (Task 10 fix round 1)', () => {
     }
   });
 
+  it('the notification never announces a gig whose status is not new (final review M7)', () => {
+    const app = AppStore.open(':memory:');
+    try {
+      for (const r of rows) app.upsertGig(r.row);
+      const [a, b] = [gigOf(gigs[1]!).gigKey, gigOf(gigs[2]!).gigKey];
+      app.setGigStatus(a, 'applied', AT);
+      expect(freshGigs(app).map((g) => g.gigKey)).toEqual([b]);
+      app.setGigStatus(b, 'skipped', AT);
+      expect(freshGigs(app)).toEqual([]);
+    } finally {
+      app.close();
+    }
+  });
 });

@@ -153,8 +153,12 @@ export function gigNotificationFor(fresh: readonly GigView[], o: { readonly rate
   return clean(full) ?? clean(`${count}${tail}`) ?? fallback;
 }
 
-/** The newly shortlisted gigs: Contracts or Gigs, documents ready, not yet announced, duplicate listings excluded. */
-export const freshGigs = (app: AppStore): GigView[] => app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null);
+/**
+ * The newly shortlisted gigs: Contracts or Gigs, documents ready, not yet announced, still `new` (final review M7: a
+ * gig the user already applied to, skipped or otherwise moved on is never announced), duplicate listings excluded.
+ */
+export const freshGigs = (app: AppStore): GigView[] =>
+  app.listGigs().filter((g) => (g.list === 'contracts' || g.list === 'gigs') && g.docsState === 'ready' && g.notifiedAt === null && g.status === 'new');
 
 /**
  * `jobpilot run-freelance`: one freelance run under the run lock (spec §3, §8), the freelance counterpart of `runDaily`:
