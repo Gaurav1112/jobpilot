@@ -20,6 +20,7 @@ import {
 import { isoWeek } from '../../../src/app/freelance/health.js';
 import type { RawGig } from '../../../src/app/freelance/types.js';
 import { loadRunPack } from '../../../src/app/kernel.js';
+import { LOCK_FILE } from '../../../src/app/lock.js';
 import { AppStore } from '../../../src/app/store/app-store.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
@@ -252,6 +253,18 @@ describe('probeCommand end to end', () => {
     const report = JSON.parse(lines.join('\n')) as { rows: { id: string }[] };
     expect(report.rows.map((r) => r.id).sort()).toEqual([...PROBE_SOURCE_IDS].sort());
     expect(readdirSync(rec).length).toBeGreaterThan(5);
+  });
+  it('takes the run lock: refuses while another jobpilot holds it, and writes nothing (final review M9)', async () => {
+    const h = tmp();
+    const { cpSync, existsSync, writeFileSync } = await import('node:fs');
+    cpSync(join(root, 'tests/fixtures/pack'), join(h, 'pack'), { recursive: true });
+    writeFileSync(join(h, LOCK_FILE), JSON.stringify({ pid: process.pid, command: 'run-freelance', at: 'now' }));
+    const lines: string[] = [];
+    await expect(probeCommand({ home: h, repoRoot: root, json: true, force: false, clock, sleep: async () => {}, fetch: keptFetch(), get: parkedGet(), out: (l) => lines.push(l) })).rejects.toThrow(
+      /another jobpilot process \(pid \d+, run-freelance\) holds/,
+    );
+    expect(lines).toEqual([]);
+    expect(existsSync(join(h, 'jobpilot.db'))).toBe(false);
   });
   it('counts a raw gig the normalizer refuses', async () => {
     const bad: RawGig = { platform: 'hn-freelancer', sourceId: '9', raw: { not: 'a comment' } };

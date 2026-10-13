@@ -9,6 +9,7 @@ import { nodeFetch, type FetchLike } from '../../kernel/providers.js';
 import { ensureHome } from '../home.js';
 import type { RunPack } from '../kernel.js';
 import { loadRunPack } from '../kernel.js';
+import { withLock } from '../lock.js';
 import { packOf as scorerPackOf, scoreText } from '../agents/scorer-lexicon.js';
 import { homePaths } from '../pack/paths.js';
 import { istDate, istMonth } from '../run.js';
@@ -680,21 +681,27 @@ export const liveGet: ParkedGet = async (url) => {
   return { status: res.status, text: await res.text() };
 };
 
-/** `jobpilot sources probe [--json] [--record <dir>] [--force]`. Returns the exit code (0). */
+/**
+ * `jobpilot sources probe [--json] [--record <dir>] [--force]`. Returns the exit code (0). Under the run lock (final
+ * review M9), like every command that writes the DB: it records probe failures in source health, so it never writes
+ * while a run is running (a held lock is a `LockError`).
+ */
 export async function probeCommand(o: ProbeCommandOptions): Promise<number> {
   if (o.record !== undefined) assertRecordDir(o.record, { home: o.home, repoRoot: o.repoRoot, force: o.force });
-  const paths = homePaths(o.home);
-  ensureHome(paths.home);
-  const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()), undefined, 'strict');
-  const app = AppStore.open(paths.db);
-  try {
-    const report = await runProbe({
-      loaded, app, clock: o.clock, sleep: o.sleep, fetch: o.fetch ?? nodeFetch, get: o.get ?? liveGet,
-      ...(o.record !== undefined ? { record: fileRecorder(resolve(o.record)) } : {}),
-    });
-    o.out(o.json ? JSON.stringify(report, null, 2) : formatProbeTable(report));
-    return 0;
-  } finally {
-    app.close();
-  }
+  return withLock(o.home, 'sources probe', async () => {
+    const paths = homePaths(o.home);
+    ensureHome(paths.home);
+    const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()), undefined, 'strict');
+    const app = AppStore.open(paths.db);
+    try {
+      const report = await runProbe({
+        loaded, app, clock: o.clock, sleep: o.sleep, fetch: o.fetch ?? nodeFetch, get: o.get ?? liveGet,
+        ...(o.record !== undefined ? { record: fileRecorder(resolve(o.record)) } : {}),
+      });
+      o.out(o.json ? JSON.stringify(report, null, 2) : formatProbeTable(report));
+      return 0;
+    } finally {
+      app.close();
+    }
+  });
 }
