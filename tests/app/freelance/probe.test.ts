@@ -30,7 +30,7 @@ vi.stubGlobal('fetch', () => {
 
 const root = join(import.meta.dirname, '../../..');
 const fixtures = (name: string): string => join(root, 'tests/fixtures/freelance', name);
-const loaded = loadRunPack(join(root, 'tests/fixtures/pack'), {}, '2026-10');
+const loaded = loadRunPack(join(root, 'tests/fixtures/pack'), {}, '2026-10', undefined, 'strict');
 const NOW = '2026-10-12T04:00:00.000Z';
 const clock = fixedClock(NOW);
 const tmps: string[] = [];

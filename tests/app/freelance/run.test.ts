@@ -69,7 +69,7 @@ describe.skipIf(pdftotext === undefined)('one dead platform never silences the o
 
 describe('freelance pacing', () => {
   it('the freelance run paces hosts at the largest platform minIntervalMs (2000 ms); the daily policy and its hash are unchanged', () => {
-    const loaded = loadRunPack(PACK, {}, '2026-10');
+    const loaded = loadRunPack(PACK, {}, '2026-10', undefined, 'strict');
     const fl = prepareFreelance(loaded.pack);
     expect(fl.policy.minHostIntervalMs).toBe(2000);
     const daily = preparePipeline(loaded.pack);

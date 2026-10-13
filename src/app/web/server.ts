@@ -128,7 +128,7 @@ class NamingUnreadable extends Error {
 function packState(home: string, now: string): PackState {
   const dir = homePaths(home).pack;
   try {
-    const { pack } = loadPack(dir, {}, { asOf: istMonth(now) });
+    const { pack } = loadPack(dir, {}, { asOf: istMonth(now), mode: 'daily' });
     return { pack, error: undefined, naming: pack.naming };
   } catch (e) {
     const naming = namingOnly(dir);

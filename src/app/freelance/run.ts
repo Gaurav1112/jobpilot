@@ -167,7 +167,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const now = o.clock.now();
       const runDate = istDate(now);
       const half = halfOf(now);
-      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
+      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
       const rules = loaded.pack.freelance;
       let gmail: GmailRunAccess = GMAIL_OFF;
       if (rules.platforms.gmail.enabled && o.gmail !== undefined) {

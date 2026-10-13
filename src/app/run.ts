@@ -202,11 +202,11 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
     try {
       const now = o.clock.now();
       const runDate = istDate(now);
-      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app));
+      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'daily');
       const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
-      const warnings = [...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
+      const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
       const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined);
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
@@ -320,7 +320,7 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
       // The month that run measured experience to (its asOf came from the same clock reading as its run date).
       const asOf = runDate.slice(0, 7);
       const nonce = (nonceOf(app) ?? 0) + 1;
-      const loaded = loadRunPack(paths.pack, app.factOverrides(), asOf, nonce);
+      const loaded = loadRunPack(paths.pack, app.factOverrides(), asOf, nonce, 'daily');
       if (loaded.packHash !== latest.packHash) {
         throw new Error(`the pack changed since ${latest.runId} (a pack file or a fact status); run \`jobpilot run\` to rebuild with the new pack`);
       }
@@ -336,7 +336,7 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
       markStaleDocs(app, citeableNow(app, loaded.pack), diskDocCheck(paths.out));
       const counts = runCounts(app.kernel, runId);
       const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
-      const warnings = skippedWarnings(skipped);
+      const warnings = [...loaded.warnings, ...skippedWarnings(skipped)];
       app.recordRun({ runId, at: now, counts, packHash: loaded.packHash, policyHash: k.policyHash, warnings, problems });
       const written = new Set(docChanges.map((c) => c.jobKey));
       const changes = docChanges.map((c) => {

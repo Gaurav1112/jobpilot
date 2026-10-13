@@ -580,7 +580,7 @@ describe('gig-renderer through executeStep', () => {
       handoff: { guarantees: [], dataClass: 'P0', obligations: [], pins: { policyHash: pHash } }, guardrails: [], cost: ZERO_COST,
     };
     const run = async (dir: string) => {
-      const loaded = loadRunPack(dir, {}, '2026-10');
+      const loaded = loadRunPack(dir, {}, '2026-10', undefined, 'strict');
       const out = mkdtempSync(join(tmpdir(), 'jobpilot-gig-'));
       const packs = freelanceDocsPacks(loaded);
       const res = await executeStep(

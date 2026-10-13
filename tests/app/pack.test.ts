@@ -631,26 +631,26 @@ describe('freelance pack: hashes', () => {
     expect(c.freelancePackHash).not.toBe(b.freelancePackHash);
   });
   it('fullPackHash keeps its pre-freelance value (pinned from base e65761d), with and without a nonce', () => {
-    expect(loadRunPack(FIXTURE, {}, '2026-10').fullPackHash).toBe(DAILY_FULL_HASH);
-    expect(loadRunPack(FIXTURE, {}, '2026-10', 7).fullPackHash).toBe(DAILY_FULL_HASH_NONCE7);
+    expect(loadRunPack(FIXTURE, {}, '2026-10', undefined, 'strict').fullPackHash).toBe(DAILY_FULL_HASH);
+    expect(loadRunPack(FIXTURE, {}, '2026-10', 7, 'strict').fullPackHash).toBe(DAILY_FULL_HASH_NONCE7);
   });
   it('freelanceFullPackHash changes on a freelance.yaml edit and on a contact edit, and fullPackHash does not on the first', () => {
     const d = copyFixture();
-    const a = loadRunPack(d, {}, '2026-10');
+    const a = loadRunPack(d, {}, '2026-10', undefined, 'strict');
     writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
-    const b = loadRunPack(d, {}, '2026-10');
+    const b = loadRunPack(d, {}, '2026-10', undefined, 'strict');
     expect(b.freelanceFullPackHash).not.toBe(a.freelanceFullPackHash);
     edit(d, 'contact.yaml', 'Asha Rao', 'Asha R Rao');
-    const c = loadRunPack(d, {}, '2026-10');
+    const c = loadRunPack(d, {}, '2026-10', undefined, 'strict');
     expect(c.freelanceFullPackHash).not.toBe(b.freelanceFullPackHash);
     expect(c.freelancePackHash).toBe(b.freelancePackHash);
-    expect(loadRunPack(d, {}, '2026-10', 3).freelanceFullPackHash).not.toBe(c.freelanceFullPackHash);
+    expect(loadRunPack(d, {}, '2026-10', 3, 'strict').freelanceFullPackHash).not.toBe(c.freelanceFullPackHash);
   });
   it('loadRunPack exposes both and keeps fullPackHash independent of the freelance files', () => {
     const d = copyFixture();
-    const a = loadRunPack(d, {}, '2026-10');
+    const a = loadRunPack(d, {}, '2026-10', undefined, 'strict');
     writeFileSync(join(d, 'freelance.yaml'), 'fitFloor: 65\n');
-    const b = loadRunPack(d, {}, '2026-10');
+    const b = loadRunPack(d, {}, '2026-10', undefined, 'strict');
     expect(b.packHash).toBe(DAILY_HASH);
     expect(b.fullPackHash).toBe(a.fullPackHash);
     expect(b.freelancePackHash).not.toBe(a.freelancePackHash);
@@ -661,12 +661,12 @@ describe('freelance pack: naming guard (loadRunPack, which jobpilot pack check u
   it('refuses a forbidden term in a network keyword, naming the file', () => {
     const d = copyFixture();
     edit(d, 'networks/arc.yaml', 'keywords: [backend,', 'keywords: [Initech, backend,');
-    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/networks\/arc\.yaml: keywords\[0\] holds forbidden term #1/);
+    expect(() => loadRunPack(d, {}, '2026-10', undefined, 'strict')).toThrow(/networks\/arc\.yaml: keywords\[0\] holds forbidden term #1/);
   });
   it('refuses a forbidden term in platforms.freelancer.queries', () => {
     const d = copyFixture();
     edit(d, 'freelance.yaml', 'queries: [java,', 'queries: [Initech, java,');
-    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/freelance\.yaml: platforms\.freelancer\.queries\[0\] holds forbidden term #1/);
+    expect(() => loadRunPack(d, {}, '2026-10', undefined, 'strict')).toThrow(/freelance\.yaml: platforms\.freelancer\.queries\[0\] holds forbidden term #1/);
   });
   it('labels a network whose id holds a forbidden term by position, never by id', () => {
     const d = copyFixture();
@@ -674,7 +674,7 @@ describe('freelance pack: naming guard (loadRunPack, which jobpilot pack check u
     edit(d, 'networks/initech-net.yaml', 'id: toptal', 'id: initech-net');
     let msg = '';
     try {
-      loadRunPack(d, {}, '2026-10');
+      loadRunPack(d, {}, '2026-10', undefined, 'strict');
     } catch (e) {
       msg = e instanceof Error ? e.message : String(e);
     }
@@ -684,6 +684,6 @@ describe('freelance pack: naming guard (loadRunPack, which jobpilot pack check u
   it('refuses an undrawable glyph in a network screening prep line', () => {
     const d = copyFixture();
     edit(d, 'networks/toptal.yaml', 'English communication practice', 'English \u2192 practice');
-    expect(() => loadRunPack(d, {}, '2026-10')).toThrow(/networks\/toptal\.yaml: screening\[0\]\.prep\[0\]/);
+    expect(() => loadRunPack(d, {}, '2026-10', undefined, 'strict')).toThrow(/networks\/toptal\.yaml: screening\[0\]\.prep\[0\]/);
   });
 });

@@ -27,6 +27,26 @@ type ScannedPack = Pick<
   'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser' | 'freelance' | 'platformRules' | 'networks'
 >;
 
+/** How a network file is named in a problem: `networks/<id>.yaml`, or `networks #<n>` when the id holds a forbidden term. */
+export function networkLabel(id: string, index: number, naming: Pick<NamingRules, 'forbiddenTerms'>): string {
+  return forbiddenTermIn(id, naming) === undefined ? `networks/${id}.yaml` : `networks #${index + 1}`;
+}
+
+/**
+ * The strict forbidden-term check and the glyph check over every string of one freelance file (freelance.yaml,
+ * platform-rules.yaml or one network file), as `<file>: <path> holds forbidden term #<n>` and glyph problems.
+ * `packTextProblems` uses it for every mode; the daily load (`loadPack` mode `daily`) uses it to ignore a file.
+ */
+export function freelanceFileProblems(file: string, value: unknown, naming: Pick<NamingRules, 'forbiddenTerms'>): string[] {
+  const p: string[] = [];
+  for (const s of stringsIn(value, '')) {
+    const n = forbiddenTermIn(s.text, naming);
+    if (n !== undefined) p.push(`${file}: ${s.path} holds forbidden term #${n}`);
+    p.push(...glyphProblems(s.text, `${file}: ${s.path}`));
+  }
+  return p;
+}
+
 /** What to write instead of a character Noto Sans cannot draw. */
 const GLYPH_HINTS: Readonly<Record<number, string>> = {
   0x2192: "replace with 'to'",
@@ -123,14 +143,9 @@ export function packTextProblems(pack: ScannedPack): string[] {
   const freelanceFiles: readonly (readonly [string, unknown])[] = [
     ['freelance.yaml', pack.freelance], ['platform-rules.yaml', pack.platformRules],
     // An id that itself holds a forbidden term is named by position, never by the id.
-    ...pack.networks.map((n, i) => [forbiddenTermIn(n.id, pack.naming) === undefined ? `networks/${n.id}.yaml` : `networks #${i + 1}`, n] as const),
+    ...pack.networks.map((n, i) => [networkLabel(n.id, i, pack.naming), n] as const),
   ];
-  for (const [file, value] of freelanceFiles) {
-    for (const s of stringsIn(value, '')) {
-      term(s.text, `${file}: ${s.path}`);
-      p.push(...glyphProblems(s.text, `${file}: ${s.path}`));
-    }
-  }
+  for (const [file, value] of freelanceFiles) p.push(...freelanceFileProblems(file, value, pack.naming));
   for (const [file, value] of files) for (const s of stringsIn(value, '')) term(s.text, `${file}: ${s.path}`);
   return p;
 }

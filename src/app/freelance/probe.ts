@@ -685,7 +685,7 @@ export async function probeCommand(o: ProbeCommandOptions): Promise<number> {
   if (o.record !== undefined) assertRecordDir(o.record, { home: o.home, repoRoot: o.repoRoot, force: o.force });
   const paths = homePaths(o.home);
   ensureHome(paths.home);
-  const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()));
+  const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()), undefined, 'strict');
   const app = AppStore.open(paths.db);
   try {
     const report = await runProbe({

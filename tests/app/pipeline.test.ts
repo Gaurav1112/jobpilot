@@ -318,7 +318,7 @@ describe('the failure notification (I1)', () => {
       writeFileSync(join(dir, 'answers.yaml'), readFileSync(join(dir, 'answers.yaml'), 'utf8').replace('notice_period: 30 days', 'notice_period: 30 days per InitechHR'));
       let err: unknown;
       try {
-        loadRunPack(dir, {}, '2026-10');
+        loadRunPack(dir, {}, '2026-10', undefined, 'strict');
       } catch (e) {
         err = e;
       }

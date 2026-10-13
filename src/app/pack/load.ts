@@ -7,6 +7,8 @@ import { sanitisePostingText, unsafePostingText } from '../agents/writing/templa
 import { FEED_SOURCES, knownFeeds } from '../feeds.js';
 import { DEFAULT_FX } from './defaults.js';
 import { FreelanceFile, NetworkFile, PlatformRulesFile, type Network } from './freelance-schema.js';
+import { redactText } from './rules.js';
+import { freelanceFileProblems, networkLabel } from './scan.js';
 import {
   AnswersSchema,
   ContactSchema,
@@ -75,22 +77,79 @@ export function withoutFreelance<T extends object>(pack: T): Omit<T, 'freelance'
   return rest as Omit<T, 'freelance' | 'platformRules' | 'networks'>;
 }
 
+/** The networks/ entries that are the user's files, sorted by name: dotfiles (.DS_Store) and editor leftovers (foo.yaml~, .foo.swp) are not. */
+function networkEntries(nd: string): import('node:fs').Dirent[] {
+  return readdirSync(nd, { withFileTypes: true })
+    .filter((e) => !e.name.startsWith('.') && !e.name.endsWith('~') && !e.name.endsWith('.swp'))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** One networks/ entry as a network; throws a `PackError` for a folder, a non-.yaml file, a bad file or an id that is not its file name. */
+function readNetwork(dir: string, e: import('node:fs').Dirent): Network {
+  const f = e.name;
+  if (e.isDirectory()) throw new PackError(`networks/${f}: a folder cannot be a network file; only .yaml files belong in networks/`);
+  if (!f.endsWith('.yaml')) throw new PackError(`networks/${f}: only .yaml files belong in networks/`);
+  const n = readYaml(dir, `networks/${f}`, NetworkFile);
+  if (n.id !== f.slice(0, -'.yaml'.length)) throw new PackError(`networks/${f}: id: ${n.id} must match the file name`);
+  return n;
+}
+
 /** networks/<id>.yaml, sorted by id; each file's id must be its file name, so the id is never a surprise. */
 function readNetworks(dir: string): Network[] {
   const nd = join(dir, 'networks');
   if (!existsSync(nd)) return [];
-  // Dotfiles (.DS_Store) and editor leftovers (foo.yaml~, .foo.swp) are not the user's network files.
-  const entries = readdirSync(nd, { withFileTypes: true })
-    .filter((e) => !e.name.startsWith('.') && !e.name.endsWith('~') && !e.name.endsWith('.swp'))
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-  return entries.map((e) => {
-    const f = e.name;
-    if (e.isDirectory()) throw new PackError(`networks/${f}: a folder cannot be a network file; only .yaml files belong in networks/`);
-    if (!f.endsWith('.yaml')) throw new PackError(`networks/${f}: only .yaml files belong in networks/`);
-    const n = readYaml(dir, `networks/${f}`, NetworkFile);
-    if (n.id !== f.slice(0, -'.yaml'.length)) throw new PackError(`networks/${f}: id: ${n.id} must match the file name`);
-    return n;
-  });
+  return networkEntries(nd).map((e) => readNetwork(dir, e));
+}
+
+/**
+ * The daily load of the freelance files (final review C1): the daily run never fails because of them. Each file is
+ * read, schema-checked and text-checked (`freelanceFileProblems`: the strict forbidden-term check and the glyph check)
+ * on its own; a file with any problem is ignored (freelance.yaml and platform-rules.yaml take their defaults, a network
+ * file is left out, a stray networks/ entry is skipped) and named in a warning, redacted. The freelance run and
+ * `pack check` load strictly and refuse instead.
+ */
+function readFreelanceLeniently(dir: string, naming: Pick<Pack['naming'], 'forbiddenTerms'>, warnings: string[]): Pick<Pack, 'freelance' | 'platformRules' | 'networks'> {
+  const warn = (problem: string): void => {
+    warnings.push(redactText(`${problem} (the daily run ignores this file; \`jobpilot pack check\` and the freelance run refuse it until it is fixed)`, naming));
+  };
+  const reason = (e: unknown): string => (e instanceof PackError ? e.message : `could not be read: ${e instanceof Error ? e.message : String(e)}`);
+  function one<T>(file: string, schema: ZodType<T>): T {
+    const fallback = schema.parse({});
+    try {
+      const v = readYaml(dir, file, schema, {});
+      const text = freelanceFileProblems(file, v, naming);
+      if (text.length === 0) return v;
+      warn(text.join('; '));
+    } catch (e) {
+      warn(reason(e));
+    }
+    return fallback;
+  }
+  const freelance = one('freelance.yaml', FreelanceFile);
+  const platformRules = one('platform-rules.yaml', PlatformRulesFile);
+  const networks: Network[] = [];
+  const nd = join(dir, 'networks');
+  if (existsSync(nd)) {
+    let entries: import('node:fs').Dirent[] = [];
+    try {
+      entries = networkEntries(nd);
+    } catch (e) {
+      warn(`networks: ${reason(e)}`);
+    }
+    entries.forEach((e, i) => {
+      const label = networkLabel(e.name.replace(/\.yaml$/u, ''), i, naming);
+      try {
+        const n = readNetwork(dir, e);
+        const text = freelanceFileProblems(label, n, naming);
+        if (text.length === 0) networks.push(n);
+        else warn(text.join('; '));
+      } catch (err) {
+        // A file name holding a forbidden term is named by position only (the problem names the file).
+        warn(label.startsWith('networks #') ? `${label}: ${redactText(reason(err), naming)}` : reason(err));
+      }
+    });
+  }
+  return { freelance, platformRules, networks };
 }
 
 function withKey(g: LexiconGroup): LexiconGroup {
@@ -104,7 +163,17 @@ export interface LoadOptions {
    * future inflates the years claim, and nothing here can bound it.
    */
   readonly asOf?: string;
+  /**
+   * How the freelance files (freelance.yaml, platform-rules.yaml, networks/) are read (final review C1). `strict`
+   * (the default; the freelance run, `networks pack`, `sources probe`, `pack check`, `pack import`): any problem
+   * throws. `daily` (`run`, `docs rebuild`, `serve`): a file with a parse, schema, stray-file, glyph or forbidden-term
+   * problem is ignored with a warning (`readFreelanceLeniently`), so it can never stop the daily run, and its content
+   * never reaches it.
+   */
+  readonly mode?: LoadMode;
 }
+
+export type LoadMode = 'strict' | 'daily';
 
 /**
  * No role or fact may start after asOf, and no role may end after it (a cert's validity end may). Roles are named by
@@ -147,7 +216,11 @@ function checkClaimable(titles: readonly string[]): void {
  * Loads and validates the pack in `dir`. `overrides` replaces fact statuses (Task 8) before hashing.
  * The hash covers the public pack only, so contact and answers edits never invalidate cached steps.
  */
-export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['status']>> = {}, opts: LoadOptions = {}): { pack: Pack; hash: string; freelancePackHash: string } {
+export function loadPack(
+  dir: string,
+  overrides: Readonly<Record<string, Fact['status']>> = {},
+  opts: LoadOptions = {},
+): { pack: Pack; hash: string; freelancePackHash: string; warnings: string[] } {
   const facts = readYaml(dir, 'facts.yaml', FactsFile).facts;
   const seen = new Set<string>();
   for (const f of facts) {
@@ -171,7 +244,7 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     throw new PackError('experience.asOf is required: write experience.yaml or pass the asOf option (the daily run passes the current month)');
   }
   const targets = readYaml(dir, 'targets.yaml', TargetsSchema);
-  const pack: Pack = {
+  const base: Omit<Pack, 'freelance' | 'platformRules' | 'networks'> = {
     contact: readYaml(dir, 'contact.yaml', ContactSchema),
     facts: facts.map((f) => (Object.hasOwn(overrides, f.id) ? { ...f, status: overrides[f.id] as Fact['status'] } : f)),
     roles,
@@ -188,17 +261,25 @@ export function loadPack(dir: string, overrides: Readonly<Record<string, Fact['s
     watchlist: readYaml(dir, 'watchlist.yaml', WatchlistFile).watchlist,
     feeds: readYaml(dir, 'feeds.yaml', FeedsSchema, { enabled: [] }),
     policyUser: readYaml(dir, 'policy.user.yaml', PolicyUserSchema, {}),
-    freelance: readYaml(dir, 'freelance.yaml', FreelanceFile, {}),
-    platformRules: readYaml(dir, 'platform-rules.yaml', PlatformRulesFile, {}),
-    networks: readNetworks(dir),
   };
+  // Read after the daily files, so a strict load names the same first problem as before; a daily load needs naming.
+  const warnings: string[] = [];
+  const freelanceParts: Pick<Pack, 'freelance' | 'platformRules' | 'networks'> =
+    opts.mode === 'daily'
+      ? readFreelanceLeniently(dir, base.naming, warnings)
+      : {
+          freelance: readYaml(dir, 'freelance.yaml', FreelanceFile, {}),
+          platformRules: readYaml(dir, 'platform-rules.yaml', PlatformRulesFile, {}),
+          networks: readNetworks(dir),
+        };
+  const pack: Pack = { ...base, ...freelanceParts };
   checkDates(pack);
   // A feed with no source agent would be configuration the run silently never honours (review I2).
   for (const f of pack.feeds.enabled) if (!Object.hasOwn(FEED_SOURCES, f)) throw new PackError(`feeds.yaml: unknown feed ${f} (known: ${knownFeeds().join(', ')})`);
   checkClaimable(pack.targets.claimableTitles);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
-  return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack) };
+  return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack), warnings };
 }
 
 export { assertNoForbidden, citeable, ForbiddenTermError } from './rules.js';

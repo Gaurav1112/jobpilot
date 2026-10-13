@@ -18,7 +18,7 @@ import { loadRunPack, preparePipeline, resolvePdftotext } from './app/kernel.js'
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { osascriptNotifier } from './app/notify.js';
-import { ForbiddenTermError } from './app/pack/load.js';
+import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
 import { homePaths, jobpilotHome } from './app/pack/paths.js';
@@ -230,8 +230,12 @@ function overridesAt(db: string): Record<string, Fact['status']> {
   }
 }
 
-/** The pack as today's run would load it (this IST month, the user's fact overrides, the kept render nonce). */
-function todaysPack() {
+/**
+ * The pack as today's run would load it (this IST month, the user's fact overrides, the kept render nonce). `mode`
+ * (final review C1): `strict` for `pack check` and the freelance commands; `daily` for the daily-only commands, which
+ * a broken freelance file must never stop.
+ */
+function todaysPack(mode: LoadMode) {
   const paths = homePaths(jobpilotHome());
   let nonce: number | undefined;
   if (existsSync(paths.db)) {
@@ -242,7 +246,7 @@ function todaysPack() {
       app.close();
     }
   }
-  return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce);
+  return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce, mode);
 }
 
 program
@@ -280,7 +284,7 @@ pack
     guarded(() => {
       // m8, final I8: `loadRunPack` re-checks user edits after the import for undrawable characters and forbidden
       // terms (strictly, in every pack file but naming.yaml) and throws on any, exactly as the run would refuse.
-      const loaded = todaysPack();
+      const loaded = todaysPack('strict');
       const prepared = preparePipeline(loaded.pack);
       const careers = loaded.pack.watchlist.filter((w) => w.ats === 'careers').length;
       console.log(`pack ok: ${homePaths(jobpilotHome()).pack}`);
@@ -362,7 +366,7 @@ migrate
       if (!existsSync(join(paths.pack, 'naming.yaml'))) {
         throw new Error(`migrate desk needs the pack's naming rules (${join(paths.pack, 'naming.yaml')}) to sanitise the rows; build the pack first`);
       }
-      const { pack: loaded } = todaysPack();
+      const { pack: loaded } = todaysPack('daily');
       if (loaded.naming.forbiddenTerms.length === 0) throw new Error('naming.yaml lists no forbiddenTerms; refusing to import Desk rows unsanitised');
       await withLock(paths.home, 'migrate desk', async () => {
         const app = AppStore.open(paths.db);
@@ -383,7 +387,7 @@ facts
     guarded(() => {
       const paths = homePaths(jobpilotHome());
       const overrides = overridesAt(paths.db);
-      const { pack: p } = todaysPack();
+      const { pack: p } = todaysPack('daily');
       const w = Math.max(...p.facts.map((f) => f.id.length), 2);
       for (const f of p.facts) {
         const status = `${f.status}${Object.hasOwn(overrides, f.id) ? ' (override)' : ''}`;
@@ -405,7 +409,7 @@ for (const [verb, status] of [['verify', 'verified'], ['reject', 'rejected']] as
     .action((id: string) =>
       guarded(() => {
         const paths = homePaths(jobpilotHome());
-        const { pack: p } = todaysPack();
+        const { pack: p } = todaysPack('daily');
         const fact = p.facts.find((f) => f.id === id);
         if (!fact) throw new Error(`unknown fact ${id}`);
         const app = AppStore.open(paths.db);
@@ -428,7 +432,7 @@ networks
   .description('List the network files in pack/networks/')
   .action(() =>
     guarded(() => {
-      for (const l of networksList(todaysPack())) console.log(l);
+      for (const l of networksList(todaysPack('strict'))) console.log(l);
     }),
   );
 networks
@@ -441,7 +445,7 @@ networks
       const paths = homePaths(jobpilotHome());
       const pdftotext = resolvePdftotext();
       process.exitCode = await withLock(paths.home, 'networks pack', async () =>
-        networksPack(o.all === true ? 'all' : ids, todaysPack(), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
+        networksPack(o.all === true ? 'all' : ids, todaysPack('strict'), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
       );
     }),
   );

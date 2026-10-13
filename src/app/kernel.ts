@@ -12,7 +12,7 @@ import type { CompiledPipeline } from '../kernel/wiring.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
 import { codeHash } from './code-hash.js';
 import { appGuardrails } from './guardrails.js';
-import { loadPack, PackError, withoutFreelance } from './pack/load.js';
+import { loadPack, PackError, withoutFreelance, type LoadMode } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline } from './pipeline.js';
@@ -66,6 +66,8 @@ export interface RunPack {
   readonly freelanceFullPackHash: string;
   readonly asOf: string;
   readonly nonce: number | undefined;
+  /** Mode `daily` only: the freelance files the load ignored, one redacted line each (the run records them). */
+  readonly warnings: readonly string[];
 }
 
 /**
@@ -75,9 +77,12 @@ export interface RunPack {
  * Final I8: refuses (a `PackError`, so the run exits 2) on any `packTextProblems` problem, so a forbidden term or an
  * undrawable character edited into any pack file after the import never reaches a run. The problems name a file,
  * field or fact id and a term by its position only.
+ * `mode` (final review C1): `daily` for `run`, `docs rebuild` and `serve`, where a broken or forbidden freelance file is
+ * ignored with a warning instead (`loadPack`); `strict` for the freelance run, `networks pack`, `sources probe` and
+ * `pack check`.
  */
-export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce?: number): RunPack {
-  const { pack, hash, freelancePackHash } = loadPack(dir, overrides, { asOf });
+export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact['status']>>, asOf: string, nonce: number | undefined, mode: LoadMode): RunPack {
+  const { pack, hash, freelancePackHash, warnings } = loadPack(dir, overrides, { asOf, mode });
   const text = packTextProblems(pack);
   // rereview R11: the first line (the failure notification's text) gives the count and where to look, never a term
   if (text.length > 0) {
@@ -86,7 +91,7 @@ export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact
   }
   const { contact: _c, answers: _a, ...publicPack } = pack;
   const fullPack = nonce === undefined ? pack : { ...pack, render: { nonce } };
-  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), asOf, nonce };
+  return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), asOf, nonce, warnings };
 }
 
 export interface AppKernelOptions {
