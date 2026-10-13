@@ -24,7 +24,7 @@ function* stringsIn(v: unknown, path: string): Generator<{ path: string; text: s
 
 type ScannedPack = Pick<
   Pack,
-  'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'offers' | 'fx' | 'feeds' | 'policyUser' | 'freelance' | 'platformRules' | 'networks'
+  'facts' | 'contact' | 'roles' | 'targets' | 'answers' | 'naming' | 'lexicon' | 'watchlist' | 'filters' | 'eligibility' | 'writing' | 'offers' | 'fx' | 'feeds' | 'policyUser' | 'freelance' | 'platformRules' | 'networks'
 >;
 
 /** How a network file is named in a problem: `networks/<id>.yaml`, or `networks #<n>` when the id holds a forbidden term. */
@@ -137,6 +137,7 @@ export function packTextProblems(pack: ScannedPack): string[] {
   const files: readonly (readonly [string, unknown])[] = [
     ['lexicon.yaml', pack.lexicon], ['watchlist.yaml', { watchlist: pack.watchlist }], ['targets.yaml', targets], ['filters.yaml', filters],
     ['eligibility.yaml', pack.eligibility], ['offers.yaml', pack.offers], ['fx.yaml', pack.fx], ['feeds.yaml', pack.feeds], ['policy.user.yaml', pack.policyUser],
+    ...(pack.writing === undefined ? [] : [['writing.yaml', pack.writing] as const]),
   ];
   // Freelancer queries go to third-party APIs and network titles and keywords feed documents, so they get the same
   // strict term check and the glyph check as document text.

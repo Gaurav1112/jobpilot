@@ -4,7 +4,7 @@ import { compText } from '../format.js';
 import { remoteText } from '../copy.js';
 import { html, type Html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
-import { NOTE_B2B } from '../../agents/eligibility.js';
+import { NOTE_B2B, NOTE_OFFICE_PREFIX } from '../../agents/eligibility.js';
 
 /** Copy and pills shared by every page. Words are the user's: "documents you can send", never "artifacts". */
 
@@ -65,3 +65,9 @@ export const csrfField = (token: string): Html => html`<input type="hidden" name
 /** Freelance spec D2: the verdict note for a full-time B2B contractor role, as a badge; an empty string when the job has none. */
 export const b2bPill = (notes: readonly string[]): Html | '' =>
   notes.includes(NOTE_B2B) ? pill(NOTE_B2B, 'accent') : '';
+
+/** The verdict note for an onsite or hybrid role in one of the pack's office cities, as a badge; an empty string when the job has none. */
+export const officePill = (notes: readonly string[]): Html | '' => {
+  const note = notes.find((n) => n.startsWith(NOTE_OFFICE_PREFIX));
+  return note === undefined ? '' : pill(note, 'accent');
+};
