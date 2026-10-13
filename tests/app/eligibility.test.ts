@@ -802,7 +802,13 @@ describe('office cities: onsite or hybrid in one of the pack\'s office cities pa
     expect(decide(inOffice('N/A', 'Office location — Bengaluru, KA, India'), blr)).toEqual(officeEligible('Bengaluru'));
     // a label word inside prose is no label line
     expect(decide(inOffice('India', 'Snacks: on-the-house in the Bangalore office'), blr)).toEqual(rejected('onsite'));
-    expect(decide(inOffice('India', 'This role is Hybrid, based in our Bangalore office 2-3 days/week.'), blr)).toEqual(rejected('hybrid'));
+    // with a generic field, "based|located|working in|at|from our <office city> office" counts (Tilt-like)
+    expect(decide(inOffice('India', 'This role is Hybrid, based in our Bangalore office 2-3 days/week.'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('In-Office', 'You will be working from our Bengaluru office.'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('India', 'This role is Hybrid, based in our Hyderabad office 2-3 days/week.'), blr)).toEqual(rejected('hybrid'));
+    expect(decide(inOffice('In-Office', 'You will be based in our Hyderabad office.'), blr)).toEqual(rejected('onsite'));
+    // but never with a real location field
+    expect(decide(inOffice('Hyderabad', 'You will be based in our Bangalore office.'), blr)).toEqual(rejected('onsite'));
     // the label names another city: stays onsite
     expect(decide(inOffice('In-Office', 'Location: Mumbai'), blr)).toEqual(rejected('onsite'));
     // a non-generic location field wins over the label
@@ -811,8 +817,11 @@ describe('office cities: onsite or hybrid in one of the pack\'s office cities pa
     expect(decide(inOffice('In-Office', 'You will join our Bengaluru team.'), blr)).toEqual(rejected('onsite'));
     // the label never feeds the remote decision: a remote label on a generic location is not remote
     expect(decide(inOffice('In-Office', 'Location: Remote - India'), blr)).toEqual(rejected('onsite'));
-    // beyond the first 3000 characters it does not count
-    expect(decide({ ...inOffice('In-Office', ''), descriptionText: `${'x '.repeat(1600)}\nLocation: Bengaluru` }, blr)).toEqual(rejected('onsite'));
+    // a label line anywhere in the description counts (Stripe-like, at character 4600)
+    const late = `${'Build services. '.repeat(260)}\nOffice-assigned staff spend half their time in the office.\n${'Build services. '.repeat(24)}\n\nOffice location—Bengaluru, KA, India`;
+    expect(late.indexOf('Office location')).toBeGreaterThanOrEqual(4590);
+    expect(decide({ ...inOffice('N/A', ''), descriptionText: late }, blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide({ ...inOffice('Pune', ''), descriptionText: late }, blr)).toEqual(rejected('onsite'));
   });
 
   it('a "work from / based in / report to our <City> office" sentence naming another city keeps the reject', () => {

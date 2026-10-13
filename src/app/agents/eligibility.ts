@@ -65,9 +65,10 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       (`officeNote`). Each key resolves through the office-city alias table (`officeCity`; an unknown key matches only itself), matched on
  *       word boundaries, case-insensitively, in a segment of the location text (split on `; | / &`, "or", "and", new
  *       lines) whose places are none or include India, or in an entry of the structured countries. When the location
- *       field is generic ("In-Office", "Hybrid", "India", "N/A", empty), the value of an explicit label line in the
- *       first 3000 characters of the description ("Location: Bengaluru") stands in for it, for this match only. Any
- *       other city named only in the description never counts. It needs nothing to exclude India: countries naming none of India or an office
+ *       field is generic ("In-Office", "Hybrid", "India", "N/A", empty), the value of an explicit label line anywhere
+ *       in the description ("Location: Bengaluru") stands in for it, and "based|located|work(ing) in|at|from our
+ *       <city> office" there also counts, for this match only. Any other city named only in the description never
+ *       counts. It needs nothing to exclude India: countries naming none of India or an office
  *       city, a `location:excludes:india` signal, India or the city excluded in the location, an exclusion phrase
  *       (rule b) or a time-zone restriction (b1). A relocation, "must be located/based in" or "work(ing) from / based
  *       in|at / report(ing) to our <City> office" sentence in the first 1500 characters naming another city keeps the
@@ -523,18 +524,21 @@ const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|indi
 /**
  * An explicit location label line in the description ("Location: Bengaluru", "Office - Bangalore", "Work location:
  * Pune"), also "Available Locations: …", "Job location …" and "Office location — …" (a plural label, an em dash).
+ * An ASCII hyphen separates only beside a space: "Office-assigned staff …" is a hyphenated word, not a label.
  */
-const LOCATION_LABEL = /^\s*(?:(?:available|office|work|job)\s+)?(?:locations?|office|based in)\s*[:\-–—]\s*(.+)$/im;
-const LABEL_HEAD = 3000;
+const LOCATION_LABEL = /^\s*(?:(?:available|office|work|job)\s+)?(?:locations?|office|based in)(?:\s*[:–—]|\s+-|-\s+)\s*(.+)$/im;
+const genericLocation = (p: Posting): boolean => p.locationText.trim() === '' || GENERIC_LOCATION.test(p.locationText.trim());
 /**
  * The location text the office-city match reads: the field itself, or, when the field is generic, the value of the
- * first label line in the first 3000 characters of the description. Never used for the remote decision.
+ * first label line anywhere in the description (label lines are explicit). Never used for the remote decision.
  */
 function officeLocationText(p: Posting): string {
-  const field = p.locationText.trim();
-  if (field !== '' && !GENERIC_LOCATION.test(field)) return p.locationText;
-  return LOCATION_LABEL.exec(p.descriptionText.slice(0, LABEL_HEAD))?.[1]?.trim() ?? p.locationText;
+  if (!genericLocation(p)) return p.locationText;
+  return LOCATION_LABEL.exec(p.descriptionText)?.[1]?.trim() ?? p.locationText;
 }
+/** With a generic location field: "based|located|work(ing) in|at|from our <alias> office" anywhere in the description. */
+const namesOurOffice = (description: string, aliases: readonly string[]): boolean =>
+  aliases.some((a) => new RegExp(`\\b(?:based|located|work(?:ing)?) (?:in|at|from) our ${escapeRe(a).replace(/ /g, '\\s+')} office\\b`, 'iu').test(description));
 
 /**
  * Rule 5e: the office-city note for an onsite or hybrid posting located in one of the pack's office cities, or null.
@@ -568,6 +572,7 @@ function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
     if (city.aliases.some((a) => excluded.includes(a))) continue;
     if (segments.some((seg) => namesAlias(seg, city.aliases)) || countries.some((c) => namesAlias(c, city.aliases))) return officeNote(city.display);
   }
+  if (genericLocation(p)) for (const city of cities) if (!city.aliases.some((a) => excluded.includes(a)) && namesOurOffice(p.descriptionText, city.aliases)) return officeNote(city.display);
   return null;
 }
 
