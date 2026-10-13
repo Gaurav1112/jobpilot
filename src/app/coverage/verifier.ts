@@ -3,7 +3,7 @@ import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { BoardRefused, platformClient, type BoardRead } from '../agents/sources/platforms/client.js';
-import { gateOf, HOST_DISABLED, type GateSource, type RunGate } from './gate.js';
+import { gateOf, HOST_DISABLED, REQUEST_TIMEOUT_MS, type GateSource, type RunGate } from './gate.js';
 import { sameCompany } from './names.js';
 import { CompanyVerdict, PlatformGuess } from './types.js';
 
@@ -73,14 +73,15 @@ export function noPlatformVerdict(g: PlatformGuess): CompanyVerdict {
 }
 
 /** The board-verifier agent for ONE coverage run, on the run's shared gate (or a key and store to build one from). */
-export function makeBoardVerifier(opts: GateSource) {
+export function makeBoardVerifier(opts: GateSource & { readonly requestTimeoutMs?: number }) {
   const gate = gateOf(opts);
-  return defineAgent(boardVerifierContract, async (g, ctx) => [await verify(g, ctx, gate)]);
+  const timeoutMs = opts.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  return defineAgent(boardVerifierContract, async (g, ctx) => [await verify(g, ctx, gate, timeoutMs)]);
 }
 
 const deferred = (why: string, host: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} on ${host} (${detail}); deferred to a later run, never retried around`);
 
-async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promise<CompanyVerdict> {
+async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeoutMs: number): Promise<CompanyVerdict> {
   const verdict = (status: CompanyVerdict['status'], reasons: string[], read?: BoardRead): CompanyVerdict => ({
     guess: g,
     status,
@@ -99,7 +100,7 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promi
 
   let read: BoardRead;
   try {
-    read = await client.readBoard(g.slug, ctx.http);
+    read = await client.readBoard(g.slug, ctx.http, { timeoutMs });
   } catch (e) {
     if (e instanceof BoardRefused) {
       gate.disable(host, `http-${e.status}`, ctx.clock.now());
@@ -110,7 +111,7 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promi
       throw deferred('http-429', host, 'it rate-limited this request');
     }
     if (e instanceof KernelError && e.code === 'gone') return verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]);
-    if (e instanceof KernelError && (e.code === 'invalid_output' || e.code === 'overloaded' || e.code === 'network')) {
+    if (e instanceof KernelError && (e.code === 'invalid_output' || e.code === 'overloaded' || e.code === 'network' || (e.code === 'timeout' && !ctx.signal.aborted))) {
       return verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]);
     }
     throw e;

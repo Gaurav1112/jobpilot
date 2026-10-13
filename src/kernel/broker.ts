@@ -16,7 +16,7 @@ export interface HttpTool {
    * Like getText, then parses the body; a body that is not JSON is `invalid_output`.
    * A status of 400 or more is not parsed: the result is `{ status, json: null }` and the caller maps it.
    */
-  getJson(url: string): Promise<{ status: number; json: unknown }>;
+  getJson(url: string, opts?: RequestOptions): Promise<{ status: number; json: unknown }>;
   /** The raw body (for an archive or other binary file), under the same egress, pacing and size cap as getText. */
   getBytes(url: string): Promise<{ status: number; bytes: Uint8Array }>;
   /**
@@ -24,7 +24,17 @@ export interface HttpTool {
    * not a denial), a 429 or 5xx with its body, instead of the errors getText raises. For a caller that has its own rules
    * for redirects and bot walls (the careers locator). Same egress, https-only, pacing and size cap as getText.
    */
-  getPage(url: string): Promise<{ status: number; body: string; location: string | null }>;
+  getPage(url: string, opts?: RequestOptions): Promise<{ status: number; body: string; location: string | null }>;
+}
+
+/**
+ * Per-request options (getPage and getJson). `timeoutMs`: the request, body included, is aborted after that long and
+ * fails as `KernelError('timeout')` naming the host; the step's own signal is untouched, so the step goes on (the
+ * coverage gate reads it as a miss). The host pacer's wait comes before the clock starts. Absent: only the step's
+ * timeout applies, as before.
+ */
+export interface RequestOptions {
+  readonly timeoutMs?: number;
 }
 
 /** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
@@ -283,15 +293,37 @@ export function issueContext(a: IssueArgs): AgentContext {
   };
 
   if (a.contract.capabilities.http) {
-    const fetchBody = async <T>(url: string, read: (res: FetchResponse, max: number) => Promise<T>): Promise<{ status: number; body: T }> => {
+    /** The signal one request runs under: the step's, plus its own timer when `timeoutMs` is given. */
+    const requestSignal = (timeoutMs: number | undefined): { signal: AbortSignal; timedOut: () => boolean; done: () => void } => {
+      if (timeoutMs === undefined) return { signal: a.signal, timedOut: () => false, done: () => {} };
+      const c = new AbortController();
+      let fired = false;
+      const timer = setTimeout(() => {
+        fired = true;
+        c.abort(new DOMException('request timeout', 'TimeoutError'));
+      }, timeoutMs);
+      const onStep = (): void => c.abort(a.signal.reason);
+      a.signal.addEventListener('abort', onStep, { once: true });
+      return {
+        signal: c.signal,
+        timedOut: () => fired && !a.signal.aborted,
+        done: () => {
+          clearTimeout(timer);
+          a.signal.removeEventListener('abort', onStep);
+        },
+      };
+    };
+    const timedOutError = (host: string, ms: number | undefined): KernelError => new KernelError('timeout', `request to ${host} timed out after ${ms ?? 0} ms`);
+    const fetchBody = async <T>(url: string, read: (res: FetchResponse, max: number) => Promise<T>, timeoutMs?: number): Promise<{ status: number; body: T }> => {
       const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       await a.hostPacer?.wait(u.hostname);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       let res;
       let body;
+      const rq = requestSignal(timeoutMs);
       try {
-        res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS });
         if (res.status >= 300 && res.status < 400) {
           throw deny(`G-EGRESS: redirect from ${u.hostname} refused`);
         }
@@ -299,33 +331,40 @@ export function issueContext(a: IssueArgs): AgentContext {
         if (res.status >= 500) throw new KernelError('overloaded', `${res.status} from ${u.hostname}`);
         body = await read(res, a.policy.maxResponseBytes);
       } catch (e) {
+        if (rq.timedOut()) throw timedOutError(u.hostname, timeoutMs);
         throw mapProviderError(e);
+      } finally {
+        rq.done();
       }
       return { status: res.status, body };
     };
-    const getPage = async (url: string): Promise<{ status: number; body: string; location: string | null }> => {
+    const getPage = async (url: string, opts?: RequestOptions): Promise<{ status: number; body: string; location: string | null }> => {
       const u = checkUrl(url);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       await a.hostPacer?.wait(u.hostname);
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      const rq = requestSignal(opts?.timeoutMs);
       try {
-        const res = await a.providers.fetch(u.href, { signal: a.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        const res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS });
         const body = await readCapped(res, a.policy.maxResponseBytes);
         return { status: res.status, body, location: res.headers?.get('location') ?? null };
       } catch (e) {
+        if (rq.timedOut()) throw timedOutError(u.hostname, opts?.timeoutMs);
         throw mapProviderError(e);
+      } finally {
+        rq.done();
       }
     };
-    const getText = (url: string): Promise<{ status: number; body: string }> => fetchBody(url, readCapped);
+    const getText = (url: string, timeoutMs?: number): Promise<{ status: number; body: string }> => fetchBody(url, readCapped, timeoutMs);
     ctx.http = {
-      getText,
+      getText: (url) => getText(url),
       getPage,
       async getBytes(url) {
         const { status, body } = await fetchBody(url, readCappedBytes);
         return { status, bytes: body };
       },
-      async getJson(url) {
-        const { status, body } = await getText(url);
+      async getJson(url, opts) {
+        const { status, body } = await getText(url, opts?.timeoutMs);
         if (status >= 400) return { status, json: null };
         let json: unknown;
         try {

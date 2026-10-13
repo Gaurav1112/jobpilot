@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
@@ -250,4 +250,18 @@ export function runNow(o: { uid: number; freelance?: boolean; coverage?: boolean
   const label = o.coverage === true ? COVERAGE_LABEL : o.freelance === true ? FREELANCE_LABEL : DAILY_LABEL;
   const r = run('launchctl', ['kickstart', `gui/${o.uid}/${label}`]);
   if (r.status !== 0) throw new Error(`launchctl kickstart failed (${r.status}): ${(r.stderr || r.stdout).trim()}. Is the schedule installed? Run "jobpilot schedule install"`);
+}
+
+/**
+ * Whether the launchd job `label` is installed for `home`: its plist exists and runs with `JOBPILOT_HOME` = `home`.
+ * The coverage run yields only to pipelines scheduled on its own home (a check home never waits for the real one).
+ * An unreadable plist reads as not installed.
+ */
+export function scheduledFor(label: string, home: string, o: { agentsDir?: string | undefined } = {}): boolean {
+  try {
+    const text = readFileSync(plistPathOf(o, label), 'utf8');
+    return text.includes(`<key>JOBPILOT_HOME</key>\n${str(home, '    ')}`);
+  } catch {
+    return false;
+  }
 }

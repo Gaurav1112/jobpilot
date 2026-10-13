@@ -278,7 +278,7 @@ program
 
 program
   .command('run-coverage')
-  .description('Run the weekly career-site coverage pipeline: seed companies, locate their careers sites, detect the platform, verify the board, and fill the companies registry. Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
+  .description('Run the weekly career-site coverage pipeline: seed companies, locate their careers sites, detect the platform, verify the board, and fill the companies registry. It runs in slices of at most 90 minutes and yields to an owed daily or freelance run; the next start continues the same run. Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--no-notify', 'do not post the macOS notification')
   .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
@@ -287,9 +287,20 @@ program
     if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--limit must be a whole number, not ${v}`);
     return n;
   })
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number }) => {
+  .option('--slice-minutes <n>', 'for checks only: pause after <n> minutes instead of the 90-minute slice (the next run-coverage continues the run)', (v: string) => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) throw new Error(`--slice-minutes must be a positive number, not ${v}`);
+    return n;
+  })
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number }) => {
     process.exitCode = await runCoverageCommand(
-      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}), ...(o.limit !== undefined ? { limit: o.limit } : {}) },
+      {
+        ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}),
+        notify: o.notify,
+        ...(o.ifDue ? { ifDue: true } : {}),
+        ...(o.limit !== undefined ? { limit: o.limit } : {}),
+        ...(o.sliceMinutes !== undefined ? { sliceMs: Math.round(o.sliceMinutes * 60_000) } : {}),
+      },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });

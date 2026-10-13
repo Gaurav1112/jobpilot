@@ -2,7 +2,8 @@ import type { Clock } from '../../kernel/clock.js';
 import { policyHash } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import { codeHash } from '../code-hash.js';
-import { coverageWeek } from '../due.js';
+import { coverageWeek, otherRunOwed } from '../due.js';
+import { DAILY_LABEL, FREELANCE_LABEL, scheduledFor } from '../schedule.js';
 import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
@@ -22,6 +23,31 @@ import type { CandidateSource, CareersSite } from './types.js';
 const PIPELINE = COVERAGE_PIPELINE.id;
 /** The event marking that a run's verdicts reached the registry (once per run, so a resume never projects twice). */
 const PROJECTED = 'coverage.projected';
+/** The event of an invocation that paused between steps (it yielded, or hit its slice limit). */
+const PAUSED = 'coverage.paused';
+
+/**
+ * The incomplete coverage run of this coverage week with this policy, if any (the newest): a paused or crashed run is
+ * continued by the next invocation, on any day of the week, under its own run id (so its host state carries over).
+ */
+function resumableInWeek(app: AppStore, week: string, pHash: string): string | undefined {
+  const rows = app.kernel.db.prepare(`SELECT run_id FROM runs WHERE pipeline = ? AND status <> 'completed' AND policy_hash = ? ORDER BY started_at DESC, run_id DESC`).all(PIPELINE, pHash) as { run_id: string }[];
+  return rows.map((r) => r.run_id).find((id) => {
+    const date = /^coverage-(\d{4}-\d{2}-\d{2})(?:-\d+)?$/.exec(id)?.[1];
+    return date !== undefined && coverageWeek(`${date}T12:00:00.000Z`) === week;
+  });
+}
+
+/** The scheduled yield check: the daily and freelance runs installed on this home, read at most every YIELD_CHECK_EVERY_MS. */
+function defaultYieldCheck(home: string): (now: string) => string | null {
+  let last: { at: number; reason: string | null } | undefined;
+  const scheduled = (p: 'daily' | 'freelance'): boolean => scheduledFor(p === 'daily' ? DAILY_LABEL : FREELANCE_LABEL, home);
+  return (now) => {
+    const t = Date.parse(now);
+    if (last === undefined || t - last.at >= YIELD_CHECK_EVERY_MS) last = { at: t, reason: otherRunOwed(home, now, scheduled) };
+    return last.reason;
+  };
+}
 const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 export interface CoverageRunOptions {
@@ -39,9 +65,40 @@ export interface CoverageRunOptions {
   readonly codeHash?: string;
   readonly afterStep?: (count: number) => void;
   readonly onLocked?: () => void;
+  /** The longest one invocation runs (wall time, the injected clock) before it pauses; default COVERAGE_SLICE_MS. Checks may lower it (`--slice-minutes`). */
+  readonly sliceMs?: number;
+  /**
+   * Asked before each step: a reason to yield (the daily or freelance run is owed now or within 5 minutes), or null.
+   * Default: `otherRunOwed` for the pipelines whose launchd job is installed on this home (`scheduledFor`), asked at
+   * most every YIELD_CHECK_EVERY_MS of the clock. Tests inject their own.
+   */
+  readonly yieldCheck?: (now: string) => string | null;
 }
 
+/** One invocation's time slice: then it pauses between steps and the next `run-coverage` continues the same run. */
+export const COVERAGE_SLICE_MS = 90 * 60_000;
+/** How often (clock time) the default yield check reads the due state. */
+export const YIELD_CHECK_EVERY_MS = 30_000;
+
+/** An invocation that stopped between steps: the run stays incomplete; the next `run-coverage` (or `--if-due` start) resumes it. */
+export interface CoverageSlice {
+  readonly status: 'paused';
+  readonly runId: string;
+  readonly runDate: string;
+  readonly week: string;
+  readonly resumed: boolean;
+  /** `yielded to daily`, `yielded to freelance` or `slice limit`. */
+  readonly reason: string;
+  /** The stage it stopped in. */
+  readonly stage: StageId;
+  readonly warnings: string[];
+  readonly exitCode: 0;
+}
+
+export type CoverageResult = CoverageSummary | CoverageSlice;
+
 export interface CoverageSummary {
+  readonly status: 'completed';
   readonly runId: string;
   readonly runDate: string;
   /** The coverage week (its Sunday); every seed carries it, so a second run in the week replays. */
@@ -113,7 +170,7 @@ function coverageCounts(app: AppStore, outcome: CoverageStagesOutcome): { byAgen
  *    run for the dashboard's runs view and a `coverage.summary` event, and complete the run.
  * Coverage only writes the registry: nothing here touches the daily pipeline, which reads whatever registry exists.
  */
-export function runCoverage(o: CoverageRunOptions): Promise<CoverageSummary> {
+export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
   return withLock(o.home, 'run-coverage', async () => {
     o.onLocked?.();
     const paths = homePaths(o.home);
@@ -126,10 +183,23 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageSummary> {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
       const policy = coveragePolicy(loaded.pack);
       const pHash = policyHash(policy);
-      const { runId, resume, skipped } = pickRunId(app.kernel, `coverage-${runDate}`, pHash);
+      const ongoing = resumableInWeek(app, week, pHash);
+      const { runId, resume, skipped } = ongoing !== undefined ? { runId: ongoing, resume: true, skipped: [] as string[] } : pickRunId(app.kernel, `coverage-${runDate}`, pHash);
       const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
       const gate = makeRunGate({ runKey: runId, store: app });
+      const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
+      const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
+      // the slice limit applies once this invocation has done a step, so every slice makes progress
+      let stepsThisSlice = 0;
+      const afterStep = (n: number): void => {
+        stepsThisSlice++;
+        o.afterStep?.(n);
+      };
+      const pauseBefore = (): string | null => {
+        const at = o.clock.now();
+        return yieldCheck(at) ?? (stepsThisSlice > 0 && Date.parse(at) >= sliceEnd ? 'slice limit' : null);
+      };
       const outcome = await runCoverageStages({
         store: app.kernel,
         runId,
@@ -142,8 +212,14 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageSummary> {
         codeHash: o.codeHash ?? codeHash(),
         seeds: coverageSeeds(week, loaded.companies, seedItemsFromJobs(app)),
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
-        ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+        afterStep,
+        pauseBefore,
       });
+      if ('paused' in outcome) {
+        // between steps: nothing is projected or announced; the next invocation resumes this run id
+        app.kernel.appendEvent(runId, o.clock.now(), PAUSED, { reason: outcome.paused, stage: outcome.stage }, pHash);
+        return { status: 'paused', runId, runDate, week, resumed: resume, reason: outcome.paused, stage: outcome.stage, warnings, exitCode: 0 };
+      }
       for (const n of outcome.denied) warnings.push(n);
       if (o.limit !== undefined && outcome.selected.length < outcome.merged.length - outcome.denied.length) {
         warnings.push(`--limit ${o.limit}: ${outcome.selected.length} of ${outcome.merged.length} candidates were located this run (every pick plus the first ${o.limit} others); the rest were left out`);
@@ -188,6 +264,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageSummary> {
       const verdicts = { verified: 0, proposed: 0, failed: 0 };
       for (const v of outcome.verdicts) verdicts[v.status]++;
       const summary: Omit<CoverageSummary, 'exitCode'> = {
+        status: 'completed',
         runId,
         runDate,
         week,
@@ -224,8 +301,11 @@ const kv = (r: Readonly<Record<string, number>>): string =>
     .map(([k, n]) => `${k} ${n}`)
     .join(', ') || 'none';
 
-/** The coverage run summary as the CLI prints it. */
-export function formatCoverageSummary(s: CoverageSummary): string {
+/** The coverage run summary as the CLI prints it (a paused slice: one line, and how it goes on). */
+export function formatCoverageSummary(s: CoverageResult): string {
+  if (s.status === 'paused') {
+    return [`run ${s.runId} for ${s.runDate} (coverage week ${s.week})${s.resumed ? ', resumed' : ''}: paused in ${s.stage} (${s.reason}); the next run-coverage continues it`, ...s.warnings.map((w) => `warning: ${w}`)].join('\n');
+  }
   const c = s.candidates;
   const lines = [
     `run ${s.runId} for ${s.runDate} (coverage week ${s.week})${s.resumed ? ', resumed' : ''}: completed`,
@@ -236,7 +316,7 @@ export function formatCoverageSummary(s: CoverageSummary): string {
     `located: ${kv(s.located)}`,
     `platforms: ${kv(s.platforms)}`,
     `verdicts: verified ${s.verdicts.verified}, proposed ${s.verdicts.proposed}, failed ${s.verdicts.failed}`,
-    `not located (counted only): ${s.projection.unlocated.counted}; picks proposed unlocated: ${s.projection.unlocated.proposed}; live companies not located: ${s.projection.unlocated.failed}`,
+    `not located: ${s.projection.unlocated.counted} (seed lists, counted only); picks not located (proposed): ${s.projection.unlocated.proposed}; live companies not located (a failed week): ${s.projection.unlocated.failed}`,
     `deferred by a disabled host: ${s.deferred.total} (${kv(s.deferred.byStage)}), behind ${s.deferred.hosts.length} host(s); hosts disabled in the run: ${s.deferred.disabledHosts}`,
     `registry: verified ${s.registry.verified}, proposed ${s.registry.proposed}, failing ${s.registry.failing}, failed ${s.registry.failed}, rejected ${s.registry.rejected}`,
   ];

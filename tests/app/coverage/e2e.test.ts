@@ -2,7 +2,7 @@ import { copyFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { runCoverage, type CoverageSummary } from '../../../src/app/coverage/run.js';
+import { runCoverage, type CoverageResult, type CoverageSummary } from '../../../src/app/coverage/run.js';
 import { offlineProviders } from '../../../src/app/offline.js';
 import { AppStore, type Company } from '../../../src/app/store/app-store.js';
 import type { FetchLike } from '../../../src/kernel/providers.js';
@@ -42,8 +42,13 @@ function net(dead: readonly string[] = []) {
   return { fetch, calls };
 }
 
-const run = (home: string, now: string, fetch: FetchLike): Promise<CoverageSummary> =>
-  runCoverage({ home, clock: { now: () => now }, fetch, sleep: async () => {}, codeHash: 'e2e' });
+/** A completed run (these tests never yield: the check homes have no scheduled daily or freelance job). */
+function done(r: CoverageResult): CoverageSummary {
+  if (r.status !== 'completed') throw new Error(`expected a completed run, got ${r.status} (${r.reason})`);
+  return r;
+}
+const run = async (home: string, now: string, fetch: FetchLike): Promise<CoverageSummary> =>
+  done(await runCoverage({ home, clock: { now: () => now }, fetch, sleep: async () => {}, codeHash: 'e2e', yieldCheck: () => null }));
 
 function registry(home: string): Record<string, Pick<Company, 'status' | 'platform' | 'platformSlug' | 'source' | 'failWeeks' | 'userOverride'> & { reasons: string }> {
   const app = AppStore.open(join(home, 'jobpilot.db'));
@@ -61,7 +66,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     const home = newHome();
     const n = net();
     let t = Date.parse(W1);
-    const s = await runCoverage({ home, clock: { now: () => new Date((t += 1000)).toISOString() }, fetch: n.fetch, sleep: async () => {}, codeHash: 'e2e' });
+    const s = done(await runCoverage({ home, clock: { now: () => new Date((t += 1000)).toISOString() }, fetch: n.fetch, sleep: async () => {}, codeHash: 'e2e', yieldCheck: () => null }));
     expect(s).toMatchObject({ runId: 'coverage-2026-10-11', week: '2026-10-11', resumed: false, exitCode: 0, picks: 1 });
     expect(s.candidates).toEqual({ bySource: { pick: 1, remoteintech: 2, yc: 2, jobs: 0 }, merged: 5, selected: 5, dropped: 1, denied: 0 });
     expect(s.located).toEqual({ listed: 3, 'homepage-link': 1, path: 0, subdomain: 0, sitemap: 0, none: 1 });

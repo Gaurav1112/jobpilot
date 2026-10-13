@@ -2,7 +2,7 @@ import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
-import { asHttps, BudgetExhausted, gateOf, HOST_DISABLED, MAX_HOPS, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate } from './gate.js';
+import { asHttps, BudgetExhausted, budgetReason, gateOf, HOST_DISABLED, limitsOf, MAX_HOPS, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate, type StepLimits } from './gate.js';
 import { locatorHosts } from './locator.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
@@ -419,13 +419,13 @@ function decide(c: Collected): Decision {
  * (both required). A host this agent disables is written to the store (`coverage_host_state`) before the step returns:
  * its one side channel outside its output, run-scoped politeness state, never data.
  */
-export function makePlatformDetector(opts: GateSource & { readonly maxRequests?: number }) {
+export function makePlatformDetector(opts: GateSource & Partial<StepLimits>) {
   const gate = gateOf(opts);
-  const maxRequests = opts.maxRequests ?? DETECTOR_MAX_REQUESTS;
-  return defineAgent(platformDetectorContract, async (site, ctx) => [await detect(site, ctx, gate, maxRequests)]);
+  const limits = limitsOf(opts, DETECTOR_MAX_REQUESTS);
+  return defineAgent(platformDetectorContract, async (site, ctx) => [await detect(site, ctx, gate, limits)]);
 }
 
-async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, maxRequests: number): Promise<PlatformGuess> {
+async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limits: StepLimits): Promise<PlatformGuess> {
   const guess = (d: Decision, lines: readonly string[]): PlatformGuess => {
     const { verdict, ...rest } = d;
     return { site, ...rest, evidence: [verdict, ...lines].slice(0, MAX_EVIDENCE) };
@@ -438,7 +438,7 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, maxRe
   const web = asHttps(site.candidate.website);
   const key = web === null ? null : registrableDomain(web.hostname);
   const acceptMoved = (u: URL): boolean => (key !== null && registrableDomain(u.hostname) === key) || platformForHost(u.hostname) !== null;
-  const { fetchUrl } = stepFetcher({ ctx, gate, planned: new Set(detectorHosts(site)), acceptMoved, maxRequests });
+  const { fetchUrl } = stepFetcher({ ctx, gate, planned: new Set(detectorHosts(site)), acceptMoved, ...limits });
 
   const c: Collected = { signals: [], phenom: false, jsonld: null };
   const notes: string[] = [];
@@ -461,7 +461,7 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, maxRe
     try {
       return await fetchUrl(url, true);
     } catch (e) {
-      if (e instanceof BudgetExhausted) return { kind: 'miss', reason: 'budget-exhausted' };
+      if (e instanceof BudgetExhausted) return { kind: 'miss', reason: budgetReason(e) };
       throw e;
     }
   };

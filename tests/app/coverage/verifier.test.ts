@@ -174,6 +174,15 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
     expect(html.status).toBe('failed');
   });
 
+  it('a board read past the request timeout is failed with the reason, never a step error, never a disable', async () => {
+    const hang: FetchLike = (_u, init) => new Promise((_r, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted'))));
+    const store = memoryHostStateStore();
+    const v = await verify(guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme'), hang, makeBoardVerifier({ runKey: 'r', store, requestTimeoutMs: 20 }));
+    expect(v.status).toBe('failed');
+    expect(v.reasons.join('\n')).toMatch(/timed out after 20 ms/);
+    expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
     const n = serve({});
     const v = await verify(guess(cand('nvidia.com', 'NVIDIA'), 'workday', 'nvidia/NVIDIAExternalCareerSite'), n.fetch);

@@ -1,7 +1,7 @@
 import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import type { EgressSets } from '../../kernel/broker.js';
-import { asHttps, BudgetExhausted, gateOf, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate } from './gate.js';
+import { asHttps, BudgetExhausted, budgetReason, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate, type StepLimits } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
 import { CareersSite, CompanyCandidate } from './types.js';
@@ -164,34 +164,34 @@ export const careersLocatorContract = defineContract({
  * - The shared robots.txt fetch runs under the abort signal of whichever candidate asks first; if that candidate's
  *   step times out mid-fetch, the host becomes robots-unavailable for the run (conservative, intended).
  */
-export function makeCareersLocator(opts: GateSource & { readonly maxRequests?: number }) {
+export function makeCareersLocator(opts: GateSource & Partial<StepLimits>) {
   const gate = gateOf(opts);
-  const maxRequests = opts.maxRequests ?? MAX_REQUESTS;
-  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, gate, maxRequests)]);
+  const limits = limitsOf(opts, MAX_REQUESTS);
+  return defineAgent(careersLocatorContract, async (c, ctx) => [await locate(c, ctx, gate, limits)]);
 }
 
-async function locate(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, maxRequests: number): Promise<CareersSite> {
+async function locate(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits): Promise<CareersSite> {
   const reasons: string[] = [];
   let site: CareersSite;
   try {
-    site = await probe(c, ctx, gate, maxRequests, reasons);
+    site = await probe(c, ctx, gate, limits, reasons);
   } catch (e) {
     if (!(e instanceof BudgetExhausted)) throw e;
-    reasons.push('budget-exhausted');
+    reasons.push(budgetReason(e));
     site = { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
   }
   refuseSiblingDependent(site.reasons ?? [], site.careersUrl);
   return site;
 }
 
-async function probe(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, maxRequests: number, reasons: string[]): Promise<CareersSite> {
+async function probe(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits, reasons: string[]): Promise<CareersSite> {
   const state = gate.state;
   const planned = new Set(locatorHosts(c));
 
   const web = asHttps(c.website);
   const siteKey = web === null ? null : registrableDomain(web.hostname);
   const onCompanyDomain = (u: URL): boolean => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
-  const { fetchUrl, robotsFor } = stepFetcher({ ctx, gate, planned, acceptMoved: onCompanyDomain, maxRequests });
+  const { fetchUrl, robotsFor } = stepFetcher({ ctx, gate, planned, acceptMoved: onCompanyDomain, ...limits });
 
   const found = (method: CareersSite['method'], careersUrl: string, evidence: string): CareersSite => ({ candidate: c, careersUrl, method, evidence, ...(reasons.length > 0 ? { reasons } : {}) });
   const none = (): CareersSite => ({ candidate: c, careersUrl: null, method: 'none', evidence: null, reasons: reasons.length > 0 ? reasons : ['no probe applied'] });

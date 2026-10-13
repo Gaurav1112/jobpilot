@@ -20,6 +20,15 @@ import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
  * - `KernelError('invalid_output')` on any other 4xx or a response of the wrong shape;
  * - whatever the broker raises (`rate_limit` on 429, `overloaded` on 5xx, `network`, a timeout).
  *
+ * The board-API rule (decided 2026-10-14): a client reads only the platform's DOCUMENTED PUBLIC job-board API
+ * (Greenhouse Job Board API `boards-api.greenhouse.io`, Lever Postings API `api.lever.co`, Ashby posting API
+ * `api.ashbyhq.com`), which each platform publishes for programmatic use. It does not fetch robots.txt for these
+ * API hosts, exactly as the daily adapters do not (seen live 2026-10-13: Greenhouse disallows only `/embed/`, Lever
+ * says `Allow: /`, Ashby answers 401 for robots.txt). robots.txt keeps governing every PAGE fetch: the careers
+ * locator and the platform detector honour it for every request, through the coverage gate. If a board API answers
+ * 401, 403 or 429, the verifier disables that API host for the rest of the run, with a named problem (a deferral),
+ * and never retries around it.
+ *
  * Agent code (containment): it imports only kernel definitions, so the platform is a plain string here; the coverage
  * types' `Platform` enum is a superset of these keys.
  */
@@ -44,7 +53,8 @@ export interface PlatformClient {
   /** The one host the client reads from (the verifier's egress for this platform). */
   readonly host: string;
   readonly boardUrl: (slug: string) => string;
-  readBoard(slug: string, http: HttpTool): Promise<BoardRead>;
+  /** `timeoutMs`: a per-request timeout (the coverage verifier's); absent, only the step timeout applies. */
+  readBoard(slug: string, http: HttpTool, opts?: { readonly timeoutMs?: number }): Promise<BoardRead>;
 }
 
 /** A 401 or 403 from the platform's host: a refusal of the requester, not a fact about the board. */
@@ -68,8 +78,8 @@ const SHAPES = {
 /** The daily parsers read only `slug` and `company` of the request; the rest is a placeholder. */
 const requestFor = (ats: 'greenhouse' | 'lever' | 'ashby', slug: string): DiscoveryRequest => ({ ats, slug, company: slug, runDate: '1970-01-01' });
 
-async function getJson(http: HttpTool, url: string, host: string, slug: string): Promise<unknown> {
-  const { status, json } = await http.getJson(url);
+async function getJson(http: HttpTool, url: string, host: string, slug: string, timeoutMs?: number): Promise<unknown> {
+  const { status, json } = await http.getJson(url, timeoutMs === undefined ? undefined : { timeoutMs });
   if (status === 401 || status === 403) throw new BoardRefused(status, host);
   if (status === 404) throw new KernelError('gone', `board not found: ${slug}`);
   // any other non-2xx (the broker raises on 3xx, 429 and 5xx itself)
@@ -102,9 +112,9 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
     platform: 'greenhouse',
     host: GREENHOUSE_HOST,
     boardUrl: greenhouseUrl,
-    async readBoard(slug, http) {
+    async readBoard(slug, http, opts) {
       const url = greenhouseUrl(slug);
-      const json = await getJson(http, url, GREENHOUSE_HOST, slug);
+      const json = await getJson(http, url, GREENHOUSE_HOST, slug, opts?.timeoutMs);
       checkShape('greenhouse', slug, json);
       const jobs = (json as { jobs: unknown[] }).jobs;
       return read(greenhouseParse(json, requestFor('greenhouse', slug)), distinctNames(jobs), true, url);
@@ -114,9 +124,9 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
     platform: 'lever',
     host: LEVER_HOST,
     boardUrl: (slug) => leverUrl(slug, 0),
-    async readBoard(slug, http) {
+    async readBoard(slug, http, opts) {
       const url = leverUrl(slug, 0);
-      const json = await getJson(http, url, LEVER_HOST, slug);
+      const json = await getJson(http, url, LEVER_HOST, slug, opts?.timeoutMs);
       checkShape('lever', slug, json);
       // Lever's postings carry no company name.
       return read(leverParse(json, requestFor('lever', slug)), [], (json as unknown[]).length < LEVER_PAGE_SIZE, url);
@@ -126,9 +136,9 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
     platform: 'ashby',
     host: ASHBY_HOST,
     boardUrl: ashbyUrl,
-    async readBoard(slug, http) {
+    async readBoard(slug, http, opts) {
       const url = ashbyUrl(slug);
-      const json = await getJson(http, url, ASHBY_HOST, slug);
+      const json = await getJson(http, url, ASHBY_HOST, slug, opts?.timeoutMs);
       checkShape('ashby', slug, json);
       // Ashby's job-board response carries no company name.
       return read(ashbyParse(json, requestFor('ashby', slug)), [], true, url);

@@ -5,7 +5,8 @@ import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { lookup } from 'node:dns/promises';
-import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, type DueSpec } from './due.js';
+import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
+import { DAILY_LABEL, FREELANCE_LABEL, scheduledFor } from './schedule.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
@@ -83,6 +84,8 @@ export function redactedError(e: unknown, terms: readonly string[] | undefined):
 export interface DueRunResult {
   readonly text: string;
   readonly exitCode: 0 | 1;
+  /** The run stopped between steps on purpose (a coverage slice that yielded or hit its limit): the attempt is `paused`, never a failure. */
+  readonly paused?: boolean;
 }
 
 /** Hosts each pipeline's sources depend on; one resolving means the network is up. */
@@ -128,7 +131,7 @@ export async function runWithDue(
       }
     }
     const result = await run(o.ifDue === true ? { onLocked: () => void (attempt = attempts.start(d.home, startedAt)) } : {});
-    if (o.ifDue === true) attempts.finish(d.home, startedAt, 'done', attempt);
+    if (o.ifDue === true) attempts.finish(d.home, startedAt, result.paused === true ? 'paused' : 'done', attempt);
     d.out(result.text);
     return result.exitCode;
   } catch (e) {
@@ -219,7 +222,18 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
  * quarantined; 2 when the run could not run. `--if-due` follows `COVERAGE_DUE` (owed from Sunday 06:00 IST through
  * Saturday, `coverage-attempts.json`). `--limit <n>` is for checks: every pick plus the first n other candidates.
  */
-export async function runCoverageCommand(o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number }, d: RunCommandDeps): Promise<0 | 1 | 2> {
+export async function runCoverageCommand(
+  o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number; readonly sliceMs?: number },
+  d: RunCommandDeps & { readonly yieldCheck?: (now: string) => string | null },
+): Promise<0 | 1 | 2> {
+  // A scheduled start never takes the lock while the daily or freelance run is owed: they get it first.
+  if (o.ifDue === true) {
+    const owed = (d.yieldCheck ?? scheduledYieldCheck(d.home))(d.clock.now());
+    if (owed !== null) {
+      d.out(`not due: ${owed} (owed now or within 5 minutes); the next start continues the coverage run`);
+      return 0;
+    }
+  }
   return runWithDue(COVERAGE_DUE, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
     const summary = await runCoverage({
@@ -229,8 +243,16 @@ export async function runCoverageCommand(o: Omit<RunCommandOptions, 'refresh'> &
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),
+      ...(o.sliceMs !== undefined ? { sliceMs: o.sliceMs } : {}),
+      ...(d.yieldCheck !== undefined ? { yieldCheck: d.yieldCheck } : {}),
       ...hooks,
     });
-    return { text: formatCoverageSummary(summary), exitCode: summary.exitCode };
+    return { text: formatCoverageSummary(summary), exitCode: summary.exitCode, ...(summary.status === 'paused' ? { paused: true } : {}) };
   });
 }
+
+/** The yield check of a scheduled coverage start: the daily or freelance run installed on this home is owed now or soon. */
+export const scheduledYieldCheck =
+  (home: string) =>
+  (now: string): string | null =>
+    otherRunOwed(home, now, (p) => scheduledFor(p === 'daily' ? DAILY_LABEL : FREELANCE_LABEL, home));

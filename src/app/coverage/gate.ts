@@ -23,6 +23,18 @@ import { parseRobots, robotsDenial, type RobotsVerdict } from './robots.js';
  */
 
 export const MAX_HOPS = 5;
+/**
+ * The longest one request may take (body included) before it is given up as a miss with the reason `timeout`. A
+ * timeout is NOT a refusal: the host is not disabled (conservative in the other direction: a slow host is asked
+ * again by the next step that needs it). A robots.txt that times out is not cached either: that step treats the host
+ * as robots-unavailable (nothing is fetched from it without its robots.txt), a later step asks again.
+ */
+export const REQUEST_TIMEOUT_MS = 15_000;
+/**
+ * One step's wall-clock deadline (the injected clock), under the agents' 120 s step timeout: no request starts after
+ * it, and the step ends with what it has (the locator: `none` with `budget-exhausted:time`).
+ */
+export const CANDIDATE_DEADLINE_MS = 90_000;
 
 /** Status codes that may carry a bot wall; with a marker in the body they are a challenge (a closed list, never extended at run time). */
 const CHALLENGE_STATUS: ReadonlySet<number> = new Set([403, 429, 503]);
@@ -107,7 +119,34 @@ export type GateSource = { readonly gate: RunGate } | { readonly runKey: string;
 
 export const gateOf = (o: GateSource): RunGate => ('gate' in o ? o.gate : makeRunGate({ runKey: o.runKey, store: o.store }));
 
-export class BudgetExhausted extends Error {}
+/** A step's limits: its request budget, the per-request timeout and its wall-clock deadline. */
+export interface StepLimits {
+  readonly maxRequests: number;
+  readonly requestTimeoutMs?: number;
+  readonly deadlineMs?: number;
+}
+
+/** The limits from an agent factory's options; `maxRequests` falls back to the agent's own default. */
+export function limitsOf(o: Partial<StepLimits>, maxRequests: number): StepLimits {
+  return {
+    maxRequests: o.maxRequests ?? maxRequests,
+    ...(o.requestTimeoutMs !== undefined ? { requestTimeoutMs: o.requestTimeoutMs } : {}),
+    ...(o.deadlineMs !== undefined ? { deadlineMs: o.deadlineMs } : {}),
+  };
+}
+
+/** A step ran out of its request budget (`requests`) or its wall-clock deadline (`time`). */
+export class BudgetExhausted extends Error {
+  constructor(readonly kind: 'requests' | 'time' = 'requests') {
+    super(`budget exhausted: ${kind}`);
+  }
+}
+
+/** The reason a step records for an exhausted budget: `budget-exhausted`, or `budget-exhausted:time` past its deadline. */
+export const budgetReason = (e: BudgetExhausted): string => (e.kind === 'time' ? 'budget-exhausted:time' : 'budget-exhausted');
+
+/** The `why` of a robots.txt request that timed out (never cached, never a disable). */
+const ROBOTS_TIMEOUT = 'robots.txt request timed out';
 
 /** The prefix of a reason that comes from state another step set: such a result is never stored as a finished step. */
 export const HOST_DISABLED = 'host-disabled:';
@@ -126,7 +165,7 @@ export function refuseSiblingDependent(reasons: readonly string[], found: string
 export type Fetched =
   | { readonly kind: 'ok'; readonly status: number; readonly body: string; readonly url: string }
   | { readonly kind: 'moved'; readonly url: string }
-  | { readonly kind: 'miss'; readonly reason: string }
+  | { readonly kind: 'miss'; readonly reason: string; readonly timeout?: true }
   | { readonly kind: 'challenge'; readonly reason: string };
 
 export interface StepFetcher {
@@ -146,8 +185,14 @@ export function stepFetcher(o: {
   readonly planned: ReadonlySet<string>;
   readonly acceptMoved: (u: URL) => boolean;
   readonly maxRequests: number;
+  /** Per-request timeout; default REQUEST_TIMEOUT_MS. */
+  readonly requestTimeoutMs?: number;
+  /** The step's wall-clock deadline from its start (the context's clock); default CANDIDATE_DEADLINE_MS. */
+  readonly deadlineMs?: number;
 }): StepFetcher {
   const { ctx, gate, planned, acceptMoved, maxRequests } = o;
+  const timeoutMs = o.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
+  const deadline = Date.parse(ctx.clock.now()) + (o.deadlineMs ?? CANDIDATE_DEADLINE_MS);
   const state = gate.state;
   /** Hosts THIS step's own requests disabled: its refusals are its own outcome, unlike a sibling's. */
   const own = new Set<string>();
@@ -180,12 +225,14 @@ export function stepFetcher(o: {
         if (off2 !== undefined) return { kind: 'miss', reason: skipReason(host, off2) };
       }
       // robots.txt is shared by the whole run, so it is counted but never refused by one step's budget
-      if (checkRobots && requests >= maxRequests) throw new BudgetExhausted();
+      if (checkRobots && requests >= maxRequests) throw new BudgetExhausted('requests');
+      if (Date.parse(ctx.clock.now()) >= deadline) throw new BudgetExhausted('time');
       requests++;
       let page;
       try {
-        page = await http.getPage(u.href);
+        page = await http.getPage(u.href, { timeoutMs });
       } catch (e) {
+        if (e instanceof KernelError && e.code === 'timeout' && !ctx.signal.aborted) return { kind: 'miss', reason: `timeout: ${e.message}`, timeout: true };
         if (e instanceof KernelError) return { kind: 'miss', reason: `${e.code}: ${u.hostname}${u.pathname}` };
         throw e;
       }
@@ -219,8 +266,18 @@ export function stepFetcher(o: {
       try {
         verdict = await robotsVerdict(host);
       } catch (e) {
+        // BudgetExhausted belongs to the step that asked: forget the fetch, the next asker tries again
+        if (e instanceof BudgetExhausted) {
+          state.robots.delete(host);
+          throw e;
+        }
         // e.g. a TimeoutError rethrown by the broker: the host is robots-unavailable for the run, never a cached rejection
         verdict = { kind: 'disallow-all', reason: 'robots-unavailable', why: e instanceof Error ? e.name : 'error' };
+      }
+      if (verdict.kind === 'disallow-all' && verdict.why === ROBOTS_TIMEOUT) {
+        // a timed-out robots.txt is not a refusal: not disabled, not cached; this step skips the host, a later one asks again
+        state.robots.delete(host);
+        return verdict;
       }
       if (verdict.kind === 'disallow-all') disable(host, verdict.reason, ctx.clock.now());
       return verdict;
@@ -232,6 +289,7 @@ export function stepFetcher(o: {
   async function robotsVerdict(host: string): Promise<RobotsVerdict> {
     const r = await fetchUrl(`https://${host}/robots.txt`, false);
     if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
+    if (r.kind === 'miss' && r.timeout === true) return { kind: 'disallow-all', reason: 'robots-unavailable', why: ROBOTS_TIMEOUT };
     if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
     if (r.status === 404 || r.status === 410) return { kind: 'allow-all', why: `robots.txt ${r.status}` };
     if (r.status === 401 || r.status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${r.status}` };

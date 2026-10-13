@@ -40,7 +40,11 @@ import { makeBoardVerifier, noPlatformVerdict, verifierEgressSets } from './veri
  *   after the other, each with its own host pacer, so the run waits `minHostIntervalMs` between stages: no host is
  *   asked twice within the interval across a stage boundary either.
  * - Candidates are processed in the kernel's fixed total order (stage, agent, envelope id): deterministic for a given
- *   candidate list, the same on every run and resume (not alphabetical: the queue orders by envelope id).
+ *   candidate list, the same on every run and resume (not alphabetical: the queue orders by envelope id). Accepted
+ *   as the order (2026-10-14); `--limit` alone selects by companyKey.
+ * - Time slices (`pauseBefore`): before each step and each stage the run may stop cleanly between steps (it yields to
+ *   an owed daily or freelance run, or its 90-minute slice is used up). Stage runs stay incomplete; the next invocation
+ *   resumes them under the same umbrella run id, finished steps replay at $0 and the run's host state carries over.
  * - A completed stage run is read back, never run twice; an incomplete one (a crash) is resumed. Its inputs are a pure
  *   function of the earlier stages' stored outputs, so a resumed run seeds exactly what the first attempt seeded.
  * - Only located sites go to the detector, and only guesses with a platform go to the verifier; a guess with no
@@ -161,6 +165,14 @@ export interface CoverageStagesOptions {
   readonly seeds: readonly CoverageRequest[];
   readonly limit?: number;
   readonly afterStep?: (count: number) => void;
+  /** Asked before each step and each stage: a reason stops the run there, between steps (`CoveragePaused`). */
+  readonly pauseBefore?: () => string | null;
+}
+
+/** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
+export interface CoveragePaused {
+  readonly paused: string;
+  readonly stage: StageId;
 }
 
 export interface CoverageStagesOutcome {
@@ -218,15 +230,23 @@ function stageResult(store: Store, stage: StageId, runId: string): StageResult {
  * Runs (or resumes, or reads back) the four stages of one coverage run. Throws only on what stops the whole run (the
  * wiring proof, a store error); a failing company is a verdict or a deferral, never an exception.
  */
-export async function runCoverageStages(o: CoverageStagesOptions): Promise<CoverageStagesOutcome> {
+export async function runCoverageStages(o: CoverageStagesOptions): Promise<CoverageStagesOutcome | CoveragePaused> {
   const compiled = compileCoverage(o.gate);
   const guardrails = appGuardrails();
   let first = true;
+  let reason: string | null = null;
+  const pauseBefore = (): string | null => (reason = o.pauseBefore?.() ?? null);
+  class Paused extends Error {
+    constructor(readonly stage: StageId) {
+      super('paused');
+    }
+  }
   const run = async (stage: StageId, seeds: readonly unknown[], egressSets: EgressSets): Promise<StageResult> => {
     const { registry, compiled: c } = compiled[stage] as { registry: ReturnType<typeof compileDaily>['registry']; compiled: CompiledPipeline };
     const id = `${o.runId}.${stage}`;
     const existing = o.store.getRun(id);
     if (existing?.status !== 'completed') {
+      if (pauseBefore() !== null) throw new Paused(stage);
       // a fresh pacer per stage: the gap keeps any host's last request of the stage before at least one interval away
       if (!first) await o.sleep(o.policy.minHostIntervalMs);
       first = false;
@@ -243,12 +263,22 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         egressSets,
         codeHash: o.codeHash,
         ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+        pauseBefore,
       });
-      if (existing === undefined) await supervisor.start(id, seeds);
-      else await supervisor.resume(id);
+      const report = existing === undefined ? await supervisor.start(id, seeds) : await supervisor.resume(id);
+      if (report.status === 'paused') throw new Paused(stage);
     }
     return stageResult(o.store, stage, id);
   };
+  try {
+    return await stagesOf(o, run);
+  } catch (e) {
+    if (e instanceof Paused) return { paused: reason ?? 'paused', stage: e.stage };
+    throw e;
+  }
+}
+
+async function stagesOf(o: CoverageStagesOptions, run: (stage: StageId, seeds: readonly unknown[], egressSets: EgressSets) => Promise<StageResult>): Promise<CoverageStagesOutcome> {
 
   const seed = await run('seed', o.seeds, {});
   const seeded = seed.outputs.map((x) => CompanyCandidate.schema.parse(x));

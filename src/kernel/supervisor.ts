@@ -47,6 +47,12 @@ export interface SupervisorDeps {
   readonly onInvoke?: (agentId: string, stepKey: string) => void;
   /** Test hook: runs after a step's own transaction, before routing. Throwing here simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /**
+   * A cooperative pause, asked before each queued step: a non-null reason stops the drain there, between steps (a
+   * `run_paused` event; the run stays incomplete, nothing is finished, `resume` continues it). Default: never pause.
+   * The coverage run uses it to yield to the daily and freelance runs and to cap its time slice.
+   */
+  readonly pauseBefore?: () => string | null;
   /** The user's public pack; given to contracts with `capabilities.pack: true` and to guardrails. */
   readonly pack?: unknown;
   /** Hash of `pack`, part of the step key of pack agents only. Default 'none'. */
@@ -66,7 +72,8 @@ export interface SupervisorDeps {
 
 export interface RunReport {
   readonly runId: string;
-  readonly status: 'completed';
+  /** `paused`: `pauseBefore` stopped the drain between steps; the run is incomplete and can be resumed. */
+  readonly status: 'completed' | 'paused';
   readonly queue: Record<'pending' | 'done' | 'failed' | 'quarantined' | 'skipped', number>;
   readonly replayed: number;
   /** Failed steps whose item no longer exists at its source (error code `gone`); they are inside `queue.failed`. */
@@ -236,6 +243,12 @@ export class Supervisor {
     const breakers = this.breakers(runId);
     let count = 0;
     for (let item = store.nextQueued(runId); item; item = store.nextQueued(runId)) {
+      const pause = this.d.pauseBefore?.() ?? null;
+      if (pause !== null) {
+        const queue = store.queueCounts(runId);
+        this.event(runId, 'run_paused', { reason: pause, pending: queue.pending });
+        return this.report(runId, 'paused');
+      }
       const agent = registry.get(item.agent_id);
       const team = compiled.teamOf.get(item.agent_id);
       const agentKey = `agent:${item.agent_id}`;
@@ -290,10 +303,17 @@ export class Supervisor {
       }
     }
     store.finishRun(runId, this.d.clock.now());
+    const report = this.report(runId, 'completed');
+    this.event(runId, 'run_finished', report);
+    return report;
+  }
+
+  private report(runId: string, status: RunReport['status']): RunReport {
+    const { store } = this.d;
     const events = store.events(runId);
-    const report: RunReport = {
+    return {
       runId,
-      status: 'completed',
+      status,
       queue: store.queueCounts(runId),
       replayed: replayedOf(events),
       gone: events.filter((e) => e.kind === 'step_failed' && (JSON.parse(e.data) as { error?: unknown }).error === 'gone').length,
@@ -301,8 +321,6 @@ export class Supervisor {
       openObligations: openObligationsOf(events),
       costUsd: store.runCost(runId),
     };
-    this.event(runId, 'run_finished', report);
-    return report;
   }
 
   /** G-TRACKER: an output no tracker can key is not trusted. The first throw, in output then tracker order, decides. */

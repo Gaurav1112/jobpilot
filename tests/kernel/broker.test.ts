@@ -489,3 +489,40 @@ describe('v1 kernel extensions: broker', () => {
     expect(slept).toEqual([1000, 2000]);
   });
 });
+
+describe('per-request timeout (coverage: getPage and getJson take { timeoutMs })', () => {
+  /** A fetch that answers only when aborted (it rejects with the signal's reason), or after `ms`. */
+  const hanging = (ms = 60_000): FetchLike => (_url, init) =>
+    new Promise((resolve, reject) => {
+      const t = setTimeout(() => resolve({ status: 200, text: async () => 'late' }), ms);
+      init?.signal?.addEventListener('abort', () => {
+        clearTimeout(t);
+        reject(init.signal?.reason ?? new Error('aborted'));
+      });
+    });
+  const ctxWith = (fetch: FetchLike, signal = new AbortController().signal) =>
+    issueContext({ contract: { ...fetcher, egress: ['api.example.com'] }, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock: fixedClock('2026-10-08T00:00:00Z'), signal });
+
+  it('a request past timeoutMs fails as a KernelError timeout naming the host; the step signal is untouched', async () => {
+    const ctx = ctxWith(hanging());
+    const t0 = Date.now();
+    await expect(ctx.http!.getPage('https://api.example.com/slow', { timeoutMs: 30 })).rejects.toMatchObject({ code: 'timeout', message: expect.stringContaining('api.example.com') });
+    await expect(ctx.http!.getJson('https://api.example.com/slow', { timeoutMs: 30 })).rejects.toMatchObject({ code: 'timeout' });
+    expect(Date.now() - t0).toBeLessThan(2000);
+    expect(ctx.signal.aborted).toBe(false);
+  });
+
+  it('a request that answers in time is unchanged; without the option nothing times out', async () => {
+    const ctx = ctxWith(hanging(5));
+    await expect(ctx.http!.getPage('https://api.example.com/ok', { timeoutMs: 1000 })).resolves.toMatchObject({ status: 200, body: 'late' });
+    await expect(ctxWith(hanging(40)).http!.getPage('https://api.example.com/ok')).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('the step timeout still wins: an aborted step signal is not reported as a request timeout', async () => {
+    const ac = new AbortController();
+    const ctx = ctxWith(hanging(), ac.signal);
+    const p = ctx.http!.getPage('https://api.example.com/slow', { timeoutMs: 10_000 });
+    ac.abort(new DOMException('step', 'TimeoutError'));
+    await expect(p).rejects.not.toMatchObject({ code: 'timeout', message: expect.stringContaining('request to') });
+  });
+});

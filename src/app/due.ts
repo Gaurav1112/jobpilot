@@ -24,7 +24,8 @@ export const ATTEMPTS_FILE = 'daily-attempts.json';
 
 const IST_OFFSET_MS = 330 * 60_000;
 
-export type Outcome = 'started' | 'done' | 'failed';
+/** `paused`: a coverage slice that yielded (to the daily or freelance run, or at its slice limit): never a failure. */
+export type Outcome = 'started' | 'done' | 'failed' | 'paused';
 export interface Attempt {
   readonly at: string;
   readonly outcome: Outcome;
@@ -161,7 +162,7 @@ function readFile(spec: DueSpec, home: string, key: string): AttemptsFile {
     const v = JSON.parse(readFileSync(join(home, spec.attemptsFile), 'utf8')) as Partial<AttemptsFile>;
     if (v.date !== key || !Array.isArray(v.attempts)) return { date: key, attempts: [] };
     const attempts = v.attempts.filter(
-      (a): a is Attempt => typeof a?.at === 'string' && !Number.isNaN(Date.parse(a.at)) && ['started', 'done', 'failed'].includes(a.outcome as string),
+      (a): a is Attempt => typeof a?.at === 'string' && !Number.isNaN(Date.parse(a.at)) && ['started', 'done', 'failed', 'paused'].includes(a.outcome as string),
     );
     return { date: key, attempts, ...(v.alerted === true ? { alerted: true } : {}) };
   } catch {
@@ -182,7 +183,7 @@ const attemptsKey = (spec: DueSpec, now: string): string => (spec.weekday !== un
 const read = (spec: DueSpec, home: string, now: string): AttemptsFile => readFile(spec, home, attemptsKey(spec, now));
 
 /** Failed attempts, plus started ones that never finished: crashed, since the caller has ruled out a live holder. */
-const failuresOf = (f: AttemptsFile): string[] => f.attempts.filter((a) => a.outcome !== 'done').map((a) => a.at);
+const failuresOf = (f: AttemptsFile): string[] => f.attempts.filter((a) => a.outcome !== 'done' && a.outcome !== 'paused').map((a) => a.at);
 
 /**
  * Attempt bookkeeping of one pipeline, over the window in force at `now`. `attemptsFor(DAILY_DUE)` is what the
@@ -197,7 +198,7 @@ export function attemptsFor(spec: DueSpec) {
       return f.attempts.length;
     },
     /** Sets the outcome of attempt `index` of `now`'s window; with no index (it failed before starting), appends one. */
-    finish(home: string, now: string, outcome: 'done' | 'failed', index?: number): void {
+    finish(home: string, now: string, outcome: 'done' | 'failed' | 'paused', index?: number): void {
       const f = read(spec, home, now);
       const attempts = [...f.attempts];
       if (index !== undefined && attempts[index] !== undefined) attempts[index] = { at: attempts[index].at, outcome };
@@ -236,9 +237,9 @@ function runsIn(app: AppStore, prefix: string): { completed: boolean; started: b
  * the DB cannot be read, which the caller counts as a failed attempt. `window` is the id of the window in force
  * ('' for daily, and before the first window).
  */
-export function due(spec: DueSpec, home: string, now: string): Due & { window: string } {
+export function due(spec: DueSpec, home: string, now: string, opts: { readonly ignoreHolder?: boolean } = {}): Due & { window: string } {
   if (spec.weekday !== undefined) return dueWeekly(spec, spec.weekday, home, now);
-  const holder = liveHolder(home);
+  const holder = opts.ignoreHolder === true ? undefined : liveHolder(home);
   const win = currentWindow(spec, now);
   const window = win?.id ?? '';
   if (holder !== undefined) return { due: false, window, reason: `a jobpilot ${holder.command} is running (pid ${holder.pid})` };
@@ -305,3 +306,26 @@ function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): D
   }
 }
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
+/** How far ahead the coverage run looks for an owed daily or freelance run: it yields before their window opens. */
+export const YIELD_LOOKAHEAD_MS = 5 * 60_000;
+
+/**
+ * Whether the daily or the freelance run (only those `scheduled` on this home) is owed at `now`, or will be within YIELD_LOOKAHEAD_MS (their own due rules
+ * and attempt files; the lock holder, which is the coverage run itself, is ignored): the reason to yield, or null. A due
+ * check that cannot be read never makes coverage yield (the run it guards counts that failure itself).
+ */
+export function otherRunOwed(home: string, now: string, scheduled: (pipeline: 'daily' | 'freelance') => boolean): string | null {
+  const ahead = new Date(Date.parse(now) + YIELD_LOOKAHEAD_MS).toISOString();
+  for (const [spec, name] of [[DAILY_DUE, 'daily'], [FREELANCE_DUE, 'freelance']] as const) {
+    if (!scheduled(name)) continue;
+    for (const at of [now, ahead]) {
+      try {
+        if (due(spec, home, at, { ignoreHolder: true }).due) return `yielded to ${name}`;
+      } catch {
+        // unreadable: not a reason to yield
+      }
+    }
+  }
+  return null;
+}
