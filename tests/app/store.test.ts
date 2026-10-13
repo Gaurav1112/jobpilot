@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync } from 'node:fs';
 import { ensureHome, setWarningSink } from '../../src/app/home.js';
 import { tmpdir } from 'node:os';
@@ -285,6 +286,36 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     expect(() => db.prepare(`INSERT INTO job_docs (job_key, kind, format, path, sha256, pages, qa_ok) VALUES ('ffffffffffffffff', 'resume', 'pdf', 'x', 'aa', 1, 1)`).run()).toThrow(/FOREIGN KEY/);
     expect(() => db.prepare(`UPDATE jobs SET docs_state = 'bogus'`).run()).toThrow(/CHECK/);
   });
+
+  it('final I2: four processes opening a version-7 DB at once all succeed; the migrations run once', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jobpilot-race-'));
+    tmp.push(dir);
+    chmodSync(dir, 0o700);
+    const path = join(dir, 'jobpilot.db');
+    const kernel = Store.open(path);
+    const db = kernel.db;
+    db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
+    db.prepare(`INSERT INTO app_schema (id, version) VALUES (1, 0)`).run();
+    for (const [i, m] of APP_MIGRATIONS.slice(0, 7).entries()) {
+      if (typeof m === 'string') db.exec(m);
+      else m.run(db);
+      db.prepare(`UPDATE app_schema SET version = ?`).run(i + 1);
+    }
+    kernel.close();
+    const at = Date.now() + 2500;
+    const script = `import { AppStore } from ${JSON.stringify(join(import.meta.dirname, '../../src/app/store/app-store.ts'))};
+while (Date.now() < ${at}) {}
+try { const s = AppStore.open(${JSON.stringify(path)}); console.log('OK ' + s.schemaVersion()); s.close(); } catch (e) { console.log('ERR ' + e.message); }`;
+    const child = () =>
+      new Promise<string>((resolve) => {
+        const c = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { cwd: join(import.meta.dirname, '../..') });
+        let out = '';
+        c.stdout.on('data', (d: Buffer) => (out += d.toString()));
+        c.on('close', () => resolve(out.trim()));
+      });
+    const results = await Promise.all([child(), child(), child(), child()]);
+    expect(results).toEqual(Array(4).fill(`OK ${APP_MIGRATIONS.length}`));
+  }, 30_000);
 
   it('keeps warnings and problems with a run, and finds the latest run by prefix', () => {
     const s = AppStore.on(Store.open(':memory:'));

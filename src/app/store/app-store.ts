@@ -298,28 +298,34 @@ export class AppStore {
     if (current === APP_MIGRATIONS.length) return new AppStore(kernel, owned);
     db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
     db.prepare(`INSERT OR IGNORE INTO app_schema (id, version) VALUES (1, 0)`).run();
-    const version = (db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number }).version;
-    if (version > APP_MIGRATIONS.length) {
-      throw new Error(`app schema version ${version} is newer than this jobpilot (${APP_MIGRATIONS.length})`);
-    }
-    for (let v = version; v < APP_MIGRATIONS.length; v++) {
+    const readVersion = (): number => {
+      const v = (db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number }).version;
+      if (v > APP_MIGRATIONS.length) throw new Error(`app schema version ${v} is newer than this jobpilot (${APP_MIGRATIONS.length})`);
+      return v;
+    };
+    // Final review I2: concurrent openers (the dashboard, a run, a CLI command) serialise. Each migration runs in a
+    // BEGIN IMMEDIATE transaction that reads the version again first and applies only if it is still the one this
+    // opener expected; an opener that lost the race sees the new version and applies nothing.
+    for (let v = readVersion(); v < APP_MIGRATIONS.length; v = readVersion()) {
       const m = APP_MIGRATIONS[v] ?? '';
+      const step = (): void => {
+        if (readVersion() !== v) return; // another opener applied it while this one waited for the write lock
+        if (typeof m === 'string') db.exec(m);
+        else {
+          m.run(db);
+          const broken = db.pragma('foreign_key_check') as unknown[];
+          if (broken.length > 0) throw new Error(`app migration ${v + 1} would break ${broken.length} foreign keys`);
+        }
+        db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
+      };
       if (typeof m === 'string') {
-        db.transaction(() => {
-          db.exec(m);
-          db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
-        })();
+        db.transaction(step).immediate();
         continue;
       }
       // A table rebuild: foreign keys off around the transaction (they cannot change inside one), checked before commit.
       db.pragma('foreign_keys = OFF');
       try {
-        db.transaction(() => {
-          m.run(db);
-          const broken = db.pragma('foreign_key_check') as unknown[];
-          if (broken.length > 0) throw new Error(`app migration ${v + 1} would break ${broken.length} foreign keys`);
-          db.prepare(`UPDATE app_schema SET version = ? WHERE id = 1`).run(v + 1);
-        })();
+        db.transaction(step).immediate();
       } finally {
         db.pragma('foreign_keys = ON');
       }
