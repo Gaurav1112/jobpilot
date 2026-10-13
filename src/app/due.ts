@@ -315,33 +315,64 @@ export const YIELD_LOOKAHEAD_MS = 5 * 60_000;
  */
 export const YIELD_STARVATION_MS = 2 * 60 * 60_000;
 
-/** The start (ms) of `spec`'s window in force at `t`, or undefined before its first window. */
-function windowStartAt(spec: DueSpec, t: string): number | undefined {
-  const w = currentWindow(spec, t);
-  return w === undefined ? undefined : startOfIstDay(t) + minutesOf(w.fromIst) * 60_000;
+/** Where the coverage run remembers, per daily/freelance window, when it first gave way to it (review I-3). */
+export const YIELD_FILE = 'coverage-yield.json';
+
+function readYields(home: string): Record<string, string> {
+  try {
+    const v = JSON.parse(readFileSync(join(home, YIELD_FILE), 'utf8')) as unknown;
+    if (typeof v !== 'object' || v === null || Array.isArray(v)) return {};
+    return Object.fromEntries(Object.entries(v).filter(([, t]) => typeof t === 'string' && !Number.isNaN(Date.parse(t)))) as Record<string, string>;
+  } catch {
+    return {}; // missing or corrupt: every window's first yield is "now" (fail-safe: never starved)
+  }
+}
+
+function writeYields(home: string, y: Record<string, string>): void {
+  try {
+    const path = join(home, YIELD_FILE);
+    const tmp = `${path}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify(y), { mode: 0o600 });
+    renameSync(tmp, path);
+  } catch {
+    // unwritable: the next check starts the clock again (fail-safe)
+  }
 }
 
 /**
- * Review I-2, the fail-safe yield rule: the daily or freelance run is owed for THIS home at `now`, or within
+ * Review I-2/I-3, the fail-safe yield rule: the daily or freelance run is owed for THIS home at `now`, or within
  * YIELD_LOOKAHEAD_MS (their own due rules; the lock holder, the coverage run itself, is ignored), AND that pipeline's
- * attempts file exists in this home (only scheduled `--if-due` runs write it, so a fresh check home never yields),
- * AND it has not been owed for more than YIELD_STARVATION_MS with no attempt in its window. The reason to yield
- * (`yielded to daily` / `yielded to freelance`), or null. A due check that cannot be read never makes coverage yield.
+ * attempts file exists in this home (only scheduled `--if-due` runs write it, so a fresh check home never yields).
+ * Starvation bound: once coverage has given way to one window (pipeline + window key) for more than
+ * YIELD_STARVATION_MS, counted from its FIRST yield to that window (kept in `coverage-yield.json`, pruned to the current
+ * windows), with no attempt of that pipeline since, it stops yielding to that window (the job is not loaded, or its
+ * network is down all day). A missing or corrupt yield file reads as "first yield now", never as starved. The reason
+ * to yield (`yielded to daily` / `yielded to freelance`), or null. A due check that cannot be read never makes coverage yield.
  */
 export function otherRunOwed(home: string, now: string): string | null {
   const ahead = new Date(Date.parse(now) + YIELD_LOOKAHEAD_MS).toISOString();
+  const yields = readYields(home);
+  const current = new Set<string>();
+  let reason: string | null = null;
   for (const [spec, name] of [[DAILY_DUE, 'daily'], [FREELANCE_DUE, 'freelance']] as const) {
-    if (!existsSync(join(home, spec.attemptsFile))) continue;
+    for (const at of [now, ahead]) current.add(`${name}:${attemptsKey(spec, at)}`);
+    if (reason !== null || !existsSync(join(home, spec.attemptsFile))) continue;
     for (const at of [now, ahead]) {
       try {
         if (!due(spec, home, at, { ignoreHolder: true }).due) continue;
-        const since = windowStartAt(spec, at);
-        const starved = since !== undefined && Date.parse(now) - since > YIELD_STARVATION_MS && read(spec, home, at).attempts.length === 0;
-        if (!starved) return `yielded to ${name}`;
+        const key = `${name}:${attemptsKey(spec, at)}`;
+        const first = yields[key] ?? now;
+        const alive = read(spec, home, at).attempts.some((x) => Date.parse(x.at) >= Date.parse(first));
+        if (Date.parse(now) - Date.parse(first) > YIELD_STARVATION_MS && !alive) continue;
+        yields[key] = first;
+        reason = `yielded to ${name}`;
+        break;
       } catch {
         // unreadable: not a reason to yield
       }
     }
   }
-  return null;
+  const kept = Object.fromEntries(Object.entries(yields).filter(([k]) => current.has(k)));
+  if (JSON.stringify(kept) !== JSON.stringify(readYields(home)) || reason !== null) writeYields(home, kept);
+  return reason;
 }

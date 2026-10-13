@@ -83,7 +83,7 @@ describe('coverage time slices: yield to the daily run, a slice cap, resume the 
     await expect(withLock(home, 'run', async () => 'daily ran')).resolves.toBe('daily ran');
   });
 
-  it('the yield rule (review I-2): owed for THIS home and its attempts file exists; never after 2 h owed with no attempt', () => {
+  it('the yield rule (review I-2): owed for THIS home and its attempts file exists', () => {
     // 2026-10-11 07:30 IST = 02:00Z: daily owed since 07:00, freelance since 07:30
     const at = '2026-10-11T02:00:00.000Z';
     const home = newHome();
@@ -94,15 +94,34 @@ describe('coverage time slices: yield to the daily run, a slice cap, resume the 
     expect(otherRunOwed(home, at)).toBe('yielded to daily');
     // a trailing slash or any other spelling of the home is the same directory
     expect(otherRunOwed(`${home}/`, at)).toBe('yielded to daily');
-    // owed for more than 2 h with no attempt today (the job not loaded, the network down): starvation bound
+  });
+
+  it('review I-3: the 2 h bound runs from coverage\'s FIRST yield to that window, not from the window start', () => {
     expect(YIELD_STARVATION_MS).toBe(2 * 60 * 60_000);
-    const late = '2026-10-11T03:31:00.000Z'; // 09:01 IST: daily owed 2 h 1 min, freelance 1 h 31 min
-    expect(otherRunOwed(home, late)).toBe('yielded to freelance');
-    expect(otherRunOwed(home, '2026-10-11T04:01:00.000Z')).toBeNull(); // 09:31 IST: both owed over 2 h, no attempt
-    // an attempt today keeps the yield (the job is alive and retrying)
-    writeFileSync(join(home, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-11', attempts: [{ at: '2026-10-11T03:30:00.000Z', outcome: 'failed' }] }));
-    expect(otherRunOwed(home, '2026-10-11T04:01:00.000Z')).toBeNull(); // failed at 09:00 IST, retried from 10:00: not due yet (and freelance starves)
-    expect(otherRunOwed(home, '2026-10-11T04:31:00.000Z')).toBe('yielded to daily'); // its retry is due: yield
+    const home = newHome();
+    scheduled(home, 'daily-attempts.json'); // yesterday's attempts only
+    // the Mac wakes at 10:00 IST (04:30Z): daily owed for 3 h, but coverage has not given way yet: it yields
+    expect(otherRunOwed(home, '2026-10-11T04:30:00.000Z')).toBe('yielded to daily');
+    expect(JSON.parse(readFileSync(join(home, 'coverage-yield.json'), 'utf8'))).toEqual({ 'daily:2026-10-11': '2026-10-11T04:30:00.000Z' });
+    expect(otherRunOwed(home, '2026-10-11T06:00:00.000Z')).toBe('yielded to daily'); // 11:30 IST
+    expect(otherRunOwed(home, '2026-10-11T06:31:00.000Z')).toBeNull(); // 12:01 IST: given way for 2 h 1 min, no attempt
+    // a new window (the next day) resets the clock, and the file keeps only current windows
+    expect(otherRunOwed(home, '2026-10-12T04:30:00.000Z')).toBe('yielded to daily');
+    expect(Object.keys(JSON.parse(readFileSync(join(home, 'coverage-yield.json'), 'utf8')) as object)).toEqual(['daily:2026-10-12']);
+  });
+
+  it('review I-3: an attempt after the first yield keeps the yield (the job is alive); a missing or corrupt file is "first yield now"', () => {
+    const home = newHome();
+    scheduled(home, 'daily-attempts.json');
+    expect(otherRunOwed(home, '2026-10-11T04:30:00.000Z')).toBe('yielded to daily');
+    // daily ran at 10:30 IST and failed; its retry is due from 11:30 IST
+    writeFileSync(join(home, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-11', attempts: [{ at: '2026-10-11T05:00:00.000Z', outcome: 'failed' }] }));
+    expect(otherRunOwed(home, '2026-10-11T07:00:00.000Z')).toBe('yielded to daily'); // 12:30 IST: 2.5 h of yielding, but alive
+    const fresh = newHome();
+    scheduled(fresh, 'daily-attempts.json');
+    writeFileSync(join(fresh, 'coverage-yield.json'), '{not json');
+    expect(otherRunOwed(fresh, '2026-10-11T08:00:00.000Z')).toBe('yielded to daily'); // 13:30 IST, corrupt file: first yield now
+    expect(JSON.parse(readFileSync(join(fresh, 'coverage-yield.json'), 'utf8'))).toEqual({ 'daily:2026-10-11': '2026-10-11T08:00:00.000Z' });
   });
 
   it('the slice cap pauses; the next invocation resumes the SAME run id and finishes; the summary line is posted once, on completion', async () => {
@@ -155,7 +174,7 @@ describe('week rollover: a run still paused when the next coverage week starts',
     const next = await runCoverage({ home, clock: ticking('2026-10-18T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null, notifier: async (t) => void posted.push(t) });
     expect(next).toMatchObject({ status: 'completed', runId: 'coverage-2026-10-18' });
     expect(posted).toHaveLength(2);
-    expect(posted[0]).toMatch(/^Coverage last week did not finish: \d of 5 candidates done$/);
+    expect(posted[0]).toMatch(/^Coverage last week did not finish: \d of 5 candidates finished \(0 deferred or failed\)$/);
     expect(next.warnings).toContain(posted[0]);
     const kinds = events(home, 'coverage-2026-10-11');
     expect(kinds.filter((k) => k === 'coverage.closed')).toHaveLength(1);
@@ -163,6 +182,41 @@ describe('week rollover: a run still paused when the next coverage week starts',
     const later: string[] = [];
     await runCoverage({ home, clock: ticking('2026-10-19T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null, notifier: async (t) => void later.push(t) });
     expect(later.some((l) => l.startsWith('Coverage last week'))).toBe(false);
+  });
+});
+
+describe('week rollover counts deferred or failed locate steps apart (review minor)', () => {
+  it('"N of M candidates finished (k deferred or failed)"', async () => {
+    const home = newHome();
+    // slice until it is paused inside its locate stage with at least one locate step finished
+    const locateDone = (): number => {
+      const app = AppStore.open(join(home, 'jobpilot.db'));
+      try {
+        return app.kernel.queueItems('coverage-2026-10-11.locate').filter((q) => q.status === 'done').length;
+      } finally {
+        app.close();
+      }
+    };
+    let first: CoverageResult | undefined;
+    for (let i = 0; i < 30 && !(first?.status === 'paused' && first.stage === 'locate' && locateDone() > 0); i++) {
+      first = await runCoverage({ home, clock: ticking(SUN_2000, 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', sliceMs: 2_000, yieldCheck: () => null });
+    }
+    expect(first).toMatchObject({ status: 'paused', stage: 'locate' });
+    // one of its finished locate steps failed (say a host-disabled deferral)
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    let finished: number;
+    try {
+      const items = app.kernel.queueItems('coverage-2026-10-11.locate');
+      const done = items.filter((q) => q.status === 'done');
+      expect(done.length).toBeGreaterThan(0);
+      app.kernel.markQueue('coverage-2026-10-11.locate', done[0]!.agent_id, done[0]!.envelope_id, 'failed');
+      finished = items.filter((q) => q.status !== 'pending').length;
+    } finally {
+      app.close();
+    }
+    const posted: string[] = [];
+    await runCoverage({ home, clock: ticking('2026-10-18T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => null, notifier: async (t) => void posted.push(t) });
+    expect(posted[0]).toBe(`Coverage last week did not finish: ${finished} of 5 candidates finished (1 deferred or failed)`);
   });
 });
 

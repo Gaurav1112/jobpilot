@@ -43,10 +43,11 @@ const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r
 
 /**
  * Week rollover: an incomplete coverage run of an EARLIER coverage week (paused or crashed, never finished) is closed
- * as incomplete: a `coverage.closed` event `{status: 'incomplete', done, total}` (the kernel's run row stays `running`,
- * its only other state being completed), and one line each, `Coverage last week did not finish: N of M candidates
- * done` (M: the candidates its locate stage had, or its merged seed candidates if it never reached the locator; N:
- * those whose locate step finished). Nothing of it was projected (a
+ * as incomplete: a `coverage.closed` event `{status: 'incomplete', finished, deferredOrFailed, total}` (the kernel's
+ * run row stays `running`, its only other state being completed), and one line each, `Coverage last week did not
+ * finish: N of M candidates finished (k deferred or failed)` (M: the candidates its locate stage had, or its merged
+ * seed candidates if it never reached the locator; N: those whose locate step finished; k: of those, the ones whose
+ * step failed or was deferred). Nothing of it was projected (a
  * run projects only when it completes), so the registry keeps last known verdicts. Closed once; never resumed.
  */
 function closeEarlierWeeks(app: AppStore, week: string, now: string): string[] {
@@ -57,10 +58,11 @@ function closeEarlierWeeks(app: AppStore, week: string, now: string): string[] {
     if (date === undefined || coverageWeek(`${date}T12:00:00.000Z`) >= week) continue;
     if (app.kernel.events(r.run_id).some((e) => e.kind === CLOSED)) continue;
     const items = app.kernel.queueItems(`${r.run_id}.locate`);
-    const done = items.filter((q) => q.status !== 'pending').length;
+    const finished = items.filter((q) => q.status !== 'pending').length;
+    const unfinished = items.filter((q) => q.status === 'failed' || q.status === 'skipped' || q.status === 'quarantined').length;
     const total = items.length > 0 ? items.length : storedCandidates(app.kernel, r.run_id).length;
-    app.kernel.appendEvent(r.run_id, now, CLOSED, { status: 'incomplete', done, total }, r.policy_hash);
-    lines.push(`Coverage last week did not finish: ${done} of ${total} candidates done`);
+    app.kernel.appendEvent(r.run_id, now, CLOSED, { status: 'incomplete', finished, deferredOrFailed: unfinished, total }, r.policy_hash);
+    lines.push(`Coverage last week did not finish: ${finished} of ${total} candidates finished (${unfinished} deferred or failed)`);
   }
   return lines;
 }
