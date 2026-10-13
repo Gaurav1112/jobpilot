@@ -26,9 +26,9 @@ import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
-import { forbiddenTermsAt, redactedError, runCommand, runFreelanceCommand } from './app/run-command.js';
+import { forbiddenTermsAt, redactedError, runCommand, runCoverageCommand, runFreelanceCommand } from './app/run-command.js';
 import { AppStore } from './app/store/app-store.js';
-import { DAILY_DUE, FREELANCE_DUE, due, type DueSpec } from './app/due.js';
+import { COVERAGE_DUE, DAILY_DUE, FREELANCE_DUE, coverageWeek, due, type DueSpec } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
@@ -232,7 +232,7 @@ function overridesAt(db: string): Record<string, Fact['status']> {
 
 /**
  * The pack as today's run would load it (this IST month, the user's fact overrides, the kept render nonce). `mode`
- * (final review C1): `strict` for `pack check` and the freelance commands; `daily` for the daily-only commands, which
+ * (final review C1): `strict` for `pack check` (companies.yaml too); `freelance` for the freelance commands (their files strict, companies.yaml lenient); `daily` for the daily-only commands, which
  * a broken freelance file must never stop.
  */
 function todaysPack(mode: LoadMode) {
@@ -273,6 +273,19 @@ program
     process.exitCode = await runFreelanceCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain()) },
+    );
+  });
+
+program
+  .command('run-coverage')
+  .description('Run the weekly career-site coverage pipeline (empty for now: it loads the pack, companies.yaml strictly, and records the run). Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
+  .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
+  .option('--no-notify', 'do not post the macOS notification')
+  .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
+    process.exitCode = await runCoverageCommand(
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });
 
@@ -432,7 +445,7 @@ networks
   .description('List the network files in pack/networks/')
   .action(() =>
     guarded(() => {
-      for (const l of networksList(todaysPack('strict'))) console.log(l);
+      for (const l of networksList(todaysPack('freelance'))) console.log(l);
     }),
   );
 networks
@@ -445,7 +458,7 @@ networks
       const paths = homePaths(jobpilotHome());
       const pdftotext = resolvePdftotext();
       process.exitCode = await withLock(paths.home, 'networks pack', async () =>
-        networksPack(o.all === true ? 'all' : ids, todaysPack('strict'), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
+        networksPack(o.all === true ? 'all' : ids, todaysPack('freelance'), join(paths.out, 'networks'), { out: (l) => console.log(l), err: (l) => console.error(l), pdftotext }),
       );
     }),
   );
@@ -549,14 +562,14 @@ function dueOrError(now: string, spec: DueSpec = DAILY_DUE): string {
     return `unknown: the database cannot be read (${e instanceof Error ? e.message : String(e)})`;
   }
 }
-const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run, the 07:30 and 19:30 IST freelance runs and the always-on dashboard (macOS)');
+const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run, the 07:30 and 19:30 IST freelance runs, the weekly Sunday coverage run and the always-on dashboard (macOS)');
 const scheduleOpts = () => {
   if (process.getuid === undefined) throw new Error('schedule needs a POSIX user id (macOS)');
   return { node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid() };
 };
 schedule
   .command('install')
-  .description('Write the three launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
+  .description('Write the four launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
   .action(() =>
     guarded(() => {
       const r = installSchedule(scheduleOpts());
@@ -565,13 +578,15 @@ schedule
       console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
       const fOwed = dueOrError(new Date().toISOString(), FREELANCE_DUE);
       console.log(`freelance run: from 07:30 and 19:30 IST, checked at login and every half hour; ${fOwed.includes('owed:') ? `a window is owed now (${fOwed})` : `now: ${fOwed}`}`);
+      const cOwed = dueOrError(new Date().toISOString(), COVERAGE_DUE);
+      console.log(`coverage run: weekly, owed from Sunday 06:00 IST through Saturday, checked at login and every half hour; ${cOwed.includes('owed:') ? `owed now (${cOwed})` : `now: ${cOwed}`}`);
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
   );
 schedule
   .command('uninstall')
-  .description('Unload all three jobs and delete their plists')
+  .description('Unload all four jobs and delete their plists')
   .action(() =>
     guarded(() => {
       for (const p of uninstallSchedule(scheduleOpts())) console.log(`removed ${p}`);
@@ -589,14 +604,22 @@ schedule
       }
       console.log(`today's daily run: ${dueOrError(new Date().toISOString())}`);
       console.log(`freelance run, ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}`);
+      console.log(`coverage run, week of ${coverageWeek(new Date().toISOString())}: ${dueOrError(new Date().toISOString(), COVERAGE_DUE)}`);
     }),
   );
 schedule
   .command('run-now')
   .description('Start the daily job now through launchd (a manual test of the scheduled command); --freelance starts the freelance job')
   .option('--freelance', 'start com.jobpilot.freelance (run-freelance --if-due) instead')
-  .action((o: { freelance?: boolean }) =>
+  .option('--coverage', 'start com.jobpilot.coverage (run-coverage --if-due) instead')
+  .action((o: { freelance?: boolean; coverage?: boolean }) =>
     guarded(() => {
+      if (o.coverage === true) {
+        runNow({ ...scheduleOpts(), coverage: true });
+        console.log(`started com.jobpilot.coverage (run-coverage --if-due): ${dueOrError(new Date().toISOString(), COVERAGE_DUE)}`);
+        console.log('it runs only when this coverage week\'s run is owed; "jobpilot run-coverage" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'coverage.log'));
+        return;
+      }
       const f = o.freelance === true;
       runNow({ ...scheduleOpts(), freelance: f });
       console.log(f ? `started com.jobpilot.freelance (run-freelance --if-due): ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}` : `started com.jobpilot.daily (run --if-due): ${dueOrError(new Date().toISOString())}`);

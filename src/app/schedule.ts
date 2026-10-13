@@ -9,6 +9,7 @@ import { homePaths } from './pack/paths.js';
 
 export const DAILY_LABEL = 'com.jobpilot.daily';
 export const FREELANCE_LABEL = 'com.jobpilot.freelance';
+export const COVERAGE_LABEL = 'com.jobpilot.coverage';
 export const DASHBOARD_LABEL = 'com.jobpilot.dashboard';
 const DASHBOARD_PORT = 4317;
 const IST_OFFSET_MINUTES = 330;
@@ -89,6 +90,15 @@ export function plistFreelance(o: PlistOpts): string {
   return plistDue(FREELANCE_LABEL, o, ['run-freelance', '--if-due'], 'freelance.log');
 }
 
+/**
+ * The weekly career-site coverage job: `run-coverage --if-due` on the same schedule as the daily one. It is owed from
+ * Sunday 06:00 IST and stays owed until it runs, through Saturday (`COVERAGE_DUE`, `coverageWeek`), so a Mac asleep on
+ * Sunday runs it on its first start after waking. It shares the daily job's lock.
+ */
+export function plistCoverage(o: PlistOpts): string {
+  return plistDue(COVERAGE_LABEL, o, ['run-coverage', '--if-due'], 'coverage.log');
+}
+
 /** The always-on local dashboard (the server itself binds 127.0.0.1). */
 export function plistDashboard(o: PlistOpts): string {
   return plist(DASHBOARD_LABEL, o, ['serve', '--port', String(DASHBOARD_PORT)], 'dashboard.log', [
@@ -167,11 +177,11 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   if (v.status !== 0 || nodeVersion === undefined) throw new Error(`could not run "${o.node} --version": ${(v.stderr || v.stdout).trim() || `exit ${v.status}`}`);
   if (Number(nodeVersion.split('.')[0]) < 24) throw new Error(`jobpilot needs Node 24 or newer; ${o.node} is ${nodeVersion}. Install it with a Node 24 binary (not the Volta shim) and run again`);
   const now = o.now ?? new Date();
-  const jobs = [[DAILY_LABEL, plistDaily(o)], [FREELANCE_LABEL, plistFreelance(o)], [DASHBOARD_LABEL, plistDashboard(o)]] as const;
+  const jobs = [[DAILY_LABEL, plistDaily(o)], [FREELANCE_LABEL, plistFreelance(o)], [COVERAGE_LABEL, plistCoverage(o)], [DASHBOARD_LABEL, plistDashboard(o)]] as const;
 
   const logsDir = homePaths(o.home).logs;
   prepareLogsDir(o.home, logsDir);
-  const logs = ['daily.log', 'freelance.log', 'dashboard.log'].map((n) => join(logsDir, n));
+  const logs = ['daily.log', 'freelance.log', 'coverage.log', 'dashboard.log'].map((n) => join(logsDir, n));
   for (const l of logs) prepareLogFile(l);
   mkdirSync(agentsDirOf(o), { recursive: true });
 
@@ -197,7 +207,7 @@ const notLoaded = (r: { status: number; stdout: string; stderr: string }): boole
 
 export function uninstallSchedule(o: ScheduleOpts, run: Runner = realRunner): string[] {
   const removed: string[] = [];
-  for (const label of [DAILY_LABEL, FREELANCE_LABEL, DASHBOARD_LABEL]) {
+  for (const label of [DAILY_LABEL, FREELANCE_LABEL, COVERAGE_LABEL, DASHBOARD_LABEL]) {
     const p = plistPathOf(o, label);
     // By label, so a job still loaded after its plist file went missing is unloaded too.
     const r = run('launchctl', ['bootout', `gui/${o.uid}/${label}`]);
@@ -218,7 +228,7 @@ export interface JobStatus {
 }
 
 export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobStatus[] {
-  return [[DAILY_LABEL, 'daily.log'], [FREELANCE_LABEL, 'freelance.log'], [DASHBOARD_LABEL, 'dashboard.log']].map(([label, log]) => {
+  return [[DAILY_LABEL, 'daily.log'], [FREELANCE_LABEL, 'freelance.log'], [COVERAGE_LABEL, 'coverage.log'], [DASHBOARD_LABEL, 'dashboard.log']].map(([label, log]) => {
     const r = run('launchctl', ['print', `gui/${o.uid}/${label}`]);
     const loaded = r.status === 0;
     const state = loaded ? (/^\s*state = (.+)$/m.exec(r.stdout)?.[1]?.trim() ?? null) : null;
@@ -234,9 +244,10 @@ export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobSt
   });
 }
 
-/** Start the daily job now, or with `freelance` the freelance job (a manual test of the real scheduled command). */
-export function runNow(o: { uid: number; freelance?: boolean }, run: Runner = realRunner): void {
-  const label = o.freelance === true ? FREELANCE_LABEL : DAILY_LABEL;
+/** Start the daily job now, or with `freelance` / `coverage` that job (a manual test of the real scheduled command). */
+export function runNow(o: { uid: number; freelance?: boolean; coverage?: boolean }, run: Runner = realRunner): void {
+  if (o.freelance === true && o.coverage === true) throw new Error('run-now starts one job: pass --freelance or --coverage, not both');
+  const label = o.coverage === true ? COVERAGE_LABEL : o.freelance === true ? FREELANCE_LABEL : DAILY_LABEL;
   const r = run('launchctl', ['kickstart', `gui/${o.uid}/${label}`]);
   if (r.status !== 0) throw new Error(`launchctl kickstart failed (${r.status}): ${(r.stderr || r.stdout).trim()}. Is the schedule installed? Run "jobpilot schedule install"`);
 }

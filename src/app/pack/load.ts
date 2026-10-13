@@ -155,21 +155,22 @@ function readFreelanceLeniently(dir: string, naming: Pick<Pack['naming'], 'forbi
 
 /**
  * companies.yaml (the career-site coverage's company picks), read apart from the pack: only the coverage reads it, so
- * it is in neither the daily hash nor `freelancePackHash`, and an absent file is no companies. `strict` throws on a
- * parse or schema problem; `daily` ignores a file with any problem, with a redacted warning, so it can never stop
- * the daily run (as the freelance files, final review C1). Forbidden terms and glyphs are `packTextProblems`' job
+ * it is in neither the daily hash nor `freelancePackHash`, and an absent file is no companies. `strict` (the coverage
+ * run and `pack check` only) throws on a parse or schema problem; `daily` and `freelance` ignore a file with any
+ * problem, with a redacted warning, so it can never stop the daily or the freelance run (as the freelance files are
+ * for the daily run, final review C1). Forbidden terms and glyphs are `packTextProblems`' job
  * when strict; the daily load also checks them here and ignores the file.
  */
 function readCompanies(dir: string, mode: LoadMode, naming: Pick<Pack['naming'], 'forbiddenTerms'>, warnings: string[]): CompanyPick[] {
-  if (mode !== 'daily') return readYaml(dir, 'companies.yaml', CompaniesFile, {}).companies;
+  if (mode === 'strict') return readYaml(dir, 'companies.yaml', CompaniesFile, {}).companies;
   try {
     const v = readYaml(dir, 'companies.yaml', CompaniesFile, {});
     const text = companiesFileProblems(v.companies, naming);
     if (text.length === 0) return v.companies;
-    warnings.push(redactText(`${text.join('; ')} (the daily run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
+    warnings.push(redactText(`${text.join('; ')} (the ${mode} run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
   } catch (e) {
     const why = e instanceof PackError ? e.message : `companies.yaml: could not be read: ${e instanceof Error ? e.message : String(e)}`;
-    warnings.push(redactText(`${why} (the daily run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
+    warnings.push(redactText(`${why} (the ${mode} run ignores this file; \`jobpilot pack check\` and the coverage run refuse it until it is fixed)`, naming));
   }
   return [];
 }
@@ -190,12 +191,19 @@ export interface LoadOptions {
    * (the default; the freelance run, `networks pack`, `sources probe`, `pack check`, `pack import`): any problem
    * throws. `daily` (`run`, `docs rebuild`, `serve`): a file with a parse, schema, stray-file, glyph or forbidden-term
    * problem is ignored with a warning (`readFreelanceLeniently`), so it can never stop the daily run, and its content
-   * never reaches it.
+   * never reaches it. `freelance` (`run-freelance`, `sources probe`): the freelance files are read as in `strict`, and a
+   * broken companies.yaml is ignored with a warning.
    */
   readonly mode?: LoadMode;
 }
 
-export type LoadMode = 'strict' | 'daily';
+/**
+ * `strict`: every optional file is refused on any problem (`pack check`, the coverage run, `networks`, `pack import`).
+ * `daily`: the freelance files and companies.yaml are ignored with a warning when broken.
+ * `freelance`: the freelance files are strict as in `strict`, but companies.yaml (which freelance never reads) is
+ * ignored with a warning when broken.
+ */
+export type LoadMode = 'strict' | 'daily' | 'freelance';
 
 /**
  * No role or fact may start after asOf, and no role may end after it (a cert's validity end may). Roles are named by

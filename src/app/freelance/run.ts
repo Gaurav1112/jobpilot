@@ -184,7 +184,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const now = o.clock.now();
       const runDate = istDate(now);
       const half = halfOf(now);
-      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
+      const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'freelance');
       const rules = loaded.pack.freelance;
       let gmail: GmailRunAccess = GMAIL_OFF;
       if (rules.platforms.gmail.enabled && o.gmail !== undefined) {
@@ -197,7 +197,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
-      const warnings = skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`);
+      const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];
       warnings.push(
         ...app.kernel
           .incompleteRuns()

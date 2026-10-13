@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { alerted, ATTEMPTS_FILE, attemptsFor, DAILY_DUE, dailyDue, due, FREELANCE_DUE, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, markAlerted, startAttempt } from '../../src/app/due.js';
+import { alerted, ATTEMPTS_FILE, attemptsFor, COVERAGE_DUE, coverageWeek, DAILY_DUE, dailyDue, due, FREELANCE_DUE, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, markAlerted, startAttempt } from '../../src/app/due.js';
 import { withLock } from '../../src/app/lock.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 
@@ -187,5 +187,107 @@ describe('due (per-pipeline windows)', () => {
     markAlerted(home, at('07:30'));
     startAttempt(home, at('08:00'));
     expect(JSON.parse(readFileSync(join(home, 'daily-attempts.json'), 'utf8')).attempts).toHaveLength(2);
+  });
+});
+
+describe('due (weekly coverage)', () => {
+  // Sunday 2026-10-11 .. Saturday 2026-10-17 is one coverage week; 2026-10-18 is the next Sunday.
+  const SUN = '2026-10-11';
+  const cv = attemptsFor(COVERAGE_DUE);
+  let home: string;
+  beforeEach(() => {
+    home = mkdtempSync(join(tmpdir(), 'jobpilot-due-cv-'));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+  const insert = (id: string, status = 'completed'): void => {
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    app.kernel.db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES (?, 'p', 'h', ?, ?, ?)`).run(id, at('08:00'), status === 'completed' ? at('08:00') : null, status);
+    app.close();
+  };
+
+  it('the coverage week is keyed by the IST date of the most recent Sunday', () => {
+    expect(coverageWeek(at('06:00', SUN))).toBe(SUN);
+    expect(coverageWeek(at('00:00', SUN))).toBe(SUN);
+    expect(coverageWeek(at('23:59', '2026-10-17'))).toBe(SUN);
+    expect(coverageWeek(at('00:00', '2026-10-18'))).toBe('2026-10-18');
+    // 2026-10-10T20:00Z is already Sunday 01:30 IST
+    expect(coverageWeek('2026-10-17T20:00:00.000Z')).toBe('2026-10-18');
+  });
+
+  it('Sunday 05:59 is not due; Sunday 06:00 is due', () => {
+    expect(due(COVERAGE_DUE, home, at('05:59', SUN))).toEqual({ due: false, window: '', reason: 'before Sunday 06:00 IST' });
+    expect(due(COVERAGE_DUE, home, at('06:00', SUN))).toEqual({ due: true, window: '', reason: "this coverage week's run has not run" });
+  });
+
+  it('Saturday 23:59 is not due once the week ran, and is still the last catch-up moment when it did not', () => {
+    insert(`coverage-${SUN}`);
+    expect(due(COVERAGE_DUE, home, at('23:59', '2026-10-17'))).toMatchObject({ due: false, reason: "this coverage week's run completed" });
+    const h2 = mkdtempSync(join(tmpdir(), 'jobpilot-due-cv2-'));
+    try {
+      expect(due(COVERAGE_DUE, h2, at('23:59', '2026-10-17')).due).toBe(true);
+      // and the next Sunday before 06:00 nothing is owed, even though last week never ran
+      expect(due(COVERAGE_DUE, h2, at('05:59', '2026-10-18'))).toMatchObject({ due: false, reason: 'before Sunday 06:00 IST' });
+    } finally {
+      rmSync(h2, { recursive: true, force: true });
+    }
+  });
+
+  it('Tuesday with no run this coverage week is due (catch-up after a sleeping Sunday)', () => {
+    expect(due(COVERAGE_DUE, home, at('10:00', '2026-10-13'))).toMatchObject({ due: true, window: '' });
+    insert('coverage-2026-10-04'); // last week's run does not count
+    expect(due(COVERAGE_DUE, home, at('10:00', '2026-10-13')).due).toBe(true);
+  });
+
+  it('after a Monday run completed: not due until next Sunday 06:00; ordinals count', () => {
+    insert('coverage-2026-10-12-2');
+    for (const [t, d] of [['09:00', '2026-10-12'], ['10:00', '2026-10-14'], ['23:59', '2026-10-17'], ['05:59', '2026-10-18']] as const) {
+      expect(due(COVERAGE_DUE, home, at(t, d)).due, `${d} ${t}`).toBe(false);
+    }
+    expect(due(COVERAGE_DUE, home, at('06:00', '2026-10-18'))).toMatchObject({ due: true });
+  });
+
+  it('a running run of the week is continued, not new; a non-digit ordinal and daily rows never complete it', () => {
+    insert('coverage-2026-10-12', 'running');
+    insert('coverage-2026-10-12-x');
+    insert('daily-2026-10-12');
+    expect(due(COVERAGE_DUE, home, at('09:00', '2026-10-13'))).toMatchObject({ due: true, reason: "this coverage week's run started and did not complete; this start continues it" });
+  });
+
+  it('the cap of 3 failures is per coverage week and the retry spacing holds', () => {
+    cv.finish(home, at('06:00', SUN), 'failed');
+    expect(due(COVERAGE_DUE, home, at('06:30', SUN))).toMatchObject({ due: false, reason: 'the last attempt failed at 06:00 IST; retrying from 07:00 IST' });
+    cv.finish(home, at('07:00', SUN), 'failed');
+    cv.finish(home, at('10:00', '2026-10-13'), 'failed');
+    cv.markAlerted(home, at('11:00', '2026-10-13'));
+    expect(due(COVERAGE_DUE, home, at('12:00', '2026-10-15'))).toMatchObject({
+      due: false,
+      capped: true,
+      reason: '3 attempts failed this coverage week; run "jobpilot run-coverage" by hand after fixing the cause',
+    });
+    expect(cv.alerted(home, at('12:00', '2026-10-15'))).toBe(true);
+    expect(JSON.parse(readFileSync(join(home, 'coverage-attempts.json'), 'utf8'))).toMatchObject({ date: SUN });
+    // next week the cap and the alert reset
+    expect(due(COVERAGE_DUE, home, at('06:00', '2026-10-18'))).toMatchObject({ due: true });
+    expect(cv.alerted(home, at('06:00', '2026-10-18'))).toBe(false);
+  });
+
+  it('a started attempt that never finished counts as a failure', () => {
+    cv.start(home, at('06:00', SUN));
+    expect(due(COVERAGE_DUE, home, at('06:30', SUN)).reason).toMatch(/retrying from 07:00 IST/);
+  });
+
+  it('daily and freelance are unchanged on a Sunday and on a Tuesday', () => {
+    for (const d of [SUN, '2026-10-13']) {
+      expect(due(DAILY_DUE, home, at('09:00', d))).toEqual({ due: true, window: '', reason: "today's run has not run" });
+      expect(due(FREELANCE_DUE, home, at('08:00', d))).toMatchObject({ due: true, window: 'am' });
+    }
+    expect(DAILY_DUE.weekday).toBeUndefined();
+    expect(FREELANCE_DUE.weekday).toBeUndefined();
+  });
+
+  it('a live jobpilot holding the lock makes it not owed', async () => {
+    await withLock(home, 'run', async () => {
+      expect(due(COVERAGE_DUE, home, at('09:00', SUN))).toMatchObject({ due: false, reason: `a jobpilot run is running (pid ${process.pid})` });
+    });
   });
 });

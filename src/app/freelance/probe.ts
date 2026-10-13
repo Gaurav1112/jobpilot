@@ -691,7 +691,7 @@ export async function probeCommand(o: ProbeCommandOptions): Promise<number> {
   return withLock(o.home, 'sources probe', async () => {
     const paths = homePaths(o.home);
     ensureHome(paths.home);
-    const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()), undefined, 'strict');
+    const loaded = loadRunPack(paths.pack, {}, istMonth(o.clock.now()), undefined, 'freelance');
     const app = AppStore.open(paths.db);
     try {
       const report = await runProbe({

@@ -54,7 +54,7 @@ export interface Due {
 
 /** One pipeline's schedule: the windows of the IST day in which a run is owed, and where its bookkeeping lives. */
 export interface DueSpec {
-  readonly pipeline: 'daily' | 'freelance';
+  readonly pipeline: 'daily' | 'freelance' | 'coverage';
   /** Ascending by `fromIst` ("HH:MM"). `id` is '' for a pipeline with one window a day, else the run-id suffix. */
   readonly windows: readonly { fromIst: string; id: string }[];
   /** File under the jobpilot home holding this pipeline's attempts, keyed by IST date plus window. */
@@ -62,7 +62,14 @@ export interface DueSpec {
   /** Run ids are `<runPrefix><IST date>[-<window id>][-<ordinal>]`. */
   readonly runPrefix: string;
   /** The CLI command that runs this pipeline by hand (named in the give-up reason). */
-  readonly command: 'run' | 'run-freelance';
+  readonly command: 'run' | 'run-freelance' | 'run-coverage';
+  /**
+   * Weekly pipeline: the IST weekday (0 = Sunday) from which a run is owed, at `windows[0].fromIst`. The owed span is a
+   * "coverage week" (`coverageWeek`): that weekday's start time through the end of the day before the next one (for
+   * Sunday: Sunday 06:00 through Saturday 23:59 IST). It stays owed on every day of the span until a run completes in
+   * it; attempts and the cap of 3 failures are counted per coverage week. A weekly spec has one window with id ''.
+   */
+  readonly weekday?: 0 | 1 | 2 | 3 | 4 | 5 | 6;
 }
 export const DAILY_DUE: DueSpec = { pipeline: 'daily', windows: [{ fromIst: '07:00', id: '' }], attemptsFile: ATTEMPTS_FILE, runPrefix: 'daily-', command: 'run' };
 export const FREELANCE_DUE: DueSpec = {
@@ -75,6 +82,34 @@ export const FREELANCE_DUE: DueSpec = {
   attemptsFile: 'freelance-attempts.json',
   runPrefix: 'freelance-',
 };
+
+/** The weekly career-site coverage: owed from Sunday 06:00 IST, with catch-up through Saturday 23:59 IST. */
+export const COVERAGE_DUE: DueSpec = {
+  pipeline: 'coverage',
+  command: 'run-coverage',
+  windows: [{ fromIst: '06:00', id: '' }],
+  weekday: 0,
+  attemptsFile: 'coverage-attempts.json',
+  runPrefix: 'coverage-',
+};
+
+const DAY_MS = 86_400_000;
+const istDow = (date: string): number => new Date(`${date}T00:00:00Z`).getUTCDay();
+const addDays = (date: string, n: number): string => new Date(Date.parse(`${date}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+
+/**
+ * The coverage week `now` is in: the IST date of the most recent Sunday (today when today is a Sunday). A week is
+ * Sunday 00:00 IST through Saturday 23:59 IST, not an ISO week (which ends on Sunday); the run is owed from Sunday
+ * 06:00, so a Mac asleep on Sunday catches up on Monday through Saturday. This is the key of the week's attempts file.
+ */
+export function coverageWeek(now: string): string {
+  return weekStart(now, 0);
+}
+/** The IST date of the most recent `weekday` (0 = Sunday) on or before `now`'s IST date. */
+function weekStart(now: string, weekday: number): string {
+  const today = istDate(now);
+  return addDays(today, -((istDow(today) - weekday + 7) % 7));
+}
 
 const istClock = (ms: number): string => new Date(ms + IST_OFFSET_MS).toISOString().slice(11, 16);
 const minutesOf = (hhmm: string): number => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
@@ -143,7 +178,8 @@ function writeFile(spec: DueSpec, home: string, f: AttemptsFile): void {
 
 /** Key of the window `spec` has at `now`; before the first window, the id of the first (nothing is owed then anyway). */
 const windowId = (spec: DueSpec, now: string): string => (currentWindow(spec, now) ?? spec.windows[0]!).id;
-const read = (spec: DueSpec, home: string, now: string): AttemptsFile => readFile(spec, home, keyOf(now, windowId(spec, now)));
+const attemptsKey = (spec: DueSpec, now: string): string => (spec.weekday !== undefined ? weekStart(now, spec.weekday) : keyOf(now, windowId(spec, now)));
+const read = (spec: DueSpec, home: string, now: string): AttemptsFile => readFile(spec, home, attemptsKey(spec, now));
 
 /** Failed attempts, plus started ones that never finished: crashed, since the caller has ruled out a live holder. */
 const failuresOf = (f: AttemptsFile): string[] => f.attempts.filter((a) => a.outcome !== 'done').map((a) => a.at);
@@ -201,6 +237,7 @@ function runsIn(app: AppStore, prefix: string): { completed: boolean; started: b
  * ('' for daily, and before the first window).
  */
 export function due(spec: DueSpec, home: string, now: string): Due & { window: string } {
+  if (spec.weekday !== undefined) return dueWeekly(spec, spec.weekday, home, now);
   const holder = liveHolder(home);
   const win = currentWindow(spec, now);
   const window = win?.id ?? '';
@@ -231,3 +268,40 @@ export function dailyDue(home: string, now: string): Due {
   const { window: _w, ...rest } = due(DAILY_DUE, home, now);
   return rest;
 }
+
+/**
+ * The weekly rule (see `DueSpec.weekday`). Before the weekday's `fromIst` on that weekday nothing is owed (the previous
+ * coverage week ended the evening before); on any later day of the coverage week it is owed until a run completes in it
+ * (a `<runPrefix><date>[-<n>]` run of any date in the week), failed attempts spaced an hour and at most 3 per week.
+ */
+function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): Due & { window: string } {
+  const window = '';
+  const holder = liveHolder(home);
+  if (holder !== undefined) return { due: false, window, reason: `a jobpilot ${holder.command} is running (pid ${holder.pid})` };
+  const from = spec.windows[0]!.fromIst;
+  const week = weekStart(now, weekday);
+  const start = Date.parse(`${week}T00:00:00Z`) - IST_OFFSET_MS + minutesOf(from) * 60_000;
+  const wording: Wording = { from: `${DAY_NAMES[weekday]} ${from}`, span: 'this coverage week', run: "this coverage week's run", command: spec.command };
+  // The week is keyed by its start date, so before `start` on that day `now` is still in the previous week's keying
+  // but nothing is owed: the previous week ended with its last day.
+  if (Date.parse(now) < start) return { due: false, window, reason: `before ${wording.from} IST` };
+  const failures = failuresOf(read(spec, home, now));
+  const early = { ...decide({ now, completedToday: false, failuresToday: failures }, start, wording), window };
+  if (!early.due) return early;
+  const db = homePaths(home).db;
+  if (!existsSync(db)) return early;
+  const app = AppStore.open(db);
+  try {
+    let completed = false;
+    let started = false;
+    for (let i = 0; i < 7; i++) {
+      const r = runsIn(app, `${spec.runPrefix}${addDays(week, i)}`);
+      completed ||= r.completed;
+      started ||= r.started;
+    }
+    return { ...decide({ now, completedToday: completed, startedToday: started, failuresToday: failures }, start, wording), window };
+  } finally {
+    app.close();
+  }
+}
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;

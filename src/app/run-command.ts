@@ -5,8 +5,9 @@ import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { lookup } from 'node:dns/promises';
-import { attemptsFor, DAILY_DUE, due, FREELANCE_DUE, type DueSpec } from './due.js';
+import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
+import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
@@ -88,6 +89,7 @@ export interface DueRunResult {
 const PROBE_HOSTS_OF: Readonly<Record<DueSpec['pipeline'], readonly string[]>> = {
   daily: PROBE_HOSTS,
   freelance: ['www.freelancer.com', 'remotive.com', 'hn.algolia.com'],
+  coverage: PROBE_HOSTS,
 };
 
 /**
@@ -152,7 +154,9 @@ export async function runWithDue(
 
 /** The give-up notice: daily keeps its v1 text; a windowed pipeline names its window. */
 const giveUpText = (spec: DueSpec, window: string, reason: string): string =>
-  spec.pipeline === 'daily' ? `jobpilot gave up on today's run: ${reason}` : `jobpilot gave up on the ${window} window's ${spec.pipeline} run: ${reason}`;
+  spec.pipeline === 'daily' ? `jobpilot gave up on today's run: ${reason}`
+  : spec.pipeline === 'coverage' ? `jobpilot gave up on this week's coverage run: ${reason}`
+  : `jobpilot gave up on the ${window} window's ${spec.pipeline} run: ${reason}`;
 
 /**
  * `jobpilot run` as a function returning the exit code: 0 clean; 1 when a step failed (other than gone or
@@ -206,5 +210,17 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
       ...hooks,
     });
     return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
+  });
+}
+
+/**
+ * `jobpilot run-coverage [--if-due] [--offline-fixtures <dir>] [--no-notify]`, with the exit codes of `run`. `--if-due`
+ * follows `COVERAGE_DUE` (owed from Sunday 06:00 IST through Saturday, `coverage-attempts.json`). The pipeline is empty
+ * for now (`runCoverage`); `--offline-fixtures` is accepted and will feed the agents once they exist.
+ */
+export async function runCoverageCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
+  return runWithDue(COVERAGE_DUE, o, d, async (hooks) => {
+    const summary = await runCoverage({ home: d.home, clock: d.clock, ...hooks });
+    return { text: formatCoverageSummary(summary), exitCode: summary.exitCode };
   });
 }
