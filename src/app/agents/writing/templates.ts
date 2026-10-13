@@ -44,22 +44,35 @@ export const EVIDENCE_ALSO_AT = 'Also at {employer}, I {claim}';
 export const EVIDENCE_ALSO_AT_COLON = 'Also at {employer}: {claim}';
 
 /**
- * The signature sentence (writing.signatureFacts): one lead, chosen from the jobKey (`signatureLead`), then the fact's
- * claim verbatim after ": ", so not even its first letter changes. `{employer}` is the display employer of the role the
- * fact is placed in.
+ * The signature sentence (writing.signatureFacts): one lead phrase, chosen from the jobKey (`signatureLead`), then
+ * - when the claim starts with a role noun phrase (`ROLE_NOUN_CLAIM`: "Sole engineer who ...", "Lead developer of
+ *   ..."): "<lead>, at {employer} I am the " (role ongoing) or "I was the " (role ended), then the claim with only its
+ *   first character lower-cased;
+ * - otherwise: "<lead>, at {employer}: " and the claim verbatim.
+ * `{employer}` is the display employer of the role the fact is placed in.
  */
-export const SIGNATURE_LEADS: readonly string[] = [
-  'Beyond the stack this role lists, at {employer}: {claim}',
-  'Alongside that, at {employer}: {claim}',
-  'One more part of my work, at {employer}: {claim}',
-];
-/** The lead for a jobKey: its last four hex digits modulo the number of leads (any other key: its UTF-16 code sum). */
-export function signatureLead(jobKey: string): string {
+export const SIGNATURE_LEADS: readonly string[] = ['Beyond the stack this role lists', 'Alongside that', 'One more part of my work'];
+/** A claim that names the candidate's role: it reads after "I am the" / "I was the". */
+export const ROLE_NOUN_CLAIM = /^(Sole|Founding|Lead|Senior|Principal|Staff)\b[^.]{0,40}?\b(engineer|developer|architect)\b/;
+/** A deterministic index for a jobKey: its last four hex digits (any other key: its UTF-16 code sum), modulo `n`. */
+function keyIndex(jobKey: string, n: number): number {
   const tail = jobKey.slice(-4);
-  const n = /^[0-9a-f]{4}$/i.test(tail) ? Number.parseInt(tail, 16) : [...jobKey].reduce((a, c) => a + c.charCodeAt(0), 0);
-  return SIGNATURE_LEADS[n % SIGNATURE_LEADS.length] as string;
+  const v = /^[0-9a-f]{4}$/i.test(tail) ? Number.parseInt(tail, 16) : [...jobKey].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return v % n;
 }
-export const signatureSentence = (jobKey: string, employer: string, claim: string): string => fill(signatureLead(jobKey), { employer, claim: asSentence(claim) });
+export const signatureLead = (jobKey: string): string => SIGNATURE_LEADS[keyIndex(jobKey, SIGNATURE_LEADS.length)] as string;
+export function signatureSentence(jobKey: string, employer: string, claim: string, ongoing: boolean): string {
+  const lead = signatureLead(jobKey);
+  const c = asSentence(claim);
+  if (!ROLE_NOUN_CLAIM.test(claim)) return `${lead}, at ${employer}: ${c}`;
+  return `${lead}, at ${employer} ${ongoing ? 'I am the' : 'I was the'} ${c.charAt(0).toLowerCase()}${c.slice(1)}`;
+}
+/**
+ * p1's last sentence when a signature sentence follows the evidence: the count would be wrong, so it is count-free,
+ * chosen from the jobKey. Without a signature sentence p1 keeps `COVER_EXAMPLES`.
+ */
+export const COUNT_FREE_EXAMPLES: readonly string[] = ['Some examples follow.', 'Here is what that looked like.', 'A few examples follow.'];
+export const countFreeExamples = (jobKey: string): string => COUNT_FREE_EXAMPLES[keyIndex(jobKey, COUNT_FREE_EXAMPLES.length)] as string;
 
 /** Irregular past-tense verbs a claim may start with (and so read "I built ..."); any other verb must end in -ed. */
 export const IRREGULAR_PAST: ReadonlySet<string> = new Set([
@@ -131,6 +144,8 @@ export interface OpeningSlots {
   readonly past: boolean;
   readonly terms: readonly string[];
   readonly examples: number;
+  /** Set (to the jobKey) when a signature sentence follows the evidence: the examples sentence is `countFreeExamples`. */
+  readonly countFreeKey?: string;
 }
 
 /** The opening sentence of the letter alone (the dashboard's short cover note starts with it). */
@@ -144,7 +159,7 @@ export function renderOpening(s: Readonly<OpeningSlots>): string {
     openingSentence(s),
     fill(s.past ? COVER_TITLE_PAST : COVER_TITLE_NOW, { article: articleFor(s.targetTitle), targetTitle: s.targetTitle, years: s.years }),
     ...(terms.length > 0 ? [fill(COVER_TERMS, { coveredList: joinList(terms), quantifier: TERMS_QUANTIFIER[terms.length] as string })] : []),
-    ...(examples > 0 ? [COVER_EXAMPLES[examples] as string] : []),
+    ...(s.countFreeKey !== undefined ? [countFreeExamples(s.countFreeKey)] : examples > 0 ? [COVER_EXAMPLES[examples] as string] : []),
   ].join(' ');
 }
 
@@ -190,6 +205,9 @@ export const COVER_P4_CITY = "I'm based in {city} and looking for a fully remote
 export const COVER_P4_NOTICE = "I'm looking for a fully remote role and available after {notice}.";
 export const COVER_P4_NONE = "I'm looking for a fully remote role.";
 export const COVER_P4 = `${COVER_P4_CITY_NOTICE} ${COVER_P4_THANKS}`;
+/** When the home city is the only office city: named once. */
+export const COVER_P4_HOME_OFFICE_NOTICE = "I'm based in {city} and open to remote, office or hybrid roles, and available after {notice}.";
+export const COVER_P4_HOME_OFFICE = "I'm based in {city} and open to remote, office or hybrid roles.";
 
 /** The words of `COVER_P4` the renderer fills, as they appear in the plan. */
 export const RENDER_PLACEHOLDERS = ['{city}', '{notice}'] as const;
@@ -217,11 +235,16 @@ export const joinOr = (items: readonly string[]): string =>
  * The filled p4: the city clause only with a city, the notice clause only with a notice, then `COVER_P4_THANKS`. An
  * immediate notice (`isImmediateNotice`) reads "available to start immediately". With office cities (display names,
  * from `eligibility.officeCities`) the role reads "a remote role, or an office or hybrid role in A, B or C"; with none
- * the paragraph is exactly the template.
+ * the paragraph is exactly the template. `homeIsOffice` (the home city is the only office city) names the city once:
+ * "I'm based in {city} and open to remote, office or hybrid roles".
  */
-export function renderP4(city: string | undefined, notice: string | undefined, officeCities: readonly string[] = []): string {
+export function renderP4(city: string | undefined, notice: string | undefined, officeCities: readonly string[] = [], homeIsOffice = false): string {
   const immediate = notice !== undefined && isImmediateNotice(notice);
   const n = notice === undefined ? undefined : noticePhrase(notice);
+  if (homeIsOffice && city !== undefined && officeCities.length === 1) {
+    const first = n === undefined ? fill(COVER_P4_HOME_OFFICE, { city }) : fill(immediate ? COVER_P4_HOME_OFFICE_NOTICE.replace(AVAILABLE_AFTER, COVER_P4_IMMEDIATE) : COVER_P4_HOME_OFFICE_NOTICE, { city, notice: n });
+    return `${first} ${COVER_P4_THANKS}`;
+  }
   const shape = (t: string): string => {
     const timed = immediate ? t.replace(AVAILABLE_AFTER, COVER_P4_IMMEDIATE) : t;
     if (officeCities.length === 0) return timed;

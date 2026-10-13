@@ -1,6 +1,6 @@
 import { COVER_P4, renderP4, sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
 import { z } from 'zod';
-import { officeCityDisplays } from '../text/norm.js';
+import { cityKey, officeCity, officeCityDisplays } from '../text/norm.js';
 import type { CoverPlan } from '../types.js';
 import { coverModel, type DocModel, resumeModel } from './model.js';
 
@@ -66,7 +66,9 @@ export function fillP4(p4: string, answers: Readonly<Record<string, unknown>>, c
     const why = o === '' ? 'it is empty' : unsafeCity(o);
     if (why !== null) throw new Error(`eligibility.yaml officeCities cannot go into the cover letter (${why})`);
   }
-  return renderP4(place === '' ? undefined : place, notice, offices);
+  // The home city is the only office city (by any of its spellings): it is named once.
+  const homeIsOffice = place !== '' && offices.length === 1 && officeCities.some((k) => officeCity(k).aliases.includes(cityKey(place)));
+  return renderP4(place === '' ? undefined : place, notice, offices, homeIsOffice);
 }
 
 /** The cover plan with its last paragraph filled; every other paragraph, and the resume, unchanged. */

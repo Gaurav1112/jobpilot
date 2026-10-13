@@ -74,8 +74,9 @@ import {
  *   employer, "There I also" for the same employer as the sentence just before in the same paragraph, "Also at" for
  *   one named earlier. No sentence names a missing or gap term. Then, when `writing.signatureFacts` is set and none of
  *   its facts is among the evidence facts, one paragraph of one sentence: the first of them (list order) that is a
- *   citeable experience or project fact placed in a role, its claim verbatim after a lead chosen from the jobKey
- *   (`signatureLead`), citing its fact id. p4 is `COVER_P4`, its placeholders left for the renderer. A paragraph with
+ *   citeable experience or project fact placed in a role, as `signatureSentence` (a lead chosen from the jobKey, then
+ *   the claim verbatim after ": ", or after "I am|was the" with only its first letter lower-cased when it starts with a
+ *   role noun phrase), citing its fact id; p1's examples sentence is then count-free (`countFreeExamples`). p4 is `COVER_P4`, its placeholders left for the renderer. A paragraph with
  *   nothing to say is omitted.
  */
 
@@ -429,7 +430,7 @@ export interface CoverSlots {
   /** The evidence sentences' slots and fact ids, per paragraph (p2, then p3). */
   readonly evidence: readonly (readonly (EvidenceSlots & { readonly factId: string })[])[];
   /** The signature sentence (writing.signatureFacts), when there is one: its fact, display employer and claim. */
-  readonly signature?: { readonly jobKey: string; readonly factId: string; readonly employer: string; readonly claim: string };
+  readonly signature?: { readonly jobKey: string; readonly factId: string; readonly employer: string; readonly claim: string; readonly ongoing: boolean };
 }
 
 /** Whether a fact backs `key` for p1's "I've used" sentence: a citeable experience fact whose tech backs it. */
@@ -491,7 +492,7 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
         const f = byId.get(id);
         const i = f !== undefined && isRankable(f) ? roleIndexOf(f, roles, pack) : undefined;
         const role = i === undefined ? undefined : roles[i];
-        return f !== undefined && role !== undefined ? [{ jobKey: resume.jobKey, factId: f.id, employer: role.employer, claim: f.claim }] : [];
+        return f !== undefined && role !== undefined ? [{ jobKey: resume.jobKey, factId: f.id, employer: role.employer, claim: f.claim, ongoing: role.end === 'present' }] : [];
       })[0];
   return {
     opening: {
@@ -501,6 +502,7 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
       past: !hasOngoingRole(pack),
       terms: letterKeys.map((k) => termDisplay(k, pack)),
       examples: top.length,
+      ...(signature === undefined ? {} : { countFreeKey: resume.jobKey }),
     },
     evidence: slots,
     ...(signature === undefined ? {} : { signature }),
@@ -512,7 +514,7 @@ export function renderCover(s: CoverSlots): CoverPlan['paragraphs'] {
   return [
     { text: renderOpening(s.opening), factIds: [] },
     ...s.evidence.map((p) => ({ text: p.map((e) => evidenceSentence(e)).join(' '), factIds: p.map((e) => e.factId) })),
-    ...(s.signature === undefined ? [] : [{ text: signatureSentence(s.signature.jobKey, s.signature.employer, s.signature.claim), factIds: [s.signature.factId] }]),
+    ...(s.signature === undefined ? [] : [{ text: signatureSentence(s.signature.jobKey, s.signature.employer, s.signature.claim, s.signature.ongoing), factIds: [s.signature.factId] }]),
     { text: COVER_P4, factIds: [] },
   ];
 }

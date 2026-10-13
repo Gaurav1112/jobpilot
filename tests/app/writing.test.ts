@@ -23,6 +23,8 @@ import {
   RENDER_PLACEHOLDERS,
   renderSummary,
   sanitisePostingText,
+  COUNT_FREE_EXAMPLES,
+  countFreeExamples,
   SIGNATURE_LEADS,
   signatureLead,
   startsWithPastVerb,
@@ -616,16 +618,21 @@ describe('cover-writer: signature facts (writing.signatureFacts)', () => {
     return { resume, cover: planCover(resume, pk) };
   };
   const NW03 = 'Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.';
+  const P1 = EXPECTED_PARAGRAPHS[0]!;
 
-  it('has at least three leads, each ending in ": " before the claim, so the claim stays byte-identical', () => {
+  it('has at least three leads and three count-free example sentences, all fixed text', () => {
     expect(SIGNATURE_LEADS.length).toBeGreaterThanOrEqual(3);
-    for (const l of SIGNATURE_LEADS) expect(l, l).toMatch(/\{employer\}: \{claim\}$/);
+    for (const l of SIGNATURE_LEADS) expect(l, l).toMatch(/^[A-Z][a-z ]+$/);
+    expect(COUNT_FREE_EXAMPLES.length).toBeGreaterThanOrEqual(3);
+    for (const c of COUNT_FREE_EXAMPLES) expect(c, c).not.toMatch(/\b(?:one|two|three|four)\b/i);
   });
 
   it('adds one sentence, the first citeable signature fact verbatim, after the evidence and before p4, with its fact id', () => {
     const pk = withSignature(['f-nw-03']);
     const { cover } = letterOf(pk);
-    expect(cover.paragraphs.slice(0, 3)).toEqual(EXPECTED_PARAGRAPHS.slice(0, 3));
+    // p1's example count no longer fits four evidence lines, so it turns count-free; p2 and p3 are unchanged
+    expect(cover.paragraphs[0]).toEqual({ ...P1, text: P1.text.replace('Three examples follow.', 'Some examples follow.') });
+    expect(cover.paragraphs.slice(1, 3)).toEqual(EXPECTED_PARAGRAPHS.slice(1, 3));
     expect(cover.paragraphs[3]).toEqual({ text: `Beyond the stack this role lists, at Northwind Labs: ${NW03}`, factIds: ['f-nw-03'] });
     expect(cover.paragraphs[4]).toEqual({ text: COVER_P4, factIds: [] });
     expect(cover.paragraphs).toHaveLength(5);
@@ -652,11 +659,48 @@ describe('cover-writer: signature facts (writing.signatureFacts)', () => {
     const keys = ['0123456789abcdef', '0123456789abcdf0', '0123456789abcdf1', '0123456789abcdf2'];
     const leads = keys.map((k) => signatureLead(k));
     expect(new Set(leads).size).toBe(3);
+    expect(new Set(keys.map((k) => countFreeExamples(k))).size).toBe(3);
     for (const k of keys) {
-      const a = letterOf(pk, posting({ jobKey: k })).cover.paragraphs[3]!.text;
-      expect(letterOf(pk, posting({ jobKey: k })).cover.paragraphs[3]!.text).toBe(a);
-      expect(a).toBe(`${signatureLead(k).replace('{employer}', 'Northwind Labs').replace('{claim}', NW03)}`);
+      const { paragraphs } = letterOf(pk, posting({ jobKey: k })).cover;
+      expect(letterOf(pk, posting({ jobKey: k })).cover.paragraphs).toEqual(paragraphs);
+      expect(paragraphs[3]!.text).toBe(`${signatureLead(k)}, at Northwind Labs: ${NW03}`);
+      expect(paragraphs[0]!.text).toBe(P1.text.replace('Three examples follow.', countFreeExamples(k)));
     }
+  });
+
+  it('a claim led by a role noun phrase reads "<lead>, at <employer> I am|was the <claim, first letter lower-cased>"', () => {
+    const SOLE = 'Sole engineer who migrated a multi-tenant SaaS billing module to three microservices on Kubernetes.';
+    const LEAD = 'Lead developer of RabbitMQ based retry queues that removed a class of duplicate-charge incidents.';
+    const claims = (c: Record<string, string>, ids: string[]) =>
+      withSignature(ids, freezePack({ ...pack, facts: pack.facts.map((f) => (c[f.id] !== undefined ? { ...f, claim: c[f.id] as string } : f)) }) as WritingPack);
+    // an ongoing role (Northwind): "I am the"
+    const now = claims({ 'f-nw-03': SOLE }, ['f-nw-03']);
+    const a = letterOf(now).cover;
+    expect(a.paragraphs[3]).toEqual({ text: `Beyond the stack this role lists, at Northwind Labs I am the ${SOLE.charAt(0).toLowerCase()}${SOLE.slice(1)}`, factIds: ['f-nw-03'] });
+    expect(coverProblems(a, now)).toEqual([]);
+    // an ended role (Contoso): "I was the"
+    const past = claims({ 'f-ct-02': LEAD }, ['f-ct-02']);
+    const b = letterOf(past).cover;
+    expect(b.paragraphs[3]).toEqual({ text: `Beyond the stack this role lists, at Contoso Retail I was the lead developer of RabbitMQ based retry queues that removed a class of duplicate-charge incidents.`, factIds: ['f-ct-02'] });
+    expect(coverProblems(b, past)).toEqual([]);
+    // only those role nouns, within 40 characters: anything else keeps the colon form
+    for (const claim of ['Senior management sponsor for the payments migration.', 'Staff of four reporting to me on the billing rebuild.', 'Founding member of the platform guild.']) {
+      const pk = claims({ 'f-nw-03': claim }, ['f-nw-03']);
+      expect(letterOf(pk).cover.paragraphs[3]!.text, claim).toBe(`Beyond the stack this role lists, at Northwind Labs: ${claim}`);
+    }
+    // G-GROUND accepts exactly this transform: every other change to the sentence trips
+    const sig = a.paragraphs[3]!;
+    const swap = (text: string) => ({ ...a, paragraphs: a.paragraphs.map((x, j) => (j === 3 ? { ...sig, text } : x)) });
+    for (const text of [
+      sig.text.replace('I am the', 'I was the'),
+      sig.text.replace('I am the', "I'm the"),
+      sig.text.replace('I am the sole', 'I am the Sole'),
+      sig.text.replace('I am the sole', 'I am a sole'),
+      sig.text.replace(' I am the', ': I am the'),
+      `Beyond the stack this role lists, at Northwind Labs: ${SOLE}`,
+      sig.text.replace('three microservices', 'four microservices'),
+      sig.text.replace('Kubernetes.', 'Kubernetes'),
+    ]) expect(coverProblems(swap(text) as CoverPlan, now).length, text).toBeGreaterThan(0);
   });
 
   it('G-GROUND catches a tampered signature sentence or fact id', () => {
@@ -667,11 +711,13 @@ describe('cover-writer: signature facts (writing.signatureFacts)', () => {
     for (const bad of [
       swap(3, { ...sig, text: sig.text.replace('three', 'five') }),
       swap(3, { ...sig, text: sig.text.replace('Beyond the stack this role lists', 'Alongside that') }),
+      { ...cover, paragraphs: cover.paragraphs.map((x, j) => (j === 0 ? { ...x, text: x.text.replace('Some examples follow.', 'Three examples follow.') } : x)) },
       swap(3, { ...sig, factIds: ['f-nw-02'] }),
       { ...cover, paragraphs: cover.paragraphs.filter((_, j) => j !== 3) },
     ]) expect(coverProblems(bad as CoverPlan, pk).length).toBeGreaterThan(0);
     // and the letter without signature facts is caught under a pack that has them
-    expect(coverProblems(letterOf(pack).cover, pk)).toContain('paragraphs[3] is not the template rendering of its computed slots and facts');
+    // (p1's examples sentence is the first difference: the plan says "Three examples follow.", the pack gives a count-free one)
+    expect(coverProblems(letterOf(pack).cover, pk)).toEqual(['paragraphs[0] is not the template rendering of its computed slots and facts']);
   });
 });
 

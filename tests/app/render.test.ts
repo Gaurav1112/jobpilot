@@ -181,7 +181,12 @@ describe('cover p4 fill', () => {
   it('with office cities the role clause reads "a remote role, or an office or hybrid role in ..."; with none it is as today', () => {
     const N = 'available after a 30-day notice period';
     expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', [])).toBe(FILLED);
-    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune'])).toBe(`I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    // a home city that is not the only office city: the remote-or-office form
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Mumbai', ['pune'])).toBe(`I'm based in Mumbai, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    // the home city is the only office city: named once
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Bangalore', ['bengaluru'])).toBe(`I'm based in Bangalore and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'pune', ['Pune'])).toBe(`I'm based in pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
     expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'bangalore', 'bengaluru'])).toBe(
       `I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, Bangalore or Bengaluru, and ${N}. ${THANKS}`,
     );
@@ -190,13 +195,15 @@ describe('cover p4 fill', () => {
       `I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, Mumbai or Delhi NCR, and ${N}. ${THANKS}`,
     );
     // a repeated city is named once
-    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'Pune'])).toBe(`I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Mumbai', ['pune', 'Pune'])).toBe(`I'm based in Mumbai, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'Pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
     // the other shapes of the paragraph
-    expect(fillP4(COVER_P4, {}, 'Pune', ['pune'])).toBe(`I'm based in Pune and looking for a remote role, or an office or hybrid role in Pune. ${THANKS}`);
+    expect(fillP4(COVER_P4, {}, 'Pune', ['pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles. ${THANKS}`);
+    expect(fillP4(COVER_P4, {}, 'Mumbai', ['pune'])).toBe(`I'm based in Mumbai and looking for a remote role, or an office or hybrid role in Pune. ${THANKS}`);
     expect(fillP4(COVER_P4, { notice_period: '30 days' }, '', ['pune'])).toBe(`I'm looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
     expect(fillP4(COVER_P4, {}, '', ['pune'])).toBe(`I'm looking for a remote role, or an office or hybrid role in Pune. ${THANKS}`);
     expect(fillP4(COVER_P4, { notice_period: 'immediately' }, 'Pune', ['pune'])).toBe(
-      `I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, and available to start immediately. ${THANKS}`,
+      `I'm based in Pune and open to remote, office or hybrid roles, and available to start immediately. ${THANKS}`,
     );
     // an office city that cannot go into a document is refused
     expect(() => fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['{city}'])).toThrow(/officeCities/);
@@ -505,7 +512,7 @@ describe('G-FILL', () => {
     const cover = coverPlanOf();
     const pack = fullPack({ answers: { ...fullPack().answers, notice_period: 'immediately' }, eligibility: { ...fullPack().eligibility, officeCities: ['pune'] } });
     const { rendered } = await render(cover, pack);
-    const P4 = "I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, and available to start immediately. Thank you for considering my application.";
+    const P4 = "I'm based in Pune and open to remote, office or hybrid roles, and available to start immediately. Thank you for considering my application.";
     expect(rendered.plan.paragraphs.at(-1)!.text).toBe(P4);
     expect(rendered.text.cover.split('\n')).toContain(P4);
     expect(G_FILL.check(gctx(cover, rendered, pack))).toEqual({ id: 'G-FILL', verdict: 'pass' });
