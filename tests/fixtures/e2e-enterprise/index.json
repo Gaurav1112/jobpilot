@@ -1,0 +1,14 @@
+{
+ "https://acme.eightfold.ai/robots.txt": "robots-ef.txt",
+ "https://acme.eightfold.ai/careers?domain=acmefreight.test": "careers-ef.html",
+ "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acmefreight.test&start=0&num=10": "ef-page0.json",
+ "https://acme.eightfold.ai/api/apply/v2/jobs?domain=acmefreight.test&start=0&num=10&location=India": "ef-india.json",
+ "https://acme.eightfold.ai/api/apply/v2/jobs/601?domain=acmefreight.test": "ef-detail-601.json",
+ "https://acme.fa.us2.oraclecloud.com/robots.txt": {
+  "status": 403,
+  "file": "robots-or.html"
+ },
+ "https://acme.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;siteNumber=CX_1,facetsList=LOCATIONS%3BWORKPLACE_TYPES,limit=100,offset=0": "or-page0.json",
+ "https://acme.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;siteNumber=CX_1,facetsList=LOCATIONS%3BWORKPLACE_TYPES,limit=100,offset=0,locationId=7001": "or-india.json",
+ "https://acme.fa.us2.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?expand=all&onlyData=true&finder=ById;Id=%22701%22,siteNumber=CX_1": "or-detail-701.json"
+}

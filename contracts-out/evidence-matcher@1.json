@@ -1,5 +1,5 @@
 {
-  "hash": "fcee14b364d13c669c7d30654a4f6c6fb6b63a1f79b24805c7fe25b5f053acc9",
+  "hash": "b1076cb03e79e35e4e63c1a8b37ce9d91de320c5c689704e5d15a5afa94e5a3c",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -80,7 +80,9 @@
                   "ashby",
                   "feed",
                   "careers",
-                  "workday"
+                  "workday",
+                  "eightfold",
+                  "oracle"
                 ],
                 "type": "string"
               },
@@ -409,7 +411,9 @@
                       "ashby",
                       "feed",
                       "careers",
-                      "workday"
+                      "workday",
+                      "eightfold",
+                      "oracle"
                     ],
                     "type": "string"
                   },
@@ -620,6 +624,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

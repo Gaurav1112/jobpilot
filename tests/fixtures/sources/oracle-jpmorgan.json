@@ -1,0 +1,377 @@
+{
+ "site": "jpmc.fa.oraclecloud.com/CX_1001",
+ "recorded": "2026-10-14",
+ "note": "One polite request each (honest UA, >= 5 s apart on this host). robots.txt answered 403 (the WAF). The discovery page was recorded at limit 25 with more facets than the adapter asks for; trimmed to the requisition fields the adapter reads, the location facet values naming India plus the two largest, and the workplace types. The detail is trimmed to its posting fields: no contact name or e-mail, no hiring manager, no office address.",
+ "robots": {
+  "status": 403,
+  "body": "<html>\n\n  <body>\n\n    <h1 style=\"color:#CD5C5C; font-weight: normal;\">\n\n      W4S-402: Blocked by WAF4SaaS\n\n    </h1>\n\n    <h3 style=\"color:#4682B4; font-weight: normal;\">\n\n      RequestId:[scrubbed]\n\n    </h3>\n\n  </body>\n\n</html>"
+ },
+ "discovery": {
+  "items": [
+   {
+    "TotalJobsCount": 7297,
+    "Limit": 25,
+    "Offset": 0,
+    "requisitionList": [
+     {
+      "Id": "210707244",
+      "Title": "Quant Analytics Associate - Time Series Forecasting Strategist - Workforce Planning",
+      "PostedDate": "2026-10-13",
+      "PrimaryLocation": "Mumbai, Maharashtra, India",
+      "PrimaryLocationCountry": "IN",
+      "WorkplaceTypeCode": null,
+      "WorkplaceType": "",
+      "JobFamily": "Quant Analytics",
+      "ShortDescriptionStr": "Forecast contact center demand using time series analytics to optimize staffing and planning in Workforce Planning Data Science.\n",
+      "secondaryLocations": []
+     },
+     {
+      "Id": "210713981",
+      "Title": "Business Modeling - Applied AI Modeling Executive Director",
+      "PostedDate": "2026-10-13",
+      "PrimaryLocation": "New York, NY, United States",
+      "PrimaryLocationCountry": "US",
+      "WorkplaceTypeCode": null,
+      "WorkplaceType": "",
+      "JobFamily": "Predictive Science",
+      "ShortDescriptionStr": "Architect the development of next-generation AI ML solutions that power JPMorgan Chase’s business decisions, focusing on credit card.",
+      "secondaryLocations": [
+       {
+        "Name": "Wilmington, DE, United States",
+        "CountryCode": "US"
+       }
+      ]
+     },
+     {
+      "Id": "210714677",
+      "Title": "J.P. Morgan Wealth Management – Investment Professional Bilingual (English/Spanish Required)",
+      "PostedDate": "2026-10-13",
+      "PrimaryLocation": "Chicago, IL, United States",
+      "PrimaryLocationCountry": "US",
+      "WorkplaceTypeCode": null,
+      "WorkplaceType": "",
+      "JobFamily": "Client Operations",
+      "ShortDescriptionStr": "﻿Embark on a journey to obtain securities licenses as an Investment Professional, aiding clients in reaching financial objectives.",
+      "secondaryLocations": [
+       {
+        "Name": "Elgin, IL, United States",
+        "CountryCode": "US"
+       },
+       {
+        "Name": "Plano, TX, United States",
+        "CountryCode": "US"
+       },
+       {
+        "Name": "San Antonio, TX, United States",
+        "CountryCode": "US"
+       },
+       {
+        "Name": "Tempe, AZ, United States",
+        "CountryCode": "US"
+       },
+       {
+        "Name": "Columbus, OH, United States",
+        "CountryCode": "US"
+       }
+      ]
+     }
+    ],
+    "locationsFacet": [
+     {
+      "Id": 300000000289738,
+      "Name": "United States",
+      "TotalCount": 5341
+     },
+     {
+      "Id": 300000020657200,
+      "Name": "NY, United States",
+      "TotalCount": 1189
+     },
+     {
+      "Id": 300000000289360,
+      "Name": "India",
+      "TotalCount": 297
+     },
+     {
+      "Id": 300000081134215,
+      "Name": "Karnataka, India",
+      "TotalCount": 154
+     },
+     {
+      "Id": 300000081145775,
+      "Name": "Bengaluru, Karnataka, India",
+      "TotalCount": 154
+     },
+     {
+      "Id": 300000081134219,
+      "Name": "Maharashtra, India",
+      "TotalCount": 134
+     },
+     {
+      "Id": 300000081151360,
+      "Name": "Mumbai, Maharashtra, India",
+      "TotalCount": 134
+     }
+    ],
+    "workplaceTypesFacet": [
+     {
+      "Id": "ORA_ON_SITE",
+      "Name": "On-site",
+      "TotalCount": 7297
+     }
+    ]
+   }
+  ],
+  "count": 1,
+  "hasMore": false
+ },
+ "scoped": {
+  "india": {
+   "items": [
+    {
+     "TotalJobsCount": 297,
+     "Limit": 100,
+     "Offset": 0,
+     "LocationId": "300000000289360",
+     "requisitionList": [
+      {
+       "Id": "210707244",
+       "Title": "Quant Analytics Associate - Time Series Forecasting Strategist - Workforce Planning",
+       "PostedDate": "2026-10-13",
+       "PrimaryLocation": "Mumbai, Maharashtra, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Quant Analytics",
+       "ShortDescriptionStr": "Forecast contact center demand using time series analytics to optimize staffing and planning in Workforce Planning Data Science.\n",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210749291",
+       "Title": "Solution Analyst III",
+       "PostedDate": "2026-10-13",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Technical Program Delivery",
+       "ShortDescriptionStr": "Join our team as a Technical Business Analyst and be at the forefront of driving technical innovation and strategic business solutions. ",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210759441",
+       "Title": "Executive Assistant - Asset & Wealth Management Technology",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Administrative Assistant",
+       "ShortDescriptionStr": "Deliver polished executive support, coordinate global leadership interactions, and refine processes to promote team success.",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210761694",
+       "Title": "Software Engineer II",
+       "PostedDate": "2026-10-13",
+       "PrimaryLocation": "Hyderabad, Telangana, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Software Engineering",
+       "ShortDescriptionStr": "Serve as an emerging member of an agile team to design and deliver market-leading technology products in a secure and scalable way",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210765001",
+       "Title": "Lead Software Engineer",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Software Engineering",
+       "ShortDescriptionStr": "Carry out critical tech solutions across multiple technical areas as an integral part of an agile team",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210767928",
+       "Title": "Trader - Gift City Securities PLC Branch - Vice President",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Gandhinagar, Gujarat, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Trading Global Population",
+       "ShortDescriptionStr": "We are looking for an experienced Delta One Trader to join our APAC Delta One desk, based in GIFT City (IFSC), Gujarat, India, supporting regional Delta One trading activities and partnering closely with onshore and offshore stakeholders.",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210770565",
+       "Title": "Data Scientist Senior Associate",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Predictive Science",
+       "ShortDescriptionStr": "Join JPMorgan Chase's Cards Data & Analytics team, using data science and business insights to drive impactful outcomes.",
+       "secondaryLocations": [
+        {
+         "Name": "Mumbai, Maharashtra, India",
+         "CountryCode": "IN"
+        }
+       ]
+      },
+      {
+       "Id": "210772077",
+       "Title": "Lead Software Engineer Java , React , AWS",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Mumbai, Maharashtra, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Software Engineering",
+       "ShortDescriptionStr": "Carry out critical tech solutions across multiple technical areas as an integral part of an agile team.",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210774696",
+       "Title": "Software Engineer II - Java Full Stack Developer +  React + AWS",
+       "PostedDate": "2026-10-13",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Software Engineering",
+       "ShortDescriptionStr": "Design and deliver market-leading technology products in a secure and scalable way as a seasoned member of an agile team",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210776624",
+       "Title": "Client Data_Team Leader",
+       "PostedDate": "2026-10-13",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Client Data",
+       "ShortDescriptionStr": "Leverage advanced analytical and investigative skills to drive accuracy, compliance, and process innovation in KYC operations.",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210776625",
+       "Title": "Client Data",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Bengaluru, Karnataka, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Client Data",
+       "ShortDescriptionStr": "Drive accuracy in client data and process innovation as a Client Data Specialist—empowering teams and enhancing client experiences. ",
+       "secondaryLocations": []
+      },
+      {
+       "Id": "210778587",
+       "Title": "Sr Lead Software Engineer - IBM Planning Analytics/TM1 Solutions & Databricks",
+       "PostedDate": "2026-10-12",
+       "PrimaryLocation": "Mumbai, Maharashtra, India",
+       "PrimaryLocationCountry": "IN",
+       "WorkplaceTypeCode": null,
+       "WorkplaceType": "",
+       "JobFamily": "Software Engineering",
+       "ShortDescriptionStr": "Lead delivery of IBM Planning Analytics/TM1 solutions for Planning & Analysis across multiple business lines.",
+       "secondaryLocations": []
+      }
+     ],
+     "locationsFacet": [
+      {
+       "Id": 300000000289360,
+       "Name": "India",
+       "TotalCount": 297
+      },
+      {
+       "Id": 300000081134215,
+       "Name": "Karnataka, India",
+       "TotalCount": 154
+      },
+      {
+       "Id": 300000081145775,
+       "Name": "Bengaluru, Karnataka, India",
+       "TotalCount": 154
+      },
+      {
+       "Id": 300000081134219,
+       "Name": "Maharashtra, India",
+       "TotalCount": 134
+      },
+      {
+       "Id": 300000081151360,
+       "Name": "Mumbai, Maharashtra, India",
+       "TotalCount": 134
+      },
+      {
+       "Id": 300000081134230,
+       "Name": "Telangana, India",
+       "TotalCount": 27
+      },
+      {
+       "Id": 300000081155702,
+       "Name": "Hyderabad, Telangana, India",
+       "TotalCount": 27
+      },
+      {
+       "Id": 300000081134210,
+       "Name": "Gujarat, India",
+       "TotalCount": 2
+      },
+      {
+       "Id": 300000081145706,
+       "Name": "Gandhinagar, Gujarat, India",
+       "TotalCount": 1
+      },
+      {
+       "Id": 300000081152065,
+       "Name": "Pune, Maharashtra, India",
+       "TotalCount": 1
+      }
+     ],
+     "workplaceTypesFacet": [
+      {
+       "Id": "ORA_ON_SITE",
+       "Name": "On-site",
+       "TotalCount": 297
+      }
+     ]
+    }
+   ],
+   "count": 1,
+   "hasMore": true
+  }
+ },
+ "details": {
+  "210749291": {
+   "items": [
+    {
+     "Id": "210749291",
+     "Title": "Solution Analyst III",
+     "Category": "Technical Program Delivery",
+     "ExternalPostedStartDate": "2026-10-13T09:51:44+00:00",
+     "JobSchedule": "Full time",
+     "JobShift": "Day",
+     "ExternalDescriptionStr": "<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">Join our dynamic team to revolutionize how technology intersects with business. Your analytical skills and tech-savviness will be pivotal in creating impactful solutions.</p>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">&nbsp;</p>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">As a Solution Analyst III at JPMorgan Chase within the Commercial & Investment Bank - Payments, you will aid in bridging the gap between product owners, business, operations, and software developers by leveraging your technical fluency and strong analytical reasoning skills. Your adaptability and ability to lead through change will enable you to navigate complex situations and manage dependencies effectively. With a strong foundation in data analytics and technical solutions, you will contribute to the development of innovative architecture designs and data-driven insights that guide business decisions. Your excellent communication skills, both verbal and written, will ensure clear and concise information exchange with diverse stakeholder audiences, fostering collaboration and alignment across departments.</p>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">&nbsp;</p>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\"><strong>Job responsibilities</strong></p>\n<ul style=\"font-style: normal;  font-weight: 400;  list-style-type: disc;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">\n <li>Elicit and document comprehensive business and data flow requirements by engaging with product owners, business stakeholders, and technical teams to ensure alignment and feasibility</li>\n <li>Uses enterprise-authorized AI capabilities within the work environment to accelerate requirements synthesis, solution optioning, and architecture documentation, validating outputs and handling data according to sensitivity and security requirements.</li>\n <li>Translate complex business requirements into well-structured technical solutions, leveraging data analytics and technical knowledge to optimize system performance and scalability</li>\n <li>Conduct in-depth data analysis and interpretation to identify trends, gaps, and opportunities, providing actionable insights that support decision-making and key business initiatives</li>\n <li>Collaborate with cross-functional teams to develop and maintain architecture designs, policies, standards, and governance processes that align technology with business strategy</li>\n <li>Continuously enhance technical knowledge and stay current with industry trends, ensuring the application of best practices and innovative solutions to address evolving business needs&nbsp;</li>\n <li>Contribute to data-driven decision-making by extracting insights from large, diverse data sets and applying data analytics techniques</li>\n <li>Assist in managing project dependencies and change control by demonstrating adaptability and leading through change in a fast-paced environment</li>\n <li>Promote continuous improvement initiatives by identifying opportunities for process enhancements and applying knowledge of principles and practices within the Solutions Analysis field</li>\n <li>\n  <p>Guide the work of others, ensuring timely completion and adherence to established principles and practices</p>\n  <p>&nbsp;</p></li>\n</ul>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\"><strong>Required qualifications, capabilities, and skills</strong></p>\n<ul style=\"font-style: normal;  font-weight: 400;  list-style-type: disc;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">\n <li><span><span style=\" font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">3+ years of experience or equivalent expertise in solutions analysis, technical program delivery, or a related field&nbsp;</span></span></li>\n <li>Demonstrated proficiency in data analytics, including experience with data extraction, modeling, and interpretation to support strategic decision-making</li>\n <li>Advanced data visualization capabilities, with hands-on experience in implementing and managing BI dashboards</li>\n <li>Strong technical writing skills, with a proven track record of translating complex information into clear and concise documentation for diverse stakeholder audiences</li>\n <li>Demonstrated experience using enterprise-authorized AI capabilities within the work environment to support solutions analysis workflows with strong validation habits and awareness of data sensitivity.</li>\n <li>Ability to review and validate AI-assisted analyses and recommendations before use, escalating when uncertain and following data handling expectations.</li>\n <li>Advanced knowledge of data fluency, including experience in handling large, diverse data sets and generating insights to drive business objectives</li>\n <li>Experience in data visualization and analytics, including understanding of vendor products and managing vendor relations</li>\n <li>Strong written communication skills, with a proven ability to effectively translate complex information for diverse stakeholder audiences&nbsp;</li>\n <li>Translate requirements into User stories in JIRA with clear Definition of ready and Acceptance criteria.</li>\n <li>\n  <p>Interface with technical, architect and product teams breaking down requirements and Demonstrate proficiency with JIRA, pulling reports and creating dashboards.</p>\n  <p>&nbsp;</p></li>\n</ul>\n<p style=\"font-style: normal;  font-weight: 400;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\"><strong>Preferred qualifications, capabilities, and skills</strong>&nbsp;&nbsp;</p>\n<ul style=\"font-style: normal;  font-weight: 400;  list-style-type: disc;  text-decoration-color: initial;  text-decoration-style: initial;  text-decoration-thickness: initial\">\n <li>Knowledge in Financial and Payments domain</li>\n</ul>",
+     "ExternalQualificationsStr": "",
+     "ExternalResponsibilitiesStr": "",
+     "ShortDescriptionStr": "Join our team as a Technical Business Analyst and be at the forefront of driving technical innovation and strategic business solutions. ",
+     "PrimaryLocation": "Bengaluru, Karnataka, India",
+     "PrimaryLocationCountry": "IN",
+     "WorkplaceTypeCode": null,
+     "WorkplaceType": "",
+     "JobFunction": "Technology",
+     "secondaryLocations": []
+    }
+   ],
+   "count": 1
+  }
+ }
+}

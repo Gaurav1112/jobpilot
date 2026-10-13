@@ -6,7 +6,10 @@ import { ASHBY_HOST, ashbyParse, ashbyUrl } from '../ashby.js';
 import type { Parsed } from '../common.js';
 import { GREENHOUSE_HOST, greenhouseParse, greenhouseUrl } from '../greenhouse.js';
 import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
-import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workdayListUrl, workdayRef, WorkdayRefused, WORKDAY_PAGE_SIZE, type WorkdayHosts } from './workday.js';
+import * as ef from './eightfold.js';
+import * as orc from './oracle.js';
+import { HostRefused, type PlatformHosts } from './shared.js';
+import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workdayListUrl, workdayRef, WORKDAY_PAGE_SIZE, type WorkdayHosts } from './workday.js';
 
 /**
  * The read side of each career platform, shared by the coverage run's board-verifier (Task 5) and the daily adapters
@@ -39,6 +42,16 @@ import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workda
  * daily adapter's own request and parser (`fetchListPage`, `pagePostings`). Workday has no company-name field: the
  * board's name to compare is its tenant (`nameKey`), matched under the generic-label rules like a slug.
  *
+ * Eightfold and Oracle Recruiting Cloud (Task 7) read the same way, with their daily adapters' own requests and
+ * parsers, robots.txt governing (the careers page's own JSON; Oracle's REST resource):
+ * - Eightfold: the tenant's careers page first (its embedded configuration names the API, v2 or PCSX: the other one
+ *   answers 403), then page 1 of the unscoped list (2 requests). Neither API has a company-name field: the name to
+ *   compare is the `domain` parameter's first label (`netflix.com` → `netflix`), under the generic-label rules;
+ * - Oracle: page 1 of the unscoped requisition list. Its robots.txt answers 403 (the WAF): for this REST API that is
+ *   "unknown", read at the minimal rate (`robotsUnreadable: 'allow'`, a controller decision; the coverage page crawler
+ *   keeps refusing a 401/403 robots.txt for pages). No company-name field: the host's first label (`jpmc`) is
+ *   compared, so a tenant label that is not the company's name is proposed "board name not available, please confirm".
+ *
  * Agent code (containment): it imports only kernel definitions, so the platform is a plain string here; the coverage
  * types' `Platform` enum is a superset of these keys.
  */
@@ -60,10 +73,10 @@ export interface BoardRead {
   readonly nameKey: string | null;
 }
 
-/** What a read may be given: a per-request timeout, and (Workday) the run's host state for robots.txt and refusals. */
+/** What a read may be given: a per-request timeout, and (Workday, Eightfold, Oracle) the run's host state for robots.txt and refusals. */
 export interface ReadOptions {
   readonly timeoutMs?: number;
-  readonly hosts?: WorkdayHosts;
+  readonly hosts?: PlatformHosts;
 }
 
 export interface PlatformClient {
@@ -72,6 +85,8 @@ export interface PlatformClient {
   readonly host: string | null;
   /** Whether robots.txt governs the read (a page's own JSON rather than a documented public API): the caller passes `hosts`. */
   readonly robots: boolean;
+  /** A 401/403 robots.txt: refused (the default) or "unknown", read at the minimal rate (Oracle Recruiting Cloud, a controller decision). */
+  readonly robotsUnreadable?: 'refuse' | 'allow';
   /** The board id the client reads, from a detection's slug and board URL (Workday: `<host>/<tenant>/<site>`); null when they name none. */
   readonly refOf: (slug: string, boardUrl: string | null) => string | null;
   /** The host a board id is read from. */
@@ -216,17 +231,81 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
       // the daily adapter's own request (POST, page 1, the 2 s spacing, robots.txt) and parser
       let page;
       try {
-        page = await fetchListPage(http, opts.hosts, b, 0, {}, opts.timeoutMs);
+        page = await fetchListPage(http, opts.hosts as WorkdayHosts, b, 0, {}, opts.timeoutMs);
       } catch (e) {
         // the host state has already disabled the host; the caller defers, as for any refused board API
-        if (e instanceof WorkdayRefused) throw new BoardRefused(e.status, e.host);
+        if (e instanceof HostRefused) throw new BoardRefused(e.status, e.host);
         throw e;
       }
       const jobs = pagePostings(b, page, { company: b.tenant, slug: ref });
       return { boardName: null, boardNames: [], jobs, complete: page.total <= WORKDAY_PAGE_SIZE, url: workdayListUrl(b), nameKey: b.tenant };
     },
   },
+  eightfold: {
+    platform: 'eightfold',
+    host: null,
+    robots: true,
+    refOf: (slug, boardUrl) => {
+      const b = (boardUrl === null ? null : ef.eightfoldBoardOfUrl(boardUrl)) ?? ef.parseEightfoldRef(slug);
+      return b === null ? null : ef.eightfoldRef(b);
+    },
+    hostOf: (ref) => ef.parseEightfoldRef(ref)?.host ?? null,
+    boardUrl: (ref) => ef.eightfoldListUrl(boardOf(ref, ef.parseEightfoldRef, 'eightfold', '<host>/<domain>'), 'v2', 0),
+    async readBoard(ref, http, opts) {
+      const b = boardOf(ref, ef.parseEightfoldRef, 'eightfold', '<host>/<domain>');
+      const hosts = hostsOf(opts, 'eightfold') as ef.EightfoldHosts;
+      // the daily adapter's own requests (the careers page for the API, then page 1; the 5 s spacing; robots.txt) and parser
+      const { api, page } = await refused(async () => {
+        const a = await ef.fetchApi(http, hosts, b, ef.eightfoldRef(b), opts?.timeoutMs);
+        return { api: a, page: await ef.fetchListPage(http, hosts, b, a, 0, {}, opts?.timeoutMs) };
+      });
+      const jobs = ef.pagePostings(b, api, page, { company: b.domain, slug: ref });
+      return { boardName: null, boardNames: [], jobs, complete: page.count <= ef.EIGHTFOLD_PAGE_SIZE, url: ef.eightfoldListUrl(b, api, 0), nameKey: b.domain.split('.')[0] ?? b.domain };
+    },
+  },
+  oracle: {
+    platform: 'oracle',
+    host: null,
+    robots: true,
+    robotsUnreadable: 'allow',
+    refOf: (slug, boardUrl) => {
+      const b = (boardUrl === null ? null : orc.oracleBoardOfUrl(boardUrl)) ?? orc.parseOracleRef(slug);
+      return b === null ? null : orc.oracleRef(b);
+    },
+    hostOf: (ref) => orc.parseOracleRef(ref)?.host ?? null,
+    boardUrl: (ref) => orc.oracleListUrl(boardOf(ref, orc.parseOracleRef, 'oracle', '<host>/<siteNumber>'), 0),
+    async readBoard(ref, http, opts) {
+      const b = boardOf(ref, orc.parseOracleRef, 'oracle', '<host>/<siteNumber>');
+      const hosts = hostsOf(opts, 'oracle') as orc.OracleHosts;
+      const page = await refused(() => orc.fetchListPage(http, hosts, b, 0, {}, opts?.timeoutMs));
+      const jobs = orc.pagePostings(b, page, { company: b.site, slug: ref });
+      return { boardName: null, boardNames: [], jobs, complete: page.total <= orc.ORACLE_PAGE_SIZE, url: orc.oracleListUrl(b, 0), nameKey: b.host.split('.')[0] ?? b.host };
+    },
+  },
 };
+
+/** The board of a ref, or `invalid_output` naming the platform's ref shape. */
+function boardOf<B>(ref: string, parse: (r: string) => B | null, platform: string, shape: string): B {
+  const b = parse(ref);
+  if (b === null) throw new KernelError('invalid_output', `${platform}: ${ref} is not ${shape}`);
+  return b;
+}
+
+/** The host state a robots-governed read needs; `policy_denied` when the caller gave none. */
+function hostsOf(opts: ReadOptions | undefined, platform: string): PlatformHosts {
+  if (opts?.hosts === undefined) throw new KernelError('policy_denied', `${platform}: robots.txt applies, and no host state was given`);
+  return opts.hosts;
+}
+
+/** A host's 401/403 as `BoardRefused` (the host state has already disabled it; the caller defers, as for any refused board API). */
+async function refused<T>(read: () => Promise<T>): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    if (e instanceof HostRefused) throw new BoardRefused(e.status, e.host);
+    throw e;
+  }
+}
 
 /** The platform's read client, or null when this build has no adapter for it yet (Tasks 6-8 add them). */
 export function platformClient(platform: string): PlatformClient | null {

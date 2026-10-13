@@ -30,7 +30,7 @@ import { check, type Check, contactProblems, hasTerm, hyphenProblems, namingProb
  */
 export const qaGateContract = defineContract({
   id: 'qa-gate',
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Checks the rendered documents of one job against their plan',
   skills: ['document-qa'],
   team: 'writing',

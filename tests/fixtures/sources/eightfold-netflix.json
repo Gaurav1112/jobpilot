@@ -1,0 +1,340 @@
+{
+ "board": "explore.jobs.netflix.net/netflix.com",
+ "api": "v2",
+ "recorded": "2026-10-14",
+ "note": "One polite request each (honest UA, >= 2.5 s apart). Trimmed to the fields the adapter reads: positions (id, name, locations, work type, department, t_create), the locations facet (India and remote values plus two others) and the Work Type facet; the careers page reduced to its configuration marker.",
+ "robots": "User-agent: *\nDisallow: /\nAllow: /$\nAllow: /careers\nAllow: /api/apply\nAllow: /api/pcsx\nAllow: /candidate/login\nAllow: /login\nAllow: /events/candidate\nAllow: /events/open\nAllow: /api/events\nAllow: /careerhub/explore/jobs\nAllow: /api/career_hub\nAllow: /static/gen\nAllow: /gen\n\n\nSitemap: https://explore.jobs.netflix.net/careers/sitemap_index.xml?domain=netflix.com&microsite=netflix.com\n",
+ "careersPage": "<html><body><code id=\"smartApplyData\" style=\"display:none\">{\"domain\": \"netflix.com\"}</code></body></html>",
+ "discovery": {
+  "count": 442,
+  "positions": [
+   {
+    "id": 790318927263,
+    "name": "Technical Operations Manager, Post Services - India",
+    "location": "Mumbai,India",
+    "locations": [
+     "Mumbai,India"
+    ],
+    "work_location_option": "onsite",
+    "department": "Content Production Operations",
+    "t_create": 1791849600,
+    "ats_job_id": "JR43003",
+    "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318927263"
+   },
+   {
+    "id": 790318898616,
+    "name": "Creative Merchandiser - India",
+    "location": "Mumbai,India",
+    "locations": [
+     "Mumbai,India"
+    ],
+    "work_location_option": "onsite",
+    "department": "Product Discovery & Promotion",
+    "t_create": 1791763200,
+    "ats_job_id": "JR42984",
+    "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318898616"
+   },
+   {
+    "id": 790318865052,
+    "name": "Language Producer, India",
+    "location": "Mumbai,India",
+    "locations": [
+     "Mumbai,India"
+    ],
+    "work_location_option": "onsite",
+    "department": "Content Production",
+    "t_create": 1791504000,
+    "ats_job_id": "JR42967",
+    "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318865052"
+   }
+  ],
+  "facets": {
+   "locations": {
+    "Remote": 999999,
+    "Remote, OR, United States": 107,
+    "Mumbai, MH, India": 9,
+    "Los Angeles, CA, United States": 99,
+    "Los Gatos, CA, United States": 97
+   },
+   "Work Type": {
+    "onsite": 331,
+    "remote": 112
+   }
+  }
+ },
+ "scoped": {
+  "india": {
+   "count": 9,
+   "positions": [
+    {
+     "id": 790318927263,
+     "name": "Technical Operations Manager, Post Services - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Content Production Operations",
+     "t_create": 1791849600,
+     "ats_job_id": "JR43003",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318927263"
+    },
+    {
+     "id": 790318898616,
+     "name": "Creative Merchandiser - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Product Discovery & Promotion",
+     "t_create": 1791763200,
+     "ats_job_id": "JR42984",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318898616"
+    },
+    {
+     "id": 790318865052,
+     "name": "Language Producer, India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Content Production",
+     "t_create": 1791504000,
+     "ats_job_id": "JR42967",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318865052"
+    },
+    {
+     "id": 790318866949,
+     "name": "Partner Operations Manager",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Program Management",
+     "t_create": 1791504000,
+     "ats_job_id": "JR42970",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318866949"
+    },
+    {
+     "id": 790318636029,
+     "name": "Head - Film & Series Marketing - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Marketing",
+     "t_create": 1790294400,
+     "ats_job_id": "JR42794",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318636029"
+    },
+    {
+     "id": 790318478981,
+     "name": "Screening Specialist, APAC (Events)",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Marketing",
+     "t_create": 1789430400,
+     "ats_job_id": "JR42587",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318478981"
+    },
+    {
+     "id": 790317836990,
+     "name": "Senior Manager, Communications - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Communications & Corporate Affairs",
+     "t_create": 1786924800,
+     "ats_job_id": "JR42140",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790317836990"
+    },
+    {
+     "id": 790317788391,
+     "name": "Senior Manager, Marketing Planning & Studio Relations - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Marketing",
+     "t_create": 1786579200,
+     "ats_job_id": "JR42099",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790317788391"
+    },
+    {
+     "id": 790317351106,
+     "name": "Associate, Production Finance - India",
+     "location": "Mumbai,India",
+     "locations": [
+      "Mumbai,India"
+     ],
+     "work_location_option": "onsite",
+     "department": "Core Finance & Controllership",
+     "t_create": 1784937600,
+     "ats_job_id": "JR41792",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790317351106"
+    }
+   ]
+  },
+  "remote": {
+   "count": 113,
+   "positions": [
+    {
+     "id": 790318938531,
+     "name": "Senior Gameplay Programmer, Game Prototypes",
+     "location": "Canada - Remote",
+     "locations": [
+      "Canada - Remote"
+     ],
+     "work_location_option": "onsite",
+     "department": "Games",
+     "t_create": 1791849600,
+     "ats_job_id": "JR43009",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318938531"
+    },
+    {
+     "id": 790318883356,
+     "name": "Executive Producer - Mainstream, Narrative & New Experiences (Games)",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States",
+      "Los Angeles,California,United States of America"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Games",
+     "t_create": 1791590400,
+     "ats_job_id": "JR42979",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318883356"
+    },
+    {
+     "id": 790318859750,
+     "name": "AI Research Scientist 4/5 - Generative Models, Recommender Systems",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Data & Insights",
+     "t_create": 1791417600,
+     "ats_job_id": "JR42958",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318859750"
+    },
+    {
+     "id": 790318858893,
+     "name": "Senior Game Engineer, Gen AI - Games",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Netflix Games Studio",
+     "t_create": 1791417600,
+     "ats_job_id": "JR42956",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318858893"
+    },
+    {
+     "id": 790318755298,
+     "name": "Engineering Manager - TV Client Paved Paths & Workflows",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Engineering",
+     "t_create": 1790899200,
+     "ats_job_id": "JR42879",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318755298"
+    },
+    {
+     "id": 790318714671,
+     "name": "Analytics Engineer 5 - Ads Technical Measurement and Quality",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Data & Insights",
+     "t_create": 1790640000,
+     "ats_job_id": "JR42849",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318714671"
+    },
+    {
+     "id": 790316208720,
+     "name": "Machine Learning Scientist 5 - Ads Demand Science",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "onsite",
+     "department": "Data & Insights",
+     "t_create": 1790553600,
+     "ats_job_id": "JR40988",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790316208720"
+    },
+    {
+     "id": 790318658684,
+     "name": "Analytics Engineer 5 - Demand Science",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "remote_local",
+     "department": "Data & Insights",
+     "t_create": 1790380800,
+     "ats_job_id": "JR42808",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318658684"
+    },
+    {
+     "id": 790317912743,
+     "name": "Software Engineer (L6) - Compute Runtime",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "onsite",
+     "department": "Engineering",
+     "t_create": 1790294400,
+     "ats_job_id": "JR42215",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790317912743"
+    },
+    {
+     "id": 790318596466,
+     "name": "Technical Program Manager 6 - Infrastructure, AI",
+     "location": "Remote, United States",
+     "locations": [
+      "Remote, United States"
+     ],
+     "work_location_option": "onsite",
+     "department": "Engineering Operations",
+     "t_create": 1790294400,
+     "ats_job_id": "JR42723",
+     "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318596466"
+    }
+   ]
+  }
+ },
+ "details": {
+  "790318927263": {
+   "id": 790318927263,
+   "name": "Technical Operations Manager, Post Services - India",
+   "location": "Mumbai,India",
+   "locations": [
+    "Mumbai,India"
+   ],
+   "work_location_option": null,
+   "department": "Content Production Operations",
+   "t_create": 1791849600,
+   "job_description": "<p><span>Netflix is one of the world's leading entertainment services, with over 300 million paid memberships in over 190 countries enjoying TV series, films and games across a wide variety of genres and languages. Members can play, pause and resume watching as much as they want, anytime, anywhere, and can change their plans at any time.</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><h2><b>About the Role:<br /></b></h2><p>As part of Netflix's in-house Post Services team, the Technical Operations Manager (India) owns technical operations for the India market — spanning Netflix Dailies, MPS (Media Production Suite) Footage Ingest, screening operations — and is accountable for service quality across all Post Services technical offerings in India. Reporting to the Senior Manager, Post Services – APAC, this is a people manager role: you'll lead and grow a team of contractor operators, applying systems thinking, risk management, and operations design to build scalable, reliable workflows across India's production hubs.<br /></p><p>You'll partner closely with India's Project Operations counterpart to ensure end-to-end clarity across every workstream — dailies, ingest, screenings, and editorial — and align with APAC and Global Post Services colleagues to keep standards and practices consistent.<br /></p><h2><b>What You'll Do:</b><br /></h2><ul><li>Own technical operations for India, including Netflix Dailies, MPS Footage Ingest, screening operations, and be accountable for service quality across all Post Services technical offerings in India.</li><li>Lead, mentor, and grow a team of contractor operators (including Dailies Operators and Dailies Lab Supervisor), building a high-performance, service-first culture.</li><li>Lead the execution of Post Services’ Global Follow-the-Sun Operations of MPS Dailies in India. Collaborating closely with global colleagues on continuous development of operational excellence and efficiencies.</li><li>Responsible for representing Post Services as local leadership. Build and strengthen partnerships with internal stakeholders such as Title Management and Production Solutions</li><li>Serve as the technical operator lead for Netflix screening spaces in India — Screening Room, Screening Lounge, and Technical Review Room — and oversee local/remote operational support for sessions conducted at partner facilities such as Dark and Talkies.</li><li>Own MPS Footage Ingest operations across India's Model A ingest hubs (Mumbai, Delhi, and Hyderabad), including onboarding, training, and coordination of contractors, kiosk resource allocation, and fulfillment of ad-hoc and high-volume ingest requests.</li><li>Oversee end-to-end MPS Dailies technical workflows and deliverables across multiple concurrent productions, acting as the primary Dailies technical point of contact for internal stakeholders and external partners.</li><li>Collaborate closely with the Senior Manager of Post Services APAC to develop the MPS and Live Editorial strategy for India. </li><li>Apply systems thinking, risk management, and operations design to build workflows that scale reliably as India's volume and complexity grow.</li><li>Partner closely with India's Project Operations Coordinator so that technical and project workstreams move together, aligning on escalation paths and partner-facing commitments.</li><li>Act as the India escalation point for technical risk, workflow gaps, and tooling issues surfaced by Specialists and contractor teams.</li><li>Represent Technical Operations for India, acting as the named decision-maker for technical questions that are local in scope, and looping in Global when a decision would set a de facto standard or trade off against the 90% Global standard/ 10% Local nuance line.</li><li>Partner with Global Engineering and Product teams to pilot and roll out new tools, ensuring compatibility with the nuance of India-specific production workflows.</li><li>Surface risk, workflow gaps, and improvement opportunities to Regional Leadership (Senior Manager, Post Services – APAC).<br /></li></ul><h2><b>Experience:</b><br /></h2><ul><li>10+ years of post-production technical operations experience, with prior people management or team lead experience.</li><li>Deep knowledge of post-production tools and workflows relevant to the India market (e.g., dailies, ingest, editorial, screenings, QC, sound, finishing).</li><li>Proven ability to build and scale technical operations across multiple production hubs, applying systems thinking and operations design.</li><li>Track record of managing and mentoring technical teams, including contractor operators, in a fast-paced, deadline-driven environment.</li><li>Excellent  stakeholder management and communication skills. A mature and collaborative mindset, and ability to align partners and stakeholders across regions and functions  on complex initiatives.</li><li>Familiarity with the India production ecosystem.</li><li>Comfortable operating with ambiguity, applying judgment, and prioritizing across shifting, concurrent demands.</li><li>Enthusiastic team player with a commitment to high performance and a service-first mindset.</li></ul><br /><h2><b>Additional Qualifications:</b></h2><br /><ul><li>Fluent in English (Hindi or other regional languages a plus).</li><li>Willingness to travel within India, and globally as needed.</li><li>Ability to respond to urgent or after-hours needs when required.</li><li>Comfortable working across time zones in a global team, including alignment with APAC and global partners.</li><li>Deep alignment with Netflix's culture of curiosity, ownership, and continuous improvement.<br /></li></ul><h2><b>About Post Services in India:<br /></b></h2><p>This is a regional role within a globally aligned Post Services organization. As part of Regional Leadership for APAC, you'll own technical operations for India and work closely with Project Operations and global partners to deliver scalable, reliable, and impactful post-production support that helps Netflix entertain the world.</p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><a href=\"https://about.netflix.com/en/inclusion\" target=\"_blank\"><u>Inclusion</u></a><span> is a Netflix value and we strive to host a meaningful interview experience for all candidates. If you want an <span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span><span class=\"WHR0\">accommodation/adjustment</span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span></span> for a disability or any other reason during the hiring process, please send a request to your recruiting partner.</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:left\"><span>We are an equal-opportunity employer and celebrate diversity, recognizing that diversity<span> </span>builds stronger teams. We approach diversity and inclusion seriously and thoughtfully. We do not discriminate on the basis of race, religion, color, ancestry, national origin, caste, sex, sexual orientation, gender, gender identity or expression, age, disability, medical condition, pregnancy, genetic makeup, marital status, or military service.</span></p>",
+   "canonicalPositionUrl": "https://explore.jobs.netflix.net/careers/job/790318927263?microsite=netflix.com"
+  }
+ }
+}

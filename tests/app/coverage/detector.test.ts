@@ -605,10 +605,12 @@ describe('the coverage-detector golden set', () => {
     const sources = `${root}tests/fixtures/sources`;
     const files = [
       ...readdirSync(dir).map((f) => `${dir}/${f}`),
-      ...readdirSync(sources).filter((f) => f.startsWith('workday-')).map((f) => `${sources}/${f}`),
+      ...readdirSync(sources).filter((f) => /^(?:workday|eightfold|oracle)-/u.test(f)).map((f) => `${sources}/${f}`),
       `${root}tests/fixtures/coverage/e2e/epsilon-cxs.json`,
     ];
     expect(files.filter((f) => f.includes('/workday-')).length).toBe(3);
+    // Task 7: the recorded Eightfold (Microsoft, Netflix) and Oracle (JPMorgan) responses
+    expect(files.filter((f) => /\/(?:eightfold|oracle)-/u.test(f)).map((f) => f.slice(sources.length + 1)).sort()).toEqual(['eightfold-microsoft.json', 'eightfold-netflix.json', 'oracle-jpmorgan.json']);
     // a phone number (an international or a 10-digit Indian mobile) in a job description is personal data too; the
     // detector pages are left out of this one check, their job ids look like mobile numbers
     const PHONE: readonly [string, RegExp][] = [['phone', /(?<![\w.-])\+\d{1,3}[\s-]?\(?\d{2,5}\)?[\s-]?\d{3,5}[\s-]?\d{3,5}(?![\w-])|(?<![\w.-])[6-9]\d{9}(?![\w-])/g]];

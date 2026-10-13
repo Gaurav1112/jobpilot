@@ -732,6 +732,8 @@ describe('capability allow-list', () => {
       careersEgress: ['src-careers-list', 'src-careers-job'],
       candidateEgress: ['careers-locator', 'platform-detector', 'board-verifier'],
       workdayEgress: ['src-workday'],
+      eightfoldEgress: ['src-eightfold'],
+      oracleEgress: ['src-oracle'],
       httpPost: ['src-workday', 'board-verifier'],
     });
     const sneaky = defineContract({ ...base });

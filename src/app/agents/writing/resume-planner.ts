@@ -12,7 +12,7 @@ import { failLoud, planResume, writingPackOf } from './grounded.js';
  */
 export const resumePlannerContract = defineContract({
   id: 'resume-planner',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Plans one grounded resume from ranked evidence',
   skills: ['resume-planning'],
   team: 'writing',

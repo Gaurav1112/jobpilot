@@ -12,9 +12,10 @@ import type { MessageType } from './types.js';
  * against the policy and its deny lists). A set that is not given resolves to no host at all.
  * `pack:careers-hosts` is the watchlist's careers hosts; `coverage:candidate-hosts` is the hosts of the weekly coverage
  * run's candidate companies (the careers locator's plan); `registry:workday-hosts` is the hosts of the verified
- * Workday companies in the company registry (the daily Workday adapter's).
+ * Workday companies in the company registry (the daily Workday adapter's); `registry:eightfold-hosts` and
+ * `registry:oracle-hosts` likewise for the verified Eightfold and Oracle Recruiting Cloud companies (Task 7).
  */
-export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts', 'registry:workday-hosts'] as const;
+export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts', 'registry:workday-hosts', 'registry:eightfold-hosts', 'registry:oracle-hosts'] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
 

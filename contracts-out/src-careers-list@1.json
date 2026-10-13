@@ -1,5 +1,5 @@
 {
-  "hash": "afe2a2a1e5605a5c07cdee5b08b4e2c25d888d35b76d6e53c6704c2ba4af1b65",
+  "hash": "485c1b12bcf0c480abaf9c0043ff2a00442d44f3131193e62fdc714f3062d27d",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -26,7 +26,9 @@
               "ashby",
               "feed",
               "careers",
-              "workday"
+              "workday",
+              "eightfold",
+              "oracle"
             ],
             "type": "string"
           },
@@ -137,6 +139,6 @@
     },
     "team": "sourcing",
     "timeoutMs": 1650000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

@@ -18,7 +18,8 @@ import type { AnyContract } from '../kernel/contract.js';
  *   the gate's `HostStateStore` (the `AppStore`), before the step returns. It is run-scoped politeness state keyed by
  *   the coverage run id, never data, and nothing but the gate reads it;
  * - the symbolic egress `registry:workday-hosts` (the verified Workday companies' hosts, from the company registry,
- *   resolved per daily run): only `src-workday`;
+ *   resolved per daily run): only `src-workday`; likewise `registry:eightfold-hosts` only `src-eightfold` and
+ *   `registry:oracle-hosts` only `src-oracle` (Task 7);
  * - `capabilities.httpPost` (the broker's `postJson`): only the two Workday readers, `src-workday` and the
  *   `board-verifier`, whose CXS job list is a POST; every other agent reads by GET only (the Gmail source above all).
  */
@@ -32,6 +33,10 @@ export const CAPABILITY_ALLOW_LIST = {
   candidateEgress: ['careers-locator', 'platform-detector', 'board-verifier'],
   /** The symbolic egress whose hosts are the registry's verified Workday companies. */
   workdayEgress: ['src-workday'],
+  /** The symbolic egress whose hosts are the registry's verified Eightfold companies. */
+  eightfoldEgress: ['src-eightfold'],
+  /** The symbolic egress whose hosts are the registry's verified Oracle Recruiting Cloud companies. */
+  oracleEgress: ['src-oracle'],
   /** The agents that may POST (Workday's CXS list search). */
   httpPost: ['src-workday', 'board-verifier'],
 } as const satisfies Record<string, readonly string[]>;
@@ -55,6 +60,12 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
     }
     if (c.egress.includes('registry:workday-hosts') && !allowed(CAPABILITY_ALLOW_LIST.workdayEgress, c.id)) {
       problems.push(`${c.id} declares egress registry:workday-hosts; only ${CAPABILITY_ALLOW_LIST.workdayEgress.join(', ')} may contact the registry's Workday hosts`);
+    }
+    if (c.egress.includes('registry:eightfold-hosts') && !allowed(CAPABILITY_ALLOW_LIST.eightfoldEgress, c.id)) {
+      problems.push(`${c.id} declares egress registry:eightfold-hosts; only ${CAPABILITY_ALLOW_LIST.eightfoldEgress.join(', ')} may contact the registry's Eightfold hosts`);
+    }
+    if (c.egress.includes('registry:oracle-hosts') && !allowed(CAPABILITY_ALLOW_LIST.oracleEgress, c.id)) {
+      problems.push(`${c.id} declares egress registry:oracle-hosts; only ${CAPABILITY_ALLOW_LIST.oracleEgress.join(', ')} may contact the registry's Oracle hosts`);
     }
     if (c.capabilities.httpPost && !allowed(CAPABILITY_ALLOW_LIST.httpPost, c.id)) {
       problems.push(`${c.id} declares capabilities.httpPost; only ${CAPABILITY_ALLOW_LIST.httpPost.join(', ')} may send a POST`);

@@ -2,7 +2,7 @@ import type { Envelope } from '../kernel/envelope.js';
 import type { Store } from '../kernel/store/store.js';
 import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
-import { WORKDAY_NOTE_PREFIXES } from './agents/sources/platforms/workday.js';
+import { PLATFORM_NOTE_PREFIXES } from './agents/sources/platforms/shared.js';
 
 /**
  * One problem or warning line (rereview R7): control characters dropped and whitespace folded, or a fixed notice when
@@ -310,8 +310,8 @@ export function staleProblems(
     }));
 }
 
-/** Note prefixes of the named skips a source records (`WORKDAY_NOTE_PREFIXES`): never counted as malformed postings. */
-const NAMED_SKIPS: readonly string[] = WORKDAY_NOTE_PREFIXES;
+/** Note prefixes of the named skips a platform source records (`PLATFORM_NOTE_PREFIXES`): never counted as malformed postings. */
+const NAMED_SKIPS: readonly string[] = PLATFORM_NOTE_PREFIXES;
 const isNamedSkip = (note: string): boolean => NAMED_SKIPS.some((p) => note.startsWith(p));
 
 /**

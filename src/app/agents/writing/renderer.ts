@@ -28,7 +28,7 @@ import { postingSlots } from './grounded.js';
  */
 export const rendererContract = defineContract({
   id: 'renderer',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Renders one cover plan into ATS-ready documents',
   skills: ['document-rendering'],
   team: 'writing',

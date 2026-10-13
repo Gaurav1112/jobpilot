@@ -2,10 +2,29 @@ import { z } from 'zod';
 import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/agent.js';
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
-import { compileSafePattern } from '../../../pack/regex.js';
 import { countriesIn, officeCity } from '../../../text/norm.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { finish, onlySeenBefore } from '../common.js';
+import {
+  chooseDetails,
+  goneNote,
+  HostRefused,
+  hostRequest,
+  PLATFORM_NOTE_PREFIXES,
+  preferPostings as preferBy,
+  refusal,
+  REMOTE_TYPE,
+  scopeMiss,
+  scopeNotApplied,
+  shapeError,
+  titlePackOf,
+  type HttpTool,
+  type PlatformHosts,
+} from './shared.js';
+
+// the shared host rules and title pre-filter, under the names Task 6 gave them
+export { HostDisabled, RobotsDenied, titlePasses, type HttpTool, type TitlePack } from './shared.js';
+export { HostRefused as WorkdayRefused };
 
 /**
  * Workday (career-sites spec §4, Task 6): the daily adapter for every verified registry company on Workday, and the
@@ -113,7 +132,7 @@ export function workdayPagesPerList(officeCities: number): number {
 export const WORKDAY_EGRESS = 'registry:workday-hosts';
 
 /** The note prefixes of the named skips (problems.ts prints them as they are, never as "malformed"). */
-export const WORKDAY_NOTE_PREFIXES = ['robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list '] as const;
+export const WORKDAY_NOTE_PREFIXES = PLATFORM_NOTE_PREFIXES;
 
 export interface WorkdayBoard {
   readonly host: string;
@@ -211,12 +230,6 @@ export const WorkdayDetail = z
   .passthrough();
 export type WorkdayDetail = z.infer<typeof WorkdayDetail>;
 
-function shapeError(what: string, r: { error: z.ZodError }): KernelError {
-  const first = r.error.issues[0];
-  const where = first === undefined ? '' : ` (${first.path.map(String).join('.') || 'root'}: ${first.message})`;
-  return new KernelError('invalid_output', `${what}: response shape is not valid${where}`);
-}
-
 /**
  * A list page, shape-checked. A page missing `total` or `jobPostings` is `invalid_output`, never partially parsed. An
  * entry without a title or a /job/ externalPath is not a posting: it is skipped by position (the adapter notes it, as
@@ -308,88 +321,14 @@ export function pagePostings(b: WorkdayBoard, page: WorkdayListPage, req: Pick<D
 // Host state: robots.txt and disabled hosts, injected by the run (trusted code)
 // ---------------------------------------------------------------------------
 
-/** The broker's HTTP tool, as an agent's context carries it. */
-export type HttpTool = NonNullable<AgentContext['http']>;
-
 /**
  * The run's view of the Workday hosts, built by the daily wiring (`daily-hosts.ts`) or the coverage verifier (the
- * coverage gate): robots.txt once per host per run, and the hosts disabled in this run.
+ * coverage gate): robots.txt once per host per run, the hosts disabled in this run, and each board's discovered scopes.
  */
-export interface WorkdayHosts {
-  /** Null when robots.txt lets jobpilot fetch `path` on `host`, else the reason (`robots-disallow /wday/…`, `robots-forbidden`, …). */
-  robots(host: string, path: string, http: HttpTool): Promise<string | null>;
-  disabledWhy(host: string): string | undefined;
-  disable(host: string, why: string): void;
-  /** The board's discovered scopes, cached for this run only (absent: discovered on every read). */
-  readonly scopes?: Map<string, WorkdayScopes>;
-}
-
-/** robots.txt refuses the board's host or path. */
-export class RobotsDenied extends Error {
-  constructor(
-    readonly host: string,
-    readonly reason: string,
-  ) {
-    super(`robots-disallow ${host} (${reason})`);
-    this.name = 'RobotsDenied';
-  }
-}
-
-/** The host was disabled earlier in this run (by this company or another). */
-export class HostDisabled extends Error {
-  constructor(
-    readonly host: string,
-    readonly why: string,
-  ) {
-    super(`host-disabled:${why} on ${host}`);
-    this.name = 'HostDisabled';
-  }
-}
-
-/** A 401 or 403 from a Workday host: a refusal of the requester. The host is disabled for the run. */
-export class WorkdayRefused extends Error {
-  constructor(
-    readonly status: number,
-    readonly host: string,
-  ) {
-    super(`${host} answered ${status}`);
-    this.name = 'WorkdayRefused';
-  }
-}
+export type WorkdayHosts = PlatformHosts<WorkdayScopes>;
 
 /** The request options every Workday request carries: the 2 s host spacing, and the caller's timeout. */
 const reqOpts = (timeoutMs: number | undefined) => ({ minIntervalMs: WORKDAY_MIN_INTERVAL_MS, ...(timeoutMs === undefined ? {} : { timeoutMs }) });
-
-/**
- * One Workday request with the run's host rules: a disabled host is never asked; robots.txt is checked for the path;
- * 401/403 → the host is disabled and `WorkdayRefused`; 429 → disabled and the broker's `rate_limit`.
- */
-async function hostRequest(
-  http: HttpTool,
-  hosts: WorkdayHosts,
-  b: WorkdayBoard,
-  url: string,
-  send: () => Promise<{ status: number; json: unknown }>,
-): Promise<{ status: number; json: unknown }> {
-  const off = hosts.disabledWhy(b.host);
-  if (off !== undefined) throw new HostDisabled(b.host, off);
-  const denial = await hosts.robots(b.host, new URL(url).pathname, http);
-  const off2 = hosts.disabledWhy(b.host);
-  if (off2 !== undefined) throw new HostDisabled(b.host, off2);
-  if (denial !== null) throw new RobotsDenied(b.host, denial);
-  let r: { status: number; json: unknown };
-  try {
-    r = await send();
-  } catch (e) {
-    if (e instanceof KernelError && e.code === 'rate_limit') hosts.disable(b.host, 'http-429');
-    throw e;
-  }
-  if (r.status === 401 || r.status === 403) {
-    hosts.disable(b.host, `http-${r.status}`);
-    throw new WorkdayRefused(r.status, b.host);
-  }
-  return r;
-}
 
 /** One list page (POST), shape-checked. A 404 is a retired board (`gone`), any other 4xx `invalid_output`. */
 export async function fetchListPage(
@@ -401,7 +340,7 @@ export async function fetchListPage(
   timeoutMs?: number,
 ): Promise<WorkdayListPage> {
   const url = workdayListUrl(b);
-  const { status, json } = await hostRequest(http, hosts, b, url, () => http.postJson(url, workdayListBody(offset, facets), reqOpts(timeoutMs)));
+  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.postJson(url, workdayListBody(offset, facets), reqOpts(timeoutMs)));
   if (status === 404 || status === 410) throw new KernelError('gone', `workday board not found: ${workdayRef(b)}`);
   if (status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${status} for the ${b.tenant}/${b.site} list at offset ${offset}`);
   return parseListPage(json, `workday ${workdayRef(b)}`);
@@ -410,7 +349,7 @@ export async function fetchListPage(
 /** One job's detail (GET), shape-checked; null when the job is gone (404/410). */
 export async function fetchDetail(http: HttpTool, hosts: WorkdayHosts, b: WorkdayBoard, externalPath: string, timeoutMs?: number): Promise<WorkdayDetail | null> {
   const url = workdayDetailUrl(b, externalPath);
-  const { status, json } = await hostRequest(http, hosts, b, url, () => http.getJson(url, reqOpts(timeoutMs)));
+  const { status, json } = await hostRequest(http, hosts, b.host, url, () => http.getJson(url, reqOpts(timeoutMs)));
   if (status === 404 || status === 410) return null;
   if (status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${status} for a ${b.tenant}/${b.site} job detail`);
   return parseDetail(json, `workday ${workdayRef(b)}`);
@@ -419,32 +358,6 @@ export async function fetchDetail(http: HttpTool, hosts: WorkdayHosts, b: Workda
 // ---------------------------------------------------------------------------
 // The title pre-filter and the facet scopes
 // ---------------------------------------------------------------------------
-
-/** The parts of the pack the adapter reads: the title rules. */
-const TitlePack = z.object({
-  filters: z.object({ roleDeny: z.array(z.string()) }),
-  targets: z.object({ titles: z.array(z.string()) }),
-  // the office cities (eligibility rule 5e), for the office-city lists only
-  eligibility: z.object({ officeCities: z.array(z.string()).optional() }).optional(),
-});
-export type TitlePack = z.infer<typeof TitlePack>;
-
-const words = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}+#]+/u).filter((w) => w !== '');
-
-/**
- * The cheap title pre-filter: no `filters.roleDeny` pattern matches (eligibility rule 2, the same compiled patterns),
- * and, when `targets.titles` is not empty, every word of one target title is a word of the title ("senior engineer"
- * passes "Senior DevOps Engineer"). It only decides which jobs get a detail; eligibility still judges every job.
- */
-export function titlePasses(title: string, pack: TitlePack): boolean {
-  if (pack.filters.roleDeny.some((p) => p.trim() !== '' && compileSafePattern(p).test(title))) return false;
-  if (pack.targets.titles.length === 0) return true;
-  const have = new Set(words(title));
-  return pack.targets.titles.some((t) => {
-    const want = words(t);
-    return want.length > 0 && want.every((w) => have.has(w));
-  });
-}
 
 /** One scoped list: the facet selection, and how many jobs the discovery page's facet counts say it holds. */
 export interface WorkdayScope {
@@ -467,8 +380,6 @@ export interface WorkdayScopes {
   readonly offices: readonly (WorkdayScope & { readonly display: string; readonly labels: readonly string[] })[];
 }
 
-/** A remote work-type value: the whole descriptor says remote ("Remote", "Virtual", "Work from home"), not a remote site ("California - Remote"). */
-const REMOTE_TYPE = /^\s*(?:fully\s+)?(?:remote|virtual|work\s+from\s+home|wfh|home[\s-]based)\s*$/iu;
 /**
  * The location facet parameters seen on real tenants (the recorded NVIDIA, Salesforce and Mastercard boards, the
  * careers-sites research): only these may scope by city values or stamp an office. `locationHierarchy2` is NVIDIA's
@@ -567,8 +478,8 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
 
 export const srcWorkdayContract = defineContract({
   id: 'src-workday',
-  // 1.1.0: the reads are scoped to the board's India and remote facets (Fix round 1)
-  version: '1.1.0',
+  // 1.1.0: the reads are scoped to the board's India and remote facets (Fix round 1); 1.2.0: DiscoveryRequest/Posting.ats gained eightfold, oracle (Task 7)
+  version: '1.2.0',
   description: 'Reads one verified Workday company\'s India-located or remote job lists, with job details for the titles the pre-filter passes, within a per-company request budget, honouring robots.txt per host',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead Workday tenant never opens a breaker for another platform or the ATS sources.
@@ -591,9 +502,6 @@ export interface SrcWorkdayOptions {
   readonly maxPages?: number;
   readonly maxDetails?: number;
 }
-
-/** Sorted by sourceId (as `finish`), so the detail order is fixed for a given list. */
-const bySourceId = (a: RawPosting, b: RawPosting): number => (a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0);
 
 /** The detail order by listed location: 0 when it names India (or an Indian place) or is listed under an office city, 1 for "N Locations", 2 for the rest. */
 const locationRank = (p: RawPosting): number => {
@@ -623,12 +531,7 @@ function preferPostings(postings: readonly RawPosting[]): RawPosting[] {
     if ((raw.officeLocations ?? []).length > 0) return 0;
     return countriesIn(raw.locationsText).includes('india') ? 1 : 2;
   };
-  const best = new Map<string, RawPosting>();
-  for (const p of byPath(postings)) {
-    const had = best.get(p.sourceId);
-    if (had === undefined || pref(p) < pref(had)) best.set(p.sourceId, p);
-  }
-  return finish([...best.values()]);
+  return preferBy(byPath(postings), pref);
 }
 
 /** Pages the list from offset 0 under `facets`, starting from its first page (already read): at most `maxPages` pages. */
@@ -674,8 +577,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   if (!http) throw new KernelError('policy_denied', 'no http capability issued');
   const b = parseWorkdayRef(req.slug);
   if (b === null) throw new KernelError('invalid_output', `workday: ${req.slug} is not <host>/<tenant>/<site>`);
-  const titles = TitlePack.safeParse(ctx.pack);
-  if (!titles.success) throw new KernelError('invalid_output', 'src-workday: the pack is missing or lacks filters.roleDeny or targets.titles');
+  const titles = { data: titlePackOf(ctx.pack, 'src-workday') };
   const what = `workday ${req.company}`;
   try {
     const ref = workdayRef(b);
@@ -694,14 +596,10 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
     const scopedFirst = async (list: string, name: string, sc: WorkdayScope): Promise<WorkdayListPage> => {
       const page1 = await fetchListPage(http, o.hosts, b, 0, sc.facets);
       if (page1.total >= WORKDAY_TOTAL_CEILING) throw new KernelError('input_rejected', `${what}: ${list} reports Workday's ${WORKDAY_TOTAL_CEILING} ceiling; it cannot be read in full`);
-      // a scope Workday ignored (a stale or refused facet id) answers with more jobs than its facet values hold
-      if (page1.total > sc.expected + Math.max(5, sc.expected * 0.05)) {
-        throw new KernelError('input_rejected', `scope-not-applied ${req.company} ${name} list: total ${page1.total}, the facet counts ${sc.expected}; Workday did not apply the scope, nothing read from it`);
-      }
-      // a stale facet id can also answer with nothing: the list holds at least its largest selected value
-      if (page1.total < sc.largest - Math.max(5, sc.largest * 0.05)) {
-        throw new KernelError('input_rejected', `scope-not-applied ${req.company} ${name} list: total ${page1.total}, below its largest facet value ${sc.largest}; Workday did not apply the scope, nothing read from it`);
-      }
+      // a scope Workday ignored (a stale or refused facet id) answers with more jobs than its facet values hold, or
+      // with less than its largest selected value: never read, never a silent zero
+      const miss = scopeMiss(page1.total, sc);
+      if (miss !== null) throw scopeNotApplied(req.company, name, miss, 'Workday');
       return page1;
     };
     const lists = ([['india', scopes.india], ['remote', scopes.remote]] as const).filter((x): x is readonly ['india' | 'remote', WorkdayScope] => x[1] !== null);
@@ -747,12 +645,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
     }
 
     // details: rank-0 title-passing jobs only (India-named, India-remote, office-listed), ties by sourceId, at most the budget
-    const wanted = postings.filter((p) => titlePasses((p.raw as WorkdayRaw).title, titles.data));
-    const rank0 = wanted.filter((p) => locationRank(p) === 0).sort(bySourceId);
-    const chosen = rank0.slice(0, o.maxDetails);
-    if (wanted.length > chosen.length) {
-      ctx.skipped([`detail-budget ${req.company}: ${wanted.length - chosen.length} jobs without detail (${rank0.length - chosen.length} over the budget, ${wanted.length - rank0.length} not India-named)`]);
-    }
+    const chosen = chooseDetails(postings, { pack: titles.data, title: (p) => (p.raw as WorkdayRaw).title, rank0: (p) => locationRank(p) === 0, max: o.maxDetails, company: req.company, ctx });
     const details = new Map<string, WorkdayDetailRaw | null>();
     for (const p of chosen) {
       const raw = p.raw as WorkdayRaw;
@@ -760,7 +653,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       details.set(p.sourceId, d === null ? null : detailRaw(d));
     }
     const gone = [...details.entries()].filter(([, d]) => d === null).map(([id]) => id);
-    if (gone.length > 0) ctx.skipped([`detail-gone ${req.company}: ${gone.length} ${gone.length === 1 ? 'job' : 'jobs'} gone between list and detail (${gone.slice(0, 5).join(', ')}${gone.length > 5 ? ', …' : ''})`]);
+    if (gone.length > 0) ctx.skipped([goneNote(req.company, gone)]);
     return postings
       .filter((p) => !gone.includes(p.sourceId))
       .map((p) => {
@@ -768,13 +661,8 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
         return d === undefined || d === null ? p : { ...p, raw: { ...(p.raw as WorkdayRaw), detail: d } };
       });
   } catch (e) {
-    if (e instanceof RobotsDenied) {
-      ctx.skipped([`robots-disallow ${e.host}: ${req.company} not read today (${e.reason})`]);
-      return [];
-    }
-    if (e instanceof HostDisabled) throw new KernelError('input_rejected', `host-disabled:${e.why} on ${e.host}; ${req.company} deferred to the next run, never retried around`);
-    if (e instanceof WorkdayRefused) throw new KernelError('challenged', `${e.host} answered ${e.status}: the host is disabled for this run, never retried around`);
-    throw e;
+    refusal(e, req.company, ctx);
+    return [];
   }
 }
 

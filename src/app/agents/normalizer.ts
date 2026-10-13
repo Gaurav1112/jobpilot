@@ -31,7 +31,20 @@ import { Posting, RawPosting } from '../types.js';
  *   ("India, Bengaluru", or a bare "2 Locations", which eligibility treats as a generic location field) and an empty
  *   description; a job the adapter saw under an office city's location facet value appends those values
  *   (`officeLocations`: "2 Locations; India, Bengaluru"). Workday dates are relative ("Posted Today"): `postedAt` is
- *   always null.
+ *   always null;
+ * - eightfold: `{api, title, url, id, locations, standardizedLocations, workLocationOption, department, postedTs,
+ *   detail}` (platforms/eightfold.ts). The location text is every listed location joined by `; ` ("India, Karnataka,
+ *   Bangalore; India, Telangana, Hyderabad"); countries from it and from PCSX's standardized locations ("Bengaluru,
+ *   KA, IN": the ISO-2 last part). The arrangement: the detail's work site when it says one ("0 days / week in-office
+ *   – remote" remote, "3 days / week in-office" hybrid, "fully on-site" onsite), else `workLocationOption` (`remote`,
+ *   `remote_local` remote; `hybrid`; `onsite`); both kept as signals. `postedAt` from the epoch seconds `postedTs`
+ *   (absent → null). Without a detail the description is empty;
+ * - oracle: `{title, url, id, primaryLocation, primaryCountry, secondaryLocations, postedDate, workplaceTypeCode,
+ *   shortDescription, detail}` (platforms/oracle.ts). The location text is the primary then the secondary locations
+ *   joined by `; `; countries from it and the ISO-2 country codes. `WorkplaceTypeCode` `ORA_REMOTE` is remote,
+ *   `ORA_HYBRID` hybrid, `ORA_ON_SITE` onsite (the detail's wins). `postedAt` = `PostedDate` (YYYY-MM-DD; absent →
+ *   null). The description is the detail's (description, responsibilities, qualifications), else the list's short
+ *   description; `employmentType` the detail's `JobSchedule` ("Full time").
  *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
@@ -612,7 +625,73 @@ function workday(raw: RawPosting, r: Rec): Posting {
   });
 }
 
-const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = { greenhouse, lever, ashby, himalayas, jobicy, careers, workday };
+/** Eightfold work arrangement: PCSX's work-site text ("3 days / week in-office") first, else `workLocationOption`. */
+function eightfoldArrangement(workSite: string | null, option: string | null): Remote['structured'] {
+  if (workSite !== null) {
+    if (/\bremote\b/i.test(workSite)) return 'remote';
+    if (/\bfully\s+on[- ]?site\b|\b5 days\b/i.test(workSite)) return 'onsite';
+    if (/\b[1-4] days?\b.*\bin[- ]office\b|\bhybrid\b/i.test(workSite)) return 'hybrid';
+  }
+  if (option === null) return null;
+  if (/^remote/i.test(option)) return 'remote';
+  if (/^hybrid/i.test(option)) return 'hybrid';
+  if (/^on[-_ ]?site$/i.test(option)) return 'onsite';
+  return null;
+}
+
+/** An ISO-2 code as the last comma part of a standardized location ("Bengaluru, KA, IN" → "IN"). */
+const isoTail = (s: string): string[] => {
+  const last = s.split(',').pop()?.trim() ?? '';
+  return /^[A-Z]{2}$/u.test(last) ? [last] : [];
+};
+
+function eightfold(raw: RawPosting, r: Rec): Posting {
+  const d = isRec(r.detail) ? r.detail : null;
+  const locations = arr(r.locations).map(str).filter((x): x is string => x !== null).map((x) => x.trim());
+  const standardized = arr(r.standardizedLocations).map(str).filter((x): x is string => x !== null);
+  const locationText = [...new Set(locations)].join('; ');
+  const workSite = d === null ? null : str(d.workSite);
+  const option = str(r.workLocationOption);
+  const descriptionText = d === null ? '' : htmlish(str(d.description) ?? '');
+  return assemble(raw, 'eightfold', {
+    title: (d === null ? null : str(d.title)) ?? str(r.title),
+    url: str(r.url),
+    locationText,
+    structured: eightfoldArrangement(workSite, option),
+    countries: [...countriesIn(locationText), ...places(standardized.flatMap(isoTail))],
+    signals: [...(option === null ? [] : [`workLocationOption:${oneLine(option)}`]), ...(workSite === null ? [] : [`workSite:${oneLine(workSite)}`])],
+    employmentType: d === null ? null : str(d.employmentType),
+    descriptionText,
+    postedAt: postedAtOf(r.postedTs, 's'),
+    comp: compFromText(descriptionText),
+  });
+}
+
+const ORACLE_WORKPLACE: Readonly<Record<string, Remote['structured']>> = { ORA_REMOTE: 'remote', ORA_HYBRID: 'hybrid', ORA_ON_SITE: 'onsite' };
+
+function oracle(raw: RawPosting, r: Rec): Posting {
+  const d = isRec(r.detail) ? r.detail : null;
+  const secondary = arr(r.secondaryLocations).filter(isRec);
+  const names = [str(r.primaryLocation), ...secondary.map((x) => str(x.name))].filter((x): x is string => x !== null).map((x) => x.trim());
+  const codes = [str(r.primaryCountry), ...secondary.map((x) => str(x.country))].filter((x): x is string => x !== null);
+  const locationText = [...new Set(names)].join('; ');
+  const code = (d === null ? null : str(d.workplaceTypeCode)) ?? str(r.workplaceTypeCode);
+  const descriptionText = d !== null ? htmlish(str(d.description) ?? '') : htmlish(str(r.shortDescription) ?? '');
+  return assemble(raw, 'oracle', {
+    title: (d === null ? null : str(d.title)) ?? str(r.title),
+    url: str(r.url),
+    locationText,
+    structured: code === null ? null : (ORACLE_WORKPLACE[code] ?? null),
+    countries: [...countriesIn(locationText), ...places(codes)],
+    signals: code === null ? [] : [`workplaceType:${oneLine(code)}`],
+    employmentType: d === null ? null : str(d.schedule),
+    descriptionText,
+    postedAt: postedAtOf(r.postedDate),
+    comp: compFromText(descriptionText),
+  });
+}
+
+const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = { greenhouse, lever, ashby, himalayas, jobicy, careers, workday, eightfold, oracle };
 
 /** Maps one raw posting; throws `invalid_output` for an unknown source, a raw that is not an object, no title or no URL. */
 export function normalize(raw: RawPosting): Posting {
@@ -624,7 +703,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

@@ -83,8 +83,17 @@ async function verify(g: PlatformGuess, fetch: FetchLike, agent = makeBoardVerif
 }
 
 describe('platformClient', () => {
-  it('reads Greenhouse, Lever, Ashby and Workday with the daily adapters\' own URLs; every other platform is not built', () => {
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'greenhouse', 'lever', 'workday']);
+  it('reads Greenhouse, Lever, Ashby, Workday, Eightfold and Oracle with the daily adapters\' own URLs; every other platform is not built', () => {
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'eightfold', 'greenhouse', 'lever', 'oracle', 'workday']);
+    // Task 7: Eightfold and Oracle read each tenant's own host; robots.txt governs both, Oracle's 403 is "unknown"
+    const ef = platformClient('eightfold');
+    expect(ef?.refOf('explore.jobs.netflix.net/netflix.com', 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com')).toBe('explore.jobs.netflix.net/netflix.com');
+    expect(ef?.hostOf('explore.jobs.netflix.net/netflix.com')).toBe('explore.jobs.netflix.net');
+    expect(ef?.boardUrl('explore.jobs.netflix.net/netflix.com')).toBe('https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com&start=0&num=10');
+    expect([ef?.host, ef?.robots, ef?.robotsUnreadable]).toEqual([null, true, undefined]);
+    const oc = platformClient('oracle');
+    expect(oc?.refOf('jpmc.fa.oraclecloud.com/CX_1001', JPM_BOARD)).toBe('jpmc.fa.oraclecloud.com/CX_1001');
+    expect([oc?.host, oc?.robots, oc?.robotsUnreadable]).toEqual([null, true, 'allow']);
     expect(platformClient('greenhouse')?.boardUrl('acme')).toBe(greenhouseUrl('acme'));
     expect(platformClient('lever')?.boardUrl('acme')).toBe(leverUrl('acme', 0));
     expect(platformClient('ashby')?.boardUrl('Acme Co')).toBe(ashbyUrl('Acme Co'));
@@ -113,6 +122,7 @@ describe('platformClient', () => {
   });
 });
 
+const JPM_BOARD = 'https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&finder=findReqs;siteNumber=CX_1001';
 const NV_HOST = 'nvidia.wd5.myworkdayjobs.com';
 const NV_BOARD = `https://${NV_HOST}/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs`;
 const nvFixture = (): { robots: string; pages: unknown[] } => JSON.parse(readFileSync(new URL('../../fixtures/sources/workday-nvidia.json', import.meta.url), 'utf8')) as { robots: string; pages: unknown[] };
@@ -274,11 +284,11 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
     const n = serve({});
-    const v = await verify(guess(cand('netflix.com', 'Netflix'), 'eightfold', 'explore.jobs.netflix.net/netflix.com'), n.fetch);
+    const v = await verify(guess(cand('atlassian.com', 'Atlassian'), 'icims', 'careers-atlassian.icims.com'), n.fetch);
     expect(v).toMatchObject({ status: 'proposed', boardName: null, jobsSeen: null });
-    expect(v.reasons[0]).toBe('adapter not built yet: eightfold');
+    expect(v.reasons[0]).toBe('adapter not built yet: icims');
     expect(n.calls).toEqual([]);
-    expect(verifierHosts(guess(cand('netflix.com', 'Netflix'), 'eightfold', 'x'))).toEqual([]);
+    expect(verifierHosts(guess(cand('atlassian.com', 'Atlassian'), 'icims', 'x'))).toEqual([]);
   });
 
   it('no platform: proposed, the detector\'s reasons carried, nothing fetched (carry 9)', async () => {
@@ -340,5 +350,85 @@ describe('board-verifier: politeness and memo safety', () => {
     expect(domainLabel('purestorage.com')).toBe('purestorage');
     expect(domainLabel('foo.co.uk')).toBe('foo');
     expect(domainLabel('acme.github.io')).toBe('acme');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Task 7: Eightfold and Oracle Recruiting Cloud
+// ---------------------------------------------------------------------------
+
+const recorded = <T>(name: string): T => JSON.parse(readFileSync(new URL(`../../fixtures/sources/${name}.json`, import.meta.url), 'utf8')) as T;
+interface EfFixture {
+  readonly robots: string;
+  readonly careersPage: string;
+  readonly discovery: unknown;
+}
+
+describe('board-verifier: Eightfold (the careers page names the API; the domain label is the board name)', () => {
+  const NF = 'explore.jobs.netflix.net';
+  const MS = 'apply.careers.microsoft.com';
+  const nfGuess = (name = 'Netflix', key = 'netflix.com') => guess(cand(key, name), 'eightfold', `${NF}/netflix.com`, { boardUrl: `https://${NF}/api/apply/v2/jobs?domain=netflix.com` });
+
+  it('verifies the recorded Netflix board (v2): robots.txt, the careers page, then page 1; the domain label matches', async () => {
+    const fx = recorded<EfFixture>('eightfold-netflix');
+    const n = serve({ [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: { body: fx.careersPage }, [`https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]: { body: fx.discovery } });
+    const v = await verify(nfGuess(), n.fetch);
+    expect(v.status).toBe('verified');
+    expect(v.reasons).toEqual(["eightfold board explore.jobs.netflix.net/netflix.com: 3+ open jobs; eightfold tenant 'netflix' matches 'Netflix'"]);
+    expect(n.calls).toEqual([`https://${NF}/robots.txt`, `https://${NF}/careers?domain=netflix.com`, `https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]);
+  });
+
+  it('verifies the recorded Microsoft board through PCSX only (its v2 answers 403, never asked)', async () => {
+    const fx = recorded<EfFixture>('eightfold-microsoft');
+    const pcsx = `https://${MS}/api/pcsx/search?domain=microsoft.com&query=&location=&start=0&sort_by=relevance`;
+    const n = serve({ [`https://${MS}/robots.txt`]: { body: fx.robots }, [`https://${MS}/careers?domain=microsoft.com`]: { body: fx.careersPage }, [pcsx]: { body: fx.discovery } });
+    const v = await verify(guess(cand('microsoft.com', 'Microsoft'), 'eightfold', `${MS}/microsoft.com`, { boardUrl: `https://${MS}/api/apply/v2/jobs?domain=microsoft.com` }), n.fetch);
+    expect(v.status).toBe('verified');
+    expect(v.reasons[0]).toMatch(/^eightfold board apply\.careers\.microsoft\.com\/microsoft\.com: 3\+ open jobs; eightfold tenant 'microsoft' matches 'Microsoft'$/);
+    expect(n.calls.some((c) => c.includes('/api/apply/'))).toBe(false);
+  });
+
+  it('a domain label that is not the company is proposed "board name not available, please confirm"; a robots disallow is proposed, unread', async () => {
+    const fx = recorded<EfFixture>('eightfold-netflix');
+    const routes = { [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: { body: fx.careersPage }, [`https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]: { body: fx.discovery } };
+    const v = await verify(nfGuess('Acme Streaming', 'acmestreaming.com'), serve(routes).fetch);
+    expect(v.status).toBe('proposed');
+    expect(v.reasons).toEqual(['board name not available, please confirm', "eightfold tenant 'netflix' is neither 'Acme Streaming' nor the domain label 'acmestreaming'"]);
+    const n = serve({ ...routes, [`https://${NF}/robots.txt`]: { body: 'User-agent: *\nDisallow: /\n' } });
+    const d = await verify(nfGuess(), n.fetch);
+    expect(d).toMatchObject({ status: 'proposed', reasons: [expect.stringMatching(/^robots-disallow \/careers on explore\.jobs\.netflix\.net: the board was not read, please confirm$/), `detected: eightfold ${NF}/netflix.com`] });
+    expect(n.calls).toEqual([`https://${NF}/robots.txt`]);
+  });
+
+  it('a 403 from the list disables the host and defers the step', async () => {
+    const fx = recorded<EfFixture>('eightfold-netflix');
+    const n = serve({ [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: { body: fx.careersPage }, [`https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]: { status: 403, body: '{}' } });
+    const agent = makeBoardVerifier(fresh());
+    await expect(agent.run(nfGuess(), ctxFor(n.fetch, [nfGuess()]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-403 on explore\.jobs\.netflix\.net/) });
+  });
+});
+
+describe('board-verifier: Oracle Recruiting Cloud (a 403 robots.txt is unknown; the host label is the board name)', () => {
+  const JPM = 'jpmc.fa.oraclecloud.com';
+  const page1 = `https://${JPM}/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&expand=requisitionList.secondaryLocations&finder=findReqs;siteNumber=CX_1001,facetsList=LOCATIONS%3BWORKPLACE_TYPES,limit=100,offset=0`;
+  const jpmGuess = () => guess(cand('jpmorganchase.com', 'JPMorgan Chase'), 'oracle', `${JPM}/CX_1001`, { boardUrl: JPM_BOARD });
+  const fx = () => recorded<{ robots: { status: number; body: string }; discovery: unknown }>('oracle-jpmorgan');
+
+  it('reads the recorded JPMorgan page 1 past its 403 robots.txt (the host is not disabled); "jpmc" is not the company: proposed, please confirm', async () => {
+    const n = serve({ [`https://${JPM}/robots.txt`]: { status: 403, body: fx().robots.body }, [page1]: { body: fx().discovery } });
+    const v = await verify(jpmGuess(), n.fetch);
+    expect(v.status).toBe('proposed');
+    expect(v.reasons).toEqual(['board name not available, please confirm', "oracle tenant 'jpmc' is neither 'JPMorgan Chase' nor the domain label 'jpmorganchase'"]);
+    expect(v.jobsSeen).toBe(3);
+    expect(n.calls).toEqual([`https://${JPM}/robots.txt`, page1]);
+  });
+
+  it('a readable robots.txt disallowing the REST path is proposed, unread; a 403 from the API defers the step', async () => {
+    const n = serve({ [`https://${JPM}/robots.txt`]: { body: 'User-agent: *\nDisallow: /hcmRestApi/\n' }, [page1]: { body: fx().discovery } });
+    const v = await verify(jpmGuess(), n.fetch);
+    expect(v).toMatchObject({ status: 'proposed', reasons: [expect.stringMatching(/^robots-disallow \/hcmRestApi\/resources\/latest\/recruitingCEJobRequisitions on jpmc\.fa\.oraclecloud\.com: the board was not read/), `detected: oracle ${JPM}/CX_1001`] });
+    expect(n.calls).toEqual([`https://${JPM}/robots.txt`]);
+    const r = serve({ [`https://${JPM}/robots.txt`]: { status: 403, body: '' }, [page1]: { status: 403, body: '' } });
+    await expect(makeBoardVerifier(fresh()).run(jpmGuess(), ctxFor(r.fetch, [jpmGuess()]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-403 on jpmc\.fa\.oraclecloud\.com/) });
   });
 });

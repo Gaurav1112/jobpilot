@@ -1,0 +1,129 @@
+{
+  "hash": "4d81d2465c19f344eb7e399803643921ec44f71f0cab4fac80c83583618f8fbc",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true,
+      "pack": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ats": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "ashby",
+              "feed",
+              "careers",
+              "workday",
+              "eightfold",
+              "oracle"
+            ],
+            "type": "string"
+          },
+          "attempt": {
+            "maximum": 9007199254740991,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "company": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ats",
+          "slug",
+          "company",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "DiscoveryRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "registry:oracle-hosts"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-oracle",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "raw": {},
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawPosting@1"
+    },
+    "redactor": false,
+    "requires": [
+      "req.known-ats"
+    ],
+    "retry": {
+      "backoffMs": [
+        8000
+      ],
+      "max": 1,
+      "on": [
+        "network",
+        "overloaded"
+      ]
+    },
+    "team": "sourcing-oracle",
+    "timeoutMs": 900000,
+    "version": "1.0.0"
+  }
+}

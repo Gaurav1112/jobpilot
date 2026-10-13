@@ -141,6 +141,87 @@ describe('the daily pipeline wiring', () => {
     ]);
   });
 
+  it('Task 7: verified Eightfold and Oracle companies add src-eightfold and src-oracle, each in its own team, with its own registry egress', () => {
+    const boards: RegistryBoard[] = [
+      { platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' },
+      { platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' },
+      { platform: 'eightfold', company: 'Microsoft', ref: 'apply.careers.microsoft.com/microsoft.com' },
+      { platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' },
+    ];
+    const agents = dailyAgents([ghEntry], boards);
+    const p = dailyPipeline(agents);
+    expect(p.edges.filter((e) => e.type === 'DiscoveryRequest@1').map((e) => e.to)).toEqual(['src-ashby', 'src-greenhouse', 'src-himalayas', 'src-jobicy', 'src-lever', 'src-workday', 'src-eightfold', 'src-oracle']);
+    const teams = Object.fromEntries(p.teams.map((t) => [t.id, [...t.members].sort()]));
+    // one team per platform adapter: a dead tenant on one platform never opens another platform's breaker
+    expect([teams['sourcing-workday'], teams['sourcing-eightfold'], teams['sourcing-oracle']]).toEqual([['src-workday'], ['src-eightfold'], ['src-oracle']]);
+    expect(agents.find((a) => a.contract.id === 'src-eightfold')?.contract.egress).toEqual(['registry:eightfold-hosts']);
+    expect(agents.find((a) => a.contract.id === 'src-oracle')?.contract.egress).toEqual(['registry:oracle-hosts']);
+    // GET only: neither may POST
+    expect(agents.find((a) => a.contract.id === 'src-eightfold')?.contract.capabilities).toEqual({ http: true, pack: true });
+    expect(agents.find((a) => a.contract.id === 'src-oracle')?.contract.capabilities).toEqual({ http: true, pack: true });
+    expect(registryEgressSets(boards)).toEqual({
+      'registry:workday-hosts': ['nvidia.wd5.myworkdayjobs.com'],
+      'registry:eightfold-hosts': ['apply.careers.microsoft.com', 'explore.jobs.netflix.net'],
+      'registry:oracle-hosts': ['jpmc.fa.oraclecloud.com'],
+    });
+    expect(() => compileDaily(agents, appGuardrails())).not.toThrow();
+    expect(capabilityProblems(agents.map((a) => a.contract))).toEqual([]);
+    // only one platform present: only its adapter
+    expect(ids(dailyAgents([], [boards[3] as RegistryBoard])).filter((id) => /^src-(?:workday|eightfold|oracle)$/u.test(id))).toEqual(['src-oracle']);
+    // fresh host state per call (robots.txt, disabled hosts): two runs never share it
+    expect(dailyAgents([ghEntry], boards).find((a) => a.contract.id === 'src-oracle')).not.toBe(agents.find((a) => a.contract.id === 'src-oracle'));
+  });
+
+  it('Task 7: registryBoards reads verified Eightfold and Oracle rows by their stored board URLs; one seed per board, Workday, Eightfold, then Oracle', () => {
+    const rows = [
+      { name: 'JPMorgan Chase', platform: 'oracle', boardUrl: 'https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?onlyData=true&finder=findReqs;siteNumber=CX_1001' },
+      { name: 'Netflix', platform: 'eightfold', boardUrl: 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com' },
+      { name: 'Microsoft', platform: 'eightfold', boardUrl: 'https://apply.careers.microsoft.com/api/apply/v2/jobs?domain=microsoft.com' },
+      { name: 'NVIDIA', platform: 'workday', boardUrl: 'https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs' },
+      { name: 'Broken', platform: 'oracle', boardUrl: 'https://evil.test/hcmRestApi/resources/latest/recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1' },
+      { name: 'Wrong platform', platform: 'eightfold', boardUrl: 'https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1' },
+      { name: 'iCIMS', platform: 'icims', boardUrl: 'https://careers-acme.icims.com/sitemap.xml' },
+    ];
+    const boards = registryBoards(rows);
+    expect(boards).toEqual([
+      { platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' },
+      { platform: 'eightfold', company: 'Microsoft', ref: 'apply.careers.microsoft.com/microsoft.com' },
+      { platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' },
+      { platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' },
+    ]);
+    const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-14', undefined, boards);
+    expect(seeds.map((x) => `${x.ats} ${x.slug}`)).toEqual([
+      'greenhouse example-gh',
+      'workday nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite',
+      'eightfold apply.careers.microsoft.com/microsoft.com',
+      'eightfold explore.jobs.netflix.net/netflix.com',
+      'oracle jpmc.fa.oraclecloud.com/CX_1001',
+    ]);
+    expect(seeds[4]).toEqual({ ats: 'oracle', slug: 'jpmc.fa.oraclecloud.com/CX_1001', company: 'JPMorgan Chase', runDate: '2026-10-14' });
+  });
+
+  it('Task 7: the Eightfold and Oracle request budgets fit the step timeout at the policy spacing; a slower spacing is refused', () => {
+    const pack = { watchlist: [], feeds: { enabled: [] } };
+    const ef: RegistryBoard[] = [{ platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' }];
+    const oc: RegistryBoard[] = [{ platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' }];
+    expect(pacingProblems(PRODUCT_POLICY_V1, pack, [...ef, ...oc])).toEqual([]);
+    expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, ef)).toEqual([
+      'minHostIntervalMs 7000 ms breaks the src-eightfold timeout arithmetic (at most 5555 ms per request); lower it in policy.user.yaml',
+    ]);
+    expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, oc)).toEqual([]);
+  });
+
+  it('Task 7 allow-list: only src-eightfold and src-oracle may use their registry egress', () => {
+    const agents = dailyAgents([], [{ platform: 'eightfold', company: 'X', ref: 'x.eightfold.ai/x.com' }, { platform: 'oracle', company: 'Y', ref: 'y.fa.oraclecloud.com/CX_1' }]);
+    const ef = agents.find((a) => a.contract.id === 'src-eightfold')?.contract;
+    const oc = agents.find((a) => a.contract.id === 'src-oracle')?.contract;
+    if (ef === undefined || oc === undefined) throw new Error('no platform adapters');
+    expect(capabilityProblems([defineContract({ ...ef, id: 'src-sneaky' }), defineContract({ ...oc, id: 'src-sly' })])).toEqual([
+      "src-sly declares egress registry:oracle-hosts; only src-oracle may contact the registry's Oracle hosts",
+      "src-sneaky declares egress registry:eightfold-hosts; only src-eightfold may contact the registry's Eightfold hosts",
+    ]);
+  });
+
   it('leaves the careers agents out when the watchlist has no careers entries', () => {
     const agents = dailyAgents([ghEntry, leverEntry]);
     expect(ids(agents)).not.toContain('src-careers-list');

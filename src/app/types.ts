@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { definePredicate } from '../kernel/predicates.js';
 import { defineType } from '../kernel/types.js';
 
-/** Where a posting is read from: the watchlist's boards, the feeds, a careers page, or a verified registry company's platform (Task 6: workday). */
-const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers', 'workday']);
+/** Where a posting is read from: the watchlist's boards, the feeds, a careers page, or a verified registry company's platform (Task 6: workday; Task 7: eightfold, oracle). */
+const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers', 'workday', 'eightfold', 'oracle']);
 /** A real calendar date: month 1-12, day within that month (leap years included). */
 export const isCalendarDate = (s: string): boolean => {
   const [y, m, d] = s.split('-').map(Number) as [number, number, number];
@@ -291,7 +291,7 @@ export type QaReport = z.infer<typeof QaReport.schema>;
 // score floor, so the scoring agent checks it directly (see Task 7).
 export const knownAts = definePredicate<DiscoveryRequest>(
   'req.known-ats',
-  'ats is one of greenhouse, lever, ashby, feed, careers, workday',
+  'ats is one of greenhouse, lever, ashby, feed, careers, workday, eightfold, oracle',
   (r) => Ats.safeParse(r.ats).success,
 );
 export const hasTitleUrl = definePredicate<Posting>(

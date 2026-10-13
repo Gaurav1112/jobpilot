@@ -1,0 +1,236 @@
+import { z } from 'zod';
+import type { AgentContext } from '../../../../kernel/agent.js';
+import { KernelError } from '../../../../kernel/errors.js';
+import { compileSafePattern } from '../../../pack/regex.js';
+import { countriesIn, officeCity } from '../../../text/norm.js';
+import type { RawPosting } from '../../../types.js';
+import { finish } from '../common.js';
+
+/**
+ * What the registry platform adapters share (Workday, Task 6; Eightfold and Oracle Recruiting Cloud, Task 7): the
+ * run's host state (robots.txt once per host per run, the hosts disabled in this run), one request under those host
+ * rules, the cheap title pre-filter, the scope-applied bounds and the re-post preference. Each adapter keeps its own
+ * endpoints, shapes and paging.
+ */
+
+/** The broker's HTTP tool, as an agent's context carries it. */
+export type HttpTool = NonNullable<AgentContext['http']>;
+
+/**
+ * The run's view of one platform's hosts, built by the daily wiring (`daily-hosts.ts`, one per platform adapter, so a
+ * dead tenant on one platform never touches another's) or the coverage verifier (the coverage gate): robots.txt once
+ * per host per run, and the hosts disabled in this run.
+ */
+export interface PlatformHosts<S = unknown> {
+  /** Null when robots.txt lets jobpilot fetch `path` on `host`, else the reason (`robots-disallow /wday/…`, `robots-forbidden`, …). */
+  robots(host: string, path: string, http: HttpTool): Promise<string | null>;
+  disabledWhy(host: string): string | undefined;
+  disable(host: string, why: string): void;
+  /** Per-board discovery (facet scopes, an API flavour), cached for this run only (absent: discovered on every read). */
+  readonly scopes?: Map<string, S>;
+}
+
+/** robots.txt refuses the board's host or path. */
+export class RobotsDenied extends Error {
+  constructor(
+    readonly host: string,
+    readonly reason: string,
+  ) {
+    super(`robots-disallow ${host} (${reason})`);
+    this.name = 'RobotsDenied';
+  }
+}
+
+/** The host was disabled earlier in this run (by this company or another). */
+export class HostDisabled extends Error {
+  constructor(
+    readonly host: string,
+    readonly why: string,
+  ) {
+    super(`host-disabled:${why} on ${host}`);
+    this.name = 'HostDisabled';
+  }
+}
+
+/** A 401 or 403 from a platform host: a refusal of the requester. The host is disabled for the run. */
+export class HostRefused extends Error {
+  constructor(
+    readonly status: number,
+    readonly host: string,
+  ) {
+    super(`${host} answered ${status}`);
+    this.name = 'HostRefused';
+  }
+}
+
+/**
+ * One request with the run's host rules: a disabled host is never asked; robots.txt is checked for the path (and
+ * query); 401/403 → the host is disabled and `HostRefused`; 429 (the broker's `rate_limit`) → disabled, rethrown.
+ */
+export async function hostRequest<R extends { status: number }>(http: HttpTool, hosts: PlatformHosts, host: string, url: string, send: () => Promise<R>): Promise<R> {
+  const off = hosts.disabledWhy(host);
+  if (off !== undefined) throw new HostDisabled(host, off);
+  const u = new URL(url);
+  const denial = await hosts.robots(host, u.pathname + u.search, http);
+  const off2 = hosts.disabledWhy(host);
+  if (off2 !== undefined) throw new HostDisabled(host, off2);
+  if (denial !== null) throw new RobotsDenied(host, denial);
+  let r: R;
+  try {
+    r = await send();
+  } catch (e) {
+    if (e instanceof KernelError && e.code === 'rate_limit') hosts.disable(host, 'http-429');
+    throw e;
+  }
+  if (r.status === 401 || r.status === 403) {
+    hosts.disable(host, `http-${r.status}`);
+    throw new HostRefused(r.status, host);
+  }
+  return r;
+}
+
+/**
+ * The adapter's refusal mapping, the same for every platform: a robots.txt refusal is a named skip for the company
+ * today (`robots-disallow <host>: <company> not read today (…)`, returns true); a host disabled earlier is a deferral
+ * (`input_rejected`); a 401/403 is `challenged` (never retried around). Anything else is rethrown as it is.
+ */
+export function refusal(e: unknown, company: string, ctx: AgentContext): true {
+  if (e instanceof RobotsDenied) {
+    ctx.skipped([`robots-disallow ${e.host}: ${company} not read today (${e.reason})`]);
+    return true;
+  }
+  if (e instanceof HostDisabled) throw new KernelError('input_rejected', `host-disabled:${e.why} on ${e.host}; ${company} deferred to the next run, never retried around`);
+  if (e instanceof HostRefused) throw new KernelError('challenged', `${e.host} answered ${e.status}: the host is disabled for this run, never retried around`);
+  throw e;
+}
+
+export function shapeError(what: string, r: { error: z.ZodError }): KernelError {
+  const first = r.error.issues[0];
+  const where = first === undefined ? '' : ` (${first.path.map(String).join('.') || 'root'}: ${first.message})`;
+  return new KernelError('invalid_output', `${what}: response shape is not valid${where}`);
+}
+
+// ---------------------------------------------------------------------------
+// The title pre-filter
+// ---------------------------------------------------------------------------
+
+/** The parts of the pack the adapters read: the title rules, and the office cities. */
+export const TitlePack = z.object({
+  filters: z.object({ roleDeny: z.array(z.string()) }),
+  targets: z.object({ titles: z.array(z.string()) }),
+  // the office cities (eligibility rule 5e)
+  eligibility: z.object({ officeCities: z.array(z.string()).optional() }).optional(),
+});
+export type TitlePack = z.infer<typeof TitlePack>;
+
+const words = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}+#]+/u).filter((w) => w !== '');
+
+/**
+ * The cheap title pre-filter: no `filters.roleDeny` pattern matches (eligibility rule 2, the same compiled patterns),
+ * and, when `targets.titles` is not empty, every word of one target title is a word of the title ("senior engineer"
+ * passes "Senior DevOps Engineer"). It only decides which jobs get a detail; eligibility still judges every job.
+ */
+export function titlePasses(title: string, pack: TitlePack): boolean {
+  if (pack.filters.roleDeny.some((p) => p.trim() !== '' && compileSafePattern(p).test(title))) return false;
+  if (pack.targets.titles.length === 0) return true;
+  const have = new Set(words(title));
+  return pack.targets.titles.some((t) => {
+    const want = words(t);
+    return want.length > 0 && want.every((w) => have.has(w));
+  });
+}
+
+/** The pack, title rules checked; `invalid_output` naming the adapter when they are missing. */
+export function titlePackOf(pack: unknown, agent: string): TitlePack {
+  const r = TitlePack.safeParse(pack);
+  if (!r.success) throw new KernelError('invalid_output', `${agent}: the pack is missing or lacks filters.roleDeny or targets.titles`);
+  return r.data;
+}
+
+// ---------------------------------------------------------------------------
+// Scopes: the applied-scope bounds, the remote type, India and office names
+// ---------------------------------------------------------------------------
+
+/** What the board's facet counts say a scoped list holds. */
+export interface ScopeBounds {
+  /** The sum of the selected values' counts (a job listed under two values counts twice: an upper bound). */
+  readonly expected: number;
+  /** The largest single selected value's count (never double-counted: a lower bound of the list). */
+  readonly largest: number;
+}
+
+/** The tolerance of the bounds: max(5, 5%). */
+const slack = (n: number): number => Math.max(5, n * 0.05);
+
+/**
+ * Whether a scoped list's reported total shows the platform applied the scope (Task 6, Fix rounds 2 and 3): null when
+ * `largest − max(5, 5%) ≤ total ≤ expected + max(5, 5%)`, else why not. A total above the counts is a scope the
+ * platform ignored (a stale or refused filter answering with the whole board); one below the largest value is a stale
+ * filter answering with too little, never a silent zero.
+ */
+export function scopeMiss(total: number, b: ScopeBounds): string | null {
+  if (total > b.expected + slack(b.expected)) return `total ${total}, the facet counts ${b.expected}`;
+  if (total < b.largest - slack(b.largest)) return `total ${total}, below its largest facet value ${b.largest}`;
+  return null;
+}
+
+/** The `input_rejected` refusal of a scope the platform did not apply: nothing is read from that list. */
+export const scopeNotApplied = (company: string, list: string, why: string, platform: string): KernelError =>
+  new KernelError('input_rejected', `scope-not-applied ${company} ${list} list: ${why}; ${platform} did not apply the scope, nothing read from it`);
+
+/** A remote work-type value: the whole descriptor says remote ("Remote", "Virtual", "Work from home"), not a remote site ("California - Remote"). */
+export const REMOTE_TYPE = /^\s*(?:fully\s+)?(?:remote|virtual|work\s+from\s+home|wfh|home[\s-]based)\s*$/iu;
+
+/** Whether a location value names India (a country name, an Indian place, or the ISO code `IN` as its last part). */
+export function namesIndia(location: string): boolean {
+  if (countriesIn(location).includes('india')) return true;
+  const last = location.split(',').pop()?.trim() ?? '';
+  return last === 'IN';
+}
+
+/** Whether a location value names one of the pack's office cities (by its aliases, word-bounded), and no country but India. */
+export function namesOffice(location: string, officeCities: readonly string[]): boolean {
+  const w = (d: string): string => ' ' + d.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((x) => x !== '').join(' ') + ' ';
+  const text = w(location);
+  const places = countriesIn(location);
+  if (places.length > 0 && !places.includes('india')) return false;
+  return officeCities.map(officeCity).some((c) => c.aliases.some((a) => text.includes(w(a))));
+}
+
+/**
+ * One posting per platform id (sourceId), across a company's lists: the lowest `pref` wins (Task 7: office-named,
+ * then India-named, then the rest), ties to the first seen; sorted by sourceId (as `finish`).
+ */
+export function preferPostings(postings: readonly RawPosting[], pref: (p: RawPosting) => number): RawPosting[] {
+  const best = new Map<string, RawPosting>();
+  for (const p of postings) {
+    const had = best.get(p.sourceId);
+    if (had === undefined || pref(p) < pref(had)) best.set(p.sourceId, p);
+  }
+  return finish([...best.values()]);
+}
+
+/** Sorted by sourceId (as `finish`), so the detail order is fixed for a given list. */
+export const bySourceId = (a: RawPosting, b: RawPosting): number => (a.sourceId < b.sourceId ? -1 : a.sourceId > b.sourceId ? 1 : 0);
+
+/**
+ * The detail choice: rank-0 title-passing jobs, ties by sourceId, at most `max`; the named note for the rest
+ * (`detail-budget <company>: N jobs without detail (k over the budget, m not India-named)`), never silent.
+ */
+export function chooseDetails(postings: readonly RawPosting[], o: { pack: TitlePack; title: (p: RawPosting) => string; rank0: (p: RawPosting) => boolean; max: number; company: string; ctx: AgentContext }): RawPosting[] {
+  const wanted = postings.filter((p) => titlePasses(o.title(p), o.pack));
+  const rank0 = wanted.filter(o.rank0).sort(bySourceId);
+  const chosen = rank0.slice(0, o.max);
+  if (wanted.length > chosen.length) {
+    o.ctx.skipped([`detail-budget ${o.company}: ${wanted.length - chosen.length} jobs without detail (${rank0.length - chosen.length} over the budget, ${wanted.length - rank0.length} not India-named)`]);
+  }
+  return chosen;
+}
+
+/** The named note for jobs gone between list and detail (404/410 on the detail): `detail-gone <company>: N jobs gone …`. */
+export function goneNote(company: string, gone: readonly string[]): string {
+  return `detail-gone ${company}: ${gone.length} ${gone.length === 1 ? 'job' : 'jobs'} gone between list and detail (${gone.slice(0, 5).join(', ')}${gone.length > 5 ? ', …' : ''})`;
+}
+
+/** The note prefixes of the named skips every platform adapter may record (problems.ts prints them as they are). */
+export const PLATFORM_NOTE_PREFIXES = ['robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list '] as const;

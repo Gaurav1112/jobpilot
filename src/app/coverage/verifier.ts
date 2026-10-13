@@ -3,9 +3,9 @@ import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { BoardRefused, platformClient, type BoardRead, type PlatformClient } from '../agents/sources/platforms/client.js';
-import { HostDisabled, RobotsDenied, type WorkdayHosts } from '../agents/sources/platforms/workday.js';
+import { HostDisabled, RobotsDenied, type PlatformHosts } from '../agents/sources/platforms/shared.js';
 import { gateOf, HOST_DISABLED, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
-import { robotsDenial } from './robots.js';
+import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 import { sameCompany } from './names.js';
 import { CompanyVerdict, PlatformGuess } from './types.js';
 
@@ -28,7 +28,10 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not), except
  * Workday, whose CXS endpoint is the careers page's own JSON: its tenant's robots.txt is checked through the gate (once
  * per host per run) before page 1 is read; a disallow is `proposed` (`robots-disallow … : the board was not read`).
- * Workday names no company: its tenant is compared, under the generic-label rules, as a slug is. A 401, 403
+ * Workday names no company: its tenant is compared, under the generic-label rules, as a slug is. Eightfold and Oracle
+ * Recruiting Cloud (Task 7) read the same way, through the gate; Oracle's robots.txt answers 403 (its WAF), which for
+ * its REST API is "unknown", read at the minimal rate (`client.robotsUnreadable`, a controller decision): the gate
+ * fetches it without disabling the host, and a readable robots.txt still governs. A 401, 403
  * or 429 from it DISABLES the host for the rest of the run (written to `coverage_host_state` before the step returns,
  * this agent's one side channel outside its output) and the step is deferred: it fails `input_rejected` with
  * `host-disabled:<why> on <host>`, so it is never stored as a finished result and is asked again in a later run. A step that
@@ -66,13 +69,24 @@ export function verifierHosts(g: PlatformGuess): string[] {
 }
 
 /**
- * The run gate as a Workday client's host state: robots.txt once per host per run (the gate's own cache and rules), and
- * the gate's disabled hosts. Only for a platform whose read robots.txt governs (`client.robots`).
+ * The run gate as a robots-governed client's host state (Workday, Eightfold, Oracle): robots.txt once per host per run
+ * (the gate's own cache and rules), and the gate's disabled hosts. Only for a platform whose read robots.txt governs
+ * (`client.robots`). `unreadable: 'allow'` (Oracle): robots.txt is fetched through the gate without its robots rules,
+ * so a plain 401/403 neither disables the host nor refuses the read (it is "unknown"); a challenge or 429 still
+ * disables the host (the gate's fetch does that), and any other answer is judged by the usual status rules.
  */
-function gateHosts(ctx: AgentContext, gate: RunGate, host: string, timeoutMs: number): WorkdayHosts {
+function gateHosts(ctx: AgentContext, gate: RunGate, host: string, timeoutMs: number, unreadable: 'refuse' | 'allow' = 'refuse'): PlatformHosts {
   const fetcher = stepFetcher({ ctx, gate, planned: new Set([host]), acceptMoved: () => false, maxRequests: 1, requestTimeoutMs: timeoutMs });
+  const unknownOk = async (h: string): Promise<RobotsVerdict> => {
+    const r = await fetcher.fetchUrl(`https://${h}/robots.txt`, false);
+    // a challenge has disabled the host: the read sees that and defers
+    if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason };
+    if (r.kind !== 'ok') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved' };
+    if (r.status === 401 || r.status === 403) return { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` };
+    return robotsVerdictOf(r.status, r.body);
+  };
   return {
-    robots: async (h, path) => robotsDenial(await fetcher.robotsFor(h), new URL(`https://${h}${path}`)),
+    robots: async (h, path) => robotsDenial(await (unreadable === 'allow' ? unknownOk(h) : fetcher.robotsFor(h)), new URL(`https://${h}${path}`)),
     disabledWhy: (h) => gate.disabledWhy(h, ctx.clock.now()),
     disable: (h, why) => gate.disable(h, why, ctx.clock.now()),
   };
@@ -102,7 +116,7 @@ export function makeBoardVerifier(opts: GateSource & { readonly requestTimeoutMs
 
 /** The read options: the verifier's timeout, plus the gate as host state where robots.txt governs the read (Workday). */
 const readOptions = (client: PlatformClient, ctx: AgentContext, gate: RunGate, host: string, timeoutMs: number) =>
-  client.robots ? { timeoutMs, hosts: gateHosts(ctx, gate, host, timeoutMs) } : { timeoutMs };
+  client.robots ? { timeoutMs, hosts: gateHosts(ctx, gate, host, timeoutMs, client.robotsUnreadable ?? 'refuse') } : { timeoutMs };
 
 const deferred = (why: string, host: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} on ${host} (${detail}); deferred to a later run, never retried around`);
 
