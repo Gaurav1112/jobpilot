@@ -64,7 +64,8 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with a verified Workday c
     expect(r.counts.totals.failed).toBe(0);
     expect(offline.fetch.calls).toEqual([
       'https://acme.wd5.myworkdayjobs.com/robots.txt',
-      // facet discovery, then the India-scoped list (the fixture's facets name no remote type)
+      // facet discovery, the India-scoped list (the fixture's facets name no remote type), the Bengaluru office list
+      BOARD,
       BOARD,
       BOARD,
       'https://acme.wd5.myworkdayjobs.com/wday/cxs/acme/External/job/India-Bengaluru/Senior-Backend-Engineer_R-501',

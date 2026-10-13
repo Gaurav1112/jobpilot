@@ -14,6 +14,8 @@ import {
   workdayJobUrl,
   workdayListUrl,
   WORKDAY_MAX_DETAILS,
+  WORKDAY_MAX_REQUESTS,
+  workdayPagesPerList,
   WORKDAY_MIN_INTERVAL_MS,
   workdayScopes,
   type WorkdayHosts,
@@ -51,7 +53,7 @@ interface Board {
   readonly total?: number;
   /** Past this offset Workday serves the first page again (its 2000 ceiling); default never. */
   readonly wrapAt?: number;
-  /** The scoped lists, by the facet parameter a request applies (one per request). */
+  /** The scoped lists, by the exact appliedFacets JSON of a request, else by its facet parameter (one per request). */
   readonly scopes?: Readonly<Record<string, { readonly jobs: readonly Posted[]; readonly total?: number }>>;
   readonly facets?: unknown[];
   readonly robots?: { readonly status?: number; readonly body: string };
@@ -82,7 +84,7 @@ function workday(boards: readonly Board[]) {
         const keys = Object.keys(q.appliedFacets);
         expect(keys.length).toBeLessThanOrEqual(1);
         const scoped = keys.length > 0;
-        const scope = scoped ? b.scopes?.[keys[0] as string] : undefined;
+        const scope = scoped ? (b.scopes?.[JSON.stringify(q.appliedFacets)] ?? b.scopes?.[keys[0] as string]) : undefined;
         if (scoped && scope === undefined) return { status: 400, text: async () => '' };
         const jobs = scope?.jobs ?? b.jobs;
         const total = scoped ? (scope?.total ?? jobs.length) : (b.total ?? jobs.length);
@@ -199,7 +201,7 @@ describe('src-workday paging', () => {
   it('cap: a list longer than the page cap fails loudly, never truncated', async () => {
     const err = await runOn([board({ jobs: jobs(70, () => 'Account Executive') })], { maxPages: 3 }).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(KernelError);
-    expect(err).toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/page cap reached at 60 postings \(total 70, 3 pages\)/) });
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/page cap reached at 60 postings \(total 70, 3 pages\)/) });
   });
 
   it('a page repeating earlier postings (Workday ignoring the offset) fails loudly', async () => {
@@ -209,7 +211,7 @@ describe('src-workday paging', () => {
 
   it("the unscoped fallback (no location facets) at Workday's 2000 ceiling fails loudly: it cannot be read in full", async () => {
     const err = await runOn([board({ jobs: jobs(20, () => 'Account Executive'), total: 2000 })]).catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/total 2000 is Workday's reporting ceiling/) });
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/total 2000 is Workday's reporting ceiling/) });
   });
 
   it('a response missing an expected field is invalid_output, never partially parsed', async () => {
@@ -267,12 +269,12 @@ describe('src-workday details: the title pre-filter and the per-company budget',
     const details = Object.fromEntries(list.map((j) => [j.externalPath, detail(j.title)]));
     const { out, calls, skips } = await runOn([board({ jobs: list, details })], { maxDetails: 2 });
     expect(detailsOf(calls).map((c) => c.url.split('_').pop())).toEqual(['JR1000', 'JR1001']);
-    expect(skips).toEqual(['detail-budget Acme: 3 jobs without detail']);
+    expect(skips).toEqual(['detail-budget Acme: 3 jobs without detail (3 over the budget, 0 not India-named)']);
     expect(out).toHaveLength(8);
     expect(out.filter((p) => (p.raw as WorkdayRaw).detail !== null).map((p) => p.sourceId)).toEqual(['JR1000', 'JR1001']);
   });
 
-  it('detail order: India-named locations first, then "N Locations", then the rest, ties by req id', async () => {
+  it('details go only to rank 0 (India-named or office-listed), ties by req id', async () => {
     const list: Posted[] = [
       { ...job(0), locationsText: 'US, CA, Santa Clara' },
       { ...job(1), locationsText: '2 Locations' },
@@ -284,9 +286,10 @@ describe('src-workday details: the title pre-filter and the per-company budget',
     ];
     const details = Object.fromEntries(list.map((j) => [j.externalPath, detail(j.title)]));
     const { calls, skips } = await runOn([board({ jobs: list, details })], { maxDetails: 5 });
-    expect(detailsOf(calls).map((c) => c.url.split('_').pop())).toEqual(['JR1004', 'JR1005', 'JR1001', 'JR1006', 'JR1000']);
-    expect(skips).toEqual(['detail-budget Acme: 2 jobs without detail']);
-    expect(WORKDAY_MAX_DETAILS).toBe(80);
+    // Fix round 2: only rank 0 (India-named, office-listed) gets a detail; "N Locations" and the rest never do
+    expect(detailsOf(calls).map((c) => c.url.split('_').pop())).toEqual(['JR1004', 'JR1005']);
+    expect(skips).toEqual(['detail-budget Acme: 5 jobs without detail (0 over the budget, 5 not India-named)']);
+    expect(WORKDAY_MAX_DETAILS).toBe(40);
   });
 
 });
@@ -459,24 +462,38 @@ const IN_NV = '2fcb99c455831013ea52b82135ba3266';
 const REMOTE_NV = '0c3f5f117e9a0101f63dc469c3010000';
 const SF_COUNTRY = 'CF_-_REC_-_LRV_-_Job_Posting_Anchor_-_Country_from_Job_Posting_Location_Extended';
 const SF_INDIA = 'c4f78be1a8f14da0ab49ce1162348a5e';
+const NV_SCOPES = () => workdayScopes(parseListPage(fixture('nvidia').discovery, 'nvidia'), ['bengaluru']);
+const NV_INDIA = () => NV_SCOPES().india?.facets ?? {};
+const NV_OFFICE = () => NV_SCOPES().offices[0]?.facets ?? {};
+const SF_SCOPES = () => workdayScopes(parseListPage(fixture('salesforce').discovery, 'sf'), ['bengaluru']);
+const key = (f: object): string => JSON.stringify(f);
 const appliedOf = (calls: { method: string; url: string; body?: unknown }[]) => lists(calls).map((c) => (c.body as { appliedFacets: unknown; offset: number }).appliedFacets);
 
 describe('Fix round 1: every Workday read is scoped to the India and remote facets', () => {
   it('discovers the facets of the three recorded tenants', () => {
     const scopes = (name: string) => workdayScopes(parseListPage(fixture(name).discovery, name));
-    // NVIDIA: a country level ("Locations": India) and a location type (Remote)
-    expect(scopes('nvidia')).toEqual({ india: { locationHierarchy1: [IN_NV] }, remote: { locationHierarchy2: [REMOTE_NV] }, located: true, offices: [] });
-    // Salesforce: a Country facet; its "X - Remote" sites are locations, not a remote type
-    expect(scopes('salesforce')).toEqual({ india: { [SF_COUNTRY]: [SF_INDIA] }, remote: null, located: true, offices: [] });
+    // NVIDIA: an exact "India" country value (253) and its India site values (355, the larger: chosen); a location type (Remote, 576)
+    const nv = scopes('nvidia');
+    expect(Object.keys(nv.india?.facets ?? {})).toEqual(['locations']);
+    expect(nv.india?.expected).toBe(355);
+    expect(nv.india?.facets['locations']).not.toContain(IN_NV);
+    expect(nv.remote).toEqual({ facets: { locationHierarchy2: [REMOTE_NV] }, expected: 576 });
+    expect(nv.located).toBe(true);
+    expect(nv.offices).toEqual([]);
+    // Salesforce: the anchor Country "India" (109) loses to its India site values (236); its "X - Remote" sites are locations, not a remote type
+    const sf = scopes('salesforce');
+    expect(Object.keys(sf.india?.facets ?? {})).toEqual(['locations']);
+    expect(sf.india?.expected).toBe(236);
+    expect(sf.remote).toBeNull();
     // Mastercard: no country level; its sites naming an Indian place stand in for it
     const mc = scopes('mastercard');
     expect(mc.remote).toBeNull();
     expect(mc.located).toBe(true);
-    expect(Object.keys(mc.india ?? {})).toEqual(['locations']);
+    expect(Object.keys(mc.india?.facets ?? {})).toEqual(['locations']);
     const groups = fixture('mastercard').discovery.facets as { values: { values: { descriptor: string; id: string }[] }[] }[];
     const mcValues = groups[0]?.values[0]?.values ?? [];
-    expect(mc.india?.['locations']).toEqual(mcValues.filter((v) => /\bIndia\b/.test(v.descriptor)).map((v) => v.id));
-    expect(mc.india?.['locations']?.length).toBeGreaterThan(5);
+    expect(mc.india?.facets['locations']).toEqual(mcValues.filter((v) => /\bIndia\b/.test(v.descriptor)).map((v) => v.id));
+    expect(mc.india?.facets['locations']?.length).toBeGreaterThan(5);
     // the recorded scoped first pages: what those facets select live
     expect(fixture('nvidia').scoped.india.total).toBe(253);
     expect(fixture('nvidia').scoped.remote?.total).toBe(576);
@@ -496,8 +513,10 @@ describe('Fix round 1: every Workday read is scoped to the India and remote face
       '/job/US-CA-Santa-Clara/Platform_JR2001': detail('Senior Software Engineer, Platform', { location: 'US, CA, Santa Clara', additionalLocations: ['India, Bengaluru'], country: { descriptor: 'United States of America' } }),
     };
     const worldwide = jobs(25, () => 'Account Executive', () => 'Germany, Munich');
-    const { out, calls } = await runOn([board({ jobs: worldwide, total: 2000, facets, scopes: { locationHierarchy1: { jobs: india }, locationHierarchy2: { jobs: remote } }, details })]);
-    expect(appliedOf(calls)).toEqual([{}, { locationHierarchy1: [IN_NV] }, { locationHierarchy2: [REMOTE_NV] }]);
+    // Fix round 2: the 2-Locations job gets its detail as an office-listed (rank-0) job
+    const office = { [key(NV_OFFICE())]: { jobs: [india[1] as Posted] } };
+    const { out, calls } = await runOn([board({ jobs: worldwide, total: 2000, facets, scopes: { [key(NV_INDIA())]: { jobs: india }, locationHierarchy2: { jobs: remote }, ...office }, details })], { pack: { ...PACK, eligibility: { officeCities: ['bengaluru'] } } });
+    expect(appliedOf(calls)).toEqual([{}, NV_INDIA(), { locationHierarchy2: [REMOTE_NV] }, NV_OFFICE()]);
     expect(out.map((p) => p.sourceId)).toEqual(['JR1001', 'JR1003', 'JR1004', 'JR2001']);
     const two = normalize(out.find((p) => p.sourceId === 'JR2001') as RawPosting);
     expect(two.locationText).toBe('US, CA, Santa Clara; India, Bengaluru');
@@ -508,7 +527,7 @@ describe('Fix round 1: every Workday read is scoped to the India and remote face
     const fx = fixture('salesforce');
     const india = fx.scoped.india.jobPostings;
     expect(india.filter((j) => j.locationsText === '2 Locations').length).toBeGreaterThan(0);
-    const sf: Board = { host: 'salesforce.wd12.myworkdayjobs.com', tenant: 'salesforce', site: 'External_Career_Site', jobs: fx.pages[0]?.jobPostings ?? [], total: 1520, facets: fx.discovery.facets ?? [], scopes: { [SF_COUNTRY]: { jobs: india } }, robots: { body: fx.robots }, anyDetail: true };
+    const sf: Board = { host: 'salesforce.wd12.myworkdayjobs.com', tenant: 'salesforce', site: 'External_Career_Site', jobs: fx.pages[0]?.jobPostings ?? [], total: 1520, facets: fx.discovery.facets ?? [], scopes: { [key(SF_SCOPES().india?.facets ?? {})]: { jobs: india } }, robots: { body: fx.robots }, anyDetail: true };
     const { out, calls } = await runOn([sf]);
     expect(lists(calls)).toHaveLength(2);
     expect(out.map((p) => (p.raw as WorkdayRaw).externalPath).sort()).toEqual(india.map((j) => j.externalPath).sort());
@@ -544,19 +563,19 @@ describe('Fix round 1: every Workday read is scoped to the India and remote face
 
   it('a scoped list at the 2000 ceiling fails loudly', async () => {
     const facets = fixture('salesforce').discovery.facets ?? [];
-    const err = await runOn([board({ jobs: jobs(1), facets, scopes: { [SF_COUNTRY]: { jobs: jobs(20, () => 'Account Executive'), total: 2000 } } })]).catch((e: unknown) => e);
-    expect(err).toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/scoped list reports Workday's 2000 ceiling/) });
+    const err = await runOn([board({ jobs: jobs(1), facets, scopes: { [key(SF_SCOPES().india?.facets ?? {})]: { jobs: jobs(20, () => 'Account Executive'), total: 2000 } } })]).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/scoped list reports Workday's 2000 ceiling/) });
   });
 
   it('the discovered facets are cached per company per run: a second read the same run skips discovery; a new run discovers again', async () => {
     const facets = fixture('salesforce').discovery.facets ?? [];
-    const b = board({ jobs: jobs(3), facets, scopes: { [SF_COUNTRY]: { jobs: jobs(2, () => 'Account Executive') } } });
+    const b = board({ jobs: jobs(3), facets, scopes: { [key(SF_SCOPES().india?.facets ?? {})]: { jobs: jobs(2, () => 'Account Executive') } } });
     const hosts = dailyWorkdayHosts();
     const net = workday([b]);
     const agent = makeSrcWorkday({ hosts });
     await agent.run(reqFor(b), context(net.fetch, [HOST]).ctx);
     await agent.run(reqFor(b), context(net.fetch, [HOST]).ctx);
-    expect(appliedOf(net.calls)).toEqual([{}, { [SF_COUNTRY]: [SF_INDIA] }, { [SF_COUNTRY]: [SF_INDIA] }]);
+    expect(appliedOf(net.calls)).toEqual([{}, SF_SCOPES().india?.facets, SF_SCOPES().india?.facets]);
     const net2 = workday([b]);
     await makeSrcWorkday({ hosts: dailyWorkdayHosts() }).run(reqFor(b), context(net2.fetch, [HOST]).ctx);
     expect(appliedOf(net2.calls)[0]).toEqual({});
@@ -568,7 +587,7 @@ describe('Fix round 1 (live finding): office-city lists label "N Locations" jobs
 
   it("discovers the office city's location values in the recorded facets", () => {
     const nv = workdayScopes(parseListPage(fixture('nvidia').discovery, 'nvidia'), ['bengaluru']);
-    expect(nv.offices).toEqual([{ display: 'Bengaluru', facets: { locations: ['91336993fab910af6d6fb9748af4c1df'] }, labels: ['India, Bengaluru'] }]);
+    expect(nv.offices).toEqual([{ display: 'Bengaluru', facets: { locations: ['91336993fab910af6d6fb9748af4c1df'] }, expected: 204, labels: ['India, Bengaluru'] }]);
     const sf = workdayScopes(parseListPage(fixture('salesforce').discovery, 'sf'), ['bengaluru']);
     expect(sf.offices.map((o) => o.labels)).toEqual([['India - Bangalore']]);
     // Mastercard has no Bengaluru location: no office list
@@ -581,8 +600,8 @@ describe('Fix round 1 (live finding): office-city lists label "N Locations" jobs
     const facets = fixture('nvidia').discovery.facets ?? [];
     const multi: Posted = { title: 'Account Executive', externalPath: '/job/US-CA-Santa-Clara/AE_JR3001', locationsText: '2 Locations', bulletFields: ['JR3001'] };
     const pune: Posted = { title: 'Account Executive', externalPath: '/job/India-Pune/AE_JR3002', locationsText: '2 Locations', bulletFields: ['JR3002'] };
-    const { out, calls } = await runOn([board({ jobs: [], facets, scopes: { locationHierarchy1: { jobs: [multi, pune] }, locationHierarchy2: { jobs: [] }, locations: { jobs: [multi] } } })], { pack: OFFICE_PACK });
-    expect(appliedOf(calls)).toEqual([{}, { locationHierarchy1: [IN_NV] }, { locationHierarchy2: [REMOTE_NV] }, { locations: ['91336993fab910af6d6fb9748af4c1df'] }]);
+    const { out, calls } = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: [multi, pune] }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: [multi] } } })], { pack: OFFICE_PACK });
+    expect(appliedOf(calls)).toEqual([{}, NV_INDIA(), { locationHierarchy2: [REMOTE_NV] }, { locations: ['91336993fab910af6d6fb9748af4c1df'] }]);
     const byId = Object.fromEntries(out.map((p) => [p.sourceId, p]));
     expect((byId['JR3001']?.raw as WorkdayRaw).officeLocations).toEqual(['India, Bengaluru']);
     expect((byId['JR3002']?.raw as WorkdayRaw).officeLocations).toEqual([]);
@@ -601,9 +620,124 @@ describe('Fix round 1 (live finding): office-city lists label "N Locations" jobs
       { title: 'Senior Software Engineer', externalPath: '/job/X/C_JR4003', locationsText: 'India, Pune', bulletFields: ['JR4003'] },
     ];
     const details = { '/job/X/B_JR4002': detail('Senior Software Engineer', { location: 'US, CA, Santa Clara', additionalLocations: ['India, Bengaluru'] }) };
-    const { out, calls } = await runOn([board({ jobs: [], facets, details, anyDetail: true, scopes: { locationHierarchy1: { jobs: list }, locationHierarchy2: { jobs: [] }, locations: { jobs: [list[1] as Posted] } } })], { pack: OFFICE_PACK, maxDetails: 2 });
+    const { out, calls } = await runOn([board({ jobs: [], facets, details, anyDetail: true, scopes: { [key(NV_INDIA())]: { jobs: list }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: [list[1] as Posted] } } })], { pack: OFFICE_PACK, maxDetails: 2 });
     expect(detailsOf(calls).map((c) => c.url.split('_').pop())).toEqual(['JR4002', 'JR4003']);
     const b = normalize(out.find((p) => p.sourceId === 'JR4002') as RawPosting);
     expect(b.locationText).toBe('US, CA, Santa Clara; India, Bengaluru');
+  });
+});
+
+describe('Fix round 2: facet safety, rank-0 details, a scaled request cap', () => {
+  const OFFICE = { ...PACK, eligibility: { officeCities: ['bengaluru'] } };
+  const page = (facets: unknown[]) => parseListPage({ total: 10, jobPostings: [], facets }, 'probe');
+
+  it('I1: a plain "Remote" value does not take over its facet: India and the office come from the other values (probe A)', () => {
+    const facets = [{ facetParameter: 'locations', values: [{ descriptor: 'Remote', id: 'rem', count: 7 }, { descriptor: 'Bengaluru, India', id: 'blr', count: 5 }, { descriptor: 'Pune, India', id: 'pnq', count: 3 }, { descriptor: 'Austin, TX', id: 'aus', count: 9 }] }];
+    expect(workdayScopes(page(facets), ['bengaluru'])).toEqual({
+      india: { facets: { locations: ['blr', 'pnq'] }, expected: 8 },
+      remote: { facets: { locations: ['rem'] }, expected: 7 },
+      located: true,
+      offices: [{ display: 'Bengaluru', facets: { locations: ['blr'] }, expected: 5, labels: ['Bengaluru, India'] }],
+    });
+  });
+
+  it('I1: with a country facet present too, the office list still comes from the site facet holding "Remote" (probe B)', () => {
+    const facets = [
+      { facetParameter: 'locationCountry', values: [{ descriptor: 'India', id: 'in', count: 20 }, { descriptor: 'United States', id: 'us', count: 40 }] },
+      { facetParameter: 'locations', values: [{ descriptor: 'Remote', id: 'rem', count: 7 }, { descriptor: 'Bengaluru, India', id: 'blr', count: 5 }] },
+    ];
+    const s = workdayScopes(page(facets), ['bengaluru']);
+    expect(s.india).toEqual({ facets: { locationCountry: ['in'] }, expected: 20 });
+    expect(s.remote).toEqual({ facets: { locations: ['rem'] }, expected: 7 });
+    expect(s.offices).toEqual([{ display: 'Bengaluru', facets: { locations: ['blr'] }, expected: 5, labels: ['Bengaluru, India'] }]);
+  });
+
+  it('minor 1: an unknown facet parameter (a delivery hub) is never an office list, and gives India only through an exact "India" value (probe C)', () => {
+    const hub = [
+      { facetParameter: 'workSiteHub', values: [{ descriptor: 'Bangalore Hub - Global Delivery', id: 'hub', count: 50 }, { descriptor: 'Hyderabad Hub, India', id: 'hyd', count: 9 }] },
+      { facetParameter: 'locationCountry', values: [{ descriptor: 'India', id: 'in', count: 12 }] },
+    ];
+    const s = workdayScopes(page(hub), ['bengaluru']);
+    expect(s.offices).toEqual([]);
+    expect(s.india).toEqual({ facets: { locationCountry: ['in'] }, expected: 12 });
+    const exactOnly = [{ facetParameter: 'workSiteHub', values: [{ descriptor: 'India', id: 'hin', count: 3 }, { descriptor: 'Pune, India', id: 'hp', count: 2 }] }];
+    expect(workdayScopes(page(exactOnly), ['bengaluru'])).toMatchObject({ india: { facets: { workSiteHub: ['hin'] }, expected: 3 }, offices: [] });
+  });
+
+  it('minor 2: several India candidates: the largest count wins, ties in served order', () => {
+    const tie = [
+      { facetParameter: 'locationCountry', values: [{ descriptor: 'India', id: 'a', count: 10 }] },
+      { facetParameter: 'Location_Country', values: [{ descriptor: 'India', id: 'b', count: 10 }] },
+    ];
+    expect(workdayScopes(page(tie)).india).toEqual({ facets: { locationCountry: ['a'] }, expected: 10 });
+    const bigger = [tie[0], { facetParameter: 'Location_Country', values: [{ descriptor: 'India', id: 'b', count: 11 }] }];
+    expect(workdayScopes(page(bigger)).india).toEqual({ facets: { Location_Country: ['b'] }, expected: 11 });
+  });
+
+  it('I2: a scoped list Workday did not apply (its total above the facet counts) fails as scope-not-applied, and nothing is stamped', async () => {
+    const facets = fixture('nvidia').discovery.facets ?? [];
+    const whole = jobs(300, () => 'Account Executive', () => '2 Locations');
+    // the office list answers with the whole board: 300 > 204 + 5%
+    const err = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: jobs(3) }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: whole } } })], { pack: OFFICE }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^scope-not-applied Acme Bengaluru list: total 300, the facet counts 204/) });
+    // drift within max(5, 5%) is accepted
+    const ok = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: jobs(3) }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: jobs(214, () => 'Account Executive') } } })], { pack: OFFICE });
+    expect(ok.out.length).toBeGreaterThan(200);
+    // the India list too
+    const err2 = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: jobs(400, () => 'Account Executive') }, locationHierarchy2: { jobs: [] } } })]).catch((e: unknown) => e);
+    expect(err2).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^scope-not-applied Acme india list: total 400, the facet counts 355/) });
+  });
+
+  it('minor 3: the office stamp is keyed by externalPath: a re-post in another city never takes the label', async () => {
+    const facets = fixture('nvidia').discovery.facets ?? [];
+    const pune: Posted = { title: 'Account Executive', externalPath: '/job/India-Pune/AE_JR1', locationsText: '2 Locations', bulletFields: ['JR1'] };
+    const blr: Posted = { title: 'Account Executive', externalPath: '/job/India-Bengaluru/AE_JR1-1', locationsText: '2 Locations', bulletFields: ['JR1'] };
+    const { out } = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: [pune, blr] }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: [blr] } } })], { pack: OFFICE });
+    // one req is one posting (the first, Pune); the Bengaluru re-post's label is not moved onto it
+    expect(out).toHaveLength(1);
+    expect((out[0]?.raw as WorkdayRaw).externalPath).toBe('/job/India-Pune/AE_JR1');
+    expect((out[0]?.raw as WorkdayRaw).officeLocations).toEqual([]);
+  });
+
+  it('minor 4: deterministic per-tenant refusals are input_rejected (no breaker); drift stays invalid_output', async () => {
+    const cap = await runOn([board({ jobs: jobs(70, () => 'Account Executive') })], { maxPages: 3 }).catch((e: unknown) => e);
+    expect(cap).toMatchObject({ code: 'input_rejected' });
+    const ceiling = await runOn([board({ jobs: jobs(20, () => 'Account Executive'), total: 2000 })]).catch((e: unknown) => e);
+    expect(ceiling).toMatchObject({ code: 'input_rejected' });
+    const repeat = await runOn([board({ jobs: jobs(45, () => 'Account Executive'), ignoreOffset: true })]).catch((e: unknown) => e);
+    expect(repeat).toMatchObject({ code: 'invalid_output' });
+  });
+
+  it('minor 5: an office list at the 2000 ceiling fails loudly', async () => {
+    const facets = fixture('nvidia').discovery.facets ?? [];
+    const err = await runOn([board({ jobs: [], facets, scopes: { [key(NV_INDIA())]: { jobs: jobs(3) }, locationHierarchy2: { jobs: [] }, [key(NV_OFFICE())]: { jobs: jobs(20, () => 'Account Executive'), total: 2000 } } })], { pack: OFFICE }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/the Bengaluru office list reports Workday's 2000 ceiling/) });
+  });
+
+  it('timing: "N Locations" and other ranks never get a detail even with budget left; India-remote locations do', async () => {
+    const list: Posted[] = [job(1, 'Senior Software Engineer', 'India, Remote'), job(2, 'Senior Software Engineer', '2 Locations'), job(3, 'Senior Software Engineer', 'US, Remote')];
+    const details = Object.fromEntries(list.map((j) => [j.externalPath, detail(j.title)]));
+    const { calls, skips } = await runOn([board({ jobs: list, details })]);
+    expect(detailsOf(calls).map((c) => c.url.split('_').pop())).toEqual(['JR1001']);
+    expect(skips).toEqual(['detail-budget Acme: 2 jobs without detail (0 over the budget, 2 not India-named)']);
+  });
+
+  it('timing: the per-list page cap scales with the office cities, so the worst case at 2 s spacing ends before the step timeout', () => {
+    for (const offices of [0, 1, 2, 3]) {
+      const lists = 2 + offices;
+      const pages = workdayPagesPerList(offices);
+      const worst = 1 + 1 + lists * pages + WORKDAY_MAX_DETAILS;
+      expect(worst, `${offices} office cities`).toBeLessThanOrEqual(WORKDAY_MAX_REQUESTS);
+      expect(worst * WORKDAY_MIN_INTERVAL_MS, `${offices} office cities`).toBeLessThan(srcWorkdayContract.timeoutMs);
+      expect(pages).toBeGreaterThan(0);
+    }
+    expect(workdayPagesPerList(0)).toBe(100);
+  });
+
+  it('timing: the scaled cap is applied to every list of a board with office cities', async () => {
+    const facets = [{ facetParameter: 'locationCountry', values: [{ descriptor: 'India', id: 'in', count: 5000 }] }];
+    const cities = ['bengaluru', 'pune', 'hyderabad'];
+    const err = await runOn([board({ jobs: [], facets, scopes: { locationCountry: { jobs: jobs(20 * workdayPagesPerList(3) + 1, () => 'Account Executive') } } })], { pack: { ...PACK, eligibility: { officeCities: cities } } }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`${workdayPagesPerList(3)} pages\\)`)) });
   });
 });
