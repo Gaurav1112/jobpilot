@@ -116,15 +116,32 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
   // proposal-planner plans nothing under `freelance.fitFloor` (Task 9), which its unit tests cover.
   const unfloored = { ...publicPack, freelance: { ...publicPack.freelance, fitFloor: 0 } };
   const gigPack = freezePack(unfloored);
+  // The `office-*` eligibility cases run on the fixture pack with one office city (Pune, the fixture candidate's city);
+  // every other case runs on the fixture pack as it is, with no office city.
+  const withOffice = { ...publicPack, eligibility: { ...publicPack.eligibility, officeCities: ['pune'] } };
+  const officePack = freezePack(withOffice);
+  const eligibilityCases = loadJsonl(join(datasetDir, 'eligibility.jsonl'));
+  const isOffice = (c: { id: string }): boolean => c.id.startsWith('office-');
+  const verdictOf = (outs: readonly unknown[]): unknown => one(outs, (o: EligibilityVerdict) => ({ verdict: o.verdict, reasons: o.reasons, notes: o.notes }));
   return [
     {
       agent: eligibility,
-      cases: loadJsonl(join(datasetDir, 'eligibility.jsonl')),
-      project: (outs) => one(outs, (o: EligibilityVerdict) => ({ verdict: o.verdict, reasons: o.reasons, notes: o.notes })),
+      cases: eligibilityCases.filter((c) => !isOffice(c)),
+      project: verdictOf,
       metric: 'exactMatch',
       min: 1,
       pack,
       packHash: hash,
+    },
+    {
+      name: 'eligibility-office',
+      agent: eligibility,
+      cases: eligibilityCases.filter(isOffice),
+      project: verdictOf,
+      metric: 'exactMatch',
+      min: 1,
+      pack: officePack,
+      packHash: hashOf(withOffice),
     },
     {
       agent: scorerLexicon,

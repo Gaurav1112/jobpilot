@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { canonicalEmployment, decideEligibility, eligibility, fullTimeContract, NOTE_B2B } from '../../src/app/agents/eligibility.js';
+import { canonicalEmployment, decideEligibility, eligibility, fullTimeContract, NOTE_B2B, NOTE_OFFICE_PREFIX, officeNote } from '../../src/app/agents/eligibility.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { appEvalSpecs } from '../../src/app/evals.js';
 import { assertNoForbidden, loadPack } from '../../src/app/pack/load.js';
@@ -699,6 +699,199 @@ describe('D2 full-time B2B', () => {
   });
 });
 
+describe('office cities: onsite or hybrid in one of the pack\'s office cities passes with a badge', () => {
+  const withOffice = (officeCities: string[]) => ({ ...pack, eligibility: { ...pack.eligibility, officeCities } });
+  const pune = withOffice(['pune']);
+  const onsite = (locationText: string, over: Partial<Posting> = {}): Partial<Posting> => ({ locationText, remote: remote('onsite', ['india']), ...over });
+  const officeEligible = (display: string) => ({ verdict: 'eligible', reasons: [], notes: [officeNote(display), 'pay not disclosed'] });
+
+  it('builds the note from the city display name', () => {
+    expect(officeNote('Bengaluru')).toBe('office/hybrid: Bengaluru');
+    expect(NOTE_OFFICE_PREFIX).toBe('office/hybrid: ');
+  });
+
+  it('a Pune onsite posting is eligible with the note', () => {
+    expect(decide(onsite('Pune, Maharashtra, India'), pune)).toEqual(officeEligible('Pune'));
+    // also when only the location text says onsite, or nothing says remote at all
+    expect(decide({ locationText: 'Pune (On-site)', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Pune, India', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('a Pune hybrid posting is eligible with the note', () => {
+    expect(decide({ locationText: 'Pune, India', remote: remote('hybrid', ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Hybrid - Pune', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Pune, India', remote: remote(null, ['india']), descriptionText: 'This is a hybrid role, 3 days a week in the office.' }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('an alias spelling matches its city key, case-insensitively, on word boundaries', () => {
+    const blr = withOffice(['bengaluru']);
+    expect(decide(onsite('Bangalore, Karnataka'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('BLR'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('Gurugram, Haryana'), withOffice(['Delhi NCR']))).toEqual(officeEligible('Delhi NCR'));
+    expect(decide(onsite('Blrx Park'), blr)).toEqual(rejected('onsite')); // not on a word boundary
+    // an unknown key matches only itself
+    expect(decide(onsite('Kochi, Kerala'), withOffice(['kochi']))).toEqual(officeEligible('Kochi'));
+    expect(decide(onsite('Cochin, Kerala'), withOffice(['kochi']))).toEqual(rejected('onsite'));
+  });
+
+  it('a Mumbai onsite posting is still onsite', () => {
+    expect(decide(onsite('Mumbai, India'), pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Mumbai, India', remote: remote('hybrid', ['india']) }, pune)).toEqual(rejected('hybrid'));
+  });
+
+  it('with no office cities nothing changes', () => {
+    expect(decide(onsite('Pune, India'))).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India'), withOffice([]))).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Pune, India', remote: remote('hybrid', ['india']) }, withOffice([]))).toEqual(rejected('hybrid'));
+  });
+
+  it('the comp floor still applies after it', () => {
+    const v = decide(onsite('Pune, India', { comp: base(1_000_000, 2_000_000) }), pune);
+    expect(v).toEqual(rejected('below-floor:2000000'));
+    expect(decide(onsite('Pune, India', { comp: base(7_000_000, 9_000_000) }), pune)).toEqual({ verdict: 'eligible', reasons: [], notes: [officeNote('Pune')] });
+  });
+
+  it('earlier rules still reject first', () => {
+    expect(decide(onsite('Pune, India', { company: 'Infosys' }), pune)).toEqual(rejected('company:Infosys'));
+    expect(decide(onsite('Pune, India', { title: 'Senior Frontend Engineer' }), pune)).toEqual(rejected('role:front[- ]?end'));
+  });
+
+  it('a city named only in the description does not count', () => {
+    expect(decide(onsite('India', { descriptionText: 'You will join our Pune engineering team.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Mumbai, India', { descriptionText: 'Teams in Pune and Mumbai.' }), pune)).toEqual(rejected('onsite'));
+  });
+
+  it('a relocation or residence requirement for another city keeps the reject', () => {
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocate to Mumbai required.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocation to Hyderabad is required within 3 months.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You must be located in Chennai.' }), pune)).toEqual(rejected('onsite'));
+    // relocation to the office city itself is fine
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocation to Pune, Maharashtra is supported.' }), pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('a multi-location posting counts when any listed location is an office city in India', () => {
+    expect(decide({ locationText: 'Pune, India; Remote US', remote: remote('hybrid', ['india', 'united states']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'San Francisco, US | Pune', remote: remote('onsite', ['india', 'united states']) }, pune)).toEqual(officeEligible('Pune'));
+    // a structured location entry kept verbatim counts like the text
+    expect(decide({ locationText: 'Office', remote: remote('onsite', ['pune']) }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('anything that excludes India keeps the reject', () => {
+    expect(decide({ locationText: 'Pune', remote: remote('onsite', ['united states']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'India (excluding Pune)', remote: remote('onsite', ['india']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Pune, India', remote: remote('onsite', ['india'], ['location:excludes:india']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'Candidates must be authorized to work in the US.' }), pune)).toEqual(rejected('onsite'));
+  });
+
+  it('a generic location field takes the city from an explicit label line in the description, for the office match only', () => {
+    const blr = withOffice(['bengaluru']);
+    const inOffice = (locationText: string, label: string, structured: Posting['remote']['structured'] = null): Partial<Posting> => ({
+      locationText,
+      remote: remote(structured, ['india']),
+      descriptionText: `About the team\nWe build the edge network.\n${label}\nWhat you'll do: build services.`,
+    });
+    // a Cloudflare-like "In-Office" posting
+    expect(decide(inOffice('In-Office', 'Location: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('Hybrid', 'Office - Bangalore, India', 'hybrid'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('India', 'Work location: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('', 'Based in: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('N/A', 'Location: Mumbai; Bengaluru'), blr)).toEqual(officeEligible('Bengaluru')); // any listed city
+    expect(decide(inOffice('In-Office', 'Available Locations: Bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('Hybrid', 'Available Locations: Mumbai/Bengaluru/New Delhi', 'hybrid'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('N/A', 'Office location — Bengaluru, KA, India'), blr)).toEqual(officeEligible('Bengaluru'));
+    // a label word inside prose is no label line
+    expect(decide(inOffice('India', 'Snacks: on-the-house in the Bangalore office'), blr)).toEqual(rejected('onsite'));
+    // with a generic field, "based|located|working in|at|from our <office city> office" counts (Tilt-like)
+    expect(decide(inOffice('India', 'This role is Hybrid, based in our Bangalore office 2-3 days/week.'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('In-Office', 'You will be working from our Bengaluru office.'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(inOffice('India', 'This role is Hybrid, based in our Hyderabad office 2-3 days/week.'), blr)).toEqual(rejected('hybrid'));
+    expect(decide(inOffice('In-Office', 'You will be based in our Hyderabad office.'), blr)).toEqual(rejected('onsite'));
+    // but never with a real location field
+    expect(decide(inOffice('Hyderabad', 'You will be based in our Bangalore office.'), blr)).toEqual(rejected('onsite'));
+    // the label names another city: stays onsite
+    expect(decide(inOffice('In-Office', 'Location: Mumbai'), blr)).toEqual(rejected('onsite'));
+    // a non-generic location field wins over the label
+    expect(decide(inOffice('Hyderabad', 'Location: Bengaluru'), blr)).toEqual(rejected('onsite'));
+    // no label line, only prose: stays onsite
+    expect(decide(inOffice('In-Office', 'You will join our Bengaluru team.'), blr)).toEqual(rejected('onsite'));
+    // the label never feeds the remote decision: a remote label on a generic location is not remote
+    expect(decide(inOffice('In-Office', 'Location: Remote - India'), blr)).toEqual(rejected('onsite'));
+    // a label line anywhere in the description counts (Stripe-like, at character 4600)
+    const late = `${'Build services. '.repeat(260)}\nOffice-assigned staff spend half their time in the office.\n${'Build services. '.repeat(24)}\n\nOffice location—Bengaluru, KA, India`;
+    expect(late.indexOf('Office location')).toBeGreaterThanOrEqual(4590);
+    expect(decide({ ...inOffice('N/A', ''), descriptionText: late }, blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide({ ...inOffice('Pune', ''), descriptionText: late }, blr)).toEqual(rejected('onsite'));
+  });
+
+  describe('fix round 3: the label decides over prose; one JD window; the label value must be a location list', () => {
+    const blr = withOffice(['bengaluru']);
+    // synthetic postings go through the normalizer, so the rule sees the description as HTML paragraphs become text
+    const viaHtml = (locationText: string, paragraphs: string[], structured: Posting['remote']['structured'] = null) => {
+      const n = normalize({ source: 'jobicy', sourceId: '1', company: 'X', slug: 'jobicy', raw: { id: 1, jobTitle: 'Backend Engineer', companyName: 'X', url: 'https://jobicy.com/jobs/1', jobGeo: 'India', jobDescription: paragraphs.map((t) => `<p>${t}</p>`).join('') } });
+      return decideEligibility({ ...n, locationText, remote: remote(structured, ['india']) }, blr);
+    };
+    const filler = (n: number): string => 'Build services for the edge network. '.repeat(n);
+
+    it('RED 1: a label naming another city beats the "based in our <office city> office" prose', () => {
+      expect(viaHtml('In-Office', ['Location: Hyderabad', 'We also have a team based in our Bengaluru office.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('India', ['Work location: Mumbai', 'You will be working from our Bangalore office.'], 'hybrid')).toEqual(rejected('hybrid'));
+    });
+
+    it('RED 2: the relocation/office reject reads the whole description, like the label and prose rules', () => {
+      expect(viaHtml('In-Office', ['You will be working from our Bangalore office.', filler(60), 'You will be based in our Hyderabad office.'])).toEqual(rejected('onsite'));
+    });
+
+    it('RED 3: a label value with prose is no label', () => {
+      expect(viaHtml('In-Office', ['Office location: our Bengaluru office is closing; this role is in Hyderabad.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('N/A', ['Location: Bengaluru is where our founders met.'])).toEqual(rejected('onsite'));
+    });
+
+    it('RED 4: a separator does not cross a line break', () => {
+      expect(viaHtml('In-Office', ['Office', '- Bangalore snacks and free lunch'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Office', '- Bangalore'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Available Locations', '- Bangalore snacks and free lunch'])).toEqual(rejected('onsite'));
+    });
+
+    it('the real rescues still pass', () => {
+      expect(viaHtml('In-Office', ['Location: Bengaluru, India — Hybrid'], 'hybrid')).toEqual(officeEligible('Bengaluru')); // Rubrik
+      expect(viaHtml('In-Office', ['Location: India, Bangalore'])).toEqual(officeEligible('Bengaluru')); // Cloudflare
+      expect(viaHtml('India', ['Location: Bengaluru, India — Hybrid Department: People — Talent Acquisition'])).toEqual(officeEligible('Bengaluru')); // Rubrik: the sibling field runs on in the same line
+      expect(viaHtml('In-Office', ['Location: Hyderabad Department: People', 'Team based in our Bengaluru office.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Available Locations: Bengaluru'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Available Locations', '- Bengaluru, India'])).toEqual(officeEligible('Bengaluru')); // the multi-line Cloudflare form
+      expect(viaHtml('In-Office', ['Available Locations: Bengaluru/Mumbai/New Delhi'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Available Locations: Bangalore / Mumbai'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Location: Bengaluru (Hybrid mode)'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('India', ['This role is Hybrid, based in our Bangalore office 2-3 days/week.'], 'hybrid')).toEqual(officeEligible('Bengaluru')); // Tilt, no label line
+      expect(viaHtml('N/A', [filler(130), 'Office location—Bengaluru, KA, India'])).toEqual(officeEligible('Bengaluru')); // Stripe
+    });
+
+    it('the existing correct outcomes still hold', () => {
+      expect(viaHtml('In-Office', ['Location: Bengaluru (excluding India)'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Location: Bengaluru', 'Remote not available for India.'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Office - San Francisco', 'Location: Bengaluru'])).toEqual(rejected('onsite')); // the first label wins
+    });
+  });
+
+  it('a "work from / based in / report to our <City> office" sentence naming another city keeps the reject', () => {
+    expect(decide(onsite('Pune, India', { descriptionText: 'This role requires working from our Hyderabad office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You will be based in our Mumbai office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You will report to our Chennai office.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'This role requires working from our Pune office.' }), pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('knows Mysuru as data only', () => {
+    expect(decide(onsite('Mysore, Karnataka'), withOffice(['mysuru']))).toEqual(officeEligible('Mysuru'));
+    expect(decide(onsite('Mysore, Karnataka'), withOffice(['bengaluru']))).toEqual(rejected('onsite'));
+  });
+
+  it('the pack field is optional and absent means none', () => {
+    expect(pack.eligibility.officeCities).toBeUndefined();
+    expect(decide(onsite('Pune, India'))).toEqual(rejected('onsite'));
+  });
+});
+
 describe('eligibility agent', () => {
   const ctxWith = (p?: unknown) =>
     issueContext({
@@ -745,6 +938,19 @@ describe('eligibility golden eval', () => {
     expect(r.failures).toEqual([]);
     expect(r).toMatchObject({ score: 1, pass: true, min: 1 });
     expect(r.packHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('runs the office-* cases on the fixture pack with one office city, every other case without', async () => {
+    const office = specs.find((s) => s.name === 'eligibility-office')!;
+    expect(office.agent.contract.id).toBe('eligibility');
+    expect(office.cases.length).toBeGreaterThanOrEqual(10);
+    expect(office.cases.every((c) => c.id.startsWith('office-'))).toBe(true);
+    expect(spec.cases.some((c) => c.id.startsWith('office-'))).toBe(false);
+    expect(office.cases.some((c) => (c.expected as { notes: string[] }).notes.includes(officeNote('Pune')))).toBe(true);
+    const r = await runEval(office, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 });
+    expect(r.failures).toEqual([]);
+    expect(r).toMatchObject({ name: 'eligibility-office', score: 1, pass: true });
+    expect(r.packHash).not.toBe((await runEval(spec, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 })).packHash);
   });
 
   it('datasets carry no forbidden fixture term', () => {

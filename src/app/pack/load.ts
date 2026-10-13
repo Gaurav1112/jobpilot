@@ -14,6 +14,7 @@ import {
   AnswersSchema,
   ContactSchema,
   EligibilitySchema,
+  WritingSchema,
   ExperienceSchema,
   FactStatus,
   FactsFile,
@@ -280,6 +281,7 @@ export function loadPack(
     roles,
     experience,
     eligibility: readYaml(dir, 'eligibility.yaml', EligibilitySchema),
+    ...(existsSync(join(dir, 'writing.yaml')) ? { writing: readYaml(dir, 'writing.yaml', WritingSchema) } : {}),
     lexicon: { strong: lexicon.strong.map(withKey), medium: lexicon.medium.map(withKey), gap: lexicon.gap.map(withKey) },
     targets: { ...targets, claimableTitles: targets.claimableTitles ?? ongoingRoleTitles(roles) },
     filters: readYaml(dir, 'filters.yaml', FiltersSchema),
@@ -308,6 +310,7 @@ export function loadPack(
   // A feed with no source agent would be configuration the run silently never honours (review I2).
   for (const f of pack.feeds.enabled) if (!Object.hasOwn(FEED_SOURCES, f)) throw new PackError(`feeds.yaml: unknown feed ${f} (known: ${knownFeeds().join(', ')})`);
   checkClaimable(pack.targets.claimableTitles);
+  for (const id of pack.writing?.signatureFacts ?? []) if (!seen.has(id)) throw new PackError(`writing.yaml: signatureFacts names unknown fact id ${id}`);
   const { contact: _contact, answers: _answers, ...pub } = pack;
   const publicPack: PublicPack = pub;
   return { pack, hash: hashOf(withoutFreelance(publicPack)), freelancePackHash: hashOf(publicPack), companies, companiesHash: hashOf({ companies }), warnings };

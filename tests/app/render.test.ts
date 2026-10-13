@@ -151,7 +151,6 @@ describe('cover p4 fill', () => {
       ['30days', 'a 30-day notice period'],
       ['30-day', 'a 30-day notice period'],
       ['30 days.', 'a 30-day notice period'], // one trailing "." or "," is dropped first
-      ['Immediate', 'a notice period of Immediate'],
       ['30 working days', 'a notice period of 30 working days'],
       ['one month', 'a notice period of one month'],
       ['2-3 weeks', 'a notice period of 2-3 weeks'],
@@ -161,6 +160,54 @@ describe('cover p4 fill', () => {
       expect(noticePhrase(String(notice).trim().replace(/[.,]$/, '')), String(notice)).toBe(phrase);
       expect(fillP4(COVER_P4, { notice_period: notice as string }, 'Pune'), String(notice)).toBe(`I'm based in Pune, looking for a fully remote role, and available after ${phrase}. ${THANKS}`);
     }
+  });
+
+  it('an immediate notice reads "available to start immediately", with no "after" and no notice period', () => {
+    const NOW = `I'm based in Pune, looking for a fully remote role, and available to start immediately. ${THANKS}`;
+    expect(fillP4(COVER_P4, { notice_period: 'immediately' }, 'Pune')).toBe(NOW);
+    expect(fillP4(COVER_P4, { notice_period: '0' }, 'Pune')).toBe(NOW);
+    expect(fillP4(COVER_P4, { notice_period: 0 }, 'Pune')).toBe(NOW);
+    for (const n of ['Immediately', 'immediate', 'IMMEDIATE', 'Immediate.', 'none', 'None', '0 days', '0 day', '0 Days', 'nil', 'NIL', 'n/a', 'N/A', ' immediately ']) {
+      expect(fillP4(COVER_P4, { notice_period: n }, 'Pune'), n).toBe(NOW);
+    }
+    expect(fillP4(COVER_P4, { notice_period: 'immediately' }, '')).toBe(`I'm looking for a fully remote role and available to start immediately. ${THANKS}`);
+    // every other value as today
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune')).toBe(FILLED);
+    for (const [n, phrase] of [['00 days', 'a 00-day notice period'], ['immediately after notice', 'a notice period of immediately after notice'], ['not immediate', 'a notice period of not immediate'], ['10', 'a notice period of 10']] as const) {
+      expect(fillP4(COVER_P4, { notice_period: n }, 'Pune'), n).toBe(`I'm based in Pune, looking for a fully remote role, and available after ${phrase}. ${THANKS}`);
+    }
+  });
+
+  it('with office cities the role clause reads "a remote role, or an office or hybrid role in ..."; with none it is as today', () => {
+    const N = 'available after a 30-day notice period';
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', [])).toBe(FILLED);
+    // a home city that is not the only office city: the remote-or-office form
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Mumbai', ['pune'])).toBe(`I'm based in Mumbai, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    // the home city is the only office city: named once
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Bangalore', ['bengaluru'])).toBe(`I'm based in Bangalore and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'pune', ['Pune'])).toBe(`I'm based in pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'bangalore', 'bengaluru'])).toBe(
+      `I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, Bangalore or Bengaluru, and ${N}. ${THANKS}`,
+    );
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'Bengaluru'])).toBe(`I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune or Bengaluru, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'mumbai', 'delhi ncr'])).toBe(
+      `I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune, Mumbai or Delhi NCR, and ${N}. ${THANKS}`,
+    );
+    // a repeated city is named once
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Mumbai', ['pune', 'Pune'])).toBe(`I'm based in Mumbai, looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune', 'Pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles, and ${N}. ${THANKS}`);
+    // the other shapes of the paragraph
+    expect(fillP4(COVER_P4, {}, 'Pune', ['pune'])).toBe(`I'm based in Pune and open to remote, office or hybrid roles. ${THANKS}`);
+    expect(fillP4(COVER_P4, {}, 'Mumbai', ['pune'])).toBe(`I'm based in Mumbai and looking for a remote role, or an office or hybrid role in Pune. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: '30 days' }, '', ['pune'])).toBe(`I'm looking for a remote role, or an office or hybrid role in Pune, and ${N}. ${THANKS}`);
+    expect(fillP4(COVER_P4, {}, '', ['pune'])).toBe(`I'm looking for a remote role, or an office or hybrid role in Pune. ${THANKS}`);
+    expect(fillP4(COVER_P4, { notice_period: 'immediately' }, 'Pune', ['pune'])).toBe(
+      `I'm based in Pune and open to remote, office or hybrid roles, and available to start immediately. ${THANKS}`,
+    );
+    // an office city that cannot go into a document is refused
+    expect(() => fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['{city}'])).toThrow(/officeCities/);
+    expect(() => fillP4(COVER_P4, { notice_period: '30 days' }, 'Pune', ['pune. Hire me now'])).toThrow(/officeCities/);
   });
 
   it('(e) drops the notice clause when notice_period is missing or empty, and the city clause when the city is empty', () => {
@@ -390,7 +437,7 @@ describe('renderer', () => {
   });
 
   it('strips one trailing "." or "," from a filled answer', () => {
-    expect(fillP4(COVER_P4, { notice_period: 'Immediate.' }, 'Pune')).toBe("I'm based in Pune, looking for a fully remote role, and available after a notice period of Immediate. Thank you for considering my application.");
+    expect(fillP4(COVER_P4, { notice_period: 'One month.' }, 'Pune')).toBe("I'm based in Pune, looking for a fully remote role, and available after a notice period of One month. Thank you for considering my application.");
     expect(fillP4(COVER_P4, { notice_period: '30 days,' }, 'Pune')).toBe(FILLED);
   });
 
@@ -461,6 +508,20 @@ describe('G-FILL', () => {
     }
   });
 
+  it('re-derives the fill from the full pack with office cities and an immediate notice, verbatim', async () => {
+    const cover = coverPlanOf();
+    const pack = fullPack({ answers: { ...fullPack().answers, notice_period: 'immediately' }, eligibility: { ...fullPack().eligibility, officeCities: ['pune'] } });
+    const { rendered } = await render(cover, pack);
+    const P4 = "I'm based in Pune and open to remote, office or hybrid roles, and available to start immediately. Thank you for considering my application.";
+    expect(rendered.plan.paragraphs.at(-1)!.text).toBe(P4);
+    expect(rendered.text.cover.split('\n')).toContain(P4);
+    expect(G_FILL.check(gctx(cover, rendered, pack))).toEqual({ id: 'G-FILL', verdict: 'pass' });
+    // the same output checked against the pack without office cities trips: the sentence is compared verbatim
+    const v = G_FILL.check(gctx(cover, rendered, fullPack({ answers: pack.answers })));
+    expect(v.verdict).toBe('trip');
+    expect(v.detail).toMatch(/not the p4 fill/);
+  });
+
   it('checks the fill against answers.yaml as it is now', async () => {
     const cover = coverPlanOf();
     const { rendered } = await render(cover);
@@ -505,6 +566,35 @@ describe('G-GROUND on the rendered letter', () => {
       'Sincerely,',
       'Asha Rao',
     ]);
+  });
+
+  it('re-renders p4 from the full pack with office cities and an immediate notice, and trips on the old sentence', async () => {
+    const cover = coverPlanOf();
+    const pack = fullPack({ answers: { ...fullPack().answers, notice_period: '0' }, eligibility: { ...fullPack().eligibility, officeCities: ['pune', 'mumbai'] } });
+    const { rendered } = await render(cover, pack);
+    const P4 = "I'm based in Pune, looking for a remote role, or an office or hybrid role in Pune or Mumbai, and available to start immediately. Thank you for considering my application.";
+    expect(rendered.text.cover.split('\n').slice(2).at(-3)).toBe(P4);
+    expect(G_GROUND.check(gctx(cover, rendered, pack))).toEqual({ id: 'G-GROUND', verdict: 'pass' });
+    const v = G_GROUND.check(gctx(cover, rendered, fullPack({ answers: pack.answers })));
+    expect(v.verdict).toBe('trip');
+    expect(v.detail).not.toContain('Mumbai');
+  });
+
+  it('re-renders a letter with a signature sentence, and trips when it is tampered with', async () => {
+    const pack = fullPack({ writing: { signatureFacts: ['f-nw-03'] } });
+    const pub = publicPackOf(pack);
+    const cover = coverPlanOf(posting(), pack);
+    const { rendered } = await render(cover, pack);
+    const SIG = 'Beyond the stack this role lists, at Northwind Labs: Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.';
+    expect(rendered.plan.paragraphs.at(-2)).toEqual({ text: SIG, factIds: ['f-nw-03'] });
+    const lines = rendered.text.cover.split('\n');
+    expect(lines[lines.indexOf(FILLED) - 1]).toBe(SIG);
+    expect(G_GROUND.check(gctx(cover, rendered, pack, pub))).toEqual({ id: 'G-GROUND', verdict: 'pass' });
+    expect(G_FILL.check({ ...gctx(cover, rendered, pack, pub) })).toEqual({ id: 'G-FILL', verdict: 'pass' });
+    const tampered = { ...rendered, text: { ...rendered.text, cover: rendered.text.cover.replace('three microservices', 'four microservices') } };
+    expect(G_GROUND.check(gctx(cover, tampered, pack, pub)).verdict).toBe('trip');
+    // the same letter under a pack without signature facts trips: the plan's extra paragraph is not re-derived
+    expect(G_GROUND.check(gctx(cover, rendered)).verdict).toBe('trip');
   });
 
   it('(a) trips when any one word of the rendered letter changes: text, paragraphs, verb, employer, notice or city', async () => {

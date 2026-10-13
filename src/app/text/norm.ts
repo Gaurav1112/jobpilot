@@ -264,6 +264,19 @@ function isLocationParen(inner: string): boolean {
   return rest === '' && inner.trim() !== '';
 }
 
+/** Mode and qualifier words that may sit beside places in an explicit location label's value. */
+const LABEL_VALUE_WORDS = /\b(?:mode|ka|excluding|except|outside|office|offices)\b/gi;
+
+/**
+ * True when `text` is only a location list: listed places (cities, states, countries) and mode words (hybrid, remote,
+ * in-office, ...) separated by , / ; | ( ) & - and dashes. Any other word ("our", "is", "closing", "snacks") makes it
+ * prose, not a list.
+ */
+export function isPlaceList(text: string): boolean {
+  const rest = text.normalize('NFKC').replace(PLACE_RE, ' ').replace(LOCATION_WORDS, ' ').replace(LABEL_VALUE_WORDS, ' ').replace(/[\s,;/|&+()–—-]+/g, '');
+  return rest === '' && text.trim() !== '';
+}
+
 /** The title's comparison form and the places taken out of it (see `normTitle`). */
 export function splitTitle(title: string): { title: string; places: string[] } {
   let t = collapse(title.normalize('NFKC').toLowerCase().replace(GENDER, ' '));
@@ -418,3 +431,38 @@ export function postedAtOf(v: unknown, unit?: 'ms' | 's'): string | null {
   if (Number.isNaN(d.getTime()) || d.getUTCFullYear() < MIN_YEAR || d.getUTCFullYear() > 9999) return null;
   return d.toISOString();
 }
+
+// ---- office cities ----
+
+/**
+ * Office city keys (the pack's `eligibility.officeCities`) and the spellings each one matches, with the name documents
+ * and notes show. Generic place data: which cities count is the pack's choice. An unknown key matches only itself and
+ * shows title-cased ("kochi" shows "Kochi").
+ */
+export interface OfficeCity {
+  readonly display: string;
+  readonly aliases: readonly string[];
+}
+
+const OFFICE_CITY_ALIASES: Readonly<Record<string, OfficeCity>> = {
+  bengaluru: { display: 'Bengaluru', aliases: ['bengaluru', 'bangalore', 'blr'] },
+  pune: { display: 'Pune', aliases: ['pune'] },
+  hyderabad: { display: 'Hyderabad', aliases: ['hyderabad'] },
+  mumbai: { display: 'Mumbai', aliases: ['mumbai', 'bombay'] },
+  'delhi ncr': { display: 'Delhi NCR', aliases: ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'ncr'] },
+  chennai: { display: 'Chennai', aliases: ['chennai', 'madras'] },
+  mysuru: { display: 'Mysuru', aliases: ['mysuru', 'mysore'] },
+};
+
+/** A city key in canonical form: trimmed, lower-cased, inner spaces collapsed. */
+export const cityKey = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, ' ');
+
+/** The office city for one pack entry. */
+export function officeCity(raw: string): OfficeCity {
+  const key = cityKey(raw);
+  const known = Object.hasOwn(OFFICE_CITY_ALIASES, key) ? OFFICE_CITY_ALIASES[key] : undefined;
+  return known ?? { display: key.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()), aliases: [key] };
+}
+
+/** The display names for the pack's office cities, in pack order, each once. */
+export const officeCityDisplays = (raw: readonly string[]): string[] => [...new Set(raw.map((r) => officeCity(r).display))];

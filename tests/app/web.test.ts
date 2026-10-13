@@ -114,7 +114,7 @@ function seed(): void {
     writeDocs(s, K1);
     s.upsertJob(row(K2, 2, {
       title: 'Staff Engineer', company: 'Globex', score: 70, compMinInr: 10_437_500, compMaxInr: 12_525_000, compBasis: 'base',
-      comp: { min: 125_000, max: 150_000, currency: 'USD', period: 'year', basis: 'base' },
+      comp: { min: 125_000, max: 150_000, currency: 'USD', period: 'year', basis: 'base' }, notes: ['office/hybrid: Pune'],
     }));
     s.upsertJob(row(K3, 3, { title: 'Platform Engineer', company: 'Hooli', score: 90 }));
     s.upsertJob(row(K4, 4, { title: 'Backend Developer', company: 'Vandelay', score: 85, verdict: 'review' }));
@@ -276,6 +276,14 @@ describe('dashboard: jobs list', () => {
     expect(list.match(/B2B contractor: no PF\/benefits<\/span>/g)?.length).toBe(1);
     expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor: no PF/benefits</span>');
     expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor: no PF/benefits</span>');
+  });
+
+  it('shows the office-city badge on the row and on the job page, only where the note is set', async () => {
+    const list = (await get('/')).body;
+    expect(list).toContain('<span class="pill pill-accent">office/hybrid: Pune</span>');
+    expect(list.match(/office\/hybrid: Pune<\/span>/g)?.length).toBe(1);
+    expect((await get(`/jobs/${K2}`)).body).toContain('>office/hybrid: Pune</span>');
+    expect((await get(`/jobs/${K1}`)).body).not.toContain('office/hybrid:');
   });
 
   it('marks rows first seen since the previous visit as new', async () => {
