@@ -155,6 +155,16 @@ describe('gig-eligibility: role filter and preset brackets', () => {
     expect(decide(custom).reasons).toEqual(['rate-below-floor:27.78']);
   });
 
+  it('a gig asking for a licensed firm or professional is review with the note, never a reject (final review M10)', () => {
+    const lic = { verdict: 'review', reasons: ['licensed-professional'], notes: ['asks for a licensed firm or professional'] };
+    expect(decide(rated({ title: 'SOC 2 Type II audit', description: 'Licensed, AICPA peer-reviewed CPA firm only.' }))).toEqual(lic);
+    expect(decide(rated({ title: 'Need a licensed attorney for contract review' }))).toEqual(lic);
+    expect(decide(rated({ description: 'We are looking for a law firm to draft our terms.' }))).toEqual(lic);
+    for (const description of ['No CPA required; build the invoice parser.', "You don't need to be a CPA.", 'Our CPA reviews the reports.', 'We are a law firm; build our site.']) {
+      expect(decide(rated({ description })).reasons, description).not.toContain('licensed-professional');
+    }
+  });
+
   it('a hedged rate or budget is review with the note, a plain one still rejects', () => {
     const d = (description: string) => decide(rated({ description }, { ...STATED, minUsdH: 25, maxUsdH: 35 }));
     for (const t of ['The hourly rate is indicative only.', 'If you have a different rate, put it in your reply.', 'Please quote your hourly rate.', 'Budget is flexible.', 'Pay is negotiable.']) {
@@ -363,7 +373,7 @@ describe('golden evals', () => {
     expect(spec).toMatchObject({ metric: 'exactMatch', min: 1 });
     expect(spec.cases.length).toBeGreaterThanOrEqual(240);
     const reasons = new Set(spec.cases.flatMap((c) => (c.expected as { reasons: string[] }).reasons.map((r) => r.replace(/:.*$/, ''))));
-    for (const r of ['closed', 'role-filter', 'budget-preset', 'company', 'location-outside-india', 'hours-over-cap', 'overlap-outside-ist-window', 'exclusive', 'budget-below-floor', 'rate-below-floor', 'location-unclear', 'hours-unclear', 'rate-unclear', 'exclusivity-unclear']) expect(reasons.has(r), r).toBe(true);
+    for (const r of ['closed', 'role-filter', 'budget-preset', 'company', 'location-outside-india', 'hours-over-cap', 'overlap-outside-ist-window', 'exclusive', 'budget-below-floor', 'rate-below-floor', 'location-unclear', 'hours-unclear', 'rate-unclear', 'exclusivity-unclear', 'licensed-professional']) expect(reasons.has(r), r).toBe(true);
     expect(new Set(spec.cases.map((c) => (c.expected as { verdict: string }).verdict))).toEqual(new Set(['eligible', 'rejected', 'review']));
     const gbp = spec.cases.find((c) => c.id === 'rate-gbp-30-31')!;
     expect(gbp.expected).toMatchObject({ reasons: ['rate-below-floor:39.5'] });

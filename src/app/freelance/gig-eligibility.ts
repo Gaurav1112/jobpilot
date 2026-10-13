@@ -52,6 +52,9 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    clients", "We need an exclusive contractor", "You will work exclusively for us", "No other clients while engaged").
  *    A narrowed prohibition (same industry, from our clients, using our data, on this codebase) is review with `restriction
  *    on other work - verify`; "exclusive rights", "non-exclusive" and "exclusively for Android" are not that.
+ * 7b. licensed-professional: the title or a description clause asks for a licensed firm or professional (CPA, AICPA,
+ *    an audit or law firm, a licensed attorney or auditor, a peer-reviewed firm) with a requirement cue ("only", "must",
+ *    "need", "looking for"): review with `asks for a licensed firm or professional`, never a reject.
  * 8. budget-below-floor: kind `gig`, rate unknown, `budgetUsd` below `fixedBudgetFloorUsd`. A kind `gig` with a budget
  *    at or above the floor is eligible on that, with the rate left unknown. A fixed budget whose raw currency, minimum
  *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
@@ -513,6 +516,28 @@ function exclusiveOutcome(g: Gig): Outcome {
   return weak ? reviewOf('exclusivity-unclear', NOTE_EXCLUSIVITY) : PASS;
 }
 
+/* ------------------------------------------------------------------ 7b. licensed professional */
+
+/** A licensed firm or professional ("licensed, AICPA peer-reviewed CPA firm only", final review M10). */
+const LICENSED = /\b(?:cpa|aicpa|licensed (?:cpa|accountant|attorney|lawyer|auditor)|audit firm|law firm|peer[- ]reviewed)\b/i;
+/** The clause asks for it: a requirement cue in the same clause. */
+const LICENSED_CUE = /\b(?:only|must|required|requires?|requirement|need(?:s|ed)?|looking for|seeking|hire|hiring|has to|have to|should be|eligible|qualified)\b/i;
+/** "No CPA required", "you don't need to be a CPA", "a licensed auditor is not needed": the clause rules it out. */
+const LICENSED_NOT_NEEDED =
+  /\b(?:no|not|without|don't|do not|doesn't|does not|isn't|is not)\b[^.;]{0,30}\b(?:need(?:ed)?|requir\w*|necessary|cpa|aicpa|licen[sc]\w*|audit firm|law firm|peer[- ]reviewed)\b|\b(?:cpa|aicpa|licen[sc]\w*|audit firm|law firm)\b[^.;]{0,30}\bnot (?:needed|required|necessary)\b/i;
+export const NOTE_LICENSED = 'asks for a licensed firm or professional';
+
+/**
+ * 7b. licensed-professional: the title or a description clause asks for a licensed firm or professional (a CPA or
+ * audit firm, a law firm, a licensed attorney, a peer-reviewed firm), which the candidate is not: review with the
+ * note, never a reject (the clause may be about the client, not the bidder).
+ */
+function licensedOutcome(g: Gig): Outcome {
+  const clauses = [g.title, ...g.description.split(CLAUSES)].map(clauseOf);
+  const asks = clauses.some((c) => LICENSED.test(c) && LICENSED_CUE.test(c) && !LICENSED_NOT_NEEDED.test(c));
+  return asks ? reviewOf('licensed-professional', NOTE_LICENSED) : PASS;
+}
+
 /* ------------------------------------------------------------------ 8-9. pay */
 
 const DERIVED: ReadonlySet<RatedGig['rate']['method']> = new Set(['fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours']);
@@ -581,6 +606,7 @@ export function decideGig(r: RatedGig, pack: GigPack): GigDecision {
     hoursOutcome(g, pack.freelance.maxHoursPerWeek),
     overlapOutcome(g, pack.freelance.istWindow),
     exclusiveOutcome(g),
+    licensedOutcome(g),
     payOutcome(r, pack.freelance, pack.platformRules[g.platform]?.presetBrackets ?? []),
   ];
   const notes = outcomes.flatMap((o) => o.notes);
