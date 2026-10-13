@@ -26,7 +26,7 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not). A 401, 403
  * or 429 from it DISABLES the host for the rest of the run (written to `coverage_host_state` before the step returns,
  * this agent's one side channel outside its output) and the step is deferred: it fails `input_rejected` with
- * `host-disabled:<why>`, so it is never stored as a finished result and is asked again in a later run. A step that
+ * `host-disabled:<why> on <host>`, so it is never stored as a finished result and is asked again in a later run. A step that
  * meets a host already disabled (by itself or a sibling) is deferred the same way, without a request.
  */
 
@@ -78,7 +78,7 @@ export function makeBoardVerifier(opts: GateSource) {
   return defineAgent(boardVerifierContract, async (g, ctx) => [await verify(g, ctx, gate)]);
 }
 
-const deferred = (why: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} (${detail}); deferred to a later run, never retried around`);
+const deferred = (why: string, host: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} on ${host} (${detail}); deferred to a later run, never retried around`);
 
 async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promise<CompanyVerdict> {
   const verdict = (status: CompanyVerdict['status'], reasons: string[], read?: BoardRead): CompanyVerdict => ({
@@ -95,7 +95,7 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promi
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const host = client.host;
   const off = gate.state.disabled.get(host);
-  if (off !== undefined) throw deferred(off, `${host} was disabled earlier in this run`);
+  if (off !== undefined) throw deferred(off, host, 'disabled earlier in this run');
 
   let read: BoardRead;
   try {
@@ -103,11 +103,11 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate): Promi
   } catch (e) {
     if (e instanceof BoardRefused) {
       gate.disable(host, `http-${e.status}`, ctx.clock.now());
-      throw deferred(`http-${e.status}`, `${host} refused this request`);
+      throw deferred(`http-${e.status}`, host, 'it refused this request');
     }
     if (e instanceof KernelError && e.code === 'rate_limit') {
       gate.disable(host, 'http-429', ctx.clock.now());
-      throw deferred('http-429', `${host} rate-limited this request`);
+      throw deferred('http-429', host, 'it rate-limited this request');
     }
     if (e instanceof KernelError && e.code === 'gone') return verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]);
     if (e instanceof KernelError && (e.code === 'invalid_output' || e.code === 'overloaded' || e.code === 'network')) {

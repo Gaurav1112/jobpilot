@@ -16,5 +16,14 @@
   "status": "Active",
   "isHiring": true,
   "batch": "S23"
+ },
+ {
+  "name": "Alpha Robotics Inc",
+  "slug": "alpha-robotics",
+  "website": "https://www.alpha.test",
+  "all_locations": "Remote",
+  "status": "Active",
+  "isHiring": true,
+  "batch": "W22"
  }
 ]

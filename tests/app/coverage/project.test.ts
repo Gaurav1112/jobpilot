@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { coverageNotification, deferralLine, projectCoverage } from '../../../src/app/coverage/project.js';
+import { coverageNotification, deferralHosts, deferralLine, projectCoverage } from '../../../src/app/coverage/project.js';
 import type { CareersSite, CompanyCandidate, CompanyVerdict, PlatformGuess } from '../../../src/app/coverage/types.js';
 import { HOST_DISABLED_MARK, runProblems } from '../../../src/app/problems.js';
 import { HOST_DISABLED } from '../../../src/app/coverage/gate.js';
@@ -91,6 +91,15 @@ describe('the weekly coverage line', () => {
   it('reads exactly "Coverage: N verified (+k new) · p proposed · f failing"', () => {
     expect(coverageNotification({ verified: 12, newVerified: 3, proposed: 40, failing: 1 }, null)).toBe('Coverage: 12 verified (+3 new) · 40 proposed · 1 failing');
     expect(coverageNotification({ verified: 0, newVerified: 0, proposed: 0, failing: 0 }, null)).toBe('Coverage: 0 verified (+0 new) · 0 proposed · 0 failing');
+  });
+
+  it('names only the hosts that deferred a step, once each, from the deferred steps\' details', () => {
+    expect(deferralHosts([
+      'skipped by run state set by another candidate (/careers: host-disabled:http-429 on www.acme.test; /jobs: host-disabled:http-429 on www.acme.test)',
+      'host-disabled:challenge on jobs.beta.test (disabled earlier in this run); deferred to a later run, never retried around',
+      'skipped by run state set by another candidate (listed: host-disabled:robots-unavailable on WWW.ACME.TEST)',
+      'no host named here',
+    ])).toEqual([['jobs.beta.test', 'challenge'], ['www.acme.test', 'http-429']]);
   });
 
   it('adds the deferral line when steps were deferred by a disabled host, naming each host once', () => {

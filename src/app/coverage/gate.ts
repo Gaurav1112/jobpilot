@@ -155,7 +155,7 @@ export function stepFetcher(o: {
     if (!state.disabled.has(host)) own.add(host);
     gate.disable(host, why, at);
   };
-  const skipReason = (host: string, why: string): string => (own.has(host) ? `${why} (${host})` : `${HOST_DISABLED}${why}`);
+  const skipReason = (host: string, why: string): string => (own.has(host) ? `${why} (${host})` : `${HOST_DISABLED}${why} on ${host}`);
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const http = ctx.http;
   let requests = 0;

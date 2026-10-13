@@ -60,14 +60,17 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
   it('yields 1 verified, 1 proposed for a name mismatch, 1 failed for a 404, a workday board proposed, an unlocated seed only counted', async () => {
     const home = newHome();
     const n = net();
-    const s = await run(home, W1, n.fetch);
+    let t = Date.parse(W1);
+    const s = await runCoverage({ home, clock: { now: () => new Date((t += 1000)).toISOString() }, fetch: n.fetch, sleep: async () => {}, codeHash: 'e2e' });
     expect(s).toMatchObject({ runId: 'coverage-2026-10-11', week: '2026-10-11', resumed: false, exitCode: 0, picks: 1 });
-    expect(s.candidates).toEqual({ bySource: { pick: 1, remoteintech: 2, yc: 2, jobs: 0 }, merged: 5, selected: 5, dropped: 0 });
+    expect(s.candidates).toEqual({ bySource: { pick: 1, remoteintech: 2, yc: 2, jobs: 0 }, merged: 5, selected: 5, dropped: 1, denied: 0 });
     expect(s.located).toEqual({ listed: 3, 'homepage-link': 1, path: 0, subdomain: 0, sitemap: 0, none: 1 });
     expect(s.platforms).toEqual({ ashby: 1, greenhouse: 2, workday: 1 });
     expect(s.verdicts).toEqual({ verified: 1, proposed: 2, failed: 1 });
     expect(s.notification).toBe('Coverage: 1 verified (+1 new) · 2 proposed · 0 failing');
     expect(s.deferred.total).toBe(0);
+    // the cross-source merge (carry 1): the yc entry on the pick's domain loses to the pick, and says so
+    expect(s.mergeNotes).toEqual(['merge: "Alpha Robotics Inc" (yc) dropped, alpha.test is held by "Alpha Robotics" (pick)']);
     expect(s.projection.unlocated).toEqual({ proposed: 0, failed: 0, counted: 1 });
 
     const r = registry(home);
@@ -87,7 +90,10 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     // the run is on the dashboard's runs view, and its umbrella row is completed
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
-      expect(app.kernel.getRun('coverage-2026-10-11')).toMatchObject({ pipeline: 'jobpilot-coverage', status: 'completed' });
+      const umbrella = app.kernel.getRun('coverage-2026-10-11');
+      expect(umbrella).toMatchObject({ pipeline: 'jobpilot-coverage', status: 'completed' });
+      const times = app.kernel.db.prepare(`SELECT started_at, finished_at FROM runs WHERE run_id = ?`).get('coverage-2026-10-11') as { started_at: string; finished_at: string };
+      expect(Date.parse(times.finished_at)).toBeGreaterThan(Date.parse(times.started_at));
       for (const st of ['seed', 'locate', 'detect', 'verify']) expect(app.kernel.getRun(`coverage-2026-10-11.${st}`)).toMatchObject({ status: 'completed' });
       expect(app.listRuns(5).map((x) => x.runId)).toEqual(['coverage-2026-10-11']);
       expect(app.kernel.getRun('coverage-2026-10-11')?.policy_hash).not.toBe('coverage-empty-pipeline');
@@ -165,7 +171,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     };
     const s = await run(home, W1, fetch);
     expect(s.exitCode).toBe(0);
-    expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']] });
+    expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1 });
     expect(calls.filter((u) => u.startsWith('https://boards-api.greenhouse.io/v1/'))).toHaveLength(1);
     expect(s.notification).toBe('Coverage: 0 verified (+0 new) · 1 proposed · 0 failing · not located this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
     expect(s.problems.map((p) => p.kind)).toEqual(['deferred', 'deferred']);

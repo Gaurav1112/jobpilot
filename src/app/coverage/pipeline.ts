@@ -3,7 +3,7 @@ import type { EgressSets } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
 import type { Envelope } from '../../kernel/envelope.js';
 import type { GuardrailRegistry } from '../../kernel/guardrails/index.js';
-import { mergePolicy, policyHash, PRODUCT_POLICY_V1, type Policy } from '../../kernel/policy.js';
+import { hostDenied, mergePolicy, policyHash, PRODUCT_POLICY_V1, type Policy } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import type { Store } from '../../kernel/store/store.js';
 import { Supervisor } from '../../kernel/supervisor.js';
@@ -12,6 +12,7 @@ import { appGuardrails } from '../guardrails.js';
 import type { Pack } from '../pack/schema.js';
 import { compileDaily } from '../pipeline.js';
 import { detectorEgressSets, makePlatformDetector } from './detector.js';
+import { asHttps } from './gate.js';
 import { makeRunGate, memoryHostStateStore, type RunGate } from './gate.js';
 import { locatorEgressSets, makeCareersLocator } from './locator.js';
 import { companySeed, mergeCandidates } from './seed.js';
@@ -112,6 +113,23 @@ export function selectCandidates(merged: readonly CompanyCandidate[], limit?: nu
   return merged.filter((c) => c.source === 'pick' || others++ < limit);
 }
 
+/**
+ * Candidates whose website (or listed careers URL) is on a host the policy denies outright (`deniedEgressHosts`,
+ * `deniedEgressBrands`: LinkedIn, Indeed, Glassdoor, Naukri): such a "website" is a profile on a job board whose terms
+ * forbid automated access, so the candidate is not sent to the locator at all (the broker would refuse every probe).
+ * One note each, never a silent drop.
+ */
+export function deniedWebsites(candidates: readonly CompanyCandidate[], policy: Pick<Policy, 'deniedEgressHosts' | 'deniedEgressBrands'>): { readonly kept: CompanyCandidate[]; readonly notes: string[] } {
+  const kept: CompanyCandidate[] = [];
+  const notes: string[] = [];
+  for (const c of candidates) {
+    const denied = [c.website, c.careersUrl].map((u) => (u === null ? null : asHttps(u))).find((u) => u !== null && u !== undefined && hostDenied(policy, u.hostname));
+    if (denied === undefined) kept.push(c);
+    else notes.push(`${c.name} (${c.companyKey}): ${denied?.hostname ?? '?'} is a host the policy denies; not located`);
+  }
+  return { kept, notes };
+}
+
 /** A step of a stage that did not finish because a host was disabled in the run: asked again next run. */
 export interface Deferred {
   readonly stage: StageId;
@@ -153,6 +171,8 @@ export interface CoverageStagesOutcome {
   readonly selected: readonly CompanyCandidate[];
   /** One note per candidate that lost its companyKey to another source in the merge. */
   readonly dropped: readonly string[];
+  /** One note per candidate left out because its website is on a policy-denied host (`deniedWebsites`). */
+  readonly denied: readonly string[];
   readonly sites: readonly CareersSite[];
   readonly guesses: readonly PlatformGuess[];
   /** The verifier's verdicts plus a Proposed verdict per guess with no platform. */
@@ -234,7 +254,8 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
   const seeded = seed.outputs.map((x) => CompanyCandidate.schema.parse(x));
   const dropped: string[] = [];
   const merged = mergeCandidates(seeded, (n) => dropped.push(n));
-  const selected = selectCandidates(merged, o.limit);
+  const { kept, notes: denied } = deniedWebsites(merged, o.policy);
+  const selected = selectCandidates(kept, o.limit);
 
   const locate = await run('locate', selected, locatorEgressSets(selected));
   const sites = locate.outputs.map((x) => CareersSite.schema.parse(x));
@@ -248,5 +269,5 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
   const verdicts = [...verify.outputs.map((x) => CompanyVerdict.schema.parse(x)), ...guesses.filter((g) => g.platform === null).map(noPlatformVerdict)];
   verdicts.sort((a, b) => (a.guess.site.candidate.companyKey < b.guess.site.candidate.companyKey ? -1 : a.guess.site.candidate.companyKey > b.guess.site.candidate.companyKey ? 1 : 0));
 
-  return { stages: { seed, locate, detect, verify }, seeded, merged, selected, dropped, sites, guesses, verdicts };
+  return { stages: { seed, locate, detect, verify }, seeded, merged, selected, dropped, denied, sites, guesses, verdicts };
 }

@@ -79,10 +79,18 @@ export function projectCoverage(app: AppStore, input: CoverageProjectInput): Cov
 }
 
 const MAX_HOSTS = 5;
+const DEFERRAL = /host-disabled:([a-z0-9-]+) on ([a-z0-9.-]+)/gi;
+
+/** The hosts that deferred steps, with why, from the deferred steps' details (`host-disabled:<why> on <host>`); once each, by host. */
+export function deferralHosts(details: readonly string[]): [host: string, why: string][] {
+  const out = new Map<string, string>();
+  for (const d of details) for (const m of d.matchAll(DEFERRAL)) if (!out.has((m[2] as string).toLowerCase())) out.set((m[2] as string).toLowerCase(), m[1] as string);
+  return [...out].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
 
 /**
  * The deferral line (Task 3/5 carry): `not located this week: N, host-disabled <host> (<why>), …` when N > 0 steps
- * were deferred because a host was disabled in the run; every disabled host is named once (at most 5, then
+ * were deferred because a host was disabled in the run; every host that deferred a step is named once (at most 5, then
  * `and k more hosts`), so a host that refuses every week reads as one line, never as N "input rejected" problems.
  */
 export function deferralLine(deferred: number, hosts: readonly (readonly [host: string, why: string])[]): string | null {
