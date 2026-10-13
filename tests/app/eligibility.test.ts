@@ -824,6 +824,56 @@ describe('office cities: onsite or hybrid in one of the pack\'s office cities pa
     expect(decide({ ...inOffice('Pune', ''), descriptionText: late }, blr)).toEqual(rejected('onsite'));
   });
 
+  describe('fix round 3: the label decides over prose; one JD window; the label value must be a location list', () => {
+    const blr = withOffice(['bengaluru']);
+    // synthetic postings go through the normalizer, so the rule sees the description as HTML paragraphs become text
+    const viaHtml = (locationText: string, paragraphs: string[], structured: Posting['remote']['structured'] = null) => {
+      const n = normalize({ source: 'jobicy', sourceId: '1', company: 'X', slug: 'jobicy', raw: { id: 1, jobTitle: 'Backend Engineer', companyName: 'X', url: 'https://jobicy.com/jobs/1', jobGeo: 'India', jobDescription: paragraphs.map((t) => `<p>${t}</p>`).join('') } });
+      return decideEligibility({ ...n, locationText, remote: remote(structured, ['india']) }, blr);
+    };
+    const filler = (n: number): string => 'Build services for the edge network. '.repeat(n);
+
+    it('RED 1: a label naming another city beats the "based in our <office city> office" prose', () => {
+      expect(viaHtml('In-Office', ['Location: Hyderabad', 'We also have a team based in our Bengaluru office.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('India', ['Work location: Mumbai', 'You will be working from our Bangalore office.'], 'hybrid')).toEqual(rejected('hybrid'));
+    });
+
+    it('RED 2: the relocation/office reject reads the whole description, like the label and prose rules', () => {
+      expect(viaHtml('In-Office', ['You will be working from our Bangalore office.', filler(60), 'You will be based in our Hyderabad office.'])).toEqual(rejected('onsite'));
+    });
+
+    it('RED 3: a label value with prose is no label', () => {
+      expect(viaHtml('In-Office', ['Office location: our Bengaluru office is closing; this role is in Hyderabad.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('N/A', ['Location: Bengaluru is where our founders met.'])).toEqual(rejected('onsite'));
+    });
+
+    it('RED 4: a separator does not cross a line break', () => {
+      expect(viaHtml('In-Office', ['Office', '- Bangalore snacks and free lunch'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Office', '- Bangalore'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Available Locations', '- Bangalore snacks and free lunch'])).toEqual(rejected('onsite'));
+    });
+
+    it('the real rescues still pass', () => {
+      expect(viaHtml('In-Office', ['Location: Bengaluru, India — Hybrid'], 'hybrid')).toEqual(officeEligible('Bengaluru')); // Rubrik
+      expect(viaHtml('In-Office', ['Location: India, Bangalore'])).toEqual(officeEligible('Bengaluru')); // Cloudflare
+      expect(viaHtml('India', ['Location: Bengaluru, India — Hybrid Department: People — Talent Acquisition'])).toEqual(officeEligible('Bengaluru')); // Rubrik: the sibling field runs on in the same line
+      expect(viaHtml('In-Office', ['Location: Hyderabad Department: People', 'Team based in our Bengaluru office.'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Available Locations: Bengaluru'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Available Locations', '- Bengaluru, India'])).toEqual(officeEligible('Bengaluru')); // the multi-line Cloudflare form
+      expect(viaHtml('In-Office', ['Available Locations: Bengaluru/Mumbai/New Delhi'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Available Locations: Bangalore / Mumbai'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Location: Bengaluru (Hybrid mode)'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('India', ['This role is Hybrid, based in our Bangalore office 2-3 days/week.'], 'hybrid')).toEqual(officeEligible('Bengaluru')); // Tilt, no label line
+      expect(viaHtml('N/A', [filler(130), 'Office location—Bengaluru, KA, India'])).toEqual(officeEligible('Bengaluru')); // Stripe
+    });
+
+    it('the existing correct outcomes still hold', () => {
+      expect(viaHtml('In-Office', ['Location: Bengaluru (excluding India)'])).toEqual(rejected('onsite'));
+      expect(viaHtml('In-Office', ['Location: Bengaluru', 'Remote not available for India.'])).toEqual(officeEligible('Bengaluru'));
+      expect(viaHtml('In-Office', ['Office - San Francisco', 'Location: Bengaluru'])).toEqual(rejected('onsite')); // the first label wins
+    });
+  });
+
   it('a "work from / based in / report to our <City> office" sentence naming another city keeps the reject', () => {
     expect(decide(onsite('Pune, India', { descriptionText: 'This role requires working from our Hyderabad office.' }), pune)).toEqual(rejected('onsite'));
     expect(decide(onsite('Pune, India', { descriptionText: 'You will be based in our Mumbai office.' }), pune)).toEqual(rejected('onsite'));

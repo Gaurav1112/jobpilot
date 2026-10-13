@@ -264,6 +264,19 @@ function isLocationParen(inner: string): boolean {
   return rest === '' && inner.trim() !== '';
 }
 
+/** Mode and qualifier words that may sit beside places in an explicit location label's value. */
+const LABEL_VALUE_WORDS = /\b(?:mode|ka|excluding|except|outside|office|offices)\b/gi;
+
+/**
+ * True when `text` is only a location list: listed places (cities, states, countries) and mode words (hybrid, remote,
+ * in-office, ...) separated by , / ; | ( ) & - and dashes. Any other word ("our", "is", "closing", "snacks") makes it
+ * prose, not a list.
+ */
+export function isPlaceList(text: string): boolean {
+  const rest = text.normalize('NFKC').replace(PLACE_RE, ' ').replace(LOCATION_WORDS, ' ').replace(LABEL_VALUE_WORDS, ' ').replace(/[\s,;/|&+()–—-]+/g, '');
+  return rest === '' && text.trim() !== '';
+}
+
 /** The title's comparison form and the places taken out of it (see `normTitle`). */
 export function splitTitle(title: string): { title: string; places: string[] } {
   let t = collapse(title.normalize('NFKC').toLowerCase().replace(GENDER, ' '));

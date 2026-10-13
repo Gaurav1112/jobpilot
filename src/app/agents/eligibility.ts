@@ -5,7 +5,7 @@ import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
-import { citiesIn, cityKey, countriesIn, excludedParts, excludedPlaces, officeCity } from '../text/norm.js';
+import { citiesIn, cityKey, countriesIn, excludedParts, excludedPlaces, isPlaceList, officeCity } from '../text/norm.js';
 import { EligibilityVerdict, Posting } from '../types.js';
 
 /**
@@ -524,17 +524,40 @@ const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|indi
 /**
  * An explicit location label line in the description ("Location: Bengaluru", "Office - Bangalore", "Work location:
  * Pune"), also "Available Locations: …", "Job location …" and "Office location — …" (a plural label, an em dash).
- * An ASCII hyphen separates only beside a space: "Office-assigned staff …" is a hyphenated word, not a label.
+ * An ASCII hyphen separates only beside a space: "Office-assigned staff …" is a hyphenated word, not a label. A
+ * separator never crosses a line break (the pattern runs on one line at a time). The value must itself be a location
+ * list (`isPlaceList`): prose in it is no label.
  */
-const LOCATION_LABEL = /^\s*(?:(?:available|office|work|job)\s+)?(?:locations?|office|based in)(?:\s*[:–—]|\s+-|-\s+)\s*(.+)$/im;
+const LOCATION_LABEL = /^[ \t]*(?:(?:available|office|work|job)[ \t]+)?(?:locations?|office|based in)(?:[ \t]*[:–—]|[ \t]+-|-[ \t]+)[ \t]*(.+)$/i;
+/** The one multi-line form: an "Available Locations" heading line, then "- Bengaluru, India" bullet lines. */
+const LOCATION_HEADING = /^[ \t]*available[ \t]+locations?[ \t]*:?[ \t]*$/i;
+/** A sibling field run on after the value ("Location: Bengaluru, India — Hybrid Department: People"): the value ends there. */
+const NEXT_FIELD = /\s+[A-Z][\w&]*(?: [A-Z][\w&]*){0,2}:(?:\s|$)/;
+const LOCATION_BULLET = /^[ \t]*[-–—•*][ \t]+(.+)$/;
 const genericLocation = (p: Posting): boolean => p.locationText.trim() === '' || GENERIC_LOCATION.test(p.locationText.trim());
 /**
- * The location text the office-city match reads: the field itself, or, when the field is generic, the value of the
- * first label line anywhere in the description (label lines are explicit). Never used for the remote decision.
+ * The first explicit label line anywhere in the description decides alone. `value` is its location list, or null when
+ * its value is prose or names a place we do not list ("Office - San Francisco"): that label then names no office city,
+ * and no later label or prose rule overrides it. `found` is false when the description has no label line at all.
  */
-function officeLocationText(p: Posting): string {
-  if (!genericLocation(p)) return p.locationText;
-  return LOCATION_LABEL.exec(p.descriptionText)?.[1]?.trim() ?? p.locationText;
+function labelLine(description: string): { found: boolean; value: string | null } {
+  const lines = description.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i] ?? '';
+    const value = LOCATION_LABEL.exec(line)?.[1]?.split(NEXT_FIELD)[0]?.trim();
+    if (value !== undefined && value !== '') return { found: true, value: isPlaceList(value) ? value : null };
+    if (!LOCATION_HEADING.test(line)) continue;
+    const bullets: string[] = [];
+    for (let j = i + 1; j < lines.length; j++) {
+      const next = lines[j] ?? '';
+      if (next.trim() === '') continue;
+      const bullet = LOCATION_BULLET.exec(next)?.[1]?.trim();
+      if (bullet === undefined) break;
+      bullets.push(bullet);
+    }
+    if (bullets.length > 0) return { found: true, value: bullets.every(isPlaceList) ? bullets.join('; ') : null };
+  }
+  return { found: false, value: null };
 }
 /** With a generic location field: "based|located|work(ing) in|at|from our <alias> office" anywhere in the description. */
 const namesOurOffice = (description: string, aliases: readonly string[]): boolean =>
@@ -555,13 +578,14 @@ function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
   if (countries.length > 0 && !countries.includes('india') && !countries.some((c) => allAliases.has(cityKey(c)))) return null;
   if (exclusionRule(head) !== undefined || timezoneExcludesIndia(head)) return null;
   // A relocation or residence requirement naming another city keeps the reject.
-  const jd = p.descriptionText.slice(0, HEAD);
+  const jd = p.descriptionText;
   for (const sentence of jd.split(/[.!?;\n]+/)) {
     if (!RELOCATION.test(sentence)) continue;
     const named = citiesIn(sentence).filter((c) => !INDIAN_STATES.has(c));
     if (named.some((c) => !namesAlias(c, [...allAliases]))) return null;
   }
-  const where = officeLocationText(p);
+  const label = genericLocation(p) ? labelLine(p.descriptionText) : { found: false, value: null };
+  const where = label.value ?? p.locationText;
   if (excludedPlaces(where).includes('india')) return null;
   const excluded = excludedParts(where);
   const segments = where.split(LOCATION_SPLIT).filter((seg) => {
@@ -572,7 +596,8 @@ function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
     if (city.aliases.some((a) => excluded.includes(a))) continue;
     if (segments.some((seg) => namesAlias(seg, city.aliases)) || countries.some((c) => namesAlias(c, city.aliases))) return officeNote(city.display);
   }
-  if (genericLocation(p)) for (const city of cities) if (!city.aliases.some((a) => excluded.includes(a)) && namesOurOffice(p.descriptionText, city.aliases)) return officeNote(city.display);
+  // The prose rule runs only when no label line was found: a label line decides alone.
+  if (genericLocation(p) && !label.found) for (const city of cities) if (!city.aliases.some((a) => excluded.includes(a)) && namesOurOffice(p.descriptionText, city.aliases)) return officeNote(city.display);
   return null;
 }
 
