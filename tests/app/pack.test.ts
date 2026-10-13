@@ -223,6 +223,18 @@ describe('pack hash', () => {
     expect(loadPack(FIXTURE, { 'f-nw-05': 'verified' }).hash).toBe(o.hash);
   });
 
+  it('eligibility.officeCities is optional: absent keeps the hash, a list loads and changes it, a blank entry is refused', () => {
+    const d = copyFixture();
+    const before = loadPack(d);
+    expect(before.pack.eligibility.officeCities).toBeUndefined();
+    append(d, 'eligibility.yaml', 'officeCities: [pune]\n');
+    const after = loadPack(d);
+    expect(after.pack.eligibility.officeCities).toEqual(['pune']);
+    expect(after.hash).not.toBe(before.hash);
+    writeFileSync(join(d, 'eligibility.yaml'), readFileSync(join(d, 'eligibility.yaml'), 'utf8').replace('[pune]', '["  "]'));
+    expect(() => loadPack(d)).toThrow(PackError);
+  });
+
   it('rejects an override for an unknown fact id', () => {
     expect(() => loadPack(FIXTURE, { nope: 'verified' })).toThrow(/nope/);
   });

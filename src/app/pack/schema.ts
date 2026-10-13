@@ -165,6 +165,13 @@ export const EligibilitySchema = z.strictObject({
   residence: z.literal('IN'),
   acceptRemoteScopes: z.array(z.string()),
   onsiteCities: z.array(z.string()),
+  /**
+   * City keys where an onsite or hybrid role is acceptable (the eligibility agent's office rule). Each key is resolved
+   * through the agent's alias table ("mumbai" also matches Bombay); an unknown key matches only itself.
+   * Absent or empty (the default): only remote roles open to India pass. Absent stays absent, so a pack without the
+   * field keeps its pack hash.
+   */
+  officeCities: z.array(z.string().trim().min(1)).optional(),
   employmentTypes: z.tuple([z.literal('full-time')]),
 });
 

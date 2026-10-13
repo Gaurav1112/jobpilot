@@ -5,7 +5,7 @@ import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
-import { citiesIn, countriesIn } from '../text/norm.js';
+import { citiesIn, countriesIn, excludedParts, excludedPlaces } from '../text/norm.js';
 import { EligibilityVerdict, Posting } from '../types.js';
 
 /**
@@ -60,6 +60,15 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    d. otherwise, when anything says remote (structured, a signal, or the word in the title, location or
  *       description) → `review` with `remote-unclear` and the note `remote scope unclear - verify`; else `onsite`.
  *    The watchlist entry is found by (ats, slug), or by company name for a feed.
+ *    e. office cities (`officeCityNote`): when the decision is `onsite` or `hybrid` and the pack lists
+ *       `eligibility.officeCities`, a posting located in one of them passes, with the note `office/hybrid: <City>`
+ *       (`officeNote`). Each key resolves through OFFICE_CITY_ALIASES (an unknown key matches only itself), matched on
+ *       word boundaries, case-insensitively, in a segment of the location text (split on `; | / &`, "or", "and", new
+ *       lines) whose places are none or include India, or in an entry of the structured countries. A city named only in
+ *       the description never counts. It needs nothing to exclude India: countries naming none of India or an office
+ *       city, a `location:excludes:india` signal, India or the city excluded in the location, an exclusion phrase
+ *       (rule b) or a time-zone restriction (b1). A relocation or "must be located/based in" sentence in the first
+ *       1500 characters naming another city keeps the reject. Rule 6 then applies unchanged.
  * 6. comp: only a `base` basis with a stated maximum is judged: its maximum in INR (`toInrPerYear`) below
  *    `offers.floor` → `below-floor:<maxInr>`. No comp adds the note `pay not disclosed`; an unknown basis adds
  *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor.
@@ -72,13 +81,16 @@ export const NOTE_PAY_BASIS = 'pay basis unclear';
 export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
 export const NOTE_B2B = 'B2B contractor: no PF/benefits';
+export const NOTE_OFFICE_PREFIX = 'office/hybrid: ';
+/** The note for an onsite or hybrid role in an office city: `office/hybrid: Pune`. */
+export const officeNote = (display: string): string => `${NOTE_OFFICE_PREFIX}${display}`;
 
 /** The parts of the pack this agent reads; anything else in it is ignored. */
 const PackView = z.object({
   // `filters.employmentDeny` are the words that reject when bare in the title (fix round 2); the description uses the
   // fixed EMPLOYMENT_PHRASES instead, because bare words there are mostly not about employment (fix round 1, I1).
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
-  eligibility: z.object({ employmentTypes: z.array(z.string()) }),
+  eligibility: z.object({ employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   offers: z.object({ floor: z.object({ amount: z.number(), currency: z.enum(['INR', 'USD', 'EUR', 'GBP']) }).nullable() }),
   fx: z.object({ toINR: z.object({ INR: z.number(), USD: z.number(), EUR: z.number(), GBP: z.number() }) }),
@@ -494,6 +506,68 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
 }
 
 /**
+ * Office city keys and the spellings each one matches, with the name the note shows. Generic place data: which cities
+ * count is the pack's `eligibility.officeCities`.
+ */
+const OFFICE_CITY_ALIASES: Readonly<Record<string, { display: string; aliases: readonly string[] }>> = {
+  bengaluru: { display: 'Bengaluru', aliases: ['bengaluru', 'bangalore', 'blr'] },
+  pune: { display: 'Pune', aliases: ['pune'] },
+  hyderabad: { display: 'Hyderabad', aliases: ['hyderabad'] },
+  mumbai: { display: 'Mumbai', aliases: ['mumbai', 'bombay'] },
+  'delhi ncr': { display: 'Delhi NCR', aliases: ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'ncr'] },
+  chennai: { display: 'Chennai', aliases: ['chennai', 'madras'] },
+};
+/** Indian states: a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
+const INDIAN_STATES: ReadonlySet<string> = new Set(['karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat']);
+
+const cityKey = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, ' ');
+function officeCity(raw: string): { display: string; aliases: readonly string[] } {
+  const key = cityKey(raw);
+  const known = Object.hasOwn(OFFICE_CITY_ALIASES, key) ? OFFICE_CITY_ALIASES[key] : undefined;
+  return known ?? { display: key.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()), aliases: [key] };
+}
+const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const namesAlias = (text: string, aliases: readonly string[]): boolean =>
+  aliases.some((a) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(a).replace(/ /g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu').test(text));
+/** Location segments: separate locations are joined by these ("Pune, India; Remote US", "Pune or Singapore"). */
+const LOCATION_SPLIT = /[;|\n/&]|\bor\b|\band\b/i;
+/** Sentences that require living in or moving to a place. */
+const RELOCATION = /\brelocat\w*\b|\bmust be (?:located|based)\b/i;
+
+/**
+ * Rule 5e: the office-city note for an onsite or hybrid posting located in one of the pack's office cities, or null.
+ * See the header for what counts and what keeps the reject.
+ */
+function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
+  const cities = (pack.eligibility.officeCities ?? []).map(officeCity);
+  if (cities.length === 0) return null;
+  const { countries, signals } = p.remote;
+  const allAliases = new Set(cities.flatMap((c) => c.aliases));
+  const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
+  // Nothing may exclude India.
+  if (signals.includes('location:excludes:india') || excludedPlaces(p.locationText).includes('india')) return null;
+  if (countries.length > 0 && !countries.includes('india') && !countries.some((c) => allAliases.has(cityKey(c)))) return null;
+  if (exclusionRule(head) !== undefined || timezoneExcludesIndia(head)) return null;
+  // A relocation or residence requirement naming another city keeps the reject.
+  const jd = p.descriptionText.slice(0, HEAD);
+  for (const sentence of jd.split(/[.!?;\n]+/)) {
+    if (!RELOCATION.test(sentence)) continue;
+    const named = citiesIn(sentence).filter((c) => !INDIAN_STATES.has(c));
+    if (named.some((c) => !namesAlias(c, [...allAliases]))) return null;
+  }
+  const excluded = excludedParts(p.locationText);
+  const segments = p.locationText.split(LOCATION_SPLIT).filter((seg) => {
+    const places = countriesIn(seg);
+    return places.length === 0 || places.includes('india');
+  });
+  for (const city of cities) {
+    if (city.aliases.some((a) => excluded.includes(a))) continue;
+    if (segments.some((seg) => namesAlias(seg, city.aliases)) || countries.some((c) => namesAlias(c, city.aliases))) return officeNote(city.display);
+  }
+  return null;
+}
+
+/**
  * The pay check: a reject reason, or the note to add (null when there is nothing to say).
  *
  * Fix round 2: a stated maximum below the floor rejects whatever the basis. A total-type figure (CTC, total comp, OTE,
@@ -523,9 +597,12 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const employment = employmentReason(p, pack);
   if (employment.reason !== null) return reject(employment.reason);
 
-  const remote = remoteDecision(p, pack);
+  const decided = remoteDecision(p, pack);
+  const office = decided === 'onsite' || decided === 'hybrid' ? officeCityNote(p, pack) : null;
+  const remote = office !== null ? null : decided;
   const reasons: string[] = [];
   const notes: string[] = employment.b2b ? [NOTE_B2B] : [];
+  if (office !== null) notes.push(office);
   const review = remote === 'review' || remote === 'review-timezone';
   if (review) {
     reasons.push('remote-unclear');

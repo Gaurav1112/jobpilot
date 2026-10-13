@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { canonicalEmployment, decideEligibility, eligibility, fullTimeContract, NOTE_B2B } from '../../src/app/agents/eligibility.js';
+import { canonicalEmployment, decideEligibility, eligibility, fullTimeContract, NOTE_B2B, NOTE_OFFICE_PREFIX, officeNote } from '../../src/app/agents/eligibility.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { appEvalSpecs } from '../../src/app/evals.js';
 import { assertNoForbidden, loadPack } from '../../src/app/pack/load.js';
@@ -699,6 +699,97 @@ describe('D2 full-time B2B', () => {
   });
 });
 
+describe('office cities: onsite or hybrid in one of the pack\'s office cities passes with a badge', () => {
+  const withOffice = (officeCities: string[]) => ({ ...pack, eligibility: { ...pack.eligibility, officeCities } });
+  const pune = withOffice(['pune']);
+  const onsite = (locationText: string, over: Partial<Posting> = {}): Partial<Posting> => ({ locationText, remote: remote('onsite', ['india']), ...over });
+  const officeEligible = (display: string) => ({ verdict: 'eligible', reasons: [], notes: [officeNote(display), 'pay not disclosed'] });
+
+  it('builds the note from the city display name', () => {
+    expect(officeNote('Bengaluru')).toBe('office/hybrid: Bengaluru');
+    expect(NOTE_OFFICE_PREFIX).toBe('office/hybrid: ');
+  });
+
+  it('a Pune onsite posting is eligible with the note', () => {
+    expect(decide(onsite('Pune, Maharashtra, India'), pune)).toEqual(officeEligible('Pune'));
+    // also when only the location text says onsite, or nothing says remote at all
+    expect(decide({ locationText: 'Pune (On-site)', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Pune, India', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('a Pune hybrid posting is eligible with the note', () => {
+    expect(decide({ locationText: 'Pune, India', remote: remote('hybrid', ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Hybrid - Pune', remote: remote(null, ['india']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'Pune, India', remote: remote(null, ['india']), descriptionText: 'This is a hybrid role, 3 days a week in the office.' }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('an alias spelling matches its city key, case-insensitively, on word boundaries', () => {
+    const blr = withOffice(['bengaluru']);
+    expect(decide(onsite('Bangalore, Karnataka'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('BLR'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('bengaluru'), blr)).toEqual(officeEligible('Bengaluru'));
+    expect(decide(onsite('Gurugram, Haryana'), withOffice(['Delhi NCR']))).toEqual(officeEligible('Delhi NCR'));
+    expect(decide(onsite('Blrx Park'), blr)).toEqual(rejected('onsite')); // not on a word boundary
+    // an unknown key matches only itself
+    expect(decide(onsite('Kochi, Kerala'), withOffice(['kochi']))).toEqual(officeEligible('Kochi'));
+    expect(decide(onsite('Cochin, Kerala'), withOffice(['kochi']))).toEqual(rejected('onsite'));
+  });
+
+  it('a Mumbai onsite posting is still onsite', () => {
+    expect(decide(onsite('Mumbai, India'), pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Mumbai, India', remote: remote('hybrid', ['india']) }, pune)).toEqual(rejected('hybrid'));
+  });
+
+  it('with no office cities nothing changes', () => {
+    expect(decide(onsite('Pune, India'))).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India'), withOffice([]))).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Pune, India', remote: remote('hybrid', ['india']) }, withOffice([]))).toEqual(rejected('hybrid'));
+  });
+
+  it('the comp floor still applies after it', () => {
+    const v = decide(onsite('Pune, India', { comp: base(1_000_000, 2_000_000) }), pune);
+    expect(v).toEqual(rejected('below-floor:2000000'));
+    expect(decide(onsite('Pune, India', { comp: base(7_000_000, 9_000_000) }), pune)).toEqual({ verdict: 'eligible', reasons: [], notes: [officeNote('Pune')] });
+  });
+
+  it('earlier rules still reject first', () => {
+    expect(decide(onsite('Pune, India', { company: 'Infosys' }), pune)).toEqual(rejected('company:Infosys'));
+    expect(decide(onsite('Pune, India', { title: 'Senior Frontend Engineer' }), pune)).toEqual(rejected('role:front[- ]?end'));
+  });
+
+  it('a city named only in the description does not count', () => {
+    expect(decide(onsite('India', { descriptionText: 'You will join our Pune engineering team.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Mumbai, India', { descriptionText: 'Teams in Pune and Mumbai.' }), pune)).toEqual(rejected('onsite'));
+  });
+
+  it('a relocation or residence requirement for another city keeps the reject', () => {
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocate to Mumbai required.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocation to Hyderabad is required within 3 months.' }), pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'You must be located in Chennai.' }), pune)).toEqual(rejected('onsite'));
+    // relocation to the office city itself is fine
+    expect(decide(onsite('Pune, India', { descriptionText: 'Relocation to Pune, Maharashtra is supported.' }), pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('a multi-location posting counts when any listed location is an office city in India', () => {
+    expect(decide({ locationText: 'Pune, India; Remote US', remote: remote('hybrid', ['india', 'united states']) }, pune)).toEqual(officeEligible('Pune'));
+    expect(decide({ locationText: 'San Francisco, US | Pune', remote: remote('onsite', ['india', 'united states']) }, pune)).toEqual(officeEligible('Pune'));
+    // a structured location entry kept verbatim counts like the text
+    expect(decide({ locationText: 'Office', remote: remote('onsite', ['pune']) }, pune)).toEqual(officeEligible('Pune'));
+  });
+
+  it('anything that excludes India keeps the reject', () => {
+    expect(decide({ locationText: 'Pune', remote: remote('onsite', ['united states']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'India (excluding Pune)', remote: remote('onsite', ['india']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide({ locationText: 'Pune, India', remote: remote('onsite', ['india'], ['location:excludes:india']) }, pune)).toEqual(rejected('onsite'));
+    expect(decide(onsite('Pune, India', { descriptionText: 'Candidates must be authorized to work in the US.' }), pune)).toEqual(rejected('onsite'));
+  });
+
+  it('the pack field is optional and absent means none', () => {
+    expect(pack.eligibility.officeCities).toBeUndefined();
+    expect(decide(onsite('Pune, India'))).toEqual(rejected('onsite'));
+  });
+});
+
 describe('eligibility agent', () => {
   const ctxWith = (p?: unknown) =>
     issueContext({
@@ -745,6 +836,19 @@ describe('eligibility golden eval', () => {
     expect(r.failures).toEqual([]);
     expect(r).toMatchObject({ score: 1, pass: true, min: 1 });
     expect(r.packHash).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('runs the office-* cases on the fixture pack with one office city, every other case without', async () => {
+    const office = specs.find((s) => s.name === 'eligibility-office')!;
+    expect(office.agent.contract.id).toBe('eligibility');
+    expect(office.cases.length).toBeGreaterThanOrEqual(10);
+    expect(office.cases.every((c) => c.id.startsWith('office-'))).toBe(true);
+    expect(spec.cases.some((c) => c.id.startsWith('office-'))).toBe(false);
+    expect(office.cases.some((c) => (c.expected as { notes: string[] }).notes.includes(officeNote('Pune')))).toBe(true);
+    const r = await runEval(office, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 });
+    expect(r.failures).toEqual([]);
+    expect(r).toMatchObject({ name: 'eligibility-office', score: 1, pass: true });
+    expect(r.packHash).not.toBe((await runEval(spec, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 })).packHash);
   });
 
   it('datasets carry no forbidden fixture term', () => {
