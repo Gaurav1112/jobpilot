@@ -23,6 +23,8 @@ import {
   RENDER_PLACEHOLDERS,
   renderSummary,
   sanitisePostingText,
+  SIGNATURE_LEADS,
+  signatureLead,
   startsWithPastVerb,
   SUMMARY_TEMPLATE,
   unsafePostingText,
@@ -604,6 +606,72 @@ describe('cover-writer', () => {
     const c = planCover(planResume(buildEvidence(scoredOf(posting(), loose), loose), loose), loose);
     expect(c.paragraphs.flatMap((p) => p.factIds)).not.toContain('f-px-01');
     expect(c.paragraphs.map((p) => p.text).join(' ')).not.toContain('Personal');
+  });
+});
+
+describe('cover-writer: signature facts (writing.signatureFacts)', () => {
+  const withSignature = (ids: string[], base: WritingPack = pack) => freezePack({ ...base, writing: { signatureFacts: ids } }) as WritingPack;
+  const letterOf = (pk: WritingPack, p: Posting = posting()) => {
+    const resume = planResume(buildEvidence(scoredOf(p, pk), pk), pk);
+    return { resume, cover: planCover(resume, pk) };
+  };
+  const NW03 = 'Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.';
+
+  it('has at least three leads, each ending in ": " before the claim, so the claim stays byte-identical', () => {
+    expect(SIGNATURE_LEADS.length).toBeGreaterThanOrEqual(3);
+    for (const l of SIGNATURE_LEADS) expect(l, l).toMatch(/\{employer\}: \{claim\}$/);
+  });
+
+  it('adds one sentence, the first citeable signature fact verbatim, after the evidence and before p4, with its fact id', () => {
+    const pk = withSignature(['f-nw-03']);
+    const { cover } = letterOf(pk);
+    expect(cover.paragraphs.slice(0, 3)).toEqual(EXPECTED_PARAGRAPHS.slice(0, 3));
+    expect(cover.paragraphs[3]).toEqual({ text: `Beyond the stack this role lists, at Northwind Labs: ${NW03}`, factIds: ['f-nw-03'] });
+    expect(cover.paragraphs[4]).toEqual({ text: COVER_P4, factIds: [] });
+    expect(cover.paragraphs).toHaveLength(5);
+    expect(coverProblems(cover, pk)).toEqual([]); // G-GROUND re-derives it byte for byte
+  });
+
+  it('adds nothing when a signature fact is already among the evidence facts', () => {
+    expect(letterOf(withSignature(['f-nw-01'])).cover.paragraphs).toEqual(EXPECTED_PARAGRAPHS);
+    expect(letterOf(withSignature(['f-nw-03', 'f-ct-01'])).cover.paragraphs).toEqual(EXPECTED_PARAGRAPHS);
+  });
+
+  it('skips a fact that is not citeable, unknown, or placed in no role, and takes the next', () => {
+    const pk = withSignature(['f-nw-05', 'nope', 'f-ed-01', 'f-nw-03', 'f-nw-02']);
+    const { cover } = letterOf(pk);
+    expect(cover.paragraphs[3]?.factIds).toEqual(['f-nw-03']);
+    expect(coverProblems(cover, pk)).toEqual([]);
+    // none usable: the letter is as without signature facts
+    expect(letterOf(withSignature(['f-nw-05'])).cover.paragraphs).toEqual(EXPECTED_PARAGRAPHS);
+    expect(letterOf(withSignature([])).cover.paragraphs).toEqual(EXPECTED_PARAGRAPHS);
+  });
+
+  it('chooses the lead deterministically from the jobKey, and every lead is reachable', () => {
+    const pk = withSignature(['f-nw-03']);
+    const keys = ['0123456789abcdef', '0123456789abcdf0', '0123456789abcdf1', '0123456789abcdf2'];
+    const leads = keys.map((k) => signatureLead(k));
+    expect(new Set(leads).size).toBe(3);
+    for (const k of keys) {
+      const a = letterOf(pk, posting({ jobKey: k })).cover.paragraphs[3]!.text;
+      expect(letterOf(pk, posting({ jobKey: k })).cover.paragraphs[3]!.text).toBe(a);
+      expect(a).toBe(`${signatureLead(k).replace('{employer}', 'Northwind Labs').replace('{claim}', NW03)}`);
+    }
+  });
+
+  it('G-GROUND catches a tampered signature sentence or fact id', () => {
+    const pk = withSignature(['f-nw-03']);
+    const { cover } = letterOf(pk);
+    const swap = (i: number, p: { text: string; factIds: string[] }) => ({ ...cover, paragraphs: cover.paragraphs.map((x, j) => (j === i ? p : x)) });
+    const sig = cover.paragraphs[3]!;
+    for (const bad of [
+      swap(3, { ...sig, text: sig.text.replace('three', 'five') }),
+      swap(3, { ...sig, text: sig.text.replace('Beyond the stack this role lists', 'Alongside that') }),
+      swap(3, { ...sig, factIds: ['f-nw-02'] }),
+      { ...cover, paragraphs: cover.paragraphs.filter((_, j) => j !== 3) },
+    ]) expect(coverProblems(bad as CoverPlan, pk).length).toBeGreaterThan(0);
+    // and the letter without signature facts is caught under a pack that has them
+    expect(coverProblems(letterOf(pack).cover, pk)).toContain('paragraphs[3] is not the template rendering of its computed slots and facts');
   });
 });
 

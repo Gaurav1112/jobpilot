@@ -175,6 +175,12 @@ export const EligibilitySchema = z.strictObject({
   employmentTypes: z.tuple([z.literal('full-time')]),
 });
 
+/**
+ * writing.yaml (optional). `signatureFacts` are fact ids, in order, for the one sentence the cover letter adds after its
+ * evidence when none of them is already cited there (the first citeable one placed in a role). Default: none.
+ */
+export const WritingSchema = z.strictObject({ signatureFacts: z.array(z.string().min(1)).default([]) });
+
 /** Raw user policy overrides; validated and tightened by the kernel's `mergePolicy`, not here. */
 export const PolicyUserSchema = z.record(z.string(), z.json());
 
@@ -192,6 +198,7 @@ export type WatchEntry = z.infer<typeof WatchEntrySchema>;
 export type Feeds = z.infer<typeof FeedsSchema>;
 export type Contact = z.infer<typeof ContactSchema>;
 export type Eligibility = z.infer<typeof EligibilitySchema>;
+export type Writing = z.infer<typeof WritingSchema>;
 
 export type Experience = z.infer<typeof ExperienceSchema>;
 
@@ -201,6 +208,8 @@ export interface Pack {
   roles: Role[];
   experience: Experience;
   eligibility: Eligibility;
+  /** writing.yaml; absent when the file is, so a pack without it keeps its hash. */
+  writing?: Writing;
   lexicon: Lexicon;
   /** `claimableTitles` is always set after loading (defaulted from the roles). */
   targets: Targets & { claimableTitles: string[] };

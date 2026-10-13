@@ -10,6 +10,7 @@ import {
   renderOpening,
   renderSummary,
   sanitisePostingText,
+  signatureSentence,
   startsWithPastVerb,
   type EvidenceSlots,
   type OpeningSlots,
@@ -71,8 +72,11 @@ import {
  *   such fact it stays (`preferVerbLed`). p2 holds the first two and p3 the third, each an `evidenceSentence`
  *   anchored to its placed role's display employer: "where I work now" only on the first mention of an ongoing role's
  *   employer, "There I also" for the same employer as the sentence just before in the same paragraph, "Also at" for
- *   one named earlier. No sentence names a missing or gap term. p4 is `COVER_P4`, its placeholders left for the
- *   renderer. A paragraph with nothing to say is omitted.
+ *   one named earlier. No sentence names a missing or gap term. Then, when `writing.signatureFacts` is set and none of
+ *   its facts is among the evidence facts, one paragraph of one sentence: the first of them (list order) that is a
+ *   citeable experience or project fact placed in a role, its claim verbatim after a lead chosen from the jobKey
+ *   (`signatureLead`), citing its fact id. p4 is `COVER_P4`, its placeholders left for the renderer. A paragraph with
+ *   nothing to say is omitted.
  */
 
 const Group = z.object({ key: z.string(), synonyms: z.array(z.string()), display: z.string().optional() });
@@ -95,6 +99,7 @@ const PackView = z.object({
   lexicon: z.object({ strong: z.array(Group), medium: z.array(Group), gap: z.array(Group) }),
   targets: z.object({ claimableTitles: z.array(z.string()), minFit: z.number() }),
   naming: z.object({ employerDisplay: z.record(z.string(), z.string()), forbiddenTerms: z.array(z.string()) }),
+  writing: z.object({ signatureFacts: z.array(z.string()).optional() }).optional(),
 });
 /** What the writing team reads from the public pack. */
 export type WritingPack = z.infer<typeof PackView>;
@@ -423,6 +428,8 @@ export interface CoverSlots {
   readonly opening: OpeningSlots;
   /** The evidence sentences' slots and fact ids, per paragraph (p2, then p3). */
   readonly evidence: readonly (readonly (EvidenceSlots & { readonly factId: string })[])[];
+  /** The signature sentence (writing.signatureFacts), when there is one: its fact, display employer and claim. */
+  readonly signature?: { readonly jobKey: string; readonly factId: string; readonly employer: string; readonly claim: string };
 }
 
 /** Whether a fact backs `key` for p1's "I've used" sentence: a citeable experience fact whose tech backs it. */
@@ -475,6 +482,17 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
       return { factId: f.id, employer: role.employer, claim: f.claim, ongoing: role.end === 'present', after } as const;
     }),
   );
+  // writing.signatureFacts: when none is already cited, the first citeable one placed in a role, in list order.
+  const signatureIds = pack.writing?.signatureFacts ?? [];
+  const cited = new Set(top.map(({ f }) => f.id));
+  const signature = signatureIds.some((id) => cited.has(id))
+    ? undefined
+    : signatureIds.flatMap((id) => {
+        const f = byId.get(id);
+        const i = f !== undefined && isRankable(f) ? roleIndexOf(f, roles, pack) : undefined;
+        const role = i === undefined ? undefined : roles[i];
+        return f !== undefined && role !== undefined ? [{ jobKey: resume.jobKey, factId: f.id, employer: role.employer, claim: f.claim }] : [];
+      })[0];
   return {
     opening: {
       ...postingSlots(posting),
@@ -485,14 +503,16 @@ export function coverSlots(resume: ResumePlan, pack: WritingPack): CoverSlots {
       examples: top.length,
     },
     evidence: slots,
+    ...(signature === undefined ? {} : { signature }),
   };
 }
 
-/** The paragraphs of a cover letter rendered from its slots: p1, the evidence paragraphs, then `COVER_P4`. */
+/** The paragraphs of a cover letter rendered from its slots: p1, the evidence paragraphs, the signature sentence, then `COVER_P4`. */
 export function renderCover(s: CoverSlots): CoverPlan['paragraphs'] {
   return [
     { text: renderOpening(s.opening), factIds: [] },
     ...s.evidence.map((p) => ({ text: p.map((e) => evidenceSentence(e)).join(' '), factIds: p.map((e) => e.factId) })),
+    ...(s.signature === undefined ? [] : [{ text: signatureSentence(s.signature.jobKey, s.signature.employer, s.signature.claim), factIds: [s.signature.factId] }]),
     { text: COVER_P4, factIds: [] },
   ];
 }

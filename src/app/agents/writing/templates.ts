@@ -43,6 +43,24 @@ export const EVIDENCE_THERE = 'There I also {claim}';
 export const EVIDENCE_ALSO_AT = 'Also at {employer}, I {claim}';
 export const EVIDENCE_ALSO_AT_COLON = 'Also at {employer}: {claim}';
 
+/**
+ * The signature sentence (writing.signatureFacts): one lead, chosen from the jobKey (`signatureLead`), then the fact's
+ * claim verbatim after ": ", so not even its first letter changes. `{employer}` is the display employer of the role the
+ * fact is placed in.
+ */
+export const SIGNATURE_LEADS: readonly string[] = [
+  'Beyond the stack this role lists, at {employer}: {claim}',
+  'Alongside that, at {employer}: {claim}',
+  'One more part of my work, at {employer}: {claim}',
+];
+/** The lead for a jobKey: its last four hex digits modulo the number of leads (any other key: its UTF-16 code sum). */
+export function signatureLead(jobKey: string): string {
+  const tail = jobKey.slice(-4);
+  const n = /^[0-9a-f]{4}$/i.test(tail) ? Number.parseInt(tail, 16) : [...jobKey].reduce((a, c) => a + c.charCodeAt(0), 0);
+  return SIGNATURE_LEADS[n % SIGNATURE_LEADS.length] as string;
+}
+export const signatureSentence = (jobKey: string, employer: string, claim: string): string => fill(signatureLead(jobKey), { employer, claim: asSentence(claim) });
+
 /** Irregular past-tense verbs a claim may start with (and so read "I built ..."); any other verb must end in -ed. */
 export const IRREGULAR_PAST: ReadonlySet<string> = new Set([
   'built', 'led', 'ran', 'wrote', 'drove', 'made', 'set', 'cut', 'grew', 'took', 'began', 'won', 'shipped', 'brought', 'taught', 'sold',

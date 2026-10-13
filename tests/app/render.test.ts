@@ -573,6 +573,23 @@ describe('G-GROUND on the rendered letter', () => {
     expect(v.detail).not.toContain('Mumbai');
   });
 
+  it('re-renders a letter with a signature sentence, and trips when it is tampered with', async () => {
+    const pack = fullPack({ writing: { signatureFacts: ['f-nw-03'] } });
+    const pub = publicPackOf(pack);
+    const cover = coverPlanOf(posting(), pack);
+    const { rendered } = await render(cover, pack);
+    const SIG = 'Beyond the stack this role lists, at Northwind Labs: Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.';
+    expect(rendered.plan.paragraphs.at(-2)).toEqual({ text: SIG, factIds: ['f-nw-03'] });
+    const lines = rendered.text.cover.split('\n');
+    expect(lines[lines.indexOf(FILLED) - 1]).toBe(SIG);
+    expect(G_GROUND.check(gctx(cover, rendered, pack, pub))).toEqual({ id: 'G-GROUND', verdict: 'pass' });
+    expect(G_FILL.check({ ...gctx(cover, rendered, pack, pub) })).toEqual({ id: 'G-FILL', verdict: 'pass' });
+    const tampered = { ...rendered, text: { ...rendered.text, cover: rendered.text.cover.replace('three microservices', 'four microservices') } };
+    expect(G_GROUND.check(gctx(cover, tampered, pack, pub)).verdict).toBe('trip');
+    // the same letter under a pack without signature facts trips: the plan's extra paragraph is not re-derived
+    expect(G_GROUND.check(gctx(cover, rendered)).verdict).toBe('trip');
+  });
+
   it('(a) trips when any one word of the rendered letter changes: text, paragraphs, verb, employer, notice or city', async () => {
     const cover = coverPlanOf();
     const { rendered } = await render(cover);

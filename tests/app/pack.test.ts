@@ -235,6 +235,22 @@ describe('pack hash', () => {
     expect(() => loadPack(d)).toThrow(PackError);
   });
 
+  it('writing.yaml is optional: absent keeps the hash and the key; signatureFacts loads, defaults to [], and must name known facts', () => {
+    const d = copyFixture();
+    const before = loadPack(d);
+    expect('writing' in before.pack).toBe(false);
+    writeFileSync(join(d, 'writing.yaml'), 'signatureFacts: [f-nw-03]\n');
+    const after = loadPack(d);
+    expect(after.pack.writing).toEqual({ signatureFacts: ['f-nw-03'] });
+    expect(after.hash).not.toBe(before.hash);
+    writeFileSync(join(d, 'writing.yaml'), '{}\n');
+    expect(loadPack(d).pack.writing).toEqual({ signatureFacts: [] });
+    writeFileSync(join(d, 'writing.yaml'), 'signatureFacts: [f-nope]\n');
+    expect(() => loadPack(d)).toThrow(/writing\.yaml: signatureFacts names unknown fact id f-nope/);
+    writeFileSync(join(d, 'writing.yaml'), 'signatureFacts: [f-nw-03]\nextra: 1\n');
+    expect(() => loadPack(d)).toThrow(PackError);
+  });
+
   it('rejects an override for an unknown fact id', () => {
     expect(() => loadPack(FIXTURE, { nope: 'verified' })).toThrow(/nope/);
   });
