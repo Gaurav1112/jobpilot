@@ -42,6 +42,16 @@ import { finish, onlySeenBefore } from '../common.js';
  * - every scoped list is checked against the discovery page's facet counts (Fix round 2): a page-1 total above the
  *   selected values' count sum + max(5, 5%) means Workday did not apply the scope (a stale or refused facet id): the
  *   step fails `input_rejected` `scope-not-applied <company> <list>`, and nothing is stamped;
+ * - and from below (Fix round 3): a page-1 total under the largest single selected value's count − max(5, 5%) (a
+ *   value count is never double-counted) is a stale facet id answering with too little, never a silent zero: the
+ *   same `scope-not-applied` refusal;
+ * - an office list must be a SUBSET of the India list (both are read, no extra request): one holding any other job was
+ *   not applied (a small board answering in full under a small count), so it gets the named note
+ *   `scope-not-applied <company> <city> office list: …; nothing stamped` and stamps nothing;
+ * - one req posted twice ("_JR1" in Pune, "_JR1-1" in Bengaluru) is one posting: the office-listed one is kept, then
+ *   one whose listed location names India, then the first seen (`preferPostings`, deterministic);
+ * - accepted: the largest-count India choice prefers city values, so an ambiguous city value ("Delhi, NY", a
+ *   "Hyderabad" in Pakistan) can widen the India read; eligibility still rejects those as non-Bengaluru onsite;
  * - the trade-off, by design: a job whose locations are all outside India and which is not tagged remote is never read.
  *
  * List: `POST https://<host>/wday/cxs/<tenant>/<site>/jobs` with `{"appliedFacets":{…},"limit":20,"offset":<n>,
@@ -103,7 +113,7 @@ export function workdayPagesPerList(officeCities: number): number {
 export const WORKDAY_EGRESS = 'registry:workday-hosts';
 
 /** The note prefixes of the named skips (problems.ts prints them as they are, never as "malformed"). */
-export const WORKDAY_NOTE_PREFIXES = ['robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'short-list '] as const;
+export const WORKDAY_NOTE_PREFIXES = ['robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list '] as const;
 
 export interface WorkdayBoard {
   readonly host: string;
@@ -441,6 +451,8 @@ export interface WorkdayScope {
   readonly facets: AppliedFacets;
   /** The sum of the selected values' `count` (a job listed under two values counts twice: an upper bound). */
   readonly expected: number;
+  /** The largest single selected value's `count` (never double-counted: a lower bound of the list). */
+  readonly largest: number;
 }
 
 /** What a board's first-page facets let the adapter scope to: the India, remote-type and office-city lists. */
@@ -500,9 +512,11 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
     }
   };
   walk(page.facets ?? [], undefined);
+  const countOf = (v: FacetNode): number => (typeof v.count === 'number' && Number.isFinite(v.count) ? v.count : 0);
   const scope = (param: string, vs: readonly FacetNode[]): WorkdayScope => ({
     facets: { [param]: vs.map((v) => v.id as string) },
-    expected: vs.reduce((n, v) => n + (typeof v.count === 'number' && Number.isFinite(v.count) ? v.count : 0), 0),
+    expected: vs.reduce((n, v) => n + countOf(v), 0),
+    largest: vs.reduce((n, v) => Math.max(n, countOf(v)), 0),
   });
   const isRemote = (v: FacetNode): boolean => REMOTE_TYPE.test(v.descriptor ?? '');
   const known = (param: string): boolean => KNOWN_LOCATION_PARAMS.includes(param);
@@ -589,6 +603,34 @@ const locationRank = (p: RawPosting): number => {
   return /^\s*\d+\s+locations?\s*$/iu.test(text) ? 1 : 2;
 };
 
+/** Each posting once, by externalPath (unique per posting), the first seen kept. */
+function byPath(postings: readonly RawPosting[]): RawPosting[] {
+  const seen = new Map<string, RawPosting>();
+  for (const p of postings) {
+    const path = (p.raw as WorkdayRaw).externalPath;
+    if (!seen.has(path)) seen.set(path, p);
+  }
+  return [...seen.values()];
+}
+
+/**
+ * One posting per req id (a req posted twice, "_JR1" in Pune and "_JR1-1" in Bengaluru, is one job): the office-listed
+ * one wins, then one whose listed location names India, then the first seen; sorted by sourceId (as `finish`).
+ */
+function preferPostings(postings: readonly RawPosting[]): RawPosting[] {
+  const pref = (p: RawPosting): number => {
+    const raw = p.raw as WorkdayRaw;
+    if ((raw.officeLocations ?? []).length > 0) return 0;
+    return countriesIn(raw.locationsText).includes('india') ? 1 : 2;
+  };
+  const best = new Map<string, RawPosting>();
+  for (const p of byPath(postings)) {
+    const had = best.get(p.sourceId);
+    if (had === undefined || pref(p) < pref(had)) best.set(p.sourceId, p);
+  }
+  return finish([...best.values()]);
+}
+
 /** Pages the list from offset 0 under `facets`, starting from its first page (already read): at most `maxPages` pages. */
 async function readList(
   http: HttpTool,
@@ -621,8 +663,8 @@ async function readList(
     page = await fetchListPage(http, hosts, b, offset, facets);
     pages++;
   }
-  // re-posts of one req are one posting (finish): the list is short only when it listed fewer entries than its total
-  const postings = finish(all);
+  // every posting by its path (re-posts of one req are chosen between later, `preferPostings`); the list is short only when it listed fewer entries than its total
+  const postings = byPath(all);
   if (listed < total) ctx.skipped([`short-list ${req.company}${label}: total ${total}, listed ${listed}`]);
   return { postings, pages };
 }
@@ -656,37 +698,52 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       if (page1.total > sc.expected + Math.max(5, sc.expected * 0.05)) {
         throw new KernelError('input_rejected', `scope-not-applied ${req.company} ${name} list: total ${page1.total}, the facet counts ${sc.expected}; Workday did not apply the scope, nothing read from it`);
       }
+      // a stale facet id can also answer with nothing: the list holds at least its largest selected value
+      if (page1.total < sc.largest - Math.max(5, sc.largest * 0.05)) {
+        throw new KernelError('input_rejected', `scope-not-applied ${req.company} ${name} list: total ${page1.total}, below its largest facet value ${sc.largest}; Workday did not apply the scope, nothing read from it`);
+      }
       return page1;
     };
     const lists = ([['india', scopes.india], ['remote', scopes.remote]] as const).filter((x): x is readonly ['india' | 'remote', WorkdayScope] => x[1] !== null);
     if (lists.length > 0) {
       const all: RawPosting[] = [];
+      const indiaRead = new Set<string>();
       for (const [name, sc] of lists) {
         const page1 = await scopedFirst(`the ${name} scoped list`, name, sc);
-        all.push(...(await readList(http, o.hosts, b, req, sc.facets, page1, maxPages, ctx, ` (${name} list)`)).postings);
+        const read = (await readList(http, o.hosts, b, req, sc.facets, page1, maxPages, ctx, ` (${name} list)`)).postings;
+        if (name === 'india') for (const p of read) indiaRead.add((p.raw as WorkdayRaw).externalPath);
+        all.push(...read);
       }
-      // the office-city lists: which postings (by externalPath, unique per posting) Workday lists under an office value
+      // the office-city lists: which postings (by externalPath, unique per posting) Workday lists under an office value.
+      // An office list must be a subset of the India list (both are read): one holding any other job was not applied
+      // (a small board answering in full under a small count), so nothing from it is stamped.
       const offices = new Map<string, string[]>();
       for (const office of scopes.offices) {
         const page1 = await scopedFirst(`the ${office.display} office list`, office.display, office);
         const listed = (await readList(http, o.hosts, b, req, office.facets, page1, maxPages, ctx, ` (${office.display} list)`)).postings;
+        const outside = listed.filter((p) => !indiaRead.has((p.raw as WorkdayRaw).externalPath)).length;
+        if (outside > 0) {
+          ctx.skipped([`scope-not-applied ${req.company} ${office.display} office list: ${outside} of its ${listed.length} jobs are not in the India list; nothing stamped`]);
+          continue;
+        }
         for (const p of listed) {
           const path = (p.raw as WorkdayRaw).externalPath;
           offices.set(path, [...(offices.get(path) ?? []), ...office.labels]);
         }
-        all.push(...listed);
       }
-      postings = finish(all).map((p) => {
-        const labels = offices.get((p.raw as WorkdayRaw).externalPath);
-        return labels === undefined ? p : { ...p, raw: { ...(p.raw as WorkdayRaw), officeLocations: labels } };
-      });
+      postings = preferPostings(
+        all.map((p) => {
+          const labels = offices.get((p.raw as WorkdayRaw).externalPath);
+          return labels === undefined ? p : { ...p, raw: { ...(p.raw as WorkdayRaw), officeLocations: labels } };
+        }),
+      );
     } else if (scopes.located) {
       ctx.skipped([`no-india-or-remote-facet ${req.company}: its location facets name neither India nor a remote type`]);
       return [];
     } else {
       first ??= await fetchListPage(http, o.hosts, b, 0);
       if (first.total >= WORKDAY_TOTAL_CEILING) throw new KernelError('input_rejected', `${what}: total ${first.total} is Workday's reporting ceiling and the board has no location facets to scope by; its list cannot be read in full`);
-      postings = (await readList(http, o.hosts, b, req, {}, first, maxPages, ctx)).postings;
+      postings = preferPostings((await readList(http, o.hosts, b, req, {}, first, maxPages, ctx)).postings);
     }
 
     // details: rank-0 title-passing jobs only (India-named, India-remote, office-listed), ties by sourceId, at most the budget
