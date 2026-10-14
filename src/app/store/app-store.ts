@@ -632,14 +632,22 @@ export class AppStore {
   }
 
   /** A page adapter board's page records (Task 8, `platform_pages`), by URL. */
-  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null }[] {
-    return (this.db.prepare(`SELECT url, fetched_on, hash, raw FROM platform_pages WHERE board = ? ORDER BY url`).all(board) as { url: string; fetched_on: string; hash: string; raw: string | null }[]).map((r) => ({ url: r.url, fetchedOn: r.fetched_on, hash: r.hash, raw: r.raw }));
+  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null; errors: number }[] {
+    return (this.db.prepare(`SELECT url, fetched_on, hash, raw, errors FROM platform_pages WHERE board = ? ORDER BY url`).all(board) as { url: string; fetched_on: string; hash: string; raw: string | null; errors: number }[]).map((r) => ({
+      url: r.url,
+      fetchedOn: r.fetched_on,
+      hash: r.hash,
+      raw: r.raw,
+      errors: r.errors,
+    }));
   }
 
-  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null): void {
+  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null, errors = 0): void {
     this.db
-      .prepare(`INSERT INTO platform_pages (board, url, fetched_on, hash, raw) VALUES (?, ?, ?, ?, ?) ON CONFLICT (board, url) DO UPDATE SET fetched_on = excluded.fetched_on, hash = excluded.hash, raw = excluded.raw`)
-      .run(board, url, fetchedOn, hash, raw);
+      .prepare(
+        `INSERT INTO platform_pages (board, url, fetched_on, hash, raw, errors) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (board, url) DO UPDATE SET fetched_on = excluded.fetched_on, hash = excluded.hash, raw = excluded.raw, errors = excluded.errors`,
+      )
+      .run(board, url, fetchedOn, hash, raw, errors);
   }
 
   forgetPageRecord(board: string, url: string): void {

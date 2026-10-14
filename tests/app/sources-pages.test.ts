@@ -7,6 +7,8 @@ import {
   PAGE_MAX_HOPS,
   PAGE_STALE_DAYS,
   PAGE_STALE_RESERVE,
+  PAGE_MAX_4XX_KEEPS,
+  staleLedgerBoard,
   planPages,
   readJobPages,
   slugTitle,
@@ -372,6 +374,43 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
     expect(h2.calls).toEqual([]);
   });
 
+  it(`fix round 3: a non-404 4xx keeps the posting at most ${PAGE_MAX_4XX_KEEPS} consecutive weekly refetches, the last one drops it; a good fetch resets the count`, async () => {
+    const state = memoryPageState();
+    await crawl(harness(routes()), [job('a')], state, '2026-09-01');
+    const at = (day: string, status: number) => crawl(harness(routes(status === 200 ? {} : { [job('a').url]: () => resp(status, 'x') })), [job('a')], state, day);
+    expect((await at('2026-09-09', 451)).map((p) => p.sourceId)).toEqual(['a']);
+    expect((await at('2026-09-17', 451)).map((p) => p.sourceId)).toEqual(['a']);
+    // a good fetch in between resets the count
+    expect((await at('2026-09-25', 200)).map((p) => p.sourceId)).toEqual(['a']);
+    expect((await at('2026-10-03', 451)).map((p) => p.sourceId)).toEqual(['a']);
+    expect((await at('2026-10-11', 451)).map((p) => p.sourceId)).toEqual(['a']);
+    const h = harness(routes({ [job('a').url]: () => resp(451, 'x') }));
+    expect(await crawl(h, [job('a')], state, '2026-10-19')).toEqual([]);
+    expect(h.skipped).toEqual(['detail-gone Acme: 1 job gone between list and detail (a)']);
+    expect(PAGE_MAX_4XX_KEEPS).toBe(3);
+  });
+
+  it('fix round 3: the stale reserve is per day, so new pages come first on a later run (60 stale, 5 new, 9 left with 6 stale fetched today: 4 stale + 5 new)', async () => {
+    const state = memoryPageState();
+    const ledger = memoryPageLedger();
+    const board = 'icims jobs.acme.test';
+    const stale = Array.from({ length: 60 }, (_, i) => job(`s${String(i).padStart(2, '0')}`));
+    const fresh = Array.from({ length: 5 }, (_, i) => job(`n${i}`));
+    for (const j of stale) state.put(board, j.url, { fetchedOn: '2026-09-01', hash: 'h', raw: { url: j.url, title: 'old', jsonLd: null } });
+    ledger.add('2026-10-14', board, 31);
+    ledger.add('2026-10-14', staleLedgerBoard(board), 6);
+    const all: Record<string, () => ReturnType<typeof resp>> = {};
+    for (const j of [...stale, ...fresh]) all[j.url] = () => resp(200, page({ ...T, title: j.sourceId }));
+    const h = harness(routes(all));
+    await crawl(h, [...fresh, ...stale], state, '2026-10-14', 40, ledger);
+    const asked = h.calls.filter((c) => c !== ROBOTS).map((c) => c.split('/').pop());
+    expect(asked).toEqual(['s00', 's01', 's02', 's03', 'n0', 'n1', 'n2', 'n3', 'n4']);
+    expect(ledger.used('2026-10-14', staleLedgerBoard(board))).toBe(10);
+    // with the day's reserve spent, new pages take the whole budget before any stale one
+    const staleOnly = new Map(stale.map((j) => [j.url, rec('2026-09-01')] as const));
+    expect(planPages([...fresh, ...stale], staleOnly, '2026-10-14', 9, 0).fetch.map((j) => j.sourceId)).toEqual(['n0', 'n1', 'n2', 'n3', 'n4', 's00', 's01', 's02', 's03']);
+  });
+
   it('fix round 2: a JobPosting without a description is not valid (schema.org and Google require it): named, never partially read', async () => {
     const h = harness(routes({ [job('a').url]: () => resp(200, page({ title: 'A' })) }));
     expect(await crawl(h, [job('a')])).toEqual([]);
@@ -437,8 +476,8 @@ describe('appPageState: the page state in the app DB (migration 11, platform_pag
       ['https://a.test/jobs/1', { fetchedOn: '2026-10-14', hash: 'h1', raw }],
       ['https://a.test/jobs/2', { fetchedOn: '2026-10-13', hash: 'h2', raw: null }],
     ]);
-    s.put('icims a.test', 'https://a.test/jobs/2', { fetchedOn: '2026-10-14', hash: 'h2b', raw: null });
-    expect(s.records('icims a.test').get('https://a.test/jobs/2')?.hash).toBe('h2b');
+    s.put('icims a.test', 'https://a.test/jobs/2', { fetchedOn: '2026-10-14', hash: 'h2b', raw: null, errors: 2 });
+    expect(s.records('icims a.test').get('https://a.test/jobs/2')).toEqual({ fetchedOn: '2026-10-14', hash: 'h2b', raw: null, errors: 2 });
     s.retain('icims a.test', new Set(['https://a.test/jobs/2']));
     expect([...s.records('icims a.test').keys()]).toEqual(['https://a.test/jobs/2']);
     s.forget('icims a.test', 'https://a.test/jobs/2');

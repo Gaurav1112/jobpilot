@@ -124,8 +124,8 @@ export function dailyPageHosts(): PlatformHosts<never> {
 
 /** What `appPageState` needs of the app store (its `platform_pages` table, migration 11). */
 export interface PageStore {
-  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null }[];
-  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null): void;
+  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null; errors: number }[];
+  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null, errors?: number): void;
   forgetPageRecord(board: string, url: string): void;
   retainPageRecords(board: string, urls: ReadonlySet<string>): void;
 }
@@ -140,10 +140,10 @@ export function appPageState(store: PageStore): PageState {
   return {
     records(board) {
       const m = new Map<string, PageRecord>();
-      for (const r of store.pageRecords(board)) m.set(r.url, { fetchedOn: r.fetchedOn, hash: r.hash, raw: r.raw === null ? null : (JSON.parse(r.raw) as unknown) });
+      for (const r of store.pageRecords(board)) m.set(r.url, { fetchedOn: r.fetchedOn, hash: r.hash, raw: r.raw === null ? null : (JSON.parse(r.raw) as unknown), ...(r.errors > 0 ? { errors: r.errors } : {}) });
       return m;
     },
-    put: (board, url, rec) => store.putPageRecord(board, url, rec.fetchedOn, rec.hash, rec.raw === null ? null : JSON.stringify(rec.raw)),
+    put: (board, url, rec) => store.putPageRecord(board, url, rec.fetchedOn, rec.hash, rec.raw === null ? null : JSON.stringify(rec.raw), rec.errors ?? 0),
     forget: (board, url) => store.forgetPageRecord(board, url),
     retain: (board, urls) => store.retainPageRecords(board, urls),
   };

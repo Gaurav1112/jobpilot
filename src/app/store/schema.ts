@@ -356,4 +356,6 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     PRIMARY KEY (board, url)
   );
   `,
+  // Career-sites Task 8 fix round 3: consecutive non-404 4xx refetches that kept a page's posting (a good fetch resets it).
+  `ALTER TABLE platform_pages ADD COLUMN errors INTEGER NOT NULL DEFAULT 0;`,
 ];

@@ -133,6 +133,12 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified iCIMS and j
     expect(offline.fetch.calls.slice(before)).toEqual([`${IC}/robots.txt`, `${IC}/sitemap.xml`, PAGES[0], PAGES[1], `${BE}/robots.txt`, `${BE}/sitemap.xml`, PAGES[2]]);
     expect(pageRows().map((p) => p.fetched_on)).toEqual(['2026-10-22', '2026-10-22', '2026-10-22']);
     // a new IST day: a fresh count, the other days pruned
-    expect(ledgers()).toEqual({ 'pages.fetched.2026-10-22.icims careers-acme.icims.com': '2', 'pages.fetched.2026-10-22.jsonld-sitemap www.betaco.test': '1' });
+    expect(ledgers()).toEqual({
+      'pages.fetched.2026-10-22.icims careers-acme.icims.com': '2',
+      // fix round 3: the day's stale refetches, against the per-day stale reserve
+      'pages.fetched.2026-10-22.icims careers-acme.icims.com stale': '2',
+      'pages.fetched.2026-10-22.jsonld-sitemap www.betaco.test': '1',
+      'pages.fetched.2026-10-22.jsonld-sitemap www.betaco.test stale': '1',
+    });
   }, 120_000);
 });

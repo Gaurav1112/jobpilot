@@ -584,4 +584,18 @@ describe('fix round 2', () => {
     await expect(c.readBoard(OKTA, bad.ctx.http!, { hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) })).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/no valid JobPosting on 3 job pages/) });
     expect(bad.calls.some((u) => u.endsWith('/careers/job-4/'))).toBe(false);
   });
+
+  it('fix round 3 (N16): a bare captcha page served as the sitemap is a challenge (the host disabled), never an empty sitemap', async () => {
+    const hosts = dailyPlatformHosts({ minIntervalMs: 2000 });
+    const h = harness(srcIcimsContract, ICIMS_EGRESS, [ICIMS], { [`${IC}/robots.txt`]: { status: 404 }, [`${IC}/sitemap.xml`]: { status: 200, body: '<html><script src="https://www.google.com/recaptcha/api.js"></script>Please complete the captcha</html>' } });
+    await expect(runAgent(makeSrcIcims({ hosts }), req('icims', ICIMS, 'Atlassian'), h.ctx)).rejects.toMatchObject({ code: 'challenged' });
+    expect(hosts.disabledWhy(ICIMS)).toBe('challenge');
+  });
+
+  it('fix round 3 (N17): a bare captcha page served as the SmartRecruiters listing is a challenge, never an empty listing', async () => {
+    const hosts = dailyPlatformHosts({ minIntervalMs: 2000 });
+    const h = harness(srcSmartRecruitersContract, SR_EGRESS, SR_HOSTS, { [`${JOBS}/robots.txt`]: { status: 404 }, [`${JOBS}/BoschGroup`]: { status: 200, body: '<html><a href="/">home</a>Please complete the captcha</html>' } });
+    await expect(runAgent(makeSrcSmartRecruiters({ hosts }), req('smartrecruiters', 'BoschGroup', 'Bosch'), h.ctx)).rejects.toMatchObject({ code: 'challenged' });
+    expect(hosts.disabledWhy('jobs.smartrecruiters.com')).toBe('challenge');
+  });
 });

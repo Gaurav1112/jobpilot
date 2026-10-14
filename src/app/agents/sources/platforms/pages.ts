@@ -28,7 +28,7 @@ import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type P
  * **Robots-denied pages (fix round 2):** robots.txt is asked before a page is counted: a denied page costs no request
  * and no budget, is named, and is recorded (`robots-denied:<robots.txt fingerprint>`), so it leaves the plan until
  * robots.txt changes or its week is over. A page that answers another 4xx keeps its earlier posting (asked again next
- * week); only 404/410 is gone.
+ * week, until the PAGE_MAX_4XX_KEEPS-th consecutive such answer drops it); only 404/410 is gone at once.
  *
  * Accepted as they are (review, fix round 2): a page whose JobPosting names no location maps to an empty location and
  * the existing eligibility decides (it may reject; eligibility is out of this task's scope); a JSON-LD title keeps
@@ -62,8 +62,19 @@ export const PAGE_MAX_FETCHES = 40;
 export const PAGE_LEDGER_PREFIX = 'pages.fetched.';
 /** A page last fetched more than this many days ago is fetched again when the budget allows. */
 export const PAGE_STALE_DAYS = 7;
-/** Of the day's budget, this many fetches go to stale pages first whenever there are any (fix round 2). */
+/**
+ * Of each company's daily budget, this many fetches go to stale pages first whenever there are any (fix round 2), per IST
+ * day (fix round 3): a later run that day reserves only what the day has not yet spent on stale pages, so new pages come
+ * first then.
+ */
 export const PAGE_STALE_RESERVE = 10;
+/** The day ledger's board key counting a board's stale refetches (`<platform> <ref> stale`). */
+export const staleLedgerBoard = (board: string): string => `${board} stale`;
+/**
+ * Consecutive weekly refetches answering a non-404 4xx that keep a page's earlier posting (fix round 3): the third one
+ * drops it, as gone; a good fetch resets the count.
+ */
+export const PAGE_MAX_4XX_KEEPS = 3;
 /** The page-state hash of a page robots.txt denied: `robots-denied:<robots.txt fingerprint>`. */
 export const ROBOTS_DENIED = 'robots-denied:';
 /** Redirects followed per page, within the board's host. */
@@ -81,6 +92,8 @@ export interface PageRecord {
   readonly hash: string;
   /** The raw posting the page gave (what the adapter emitted), or null when it had none. */
   readonly raw: unknown;
+  /** Consecutive refetches that answered a non-404 4xx while the earlier posting was kept (absent: 0). */
+  readonly errors?: number;
 }
 
 /**
@@ -168,7 +181,7 @@ const ageOf = (runDate: string, fetchedOn: string): number => {
  * new URLs keep arriving; then never-fetched pages in listing order; then the remaining stale pages. A stale reserve
  * with fewer stale pages goes to new pages.
  */
-export function planPages(jobs: readonly ListedJob[], records: ReadonlyMap<string, PageRecord>, runDate: string, max: number): PagePlan {
+export function planPages(jobs: readonly ListedJob[], records: ReadonlyMap<string, PageRecord>, runDate: string, max: number, staleReserve: number = PAGE_STALE_RESERVE): PagePlan {
   const fresh: ListedJob[] = [];
   const never: ListedJob[] = [];
   const stale: { job: ListedJob; on: string }[] = [];
@@ -183,7 +196,7 @@ export function planPages(jobs: readonly ListedJob[], records: ReadonlyMap<strin
   }
   stale.sort((a, b) => (a.on < b.on ? -1 : a.on > b.on ? 1 : a.job.url < b.job.url ? -1 : a.job.url > b.job.url ? 1 : 0));
   const staleJobs = stale.map((x) => x.job);
-  const reserve = Math.min(PAGE_STALE_RESERVE, Math.max(0, max));
+  const reserve = Math.max(0, Math.min(staleReserve, max));
   const order = [...staleJobs.slice(0, reserve), ...never, ...staleJobs.slice(reserve)];
   const first = order.slice(0, Math.max(0, max));
   const fetched = new Set(first.map((j) => j.url));
@@ -305,7 +318,8 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
     if (r !== undefined && r.hash.startsWith(ROBOTS_DENIED) && now !== null && now !== undefined && r.hash !== `${ROBOTS_DENIED}${now}`) records.delete(j.url);
   }
   const left = Math.max(0, o.max - o.ledger.used(o.runDate, o.board));
-  const plan = planPages(o.jobs, records, o.runDate, left);
+  const staleBoard = staleLedgerBoard(o.board);
+  const plan = planPages(o.jobs, records, o.runDate, left, Math.max(0, PAGE_STALE_RESERVE - o.ledger.used(o.runDate, staleBoard)));
   const out: RawPosting[] = [];
   const gone: string[] = [];
   const denied: string[] = [];
@@ -315,7 +329,7 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
   const moved: string[] = [];
   const errors: string[] = [];
   const emit = (j: ListedJob, raw: unknown): void => void out.push({ source: o.source, sourceId: j.sourceId, company: o.company, slug: o.slug, raw });
-  const record = (j: ListedJob, hash: string, raw: unknown): void => o.state.put(o.board, j.url, { fetchedOn: o.runDate, hash, raw });
+  const record = (j: ListedJob, hash: string, raw: unknown, errors = 0): void => o.state.put(o.board, j.url, { fetchedOn: o.runDate, hash, raw, ...(errors > 0 ? { errors } : {}) });
   const empty = (j: ListedJob, why: string): void => {
     none.push(`${j.sourceId}: ${why}`);
     record(j, sha256Hex(''), null);
@@ -348,8 +362,9 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
     }
     budget--;
     done.add(j.url);
-    // counted before it is asked: a page that fails still spends the day's budget
+    // counted before it is asked: a page that fails still spends the day's budget (and the day's stale reserve)
     o.ledger.add(o.runDate, o.board, 1);
+    if (plan.stale.has(j.url)) o.ledger.add(o.runDate, staleBoard, 1);
     let a: PageAnswer;
     try {
       a = await getRuledPage(o.http, o.hosts, j.fetchUrl, { follow: o.follow });
@@ -372,13 +387,21 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
       continue;
     }
     if (a.kind === 'error') {
-      errors.push(`${j.sourceId}: ${a.status}`);
-      // only 404/410 is gone: a stale page's good posting is kept, and asked again next week (fix round 2)
+      // only 404/410 is gone: a stale page's good posting is kept, and asked again next week (fix round 2), at most
+      // until the PAGE_MAX_4XX_KEEPS-th consecutive 4xx, which drops it as gone (fix round 3)
       const before = records.get(j.url);
-      if (before !== undefined && before.raw !== null && !before.hash.startsWith(ROBOTS_DENIED)) {
-        record(j, before.hash, before.raw);
+      const n = (before?.errors ?? 0) + 1;
+      if (before !== undefined && before.raw !== null && !before.hash.startsWith(ROBOTS_DENIED) && n < PAGE_MAX_4XX_KEEPS) {
+        errors.push(`${j.sourceId}: ${a.status}`);
+        record(j, before.hash, before.raw, n);
         emit(j, before.raw);
-      } else record(j, sha256Hex(''), null);
+      } else if (before !== undefined && before.raw !== null && !before.hash.startsWith(ROBOTS_DENIED)) {
+        gone.push(j.sourceId);
+        record(j, sha256Hex(''), null);
+      } else {
+        errors.push(`${j.sourceId}: ${a.status}`);
+        record(j, sha256Hex(''), null);
+      }
       continue;
     }
     const nodes = jsonLdJobPostings(a.body);
@@ -399,7 +422,7 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
     emit(j, raw);
   }
   // fresh pages, and stale ones today's budget did not reach, keep their stored posting
-  for (const j of [...plan.keep, ...plan.order.filter((x) => plan.stale.has(x.url) && !done.has(x.url))]) {
+  for (const j of plan.keep) {
     const r = records.get(j.url);
     if (r !== undefined && r.raw !== null && !done.has(j.url)) emit(j, r.raw);
   }

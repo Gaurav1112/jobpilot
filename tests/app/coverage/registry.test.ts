@@ -84,8 +84,8 @@ describe('migration 9: the companies registry', () => {
     const before = dumpHash(db);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toBeUndefined();
     const s = AppStore.on(kernel);
-    expect(APP_MIGRATIONS.length).toBe(11);
-    expect(s.schemaVersion()).toBe(11);
+    expect(APP_MIGRATIONS.length).toBe(12);
+    expect(s.schemaVersion()).toBe(12);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toEqual({ name: 'companies' });
     expect(dumpHash(db, ['companies', 'coverage_host_state', 'platform_pages'])).toBe(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -109,7 +109,7 @@ describe('migration 9: the companies registry', () => {
 describe('migration 10: coverage host state', () => {
   it('adds coverage_host_state, keeps the earlier SQL, and round-trips a disabled host per run', () => {
     const s = AppStore.on(Store.open(':memory:'));
-    expect(s.schemaVersion()).toBe(11);
+    expect(s.schemaVersion()).toBe(12);
     const cols = (s.kernel.db.prepare(`PRAGMA table_info(coverage_host_state)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(['run_key', 'host', 'reason', 'at']);
     s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-429', '2026-10-13T01:00:00.000Z');
