@@ -1,5 +1,5 @@
 {
-  "hash": "0ecafd25251978eed54e020693d9ab71513e3027f1570d7c7653cd41dcc00e1b",
+  "hash": "27a0b8ce1a20ecc8e7f008074925c9f4bcad33291e39a1bf9407c476152fc398",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -850,6 +850,10 @@
                                   "budget": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "bound": {
+                                        "const": "ceiling",
+                                        "type": "string"
+                                      },
                                       "currency": {
                                         "anyOf": [
                                           {
@@ -870,6 +874,13 @@
                                             "type": "null"
                                           }
                                         ]
+                                      },
+                                      "from": {
+                                        "enum": [
+                                          "platform",
+                                          "description"
+                                        ],
+                                        "type": "string"
                                       },
                                       "max": {
                                         "type": [
@@ -1193,6 +1204,7 @@
                                   "method": {
                                     "enum": [
                                       "stated",
+                                      "stated-ceiling",
                                       "fixed÷stated-hours",
                                       "derived-from-duration",
                                       "monthly÷hours",
@@ -1438,6 +1450,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.5.0"
+    "version": "1.6.0"
   }
 }

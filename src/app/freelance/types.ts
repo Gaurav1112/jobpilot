@@ -60,6 +60,15 @@ export const Gig = defineType(
           currency: GigCurrency.nullable(),
           /** USD per unit of `currency` as the platform states it (Freelancer `currency.exchange_rate`, copied); null elsewhere. Used only for a currency the pack fx table lacks. */
           usdPerUnit: z.number().nullable(),
+          /**
+           * Where the pay was read (freelance-boost): `platform` a structured pay field of the source (Himalayas'
+           * `minSalary`/`maxSalary`/`salaryPeriod`), `description` the posting's own text (boards, Himalayas without a
+           * pay field). Absent on the older sources, whose mapping is fixed per platform (Freelancer: its budget
+           * fields; Remotive, HN, Gmail: the text).
+           */
+          from: z.enum(['platform', 'description']).optional(),
+          /** `ceiling`: the text states only an upper bound ("up to $130/hr"): `min` is null, `max` the ceiling. */
+          bound: z.literal('ceiling').optional(),
         })
         .strict(),
       hoursPerWeek: z.object({ min: z.number().nullable(), max: z.number().nullable(), source: z.literal('text').nullable() }).strict(),
@@ -85,7 +94,7 @@ export const RatedGig = defineType(
         .object({
           minUsdH: z.number().nullable(),
           maxUsdH: z.number().nullable(),
-          method: z.enum(['stated', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']),
+          method: z.enum(['stated', 'stated-ceiling', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']),
           fxDate: IsoDate.nullable(),
           /** Which table converted the money: the pack's, the platform's own rate, or none (USD, or nothing converted). */
           fxSource: z.enum(['pack', 'platform']).nullable(),

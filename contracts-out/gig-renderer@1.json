@@ -1,5 +1,5 @@
 {
-  "hash": "7e63037297526c86bb0e63613969c40c38081b055eeb9962ca226da943d519dd",
+  "hash": "9660e29c6771ed8c80b2e922ad41f6186bf8c300aa4cea5e393f84dbbe54a032",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -796,6 +796,10 @@
                               "budget": {
                                 "additionalProperties": false,
                                 "properties": {
+                                  "bound": {
+                                    "const": "ceiling",
+                                    "type": "string"
+                                  },
                                   "currency": {
                                     "anyOf": [
                                       {
@@ -816,6 +820,13 @@
                                         "type": "null"
                                       }
                                     ]
+                                  },
+                                  "from": {
+                                    "enum": [
+                                      "platform",
+                                      "description"
+                                    ],
+                                    "type": "string"
                                   },
                                   "max": {
                                     "type": [
@@ -1139,6 +1150,7 @@
                               "method": {
                                 "enum": [
                                   "stated",
+                                  "stated-ceiling",
                                   "fixed÷stated-hours",
                                   "derived-from-duration",
                                   "monthly÷hours",
@@ -2082,6 +2094,10 @@
                                   "budget": {
                                     "additionalProperties": false,
                                     "properties": {
+                                      "bound": {
+                                        "const": "ceiling",
+                                        "type": "string"
+                                      },
                                       "currency": {
                                         "anyOf": [
                                           {
@@ -2102,6 +2118,13 @@
                                             "type": "null"
                                           }
                                         ]
+                                      },
+                                      "from": {
+                                        "enum": [
+                                          "platform",
+                                          "description"
+                                        ],
+                                        "type": "string"
                                       },
                                       "max": {
                                         "type": [
@@ -2425,6 +2448,7 @@
                                   "method": {
                                     "enum": [
                                       "stated",
+                                      "stated-ceiling",
                                       "fixed÷stated-hours",
                                       "derived-from-duration",
                                       "monthly÷hours",
@@ -2554,6 +2578,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.5.0"
+    "version": "1.6.0"
   }
 }

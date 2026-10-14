@@ -1,5 +1,5 @@
 {
-  "hash": "7332447ece166a2d3110a6a69bbb3bbfe3560892945762a186fce20812e4a217",
+  "hash": "6329ceebd08b037c196c6796bf5892c29da6854004f5587d1e0212a78be7e152",
   "shape": {
     "breaker": {
       "consecutiveFailures": 10000
@@ -75,6 +75,10 @@
           "budget": {
             "additionalProperties": false,
             "properties": {
+              "bound": {
+                "const": "ceiling",
+                "type": "string"
+              },
               "currency": {
                 "anyOf": [
                   {
@@ -95,6 +99,13 @@
                     "type": "null"
                   }
                 ]
+              },
+              "from": {
+                "enum": [
+                  "platform",
+                  "description"
+                ],
+                "type": "string"
               },
               "max": {
                 "type": [
@@ -386,6 +397,6 @@
     },
     "team": "understanding",
     "timeoutMs": 10000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

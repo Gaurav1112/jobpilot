@@ -1,5 +1,5 @@
 {
-  "hash": "48eacd43684b4e0027871d0a17484a928597854be38583846ffaf650f3742760",
+  "hash": "b71350ee8146bacf4432b4d3b0617f761b327c2bf39945146b05f2cefe4929e5",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -59,6 +59,10 @@
                       "budget": {
                         "additionalProperties": false,
                         "properties": {
+                          "bound": {
+                            "const": "ceiling",
+                            "type": "string"
+                          },
                           "currency": {
                             "anyOf": [
                               {
@@ -79,6 +83,13 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "from": {
+                            "enum": [
+                              "platform",
+                              "description"
+                            ],
+                            "type": "string"
                           },
                           "max": {
                             "type": [
@@ -402,6 +413,7 @@
                       "method": {
                         "enum": [
                           "stated",
+                          "stated-ceiling",
                           "fixed÷stated-hours",
                           "derived-from-duration",
                           "monthly÷hours",
@@ -556,6 +568,10 @@
                           "budget": {
                             "additionalProperties": false,
                             "properties": {
+                              "bound": {
+                                "const": "ceiling",
+                                "type": "string"
+                              },
                               "currency": {
                                 "anyOf": [
                                   {
@@ -576,6 +592,13 @@
                                     "type": "null"
                                   }
                                 ]
+                              },
+                              "from": {
+                                "enum": [
+                                  "platform",
+                                  "description"
+                                ],
+                                "type": "string"
                               },
                               "max": {
                                 "type": [
@@ -899,6 +922,7 @@
                           "method": {
                             "enum": [
                               "stated",
+                              "stated-ceiling",
                               "fixed÷stated-hours",
                               "derived-from-duration",
                               "monthly÷hours",
@@ -980,6 +1004,6 @@
     },
     "team": "evaluation",
     "timeoutMs": 10000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

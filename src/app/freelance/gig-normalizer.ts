@@ -19,14 +19,16 @@ import { Gig, RawGig } from './types.js';
  *   `publication_date` carries no zone and is read as UTC. Pay is read from `salary` and the description.
  * - hn-freelancer, hn-hiring: `title` is the comment's first line (at most 120 characters), `kind` is `contract`,
  *   `postedAt` is `created_at_i`. Pay is read from the text.
- * - boards: a daily Posting@1. `kind` is `contract` and the budget is `unknown`: an annual salary is not a freelance
- *   budget.
+ * - boards: a daily Posting@1. `kind` is `contract`. The budget is read from the title and description text by PAY
+ *   (freelance-boost; before, it was always `unknown`) and labelled `from: 'description'`; the Posting's annual `comp`
+ *   is never read: an annual salary is not a freelance budget.
  * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
  *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
  *   read from `pay` and the description by the same rule.
  *
  * Hours come from text only (HOURS_PER_WEEK). Pay in text counts only when exactly one distinct, unqualified figure
- * is stated (PAY): two different rates, "up to $90/h", "from $50/h" or "about $50/h" leave the budget `unknown`.
+ * is stated (PAY): two different rates, "from $50/h" or "about $50/h" leave the budget `unknown`. An hourly "up to
+ * $90/h" (or "Upto $90/hr") is a stated ceiling (freelance-boost): `min` null, `max` 90, `bound: 'ceiling'`.
  * A raw with no title or no url, from a platform with no mapping, or that is not the platform's shape, fails with
  * `invalid_output` naming the field.
  */
@@ -102,6 +104,8 @@ const PAY = new RegExp(
     '(?:\\s?(?<c1>' + CODES + '))?\\s?(?:\\/|per\\s|an?\\s)\\s?(?<unit>hours?|hrs?|h|months?|mo)\\b(?:\\s?(?<c2>' + CODES + ')\\b)?',
   'giu',
 );
+/** "up to" / "upto" just before a figure: a stated ceiling (freelance-boost), kept as `max` with `bound: 'ceiling'`. */
+const UP_TO = /\bup\s?to\s*$/i;
 /** Words just before a figure that make it a bound or one end of a range, not the rate. */
 const QUALIFIED =
   /\b(?:up\s?to|from|starting(?:\s+at)?|at\s+least|min(?:imum)?|max(?:imum)?|over|under|below|above|less\s+than|more\s+than|estimated|approx(?:imately|\.)?|about|around|roughly|potential(?:\s+of)?|\d\s*(?:to|-|–))\s*$/i;
@@ -132,7 +136,10 @@ function payOf(text: string): Budget {
       const around = field ? m[0] : text.slice(Math.max(0, at - 40), at + m[0].length + 40);
       if (NOT_PAY_WORD.test(around) || !(field || PAY_WORD.test(around))) continue;
     }
-    if (QUALIFIED.test(text.slice(Math.max(0, at - 40), at))) return UNKNOWN_BUDGET;
+    const before = text.slice(Math.max(0, at - 40), at);
+    // An hourly "up to $X" is a stated ceiling; any other qualified figure (a monthly ceiling too) is no rate.
+    const ceiling = type === 'hourly' && UP_TO.test(before);
+    if (!ceiling && QUALIFIED.test(before)) return UNKNOWN_BUDGET;
     const k = (s: string | undefined): number => (s === undefined ? 1 : 1000);
     if (g.hi !== undefined && (g.klo === undefined) !== (g.khi === undefined)) return UNKNOWN_BUDGET;
     const lo = Number((g.lo ?? '').replace(/,/g, '')) * k(g.klo);
@@ -145,10 +152,14 @@ function payOf(text: string): Budget {
     const nonDollar = sym === '$' && named.some((c) => c === 'EUR' || c === 'GBP' || c === 'INR');
     if (currencies.size > 1 || nonDollar || (named.length === 0 && sym !== '$')) return UNKNOWN_BUDGET;
     const currency = [...currencies][0] ?? 'USD';
-    seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
+    if (ceiling) seen.set(`${type}|${currency}|ceiling|${hi}`, { type, min: null, max: hi, currency, usdPerUnit: null, bound: 'ceiling' });
+    else seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
   }
   return seen.size === 1 ? ([...seen.values()][0] ?? UNKNOWN_BUDGET) : UNKNOWN_BUDGET;
 }
+
+/** A budget read from the posting's text, labelled so (an unknown budget stays the plain unknown). */
+const fromText = (b: Budget): Budget => (b.type === 'unknown' ? b : { ...b, from: 'description' });
 
 /** Countries named in free location text, `worldwide` split off into its flag. */
 function placesOf(text: string | null): { countries: string[]; worldwide: boolean } {
@@ -255,7 +266,10 @@ function boards(r: RawGig, o: unknown): Draft {
     description: collapse(posting.descriptionText),
     clientName: nonBlank(posting.company),
     kind: 'contract',
-    budget: UNKNOWN_BUDGET,
+    // freelance-boost (research A7.2): the posting's own stated pay, by the same PAY rule as the other text sources,
+    // labelled `from: description`. The daily Posting's annual `comp` is still not a freelance budget, and PAY reads
+    // only hourly and monthly units, so an annual salary in the text stays unknown.
+    budget: fromText(payOf(`${title}\n${posting.descriptionText}`)),
     location: {
       countries: posting.remote.countries.filter((c) => c !== 'worldwide'),
       worldwide: posting.remote.countries.includes('worldwide'),
@@ -324,7 +338,7 @@ export function normalizeGig(r: RawGig): Gig {
 
 export const gigNormalizerContract = defineContract({
   id: 'gig-normalizer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Maps one raw gig from any platform to the common gig shape',
   skills: ['gig-normalization'],
   team: 'understanding',

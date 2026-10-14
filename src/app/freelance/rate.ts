@@ -8,7 +8,8 @@ import { Gig, RatedGig } from './types.js';
 /**
  * The rate normalizer: any pay in USD per hour, labelled by how it was reached, or `unknown`. It never guesses.
  *
- * - `hourly` with a minimum or maximum: `stated`.
+ * - `hourly` with a minimum or maximum: `stated`; a ceiling only (`budget.bound: 'ceiling'`, "up to $X/hr"):
+ *   `stated-ceiling`, minUsdH null.
  * - `fixed`: with `hoursPerWeek.max` and `duration.weeks`, budget / (hours x weeks), `fixed÷stated-hours`; else with
  *   exactly one total-hours figure or range with an effort cue in the description (see `totalHours`), budget / hours, `fixed÷stated-hours`
  *   (a range "N-M hours" gives minUsdH = min budget / M and maxUsdH = max budget / N); else with `duration.weeks` only,
@@ -142,7 +143,7 @@ export function rateOf(gig: Gig, fx: Fx, maxHoursPerWeek: number): Rate {
     fxSource: unit.source,
     budgetUsd,
   });
-  if (type === 'hourly') return make('stated', 1, 1, null);
+  if (type === 'hourly') return make(gig.budget.bound === 'ceiling' ? 'stated-ceiling' : 'stated', 1, 1, null);
 
   const top = usd(max ?? min);
   const noRate: Rate = { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate, fxSource: unit.source, budgetUsd: top };
@@ -166,7 +167,7 @@ const PackView = z.object({
 
 export const rateNormalizerContract = defineContract({
   id: 'rate-normalizer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Turns a gig budget into dollars per hour with a method label',
   skills: ['rate-normalization'],
   team: 'understanding',

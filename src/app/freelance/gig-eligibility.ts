@@ -60,6 +60,10 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
  *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected; at or above the floor
  *    (user decision 2026-10-13) it stays eligible with that note, so every surface labels it a preset tier.
+ * 8b. ceiling (freelance-boost): a `stated-ceiling` rate ("up to $X/hr") below the floor rejects as
+ *    `rate-below-floor:<X>` (a hedge is review, as below); at or above it is review `ceiling-only` with the note
+ *    `pay is a stated ceiling only (up to $X/h) - verify`: a ceiling never passes the floor on its own. A reject from
+ *    another rule still wins.
  * 9. rate-below-floor:<maxUsdH>: `maxUsdH` below `rateFloorUsdHour`, for a `stated` rate, or for a derived one
  *    (`derivedRateCountsForFloor`; when false it is a note). A rate with no maximum cannot be below the floor. An
  *    unknown rate (contract, or a gig with no budget) is `rate unknown - verify`.
@@ -129,6 +133,8 @@ export const NOTE_RATE_NEGOTIABLE = 'rate negotiable - verify';
 export const NOTE_LOCATION_ZONES = 'location field names time zones - verify';
 export const NOTE_RATE_UNKNOWN = 'rate unknown - verify';
 export const NOTE_DERIVED_NOT_COUNTED = 'derived rate below floor - not counted';
+/** freelance-boost: the pay is only a stated ceiling at or above the floor. */
+export const noteCeiling = (max: number): string => `pay is a stated ceiling only (up to $${max}/h) - verify`;
 
 /* ------------------------------------------------------------------ closed requirement sentences */
 /*
@@ -565,6 +571,11 @@ const negotiable = (): Outcome => reviewOf('rate-unclear', NOTE_RATE_NEGOTIABLE)
 
 function payOutcome(r: RatedGig, f: GigPack['freelance'], tiers: readonly Tier[]): Outcome {
   const { rate, gig } = r;
+  // freelance-boost: a stated ceiling ("up to $X/hr") can fail the floor but never pass it on its own.
+  if (rate.method === 'stated-ceiling' && rate.maxUsdH !== null) {
+    if (rate.maxUsdH < f.rateFloorUsdHour) return hedged(gig.description) ? negotiable() : rejectOf(`rate-below-floor:${rate.maxUsdH}`);
+    return reviewOf('ceiling-only', noteCeiling(rate.maxUsdH));
+  }
   const preset = isPreset(gig, tiers);
   if (rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
     if (gig.kind === 'gig' && rate.budgetUsd !== null) {
@@ -625,7 +636,7 @@ function packOf(pack: unknown): GigPack {
 
 export const gigEligibilityContract = defineContract({
   id: 'gig-eligibility',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Decides whether one gig is open to the candidate',
   skills: ['gig-eligibility-rules'],
   team: 'evaluation',

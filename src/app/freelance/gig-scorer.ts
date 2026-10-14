@@ -34,7 +34,7 @@ function listOf(verdict: 'eligible' | 'review', kind: Gig['kind']): ScoredGig['l
 
 export const gigScorerContract = defineContract({
   id: 'gig-scorer',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Scores one gig against the lexicon',
   skills: ['gig-scoring'],
   team: 'evaluation',

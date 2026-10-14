@@ -98,6 +98,9 @@ const NOTICE: Readonly<Record<string, string>> = {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
+/** Where a stored budget was read (`Gig.budget.from`), or null when it does not say. */
+const budgetFromOf = (b: unknown): string | null => (isObj(b) && typeof b['from'] === 'string' ? b['from'] : null);
+
 /** A stored rate, or null when the gig was never rated. */
 function rateOf(v: unknown): GigRate | null {
   if (!isObj(v) || typeof v['method'] !== 'string') return null;
@@ -150,7 +153,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const bids = numOrNull(g.breakdown?.['bids']) ?? numOrNull(x.gig?.['bids']);
     return {
       gig: g,
-      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType, presetTier: presetTierUsd(g) }),
+      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType, presetTier: presetTierUsd(g), budgetFrom: budgetFromOf(g.budget) }),
       hours: hoursText(hours),
       overlap: overlap === null ? null : text(overlap),
       istWindow: `${rules.istWindow.replace('-', '–')} IST`,

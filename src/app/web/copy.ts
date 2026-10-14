@@ -117,6 +117,8 @@ export interface RateBasis {
   readonly budgetType: string;
   /** The preset tier in USD when the gig was posted in one (`presetTierUsd`), else null or absent. */
   readonly presetTier?: { readonly lo: number; readonly hi: number } | null;
+  /** Where the budget was read (`Gig.budget.from`, freelance-boost): absent on the older sources. */
+  readonly budgetFrom?: string | null;
 }
 
 const num1 = (n: number): string => n.toFixed(1).replace(/\.0$/, '');
@@ -132,7 +134,8 @@ function perHour(r: GigRate): string {
 
 /**
  * The rate as the user reads it, always with how it was reached (spec §5: a derived rate is never shown without its
- * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
+ * label). `stated`: "$50/h stated" (freelance-boost: "… stated in the posting text" or "… stated (pay field)" when the
+ * budget says where it was read); `stated-ceiling`: "up to $130/h (stated ceiling only)"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
  * "$50/h from ~60 hours stated" or "$25/h from 3 weeks × 20 h stated"; `monthly÷hours`: "$46.19/h from a monthly
  * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"), or for a
  * preset tier (final review I1) "preset tier $750–1,500 (client picked a range; bids may exceed it)". A rate the
@@ -150,9 +153,12 @@ export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
   }
   const pay = perHour(rate);
   const missing = ' (the basis is not on record)';
+  const where = basis.budgetFrom === 'description' ? ' in the posting text' : basis.budgetFrom === 'platform' ? ' (pay field)' : '';
   switch (rate.method) {
     case 'stated':
-      return `${pay} stated${fx}`;
+      return `${pay} stated${where}${fx}`;
+    case 'stated-ceiling':
+      return `up to ${usdText((rate.maxUsdH ?? rate.minUsdH) as number)}/h (stated ceiling only)${where}${fx}`;
     case 'derived-from-duration': {
       // The run divided the budget by weeks × the pack's weekly hours cap at that time. The stored rate keeps neither
       // figure, and the cap is never recomputed from the rate or read from today's pack: only the weeks (from the
