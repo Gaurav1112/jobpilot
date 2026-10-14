@@ -44,7 +44,7 @@ The constraints carry over unchanged:
   automatic tailoring per job. Edits are stored as confirmed facts and phrasing variants. Tailoring picks from them and
   never writes an unconfirmed claim.
 - D5 **Architecture:** profiles inside jobpilot (one codebase), not a separate app and not only a converter.
-- D6 **The existing profile** stays separate (`owner`) and is updated through the same resume re-import flow when his
+- D6 **The existing profile** stays separate (`owner`) and is updated through the same resume re-import flow when their
   resume changes.
 
 ## 3. Profiles
