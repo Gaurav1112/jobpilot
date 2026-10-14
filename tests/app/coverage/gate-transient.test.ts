@@ -194,3 +194,24 @@ describe('C1: a run of network errors asks whether the machine is offline', () =
     expect(gate.offline()).toBe(false);
   });
 });
+
+describe('final review N3: a robots.txt reached by redirect also answers for the host it was found on', () => {
+  it('www -> apex: the apex robots.txt is not asked again 2 s later', async () => {
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+    const n = net((u) =>
+      u === 'https://www.acme.test/robots.txt'
+        ? { status: 301, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? 'https://acme.test/robots.txt' : null) }, text: async () => '' }
+        : u === 'https://acme.test/robots.txt'
+          ? res(200, 'User-agent: *\nDisallow: /private\n')
+          : u === 'https://www.acme.test/'
+            ? { status: 301, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? 'https://acme.test/' : null) }, text: async () => '' }
+            : u === 'https://acme.test/'
+              ? res(200, '<p>home</p>')
+              : res(404),
+    );
+    const c: CompanyCandidate = { ...cand('acme.test'), website: 'https://www.acme.test' };
+    await locate(gate, n.fetch, c, at(0));
+    expect(n.calls).toContain('https://acme.test/'); // the apex homepage was fetched, under the robots.txt already read
+    expect(n.calls.filter((u) => u === 'https://acme.test/robots.txt')).toHaveLength(1);
+  });
+});

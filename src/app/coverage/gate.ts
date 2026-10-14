@@ -437,7 +437,13 @@ export function stepFetcher(o: {
     if (r.kind === 'miss' && r.transient !== undefined) return { kind: 'disallow-all', reason: 'robots-transient', why: r.reason, transient: r.transient };
     if (r.kind === 'miss' && r.reason.startsWith(`${NO_SUCH_HOST}:`)) return { kind: 'disallow-all', reason: NO_SUCH_HOST, why: r.reason };
     if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
-    return robotsVerdictOf(r.status, r.body);
+    const verdict = robotsVerdictOf(r.status, r.body);
+    // final review N3: a robots.txt reached by redirect (www -> apex) is the target host's own robots.txt too; an
+    // allowing answer is kept for it, so it is not asked again two seconds later (a refusal is left to its own fetch)
+    const target = new URL(r.url);
+    const other = target.hostname.toLowerCase();
+    if (other !== host && target.pathname === '/robots.txt' && target.search === '' && verdict.kind !== 'disallow-all' && !state.robots.has(other)) state.robots.set(other, Promise.resolve(verdict));
+    return verdict;
   }
 
   return { fetchUrl, robotsFor };
