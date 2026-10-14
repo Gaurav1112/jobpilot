@@ -17,6 +17,7 @@ import { LEVER_MAX_PAGES, LEVER_TIMEOUT_MS, srcLever } from './agents/sources/le
 import { eightfoldBoardOfUrl, eightfoldMaxRequests, eightfoldRef, EIGHTFOLD_EGRESS, EIGHTFOLD_TIMEOUT_MS, makeSrcEightfold, parseEightfoldRef } from './agents/sources/platforms/eightfold.js';
 import { makeSrcOracle, oracleBoardOfUrl, oracleRef, ORACLE_EGRESS, ORACLE_MAX_REQUESTS, ORACLE_TIMEOUT_MS, parseOracleRef } from './agents/sources/platforms/oracle.js';
 import { makeSrcWorkday, parseWorkdayRef, workdayBoardOfUrl, workdayRef, WORKDAY_EGRESS, WORKDAY_MAX_REQUESTS, WORKDAY_TIMEOUT_MS } from './agents/sources/platforms/workday.js';
+import type { PageLedger } from './agents/sources/platforms/shared.js';
 import { dailyEightfoldHosts, dailyOracleHosts, dailyWorkdayHosts } from './daily-hosts.js';
 import { writingAgents } from './agents/writing/index.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
@@ -124,14 +125,14 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
  * call, on a fresh `dailyWorkdayHosts()` (robots.txt once per host per run). With no boards the agents, the wiring
  * and so every step key are exactly as before the registry existed.
  */
-export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = []): AnyAgent[] {
+export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = [], o: { readonly pageLedger?: PageLedger } = {}): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   // one adapter per platform with a verified company, each on its own fresh host state (robots.txt, disabled hosts)
   const has = (p: RegistryPlatform): boolean => boards.some((b) => b.platform === p);
   const platforms: AnyAgent[] = [
     ...(has('workday') ? [makeSrcWorkday({ hosts: dailyWorkdayHosts() })] : []),
     ...(has('eightfold') ? [makeSrcEightfold({ hosts: dailyEightfoldHosts() })] : []),
-    ...(has('oracle') ? [makeSrcOracle({ hosts: dailyOracleHosts() })] : []),
+    ...(has('oracle') ? [makeSrcOracle({ hosts: dailyOracleHosts(), ...(o.pageLedger === undefined ? {} : { ledger: o.pageLedger }) })] : []),
   ];
   return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }

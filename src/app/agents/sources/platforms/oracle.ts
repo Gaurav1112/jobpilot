@@ -9,6 +9,7 @@ import {
   goneNote,
   hostRequest,
   namesIndia,
+  memoryPageLedger,
   namesOffice,
   preferPostings,
   refusal,
@@ -18,6 +19,7 @@ import {
   shapeError,
   titlePackOf,
   type HttpTool,
+  type PageLedger,
   type PlatformHosts,
   type ScopeBounds,
 } from './shared.js';
@@ -35,8 +37,8 @@ import {
  * RFC 9309 §2.3.1.3 lets a crawler access resources when robots.txt answers 4xx. So, for this REST API only:
  * - robots.txt is still fetched once per host per run; a plain 401 or 403 is "unknown" (`dailyOracleHosts`,
  *   `unreadableRobots: 'allow'`), and the API is then read at the minimal rate: ORACLE_MIN_INTERVAL_MS (5 s) between
- *   requests to the host, and at most ORACLE_MAX_PAGES (10) list pages per company per day, the discovery page
- *   included;
+ *   requests to the host, and at most ORACLE_MAX_PAGES (10) list pages per company per IST day, the discovery page
+ *   included, counted across the day's runs (a retry, a `run --refresh`) in the app DB (Fix round 2, `PageLedger`);
  * - a robots.txt that becomes readable and disallows the REST path is the named skip `robots-disallow <host>: <company>
  *   not read today (…)`, nothing fetched; a challenge page or 429 on it disables the host;
  * - a 401, 403 or 429 from the API itself disables the host for the run: the step fails `challenged` (401, 403) or
@@ -401,6 +403,8 @@ export interface SrcOracleOptions {
   readonly hosts: OracleHosts;
   readonly maxPages?: number;
   readonly maxDetails?: number;
+  /** The day's list pages per board across runs (the daily wiring's app-DB ledger); default in memory, this adapter's runs only. */
+  readonly ledger?: PageLedger;
 }
 
 const rawOf = (p: RawPosting): OracleRaw => p.raw as OracleRaw;
@@ -411,9 +415,14 @@ const indiaNamed = (p: RawPosting): boolean => {
   return r.primaryCountry === 'IN' || r.secondaryLocations.some((l) => l.country === 'IN') || placesOf(r).some(namesIndia);
 };
 
-/** The company's list-page budget for the day: every list page counts, the discovery page included. */
+/**
+ * The company's list-page budget for its IST day (`req.runDate`): every list page counts, the discovery page included,
+ * across the day's attempts (a retry, a `run --refresh`), through the ledger. A page is counted before it is asked.
+ */
 interface PageBudget {
-  used: number;
+  readonly ledger: PageLedger;
+  readonly day: string;
+  readonly board: string;
   readonly max: number;
 }
 
@@ -440,8 +449,8 @@ async function readList(http: HttpTool, hosts: OracleHosts, b: OracleBoard, req:
 
 /** A list page within the company's daily page budget; past it, the loud `input_rejected` refusal `capMessage`. */
 async function nextPage(http: HttpTool, hosts: OracleHosts, b: OracleBoard, offset: number, q: OracleQuery, budget: PageBudget, capMessage: string): Promise<OracleListPage> {
-  if (budget.used >= budget.max) throw new KernelError('input_rejected', capMessage);
-  budget.used++;
+  if (budget.ledger.used(budget.day, budget.board) >= budget.max) throw new KernelError('input_rejected', capMessage);
+  budget.ledger.add(budget.day, budget.board, 1);
   return fetchListPage(http, hosts, b, offset, q);
 }
 
@@ -452,14 +461,14 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   if (b === null) throw new KernelError('invalid_output', `oracle: ${req.slug} is not <host>/<siteNumber>`);
   const pack = titlePackOf(ctx.pack, 'src-oracle');
   const offices = pack.eligibility?.officeCities ?? [];
-  const budget: PageBudget = { used: 0, max: o.maxPages };
+  const budget: PageBudget = { ledger: o.ledger, day: req.runDate, board: oracleRef(b), max: o.maxPages };
   const what = `oracle ${req.company}`;
   try {
     const key = oracleRef(b);
     let scopes = o.hosts.scopes?.get(key);
     let first: OracleListPage | undefined;
     if (scopes === undefined) {
-      first = await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before discovery`);
+      first = await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before discovery (${budget.max} list pages per company per day, all used today)`);
       scopes = oracleScopes(first);
       o.hosts.scopes?.set(key, scopes);
     }
@@ -476,7 +485,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       ctx.skipped([`no-india-or-remote-facet ${req.company}: its location facets name neither India nor a remote workplace type`]);
       return [];
     } else {
-      first ??= await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before the unscoped list`);
+      first ??= await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before the unscoped list (${budget.max} list pages per company per day, all used today)`);
       all.push(...(await readList(http, o.hosts, b, req, {}, first, budget, ctx, '')));
     }
     const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices)) ? 0 : indiaNamed(p) ? 1 : 2));
@@ -500,6 +509,6 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
 
 /** Builds `src-oracle` for one run, on the run's host state (robots.txt cache, disabled hosts, discovered scopes). */
 export function makeSrcOracle(o: SrcOracleOptions): Agent<DiscoveryRequest, RawPosting> {
-  const opts: Required<SrcOracleOptions> = { hosts: o.hosts, maxPages: Math.min(o.maxPages ?? ORACLE_MAX_PAGES, ORACLE_MAX_PAGES), maxDetails: o.maxDetails ?? ORACLE_MAX_DETAILS };
+  const opts: Required<SrcOracleOptions> = { hosts: o.hosts, maxPages: Math.min(o.maxPages ?? ORACLE_MAX_PAGES, ORACLE_MAX_PAGES), maxDetails: o.maxDetails ?? ORACLE_MAX_DETAILS, ledger: o.ledger ?? memoryPageLedger() };
   return defineAgent(srcOracleContract, (req, ctx) => (req.ats === 'oracle' ? runCompany(req, ctx, opts) : Promise.resolve([])));
 }

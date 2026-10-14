@@ -418,6 +418,17 @@ describe('board-verifier: Eightfold (the careers page names the API; the domain 
     expect(n.calls).toEqual([`https://${NF}/robots.txt`]);
   });
 
+  it('fix round 2: a careers-page 429 or challenge is a deferral (host-disabled), never a failed verdict, so no fail week', async () => {
+    const fx = recorded<EfFixture>('eightfold-netflix');
+    for (const [careers, why] of [[{ status: 429, body: 'Please try again later' }, 'http-429'], [{ status: 200, body: '<title>Just a moment...</title>' }, 'challenge']] as const) {
+      const n = serve({ [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: careers });
+      const agent = makeBoardVerifier(fresh());
+      await expect(agent.run(nfGuess(), ctxFor(n.fetch, [nfGuess()])), why).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`^host-disabled:${why} on explore\\.jobs\\.netflix\\.net`)) });
+      // nothing past the careers page
+      expect(n.calls).toEqual([`https://${NF}/robots.txt`, `https://${NF}/careers?domain=netflix.com`]);
+    }
+  });
+
   it('a 403 from the list disables the host and defers the step', async () => {
     const fx = recorded<EfFixture>('eightfold-netflix');
     const n = serve({ [`https://${NF}/robots.txt`]: { body: fx.robots }, [`https://${NF}/careers?domain=netflix.com`]: { body: fx.careersPage }, [`https://${NF}/api/apply/v2/jobs?domain=netflix.com&start=0&num=10`]: { status: 403, body: '{}' } });

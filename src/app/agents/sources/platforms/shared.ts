@@ -157,10 +157,16 @@ export interface ScopeBounds {
   readonly expected: number;
   /** The largest single selected value's count (never double-counted: a lower bound of the list). */
   readonly largest: number;
+  /**
+   * The facet list shows only the platform's top values (PCSX), so `expected` may miss smaller values naming the same
+   * place: the upper slack widens to max(10, 10%). The lower bound is unchanged.
+   */
+  readonly truncated?: boolean;
 }
 
-/** The tolerance of the bounds: max(5, 5%). */
+/** The tolerance of the bounds: max(5, 5%); for a truncated facet list's upper bound, max(10, 10%). */
 const slack = (n: number): number => Math.max(5, n * 0.05);
+const wideSlack = (n: number): number => Math.max(10, n * 0.1);
 
 /**
  * Whether a scoped list's reported total shows the platform applied the scope (Task 6, Fix rounds 2 and 3): null when
@@ -169,7 +175,7 @@ const slack = (n: number): number => Math.max(5, n * 0.05);
  * filter answering with too little, never a silent zero.
  */
 export function scopeMiss(total: number, b: ScopeBounds): string | null {
-  if (total > b.expected + slack(b.expected)) return `total ${total}, the facet counts ${b.expected}`;
+  if (total > b.expected + (b.truncated === true ? wideSlack(b.expected) : slack(b.expected))) return `total ${total}, the facet counts ${b.expected}`;
   if (total < b.largest - slack(b.largest)) return `total ${total}, below its largest facet value ${b.largest}`;
   return null;
 }
@@ -181,11 +187,15 @@ export const scopeNotApplied = (company: string, list: string, why: string, plat
 /** A remote work-type value: the whole descriptor says remote ("Remote", "Virtual", "Work from home"), not a remote site ("California - Remote"). */
 export const REMOTE_TYPE = /^\s*(?:fully\s+)?(?:remote|virtual|work\s+from\s+home|wfh|home[\s-]based)\s*$/iu;
 
-/** Whether a location value names India (a country name, an Indian place, or the ISO code `IN` as its last part). */
+/**
+ * Whether a location value names India: a country name or an Indian place, or the ISO code `IN` as the last of three or
+ * more parts ("Bengaluru, KA, IN", PCSX's standardized form). A two-part "Indianapolis, IN" is a US state, never India;
+ * a platform's own country field (Oracle `PrimaryLocationCountry`) is checked by the adapter itself.
+ */
 export function namesIndia(location: string): boolean {
   if (countriesIn(location).includes('india')) return true;
-  const last = location.split(',').pop()?.trim() ?? '';
-  return last === 'IN';
+  const parts = location.split(',').map((p) => p.trim());
+  return parts.length >= 3 && parts[parts.length - 1] === 'IN';
 }
 
 /** Whether a location value names one of the pack's office cities (by its aliases, word-bounded), and no country but India. */
@@ -230,6 +240,24 @@ export function chooseDetails(postings: readonly RawPosting[], o: { pack: TitleP
 /** The named note for jobs gone between list and detail (404/410 on the detail): `detail-gone <company>: N jobs gone …`. */
 export function goneNote(company: string, gone: readonly string[]): string {
   return `detail-gone ${company}: ${gone.length} ${gone.length === 1 ? 'job' : 'jobs'} gone between list and detail (${gone.slice(0, 5).join(', ')}${gone.length > 5 ? ', …' : ''})`;
+}
+
+/**
+ * List pages a board used on one IST day, across a day's runs (a retry, a `run --refresh`): Oracle's "10 list pages per
+ * company per day" (Task 7 fix round 2). The daily wiring injects one backed by the app DB (`appPageLedger`); without
+ * one, an in-memory ledger per adapter instance (one run).
+ */
+export interface PageLedger {
+  used(day: string, board: string): number;
+  add(day: string, board: string, pages: number): void;
+}
+
+export function memoryPageLedger(): PageLedger {
+  const m = new Map<string, number>();
+  return {
+    used: (day, board) => m.get(`${day} ${board}`) ?? 0,
+    add: (day, board, pages) => void m.set(`${day} ${board}`, (m.get(`${day} ${board}`) ?? 0) + pages),
+  };
 }
 
 /** The note prefixes of the named skips every platform adapter may record (problems.ts prints them as they are). */

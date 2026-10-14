@@ -1,5 +1,6 @@
 import type { AgentContext } from '../../kernel/agent.js';
 import { KernelError } from '../../kernel/errors.js';
+import { isChallenge } from '../challenge.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 
 /**
@@ -36,14 +37,8 @@ export const REQUEST_TIMEOUT_MS = 15_000;
  */
 export const CANDIDATE_DEADLINE_MS = 90_000;
 
-/** Status codes that may carry a bot wall; with a marker in the body they are a challenge (a closed list, never extended at run time). */
-const CHALLENGE_STATUS: ReadonlySet<number> = new Set([403, 429, 503]);
-const CHALLENGE_MARKERS = /cf-chl|challenge-platform|captcha|Attention Required|px-captcha|Just a moment/i;
-
-/** A challenge page: 403/429/503 with a known marker in the body. */
-export function isChallenge(status: number, body: string): boolean {
-  return CHALLENGE_STATUS.has(status) && CHALLENGE_MARKERS.test(body);
-}
+/** A challenge page: 403/429/503 with a known marker in the body (`challenge.ts`, shared with the platform adapters). */
+export { isChallenge } from '../challenge.js';
 
 /** `https://host/...` for an http(s) URL string; null otherwise. A bare scheme-less value is not guessed. */
 export function asHttps(raw: string): URL | null {

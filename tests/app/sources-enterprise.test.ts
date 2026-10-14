@@ -43,8 +43,13 @@ import {
   type OracleHosts,
   type OracleRaw,
 } from '../../src/app/agents/sources/platforms/oracle.js';
-import { scopeMiss } from '../../src/app/agents/sources/platforms/shared.js';
-import { dailyEightfoldHosts, dailyOracleHosts } from '../../src/app/daily-hosts.js';
+import { memoryPageLedger, namesIndia, namesOffice, scopeMiss } from '../../src/app/agents/sources/platforms/shared.js';
+import { appPageLedger, dailyEightfoldHosts, dailyOracleHosts } from '../../src/app/daily-hosts.js';
+import { AppStore } from '../../src/app/store/app-store.js';
+import { dailyAgents } from '../../src/app/pipeline.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Posting, type DiscoveryRequest, type RawPosting } from '../../src/app/types.js';
 import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
 import type { AnyContract } from '../../src/kernel/contract.js';
@@ -308,7 +313,7 @@ describe('src-eightfold scope: India and remote, checked against the facet count
     expect(scopeMiss(nf.scoped.remote.count, n.remote!)).toBeNull();
     const ms = fixture<{ discovery: unknown; scoped: { india: { data: { count: number } }[] } }>('eightfold-microsoft');
     const m = eightfoldScopes('pcsx', parseEightfoldPage('pcsx', ms.discovery, 'ms'));
-    expect(m.india).toEqual({ query: { location: 'India' }, expected: 248, largest: 131 });
+    expect(m.india).toEqual({ query: { location: 'India' }, expected: 248, largest: 131, truncated: true });
     expect(m.remote).toBeNull();
     expect(scopeMiss(ms.scoped.india[0]!.data.count, m.india!)).toBeNull();
   });
@@ -610,10 +615,10 @@ const indiaFacet = (n: number): OrFacet[] => [{ Id: 300000000289738, Name: 'Unit
 const site = (t: Partial<OrTenant> = {}): OrTenant => ({ host: OR_HOST, site: 'CX_1', reqs: [], ...t });
 const orReqFor = (t: { host: string; site: string }, company = 'Acme Bank'): DiscoveryRequest => ({ ats: 'oracle', slug: `${t.host}/${t.site}`, company, runDate: '2026-10-14' });
 
-async function runOr(tenants: readonly OrTenant[], opts: { hosts?: OracleHosts; maxPages?: number; maxDetails?: number; pack?: unknown; req?: DiscoveryRequest } = {}) {
+async function runOr(tenants: readonly OrTenant[], opts: { hosts?: OracleHosts; maxPages?: number; maxDetails?: number; pack?: unknown; req?: DiscoveryRequest; ledger?: ReturnType<typeof memoryPageLedger> } = {}) {
   const net = oracle(tenants);
   const hosts = opts.hosts ?? dailyOracleHosts();
-  const agent = makeSrcOracle({ hosts, ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}), ...(opts.maxDetails !== undefined ? { maxDetails: opts.maxDetails } : {}) });
+  const agent = makeSrcOracle({ hosts, ...(opts.maxPages !== undefined ? { maxPages: opts.maxPages } : {}), ...(opts.maxDetails !== undefined ? { maxDetails: opts.maxDetails } : {}), ...(opts.ledger !== undefined ? { ledger: opts.ledger } : {}) });
   const { ctx, slept } = context(srcOracleContract, 'registry:oracle-hosts', net.fetch, [...new Set(tenants.map((t) => t.host))], opts.pack ?? PACK);
   const out = await agent.run(opts.req ?? orReqFor(tenants[0] as OrTenant), ctx);
   return { out, calls: net.calls, skips: ctx.skips(), slept, hosts, ctx };
@@ -842,5 +847,170 @@ describe('Eightfold and Oracle postings: mapping and the existing eligibility', 
     // a missing date is null
     const noDate = valid(normalize({ ...postings[0]!, raw: { ...(postings[0]!.raw as OracleRaw), postedDate: null } }));
     expect(noDate.postedAt).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 2 (review): careers-page refusals, strict IN, the mutation-proof cases, the Oracle daily page budget
+// ---------------------------------------------------------------------------
+
+describe('Fix round 2 (Important): a careers-page refusal is a refusal', () => {
+  it('a careers-page 429: rate_limit, the host disabled (no Retry-After wait); a sibling on the host is deferred without a request', async () => {
+    const hosts = dailyEightfoldHosts();
+    const t = tenant({ careers: { status: 429, body: 'Please try again later' }, jobs: efJobs(1) });
+    const net = eightfold([t, { ...t, domain: 'other.com' }]);
+    const agent = makeSrcEightfold({ hosts });
+    const { ctx } = context(srcEightfoldContract, 'registry:eightfold-hosts', net.fetch, [EF_HOST]);
+    await expect(agent.run(efReq(t), ctx)).rejects.toMatchObject({ code: 'rate_limit', message: expect.stringMatching(/429 from acme\.eightfold\.ai for the careers page/) });
+    expect(hosts.disabledWhy(EF_HOST)).toBe('http-429');
+    const before = net.calls.length;
+    await expect(agent.run(efReq({ host: EF_HOST, domain: 'other.com' }), ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-429 on acme\.eightfold\.ai/) });
+    expect(net.calls.length).toBe(before);
+    expect(net.calls.filter((c) => new URL(c).pathname === '/careers')).toHaveLength(1);
+  });
+
+  it('a challenge page (a 200 or a 503 with a challenge marker, no configuration marker): challenged, the host disabled', async () => {
+    for (const careers of [{ status: 200, body: '<html><title>Just a moment...</title></html>' }, { status: 503, body: '<div class="cf-chl">x</div>' }]) {
+      const hosts = dailyEightfoldHosts();
+      await expect(runEf([tenant({ careers, jobs: efJobs(1) })], { hosts }), String(careers.status)).rejects.toMatchObject({ code: 'challenged' });
+      expect(hosts.disabledWhy(EF_HOST)).toBe('challenge');
+    }
+    // a real page naming its API wins over a stray marker-like word in it
+    const r = await runEf([tenant({ careers: { body: '<code id="smartApplyData">{}</code><script src="recaptcha.js"></script>' }, jobs: efJobs(1, () => 'Account Executive', () => ['Austin, TX, United States']) })]);
+    expect(r.out).toHaveLength(1);
+  });
+
+  it('a careers-page 5xx is overloaded (the transport retry rules), the host not disabled', async () => {
+    const hosts = dailyEightfoldHosts();
+    await expect(runEf([tenant({ careers: { status: 502, body: 'bad gateway' } })], { hosts })).rejects.toMatchObject({ code: 'overloaded' });
+    expect(hosts.disabledWhy(EF_HOST)).toBeUndefined();
+    expect(srcEightfoldContract.retry.on).toContain('overloaded');
+  });
+});
+
+describe('Fix round 2 (minors)', () => {
+  it('1: a bare IN counts as India only as the last of 3 or more parts ("City, State, IN"), never "Indianapolis, IN"', () => {
+    expect(namesIndia('Bengaluru, KA, IN')).toBe(true);
+    expect(namesIndia('Gurugram, HR, IN')).toBe(true);
+    expect(namesIndia('Mumbai,India')).toBe(true);
+    for (const no of ['Indianapolis, IN', 'IN', 'Fort Wayne, IN', 'Indianapolis, IN, US']) expect(namesIndia(no), no).toBe(false);
+    // the normalizer reads PCSX's ISO tail the same way: a 2-part "City, IN" is a US state
+    const raw: EightfoldRaw = { api: 'pcsx', title: 'Senior Software Engineer', url: 'https://acme.eightfold.ai/careers/job/1', id: '1', locations: ['Indianapolis, Indiana'], standardizedLocations: ['Indianapolis, IN'], workLocationOption: 'onsite', department: null, postedTs: null, detail: null };
+    expect(normalize({ source: 'eightfold', sourceId: '1', company: 'Acme', slug: 'acme.eightfold.ai/acme.com', raw }).remote.countries).not.toContain('india');
+    const blr = normalize({ source: 'eightfold', sourceId: '2', company: 'Acme', slug: 'acme.eightfold.ai/acme.com', raw: { ...raw, locations: ['Remote'], standardizedLocations: ['Bengaluru, KA, IN'] } });
+    expect(blr.remote.countries).toContain('india');
+  });
+
+  it('2a: a hostile finder value (`,` or `;` or a quote) never reaches the Oracle URL', () => {
+    const b = { host: 'jpmc.fa.oraclecloud.com', site: 'CX_1001' };
+    for (const v of ['1,limit=1000', '1;x', '1 2', '']) {
+      expect(() => oracleListUrl(b, 0, { locationId: v }), v).toThrow(/is not a facet id/);
+      expect(() => oracleListUrl(b, 0, { selectedWorkplaceTypesFacet: v }), v).toThrow(/is not a facet id/);
+    }
+    expect(() => oracleDetailUrl(b, '1",siteNumber=CX_2')).toThrow(/is not an id/);
+  });
+
+  it('2b: a 999999 facet count is a sentinel, never a count', () => {
+    const page = parseEightfoldPage('v2', { count: 0, positions: [], facets: { locations: { 'Mumbai, MH, India': 999999, 'Pune, MH, India': 4 } } }, 'x');
+    expect(eightfoldScopes('v2', page).india).toMatchObject({ expected: 4, largest: 4 });
+    const only = parseEightfoldPage('v2', { count: 0, positions: [], facets: { locations: { 'Mumbai, MH, India': 999999 } } }, 'x');
+    expect(eightfoldScopes('v2', only).india).toBeNull();
+    const remote = parseEightfoldPage('v2', { count: 0, positions: [], facets: { locations: { 'Pune, MH, India': 1 }, 'Work Type': { remote: 999999 } } }, 'x');
+    expect(eightfoldScopes('v2', remote).remote).toBeNull();
+  });
+
+  it('2c: robots.txt is matched with the query string', async () => {
+    const t = tenant({ jobs: efJobs(1), robots: { body: 'User-agent: *\nAllow: /\nDisallow: /careers?domain=acme.com\n' } });
+    const { out, calls, skips } = await runEf([t]);
+    expect(out).toEqual([]);
+    expect(paths(calls)).toEqual(['/robots.txt']);
+    expect(skips).toEqual(['robots-disallow acme.eightfold.ai: Acme not read today (robots-disallow /careers)']);
+  });
+
+  it('2d: Oracle rank 0 by the platform country code IN, without an Indian place name', async () => {
+    const reqs = [{ ...orReq(0, 'Senior Software Engineer', 'Remote Location', 'IN') }, { ...orReq(1, 'Senior Software Engineer', 'Remote Location', 'US') }, { ...orReq(2, 'Senior Software Engineer', 'Remote Location', 'US'), secondaryLocations: [{ Name: 'Remote Location', CountryCode: 'IN' }] }];
+    const t = site({ reqs, locations: indiaFacet(3), scopes: { [`locationId=${INDIA_ID}`]: { reqs } }, anyDetail: true });
+    const { calls } = await runOr([t]);
+    expect(orDetails(calls).map((c) => /Id=%22(\d+)%22/u.exec(c)?.[1])).toEqual(['210700000', '210700002']);
+  });
+
+  it('2e: the Eightfold remote facet takes a whole remote-type value only, never a remote site', () => {
+    const scopesOf = (wt: Record<string, number>) => eightfoldScopes('v2', parseEightfoldPage('v2', { count: 0, positions: [], facets: { locations: { 'Pune, MH, India': 1 }, 'Work Type': wt } }, 'x')).remote;
+    expect(scopesOf({ 'Remote - US': 3, onsite: 4 })).toBeNull();
+    expect(scopesOf({ 'California - Remote': 3 })).toBeNull();
+    expect(scopesOf({ remote: 3 })).toMatchObject({ query: { 'Work Type': 'remote' }, expected: 3 });
+    expect(scopesOf({ 'Fully Remote': 2 })).toMatchObject({ query: { 'Work Type': 'Fully Remote' } });
+  });
+
+  it('2f: an office city in another country is not the office', () => {
+    expect(namesOffice('Bangalore, KA, India', ['bengaluru'])).toBe(true);
+    expect(namesOffice('Bengaluru', ['bengaluru'])).toBe(true);
+    expect(namesOffice('Bengaluru, United States', ['bengaluru'])).toBe(false);
+    expect(namesOffice('Pune, India', ['bengaluru'])).toBe(false);
+  });
+
+  it('4: a truncated PCSX facet list (its top values only) widens the upper slack to max(10, 10%); still loud beyond it', () => {
+    const ms = fixture<{ discovery: unknown }>('eightfold-microsoft');
+    const m = eightfoldScopes('pcsx', parseEightfoldPage('pcsx', ms.discovery, 'ms')).india!;
+    expect(m).toMatchObject({ expected: 248, largest: 131, truncated: true });
+    expect(scopeMiss(272, m)).toBeNull();
+    expect(scopeMiss(273, m)).toBe('total 273, the facet counts 248');
+    expect(scopeMiss(268, { expected: 248, largest: 131 })).toBe('total 268, the facet counts 248');
+    // a v2 board (its full locations facet) keeps max(5, 5%)
+    const nf = fixture<{ discovery: unknown }>('eightfold-netflix');
+    expect(eightfoldScopes('v2', parseEightfoldPage('v2', nf.discovery, 'nf')).india?.truncated).toBeFalsy();
+    // a short PCSX facet list is complete
+    const short = parseEightfoldPage('pcsx', { data: { count: 0, positions: [], filterDef: { facets: { locations: [['Remote', 999999], ['Bengaluru, KA, India', 3]] } } } }, 'x');
+    expect(eightfoldScopes('pcsx', short).india?.truncated).toBeFalsy();
+  });
+});
+
+describe('Fix round 2 (minor 3): Oracle list pages per company per IST day, across attempts', () => {
+  const reqs = orReqs(250, () => 'Account Executive');
+  const t = site({ reqs, locations: indiaFacet(250), scopes: { [`locationId=${INDIA_ID}`]: { reqs } } });
+
+  it('a retry or a --refresh shares the day\'s 10 pages: the third full read (4 pages each) fails loudly at the cap', async () => {
+    const ledger = memoryPageLedger();
+    // each attempt is a new run (a fresh host state: discovery again)
+    expect((await runOr([t], { ledger })).out).toHaveLength(250);
+    expect((await runOr([t], { ledger })).out).toHaveLength(250);
+    expect(ledger.used('2026-10-14', 'acme.fa.us2.oraclecloud.com/CX_1')).toBe(8);
+    const third = runOr([t], { ledger });
+    await expect(third).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/page cap reached .*10 list pages per company per day/) });
+    expect(ledger.used('2026-10-14', 'acme.fa.us2.oraclecloud.com/CX_1')).toBe(10);
+    // another day starts again
+    const next = await runOr([t], { ledger, req: { ...orReqFor(t), runDate: '2026-10-15' } });
+    expect(next.out).toHaveLength(250);
+  });
+
+  it('the daily wiring hands its ledger to src-oracle', async () => {
+    const ledger = memoryPageLedger();
+    const agent = dailyAgents([], [{ platform: 'oracle', company: 'Acme Bank', ref: `${OR_HOST}/CX_1` }], { pageLedger: ledger }).find((a) => a.contract.id === 'src-oracle');
+    const net = oracle([t]);
+    const { ctx } = context(srcOracleContract, 'registry:oracle-hosts', net.fetch, [OR_HOST]);
+    await agent!.run(orReqFor(t), ctx);
+    expect(ledger.used('2026-10-14', `${OR_HOST}/CX_1`)).toBe(4);
+  });
+
+  it('the run\'s ledger is kept in the app DB by IST day and board; other days are dropped on write', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'jobpilot-ledger-'));
+    try {
+      const app = AppStore.open(join(dir, 'jobpilot.db'));
+      try {
+        const a = appPageLedger(app);
+        a.add('2026-10-13', 'x.fa.oraclecloud.com/CX_1', 3);
+        a.add('2026-10-14', 'x.fa.oraclecloud.com/CX_1', 4);
+        a.add('2026-10-14', 'x.fa.oraclecloud.com/CX_1', 2);
+        // a second ledger on the same DB (a --refresh run) sees the day's pages
+        const b = appPageLedger(app);
+        expect(b.used('2026-10-14', 'x.fa.oraclecloud.com/CX_1')).toBe(6);
+        expect(b.used('2026-10-14', 'y.fa.oraclecloud.com/CX_1')).toBe(0);
+        expect(b.used('2026-10-13', 'x.fa.oraclecloud.com/CX_1')).toBe(0);
+      } finally {
+        app.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

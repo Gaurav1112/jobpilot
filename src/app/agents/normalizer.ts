@@ -639,10 +639,14 @@ function eightfoldArrangement(workSite: string | null, option: string | null): R
   return null;
 }
 
-/** An ISO-2 code as the last comma part of a standardized location ("Bengaluru, KA, IN" → "IN"). */
+/**
+ * An ISO-2 code as a standardized location's country: the whole value ("SG") or the last of three or more parts
+ * ("Bengaluru, KA, IN"); a two-part "Indianapolis, IN" ends with a US state, not a country.
+ */
 const isoTail = (s: string): string[] => {
-  const last = s.split(',').pop()?.trim() ?? '';
-  return /^[A-Z]{2}$/u.test(last) ? [last] : [];
+  const parts = s.split(',').map((p) => p.trim());
+  const last = parts[parts.length - 1] ?? '';
+  return (parts.length === 1 || parts.length >= 3) && /^[A-Z]{2}$/u.test(last) ? [last] : [];
 };
 
 function eightfold(raw: RawPosting, r: Rec): Posting {

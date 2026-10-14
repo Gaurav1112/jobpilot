@@ -260,7 +260,7 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
     async readBoard(ref, http, opts) {
       const b = boardOf(ref, ef.parseEightfoldRef, 'eightfold', '<host>/<domain>');
       const hosts = hostsOf(opts, 'eightfold') as ef.EightfoldHosts;
-      // the daily adapter's own requests (the careers page for the API, then page 1; the 5 s spacing; robots.txt) and parser
+      // the daily adapter's own requests (the careers page for the API, then page 1; v2 2 s, PCSX 10 s spacing; robots.txt) and parser
       const { api, page } = await refused(async () => {
         const a = await ef.fetchApi(http, hosts, b, ef.eightfoldRef(b), opts?.timeoutMs);
         return { api: a, page: await ef.fetchListPage(http, hosts, b, a, 0, {}, opts?.timeoutMs) };

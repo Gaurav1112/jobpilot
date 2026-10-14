@@ -626,6 +626,11 @@ export class AppStore {
     this.db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(key, value);
   }
 
+  /** Drops the settings whose key starts with `prefix` but not with `keep` (exact prefixes, no LIKE wildcards). */
+  pruneSettings(prefix: string, keep: string): void {
+    this.db.prepare(`DELETE FROM app_settings WHERE substr(key, 1, ?) = ? AND substr(key, 1, ?) <> ?`).run(prefix.length, prefix, keep.length, keep);
+  }
+
   /** Records (or re-records, for a re-projected run) one run's summary. */
   recordRun(s: RunSummary): void {
     this.db

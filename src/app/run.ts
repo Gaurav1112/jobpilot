@@ -9,6 +9,7 @@ import { appKernel, loadRunPack, resolvePdftotext, type RunPack } from './kernel
 import { withLock } from './lock.js';
 import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
+import { appPageLedger } from './daily-hosts.js';
 import { DAILY_PIPELINE, dailySeeds, registryBoards } from './pipeline.js';
 import { namedSkipWarnings, runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
@@ -205,7 +206,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'daily');
       // the verified registry companies whose platform has a daily adapter (none: the run is exactly as before)
       const boards = registryBoards(app.verifiedCompanies());
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), boards });
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), boards, pageLedger: appPageLedger(app) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];

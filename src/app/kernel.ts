@@ -16,6 +16,7 @@ import type { CompanyPick } from './pack/companies-schema.js';
 import { loadPack, PackError, withoutFreelance, type LoadMode } from './pack/load.js';
 import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
+import type { PageLedger } from './agents/sources/platforms/shared.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline, registryEgressSets, type RegistryBoard } from './pipeline.js';
 import { FETCHING_PLATFORMS, freelanceAgents, freelancePacingProblems, freelancePipeline } from './freelance/pipeline.js';
 import { freelanceDocsPacks } from './freelance/writing/gig-renderer.js';
@@ -120,6 +121,8 @@ export interface AppKernelOptions {
   readonly codeHash?: string;
   /** The verified registry companies the daily run reads through a platform adapter (`registryBoards`); default none. */
   readonly boards?: readonly RegistryBoard[];
+  /** The day's Oracle list pages across runs (`appPageLedger`); default in memory (this run only). */
+  readonly pageLedger?: PageLedger;
 }
 
 export interface AppKernel {
@@ -140,9 +143,10 @@ export function preparePipeline(
   pack: Pick<Pack, 'watchlist' | 'feeds' | 'policyUser'>,
   mode: 'daily' | 'rebuild' = 'daily',
   boards: readonly RegistryBoard[] = [],
+  pageLedger?: PageLedger,
 ): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
   const guardrails = appGuardrails();
-  const { registry, compiled } = mode === 'daily' ? compileDaily(dailyAgents(pack.watchlist, boards), guardrails) : compileDaily(rebuildAgents(), guardrails, rebuildPipeline());
+  const { registry, compiled } = mode === 'daily' ? compileDaily(dailyAgents(pack.watchlist, boards, pageLedger === undefined ? {} : { pageLedger }), guardrails) : compileDaily(rebuildAgents(), guardrails, rebuildPipeline());
   const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
   // A rebuild fetches nothing, so only the daily run's pacing matters.
   const pacing = mode === 'daily' ? pacingProblems(policy, pack, boards) : [];
@@ -159,7 +163,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
   const { pack } = o.loaded;
   if (!isAbsolute(o.pdftotext)) throw new Error(`pdftotext must be an absolute path, not ${o.pdftotext}`);
   const boards = o.mode === 'rebuild' ? [] : (o.boards ?? []);
-  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards);
+  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards, o.pageLedger);
   if (registry.has('src-careers-list') && o.browser === undefined) throw new Error('the watchlist has careers entries but no browser provider was given');
   const supervisor = new Supervisor({
     store: o.store,

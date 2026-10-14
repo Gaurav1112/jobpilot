@@ -158,6 +158,11 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
       gate.disable(host, 'http-429', ctx.clock.now());
       throw deferred('http-429', host, 'it rate-limited this request');
     }
+    // a challenge page (Eightfold's careers page, Task 7 fix round 2): a refusal, deferred like a 429, never a failed verdict
+    if (e instanceof KernelError && e.code === 'challenged') {
+      gate.disable(host, 'challenge', ctx.clock.now());
+      throw deferred('challenge', host, 'it answered with a challenge page');
+    }
     if (e instanceof KernelError && e.code === 'gone') return verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]);
     if (e instanceof KernelError && (e.code === 'invalid_output' || e.code === 'overloaded' || e.code === 'network' || (e.code === 'timeout' && !ctx.signal.aborted))) {
       return verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]);

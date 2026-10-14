@@ -1,7 +1,7 @@
 import { KernelError } from '../kernel/errors.js';
 import { EIGHTFOLD_V2_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
 import { ORACLE_MIN_INTERVAL_MS, type OracleHosts } from './agents/sources/platforms/oracle.js';
-import type { HttpTool, PlatformHosts } from './agents/sources/platforms/shared.js';
+import type { HttpTool, PageLedger, PlatformHosts } from './agents/sources/platforms/shared.js';
 import { WORKDAY_MIN_INTERVAL_MS, type WorkdayHosts } from './agents/sources/platforms/workday.js';
 import { isChallenge } from './coverage/gate.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/robots.js';
@@ -78,4 +78,25 @@ export function dailyEightfoldHosts(): EightfoldHosts {
 /** The Oracle Recruiting Cloud adapter's host state (Task 7): a 401/403 robots.txt is unreadable, read at the minimal 5 s rate. */
 export function dailyOracleHosts(): OracleHosts {
   return dailyPlatformHosts({ minIntervalMs: ORACLE_MIN_INTERVAL_MS, unreadableRobots: 'allow' });
+}
+
+/**
+ * The Oracle list-page ledger kept in the app DB (`app_settings`, key `oracle.pages.<IST day>.<board>`), so a retry or
+ * a `run --refresh` on the same day shares the day's 10 pages (Task 7 fix round 2). Writing a day drops every other
+ * day's entries. Trusted wiring code: the adapter sees only `PageLedger`.
+ */
+export function appPageLedger(store: { getSetting(key: string): string | undefined; setSetting(key: string, value: string): void; pruneSettings(prefix: string, keep: string): void }): PageLedger {
+  const PREFIX = 'oracle.pages.';
+  const key = (day: string, board: string): string => `${PREFIX}${day}.${board}`;
+  const used = (day: string, board: string): number => {
+    const n = Number(store.getSetting(key(day, board)) ?? '0');
+    return Number.isSafeInteger(n) && n > 0 ? n : 0;
+  };
+  return {
+    used,
+    add(day, board, pages) {
+      store.pruneSettings(PREFIX, `${PREFIX}${day}.`);
+      store.setSetting(key(day, board), String(used(day, board) + pages));
+    },
+  };
 }

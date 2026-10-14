@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/agent.js';
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
+import { hasChallengeMarker, isChallenge } from '../../../challenge.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { onlySeenBefore } from '../common.js';
 import {
@@ -54,6 +55,9 @@ import {
  *   the API directly, with no careers-page request (Fix round 1);
  * - a registry row from before that (a plain `<host>/<domain>` slug): the adapter reads the careers page once per run,
  *   until the next weekly verify stores the variant.
+ * The careers page is refused like any request (Fix round 2): a challenge page (a 403/429/503 with a marker, or a 2xx
+ * with a marker and no configuration) disables the host (`challenged`), a 429 disables it (`rate_limit`, Retry-After
+ * never honoured), a 5xx is `overloaded` (the transport retry); the coverage verifier defers each refusal (no fail week).
  * A page naming neither marker is `input_rejected` (`eightfold-api-unknown`); a stale stored variant answers 403, which
  * disables the host for the run (`challenged`, named), never a guess at the other API.
  *
@@ -69,7 +73,9 @@ import {
  *   the largest value − max(5, 5%) below): outside them the step fails `input_rejected` `scope-not-applied`, nothing
  *   read from it. Seen live: Netflix India 9 (facet 9), remote 113 (facet 112); Microsoft India 253 (Bengaluru 131 +
  *   Hyderabad 117: the PCSX facet list shows only its top values, so a board whose India values are not among them
- *   has no India list);
+ *   has no India list). A PCSX list of PCSX_FACET_TOP (10) counted values is taken as truncated: the upper slack widens
+ *   to max(10, 10%), since smaller Indian values may be missing from the sum; the lower bound is unchanged, and a total
+ *   beyond the wider bound is still `scope-not-applied` (Fix round 2);
  * - no office-city lists (an accepted deviation): unlike Workday's "2 Locations", every Eightfold job lists each of its
  *   locations by name (`locations`), so an office city is read from the platform's own location values, never invented;
  *   the office-subset rule stays Workday's;
@@ -119,6 +125,8 @@ const FIXED_REQUESTS = 3;
 export function eightfoldPagesPerList(api: EightfoldApi, lists = 2): number {
   return Math.min(EIGHTFOLD_MAX_PAGES, Math.floor((eightfoldMaxRequests(api) - FIXED_REQUESTS - eightfoldMaxDetails(api)) / Math.max(1, lists)));
 }
+/** PCSX's location facet shows its top values only: this many counted values (seen live: 10 plus the "Remote" sentinel) mark it truncated. */
+export const PCSX_FACET_TOP = 10;
 /** A facet count at or above this is a sentinel ("Remote": 999999), never a count. */
 export const EIGHTFOLD_COUNT_SENTINEL = 999_999;
 /** The symbolic egress resolved per run to the verified Eightfold companies' hosts. */
@@ -398,13 +406,28 @@ export function eightfoldApiOfPage(html: string): EightfoldApi | null {
   return null;
 }
 
-/** The tenant's API, from its careers page (one GET, robots.txt checked). A 404 is a retired board (`gone`). */
+/**
+ * The tenant's API, from its careers page (one GET, robots.txt checked). The page is a request like the API's, with the
+ * same refusals (Fix round 2): a 401/403 disables the host (`challenged`, by `hostRequest`); a challenge page (a
+ * 403/429/503 with a marker, or a 2xx page with a marker and no configuration) disables it (`challenged`); a 429 disables
+ * it (`rate_limit`, Retry-After never honoured); a 5xx is `overloaded` (the contract's transport retry, the host kept).
+ * A 404 is a retired board (`gone`).
+ */
 export async function fetchApi(http: HttpTool, hosts: EightfoldHosts, b: EightfoldBoard, company: string, timeoutMs?: number): Promise<EightfoldApi> {
   const url = eightfoldCareersUrl(b);
   const r = await hostRequest(http, hosts, b.host, url, () => http.getPage(url, reqOpts('v2', timeoutMs)));
+  const api = r.status >= 200 && r.status < 300 ? eightfoldApiOfPage(r.body) : null;
+  if (api === null && (isChallenge(r.status, r.body) || (r.status >= 200 && r.status < 300 && hasChallengeMarker(r.body)))) {
+    hosts.disable(b.host, 'challenge');
+    throw new KernelError('challenged', `${b.host} answered the careers page with a challenge (${r.status}): the host is disabled for this run, never retried around`);
+  }
+  if (r.status === 429) {
+    hosts.disable(b.host, 'http-429');
+    throw new KernelError('rate_limit', `429 from ${b.host} for the careers page: the host is disabled for this run, never retried around`);
+  }
+  if (r.status >= 500) throw new KernelError('overloaded', `${r.status} from ${b.host} for the careers page`);
   if (r.status === 404 || r.status === 410) throw new KernelError('gone', `eightfold board not found: ${eightfoldRef(b)}`);
   if (r.status >= 300) throw new KernelError('invalid_output', `${b.host} returned ${r.status} for the ${b.domain} careers page`);
-  const api = eightfoldApiOfPage(r.body);
   if (api === null) throw new KernelError('input_rejected', `eightfold-api-unknown ${company}: the careers page of ${eightfoldRef(b)} embeds neither pcsx-data nor smartApplyData; its API is not guessed`);
   return api;
 }
@@ -465,8 +488,10 @@ export function eightfoldScopes(api: EightfoldApi, page: EightfoldListPage): Eig
       }
     }
   }
+  // PCSX shows only its top location values (10 counted, seen live): a full list of them may hide smaller Indian ones
+  const truncated = api === 'pcsx' && (locations?.values ?? []).filter((v) => v.count !== null).length >= PCSX_FACET_TOP;
   return {
-    india: india.length === 0 ? null : { query: { location: 'India' }, expected: counts.reduce((a, n) => a + n, 0), largest: Math.max(...counts) },
+    india: india.length === 0 ? null : { query: { location: 'India' }, expected: counts.reduce((a, n) => a + n, 0), largest: Math.max(...counts), ...(truncated ? { truncated: true } : {}) },
     remote,
     located: locations !== undefined,
   };

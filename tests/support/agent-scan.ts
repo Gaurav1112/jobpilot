@@ -35,6 +35,8 @@ export const APP_ALLOWED = [
   'src/app/render/fill.ts',
   'src/app/render/html.ts',
   'src/app/ats-profiles.ts',
+  // Task 7 fix round 2: the pure bot-wall detector the coverage gate and the Eightfold adapter share (no imports).
+  'src/app/challenge.ts',
 ];
 
 /**
