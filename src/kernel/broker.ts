@@ -84,6 +84,12 @@ export interface RequestOptions {
    * only widen the spacing, never narrow it.
    */
   readonly minIntervalMs?: number;
+  /**
+   * `getPage` only (Task 9): the one alternative Accept value a request may name, for an RSS feed (Teamtailor answers 400
+   * to the JSON Accept). Nothing else about the request changes (the honest user agent, egress, https, pacing, no
+   * redirects); any other value is a policy denial and nothing is sent.
+   */
+  readonly accept?: 'application/rss+xml';
 }
 
 /** The largest JSON body `postJson` sends. */
@@ -472,12 +478,14 @@ export function issueContext(a: IssueArgs): AgentContext {
     };
     const getPage = async (url: string, opts?: RequestOptions): Promise<{ status: number; body: string; location: string | null }> => {
       const u = checkUrl(url);
+      if (opts?.accept !== undefined && opts.accept !== 'application/rss+xml') throw deny('G-NO-EVASION: getPage accepts only accept: application/rss+xml');
+      const headers = opts?.accept === undefined ? HTTP_HEADERS : { ...HTTP_HEADERS, accept: opts.accept };
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       await (opts?.minIntervalMs === undefined ? a.hostPacer?.wait(u.hostname) : a.hostPacer?.wait(u.hostname, opts.minIntervalMs));
       if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
       const rq = requestSignal(opts?.timeoutMs);
       try {
-        const res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        const res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers });
         const body = await readCapped(res, a.policy.maxResponseBytes);
         return { status: res.status, body, location: res.headers?.get('location') ?? null };
       } catch (e) {
