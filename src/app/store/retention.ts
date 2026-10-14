@@ -31,8 +31,8 @@ import { verifyChain } from '../../kernel/store/audit.js';
  *   coverage resumes this week) of a closed or non-coverage pipeline loses this pin.
  * - R4 current documents: the `Rendered@1` that `renderedPlanOf` returns for each job with `job_docs` (the first, by
  *   envelope id, whose files are exactly the job's documents: the job page and its cover note), and the `GigRendered@1`
- *   that `gigExtras` returns for each gig with `gig_docs` (the newest such, by rowid: the freelance tab).
- * - R5 newest postings: the newest `Posting@1` (max rowid) of each job last seen in the last BOARD_SEED_DAYS days
+ *   that `gigExtras` returns for each gig with `gig_docs` (the newest such, by NEWEST_FIRST: the freelance tab).
+ * - R5 newest postings: the newest `Posting@1` (NEWEST_FIRST) of each job last seen in the last BOARD_SEED_DAYS days
  *   (`contractPostings`, the freelance boards seeds), and the newest `Gig@1` of each gig (`gigExtras`).
  * - R6 lineage: for every kept step, its input envelope, and so on up to the seed (the plan behind a kept Rendered).
  * The unit of archiving is the STEP: a step with any kept envelope keeps all of them; an archived step loses its

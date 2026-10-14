@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
-import { AppStore } from '../../src/app/store/app-store.js';
+import { AppStore, NEWEST_FIRST, STEP_DONE_SEQ } from '../../src/app/store/app-store.js';
 import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
 import { canonicalJson } from '../../src/kernel/canonical.js';
 import { Store } from '../../src/kernel/store/store.js';
@@ -11,7 +11,7 @@ import { fillJobs } from '../support/jobs-fixture.js';
  * dashboard-perf fixes 2 and 3: migrations 16-18 only add indexes (the jobs list's covering index, events by run, the
  * job page's Rendered@1 lookup). They change no row and no existing schema object, and the queries they are for use them.
  */
-const NEW_INDEXES = ['jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done'];
+const NEW_INDEXES = ['jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done', 'envelopes_posting_by_job', 'envelopes_gig_by_key', 'envelopes_gig_rendered_by_key'];
 
 /** Every table's rows and every schema object's SQL (except the given new ones), hashed. */
 function dumpHash(db: Database.Database, skipObjects: readonly string[] = []): string {
@@ -48,9 +48,9 @@ function rendered(kernel: Store, jobKey: string, n: number): void {
   kernel.db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`).run(env.envelopeId, env.stepKey, 0, env.type, canonicalJson(env));
 }
 
-describe('migrations 16-19: indexes only', () => {
-  it('the registry has 19 migrations; 16-19 are literals that create one index each', () => {
-    expect(APP_MIGRATIONS.length).toBe(19);
+describe('migrations 16-22: indexes only', () => {
+  it('the registry has 22 migrations; 16-22 are literals that create one index each', () => {
+    expect(APP_MIGRATIONS.length).toBe(22);
     for (const [i, name] of NEW_INDEXES.entries()) {
       const m = APP_MIGRATIONS[15 + i];
       expect(typeof m).toBe('string');
@@ -71,10 +71,13 @@ describe('migrations 16-19: indexes only', () => {
     ).run();
     const before = dumpHash(db);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(19);
+    expect(s.schemaVersion()).toBe(22);
     expect(dumpHash(db, NEW_INDEXES)).toBe(before);
     const added = (db.prepare(`SELECT name, tbl_name FROM sqlite_master WHERE name IN (${NEW_INDEXES.map(() => '?').join(', ')}) ORDER BY name`).all(...NEW_INDEXES) as { name: string; tbl_name: string }[]);
     expect(added).toEqual([
+      { name: 'envelopes_gig_by_key', tbl_name: 'envelopes' },
+      { name: 'envelopes_gig_rendered_by_key', tbl_name: 'envelopes' },
+      { name: 'envelopes_posting_by_job', tbl_name: 'envelopes' },
       { name: 'envelopes_rendered_by_job', tbl_name: 'envelopes' },
       { name: 'events_by_run', tbl_name: 'events' },
       { name: 'events_step_done', tbl_name: 'events' },
@@ -87,7 +90,7 @@ describe('migrations 16-19: indexes only', () => {
   it('an index that already exists (a racing opener built it) is not an error', () => {
     const kernel = v15();
     kernel.db.exec(APP_MIGRATIONS[16] as string);
-    expect(AppStore.on(kernel).schemaVersion()).toBe(19);
+    expect(AppStore.on(kernel).schemaVersion()).toBe(22);
   });
 });
 
@@ -126,8 +129,43 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
     expect(plan(db, `SELECT body FROM envelopes WHERE type = 'Rendered@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY envelope_id`, 'k')).toMatch(
       /SEARCH envelopes USING INDEX envelopes_rendered_by_job/,
     );
-    // the "newest envelope" readers (NEWEST_FIRST): the step_done lookup is an index search, not an events scan
+    // the "newest envelope" readers (NEWEST_FIRST): the step_done lookup, correlated with an envelope's step_key (a
+    // column, whose TEXT affinity would block the expression index without the unary plus), is an index search
+    expect(plan(db, `SELECT ${STEP_DONE_SEQ('e')} FROM envelopes e`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
+    expect(plan(db, `SELECT e.envelope_id FROM envelopes e ORDER BY ${NEWEST_FIRST('e')}`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
     expect(plan(db, `SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ?`, 'k')).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
+  });
+
+  it('contractPostings and gigExtras look their step_done events up through events_step_done (every statement)', () => {
+    const app = fillJobs(AppStore.on(Store.open(':memory:')), 3);
+    const db = app.kernel.db;
+    const seen: string[] = [];
+    const prepare = db.prepare.bind(db);
+    db.prepare = ((sql: string) => {
+      seen.push(sql);
+      return prepare(sql);
+    }) as typeof db.prepare;
+    try {
+      db.prepare(`UPDATE jobs SET reasons = '["employment:contract"]'`).run();
+      app.contractPostings('2000-01-01T00:00:00.000Z');
+      db.prepare(`INSERT INTO gigs (gig_key, dedupe_key, platform, source_id, url, title, client, kind, budget, hours, first_seen, last_seen) VALUES ('g1', 'd', 'freelancer', '1', 'https://x.test', 'T', '{}', 'gig', '{}', '{}', 'a', 'a')`).run();
+      db.prepare(`INSERT INTO gig_docs (gig_key, kind, format, path, sha256) VALUES ('g1', 'proposal', 'txt', 'g1/p.txt', 'aa')`).run();
+      app.gigExtras(['g1']);
+    } finally {
+      db.prepare = prepare;
+    }
+    const newest = seen.filter((q) => q.includes("v.kind = 'step_done'"));
+    expect(newest.length).toBe(3); // contractPostings, gigExtras Gig@1, gigExtras GigRendered@1
+    const byKey: Record<string, RegExp> = { "'Posting@1'": /SEARCH e USING INDEX envelopes_posting_by_job/, "'Gig@1'": /SEARCH e USING INDEX envelopes_gig_by_key/, "'GigRendered@1'": /SEARCH e USING INDEX envelopes_gig_rendered_by_key/ };
+    for (const q of newest) {
+      const p = plan(db, q, ...Array.from({ length: (q.match(/\?/g) ?? []).length }, () => 'k'));
+      expect(p, q).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
+      expect(p, q).not.toMatch(/SCAN v\b/);
+      // and the envelopes themselves are found by type and key, never by scanning every envelope
+      const [type, re] = Object.entries(byKey).find(([t]) => q.includes(`e.type = ${t}`)) as [string, RegExp];
+      expect(p, `${type}: ${q}`).toMatch(re);
+      expect(p, q).not.toMatch(/SCAN e\b/);
+    }
   });
 
   it('renderedPlanOf still finds the plan behind the documents', () => {

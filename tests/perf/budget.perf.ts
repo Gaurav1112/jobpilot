@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { setFlagsFromString } from 'node:v8';
 import { runInNewContext } from 'node:vm';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { AppStore } from '../../src/app/store/app-store.js';
+import { DEFAULT_RETENTION, planCompaction } from '../../src/app/store/retention.js';
 import { createDashboard } from '../../src/app/web/server.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { BUDGET_SPEC, buildSyntheticDb } from './synthetic.js';
@@ -34,6 +36,16 @@ export const RUNS_FRESH_MS = 200;
 export const RUNS_WARM_P95_MS = 100;
 /** `GET /runs`, the first view after a daily run (it walks that run's 50,000 events once): measured 155-214 ms. */
 export const RUNS_AFTER_RUN_MS = 500;
+/** `GET /freelance` (the contracts list with each gig's newest Gig@1 / GigRendered@1, `gigExtras`), best of 3 fresh. */
+export const FREELANCE_FRESH_MS = 150;
+/** `GET /freelance`, p95 of 20 warm requests: measured 65 ms. */
+export const FREELANCE_WARM_P95_MS = 150;
+/** Heap left by one `/freelance` view: it lists every gig of the tab (400 here) with its extras; measured 64 MB. */
+export const FREELANCE_HEAP_MB = 128;
+/** `contractPostings` (the freelance run's boards seeds: the newest Posting@1 of each contract job), warm. */
+export const CONTRACT_POSTINGS_MS = 500;
+/** The retention planner (`store compact` dry run) on this DB (~84k Posting@1, 300k envelopes, 500k events). */
+export const RETENTION_PLAN_MS = 10_000;
 /** Heap left per request (heapUsed after minus before, after a forced GC): measured 12-33 MB; the old code ~400 MB. */
 export const HEAP_PER_REQUEST_MB = 64;
 const WARM_N = 20;
@@ -69,7 +81,7 @@ function within(route: string, what: string, value: number, budget: number, unit
   expect(value <= budget, `perf-budget: ${route} ${what} ${shown} > ${budget}${unit}`).toBe(true);
 }
 
-async function warm(app: App, route: string, p95Budget: number): Promise<void> {
+async function warm(app: App, route: string, p95Budget: number, heapBudget = HEAP_PER_REQUEST_MB): Promise<void> {
   const ms: number[] = [];
   let heap = 0;
   for (let i = 0; i < WARM_N; i++) {
@@ -79,7 +91,7 @@ async function warm(app: App, route: string, p95Budget: number): Promise<void> {
   }
   ms.sort((a, b) => a - b);
   within(route, 'warm p95', ms[Math.ceil(0.95 * ms.length) - 1] as number, p95Budget);
-  within(route, 'heap per request', heap, HEAP_PER_REQUEST_MB, 'MB');
+  within(route, 'heap per request', heap, heapBudget, 'MB');
 }
 
 /** Removes `jobpilot-perf-*` temp homes older than STALE_TEMP_MS (a killed gate leaves its 1.8 GB behind). */
@@ -109,6 +121,35 @@ beforeAll(() => {
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
 describe('performance budget on the large synthetic DB', () => {
+  it('GET /freelance: fresh and warm (gigExtras: the newest envelope per gig through events_step_done)', async () => {
+    await timed(fresh(), '/facts');
+    const firsts = [];
+    for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), '/freelance'));
+    expect(firsts[0]?.body).toMatch(/backend contract/);
+    within('/freelance', 'fresh connection (best of 3)', Math.min(...firsts.map((f) => f.ms)), FREELANCE_FRESH_MS);
+    within('/freelance', 'heap per request', Math.max(...firsts.map((f) => f.heapMb)), FREELANCE_HEAP_MB, 'MB');
+    await warm(fresh(), '/freelance', FREELANCE_WARM_P95_MS, FREELANCE_HEAP_MB);
+  });
+
+  it('contractPostings and the retention planner (store compact dry run)', () => {
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      app.contractPostings('2026-08-01T00:00:00.000Z'); // warm
+      let t = performance.now();
+      const cp = app.contractPostings('2026-08-01T00:00:00.000Z');
+      const cpMs = performance.now() - t;
+      expect(cp.postings.length).toBeGreaterThan(500);
+      within('contractPostings', `${cp.postings.length} jobs`, cpMs, CONTRACT_POSTINGS_MS);
+      t = performance.now();
+      const plan = planCompaction(app, { now: '2026-09-10T12:00:00.000Z', policy: DEFAULT_RETENTION, policyHash: 'perf', includeIncomplete: false });
+      const planMs = performance.now() - t;
+      expect(plan.pinnedBy['R5 newest postings']).toBeGreaterThan(0);
+      within('store compact', 'dry-run plan', planMs, RETENTION_PLAN_MS);
+    } finally {
+      app.close();
+    }
+  });
+
   it('GET /: fresh and warm, within budget, a full page of rows', async () => {
     // the process is warm (code loaded and compiled, as a dashboard that has served any page), the connection is not
     await timed(fresh(), '/facts');

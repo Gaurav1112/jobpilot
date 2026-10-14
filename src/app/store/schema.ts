@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 /**
  * The app catalogue's tables (spec §6). They live in the kernel's DB file but are the app's own: the app keeps its
  * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never change a kernel table
- * (its definition or its rows); migrations 17, 18 and 19 only add read-path indexes on two of them (dashboard-perf).
+ * (its definition or its rows); migrations 17-22 only add read-path indexes on two of them (dashboard-perf).
  * Each entry is applied once, in order, in its own transaction, by `AppStore`.
  *
  * A job is one posting: `job_key` is `jobKey(source, sourceId)`, and `job_sources` holds that one pair (kept for
@@ -407,4 +407,10 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   // retention review: "newest envelope" by the seq of its step's step_done event, never by rowid (NEWEST_FIRST in
   // app-store.ts). Partial (step_done events only); an index on a kernel table, no row changed. A literal.
   `CREATE INDEX IF NOT EXISTS events_step_done ON events (json_extract(data, '$.stepKey'), seq) WHERE kind = 'step_done';`,
+  // retention re-review: the "newest envelope" readers find their envelopes by type and key, never by scanning every
+  // envelope (`contractPostings`: Posting@1 by job; `gigExtras`, the freelance tab: Gig@1 and GigRendered@1 by gig).
+  // Partial, one type each, so other envelope writes pay nothing; index only. Literals.
+  `CREATE INDEX IF NOT EXISTS envelopes_posting_by_job ON envelopes (json_extract(body, '$.payload.jobKey')) WHERE type = 'Posting@1';`,
+  `CREATE INDEX IF NOT EXISTS envelopes_gig_by_key ON envelopes (json_extract(body, '$.payload.gigKey')) WHERE type = 'Gig@1';`,
+  `CREATE INDEX IF NOT EXISTS envelopes_gig_rendered_by_key ON envelopes (json_extract(body, '$.payload.gigKey')) WHERE type = 'GigRendered@1';`,
 ];

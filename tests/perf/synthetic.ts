@@ -32,9 +32,11 @@ export interface SynthSpec {
    * measured without them); no extra randomness, so the rest of the DB is the same either way.
    */
   readonly withRuns?: boolean;
+  /** Gigs on the freelance tab (each with a document and Gig@1 / GigRendered@1 envelopes); default none. */
+  readonly gigs?: number;
 }
 
-export const BUDGET_SPEC: SynthSpec = { jobs: 20_000, envelopes: 300_000, events: 500_000, envelopeBytes: 3_000, runs: 10, seed: 20261014 };
+export const BUDGET_SPEC: SynthSpec = { jobs: 20_000, envelopes: 300_000, events: 500_000, envelopeBytes: 3_000, runs: 10, seed: 20261014, withRuns: true, gigs: 400 };
 
 function prng(seed: number): () => number {
   let a = seed >>> 0;
@@ -52,7 +54,7 @@ const WORDS = ['build', 'services', 'platform', 'distributed', 'systems', 'team'
 const TITLES = ['Senior Backend Engineer', 'Staff Engineer', 'Platform Engineer', 'Backend Developer', 'Data Engineer', 'Site Reliability Engineer', 'Engineering Manager', 'Software Engineer II', 'Principal Engineer'];
 const SOURCES = ['greenhouse', 'lever', 'ashby', 'remotive', 'workday', 'careers'];
 const ENVELOPE_TYPES: readonly (readonly [string, number])[] = [
-  ['RawPosting@1', 0.3], ['EligibilityVerdict@1', 0.28], ['Posting@1', 0.28], ['Scored@1', 0.07], ['Rendered@1', 0.01], ['CoverPlan@1', 0.01], ['ResumePlan@1', 0.01], ['Evidence@1', 0.01], ['QaReport@1', 0.01], ['GigPosting@1', 0.02],
+  ['RawPosting@1', 0.3], ['EligibilityVerdict@1', 0.28], ['Posting@1', 0.28], ['Scored@1', 0.07], ['Rendered@1', 0.01], ['CoverPlan@1', 0.01], ['ResumePlan@1', 0.01], ['Evidence@1', 0.01], ['QaReport@1', 0.01], ['Gig@1', 0.015], ['GigRendered@1', 0.005],
 ];
 const DAY0 = Date.parse('2026-09-01T01:30:00.000Z');
 const iso = (ms: number): string => new Date(ms).toISOString();
@@ -96,6 +98,16 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
   const insRun = db.prepare(`INSERT INTO runs_summary (run_id, at, counts, pack_hash, policy_hash, warnings, problems) VALUES (?, ?, ?, ?, ?, '[]', ?)`);
   const policy = 'a'.repeat(64);
 
+  // the freelance tab's gigs (contracts list, each with a proposal document, which a GigRendered@1 of it matches)
+  const gigKeys = Array.from({ length: spec.gigs ?? 0 }, (_, i) => `g${i.toString(16).padStart(15, '0')}`);
+  const insGig = db.prepare(`INSERT INTO gigs (gig_key, dedupe_key, platform, source_id, url, title, client, kind, budget, hours, verdict, fit, list, first_seen, last_seen) VALUES (?, ?, 'freelancer', ?, ?, ?, '{}', 'contract', '{}', '{}', 'eligible', ?, 'contracts', ?, ?)`);
+  const insGigDoc = db.prepare(`INSERT INTO gig_docs (gig_key, kind, format, path, sha256) VALUES (?, 'proposal', 'txt', ?, ?)`);
+  db.transaction(() => {
+    for (const [i, g] of gigKeys.entries()) {
+      insGig.run(g, `gd${i}`, String(i), `https://www.freelancer.example/projects/${i}`, `${cap(word())} backend contract`, 60 + (i % 40), iso(DAY0), iso(DAY0 + (spec.runs - 1) * 86_400_000));
+      insGigDoc.run(g, `${g}/proposal.txt`, g);
+    }
+  })();
   const keys: string[] = [];
   const primaries: { key: string; source: string }[] = [];
   let prev = GENESIS_HASH;
@@ -124,7 +136,8 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
           comp: comp === null ? null : JSON.stringify({ min: Math.floor(comp / 2), max: comp, currency: 'INR', period: 'year', basis: 'base' }),
           comp_min_inr: comp === null ? null : Math.floor(comp / 2), comp_max_inr: comp, comp_basis: comp === null ? null : 'base',
           score: rnd() < 0.1 ? null : Math.round(rnd() * 1200) / 10, breakdown: JSON.stringify([{ label: 'title', points: 40 }, { label: 'strong:java', points: 4 }]),
-          verdict, reasons: verdict === 'rejected' ? JSON.stringify(['G-LOCATION', 'G-OFFICE']) : '[]', notes: rnd() < 0.1 ? JSON.stringify(['office/hybrid: Pune']) : '[]',
+          // a share of the listed jobs are contract roles: contractPostings (the freelance boards seeds) reads theirs
+          verdict, reasons: verdict === 'rejected' ? JSON.stringify(['G-LOCATION', 'G-OFFICE']) : rnd() < 0.3 ? JSON.stringify(['employment:contract']) : '[]', notes: rnd() < 0.1 ? JSON.stringify(['office/hybrid: Pune']) : '[]',
           // descriptions: 2-14 KB, mean ~6 KB (real: 73 MB over 12k jobs)
           jd_text: text(2_000 + Math.floor(rnd() * rnd() * 24_000)),
           recommended_format: rnd() < 0.2 ? 'pdf' : null, docs_state: pick(['none', 'none', 'none', 'ready', 'blocked', 'below-floor']),
@@ -138,6 +151,7 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
       if (spec.withRuns === true) insKernelRun.run(runId, policy, at, iso(DAY0 + r * 86_400_000 + 1_800_000));
       let previous = '';
       let seedOfRun = '';
+      const runStepKeys: string[] = [];
       for (let i = 0; i < per(spec.envelopes, r); i++) {
         let x = rnd();
         let type = 'Posting@1';
@@ -148,7 +162,12 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
           }
         }
         const jobKey = pick(keys);
-        const body = canonicalJson({ envelopeId: `e${envN}`, index: 0, parents: [], producer: { agentId: 'synthetic', contractHash: 'h', version: '1.0.0' }, stepKey: `s${envN}`, type, payload: { jobKey, text: text(Math.floor(spec.envelopeBytes * (0.5 + rnd()))) } });
+        const gigKey = gigKeys[Math.floor(rnd() * gigKeys.length)] as string;
+        const filler = text(Math.floor(spec.envelopeBytes * (0.5 + rnd())));
+        // gig envelopes carry their gig (the freelance tab's gigExtras reads the newest Gig@1 and GigRendered@1 per gig)
+        const payload = type === 'Gig@1' ? { gigKey, text: filler } : type === 'GigRendered@1' ? { gigKey, files: [{ path: `${gigKey}/proposal.txt`, sha256: gigKey }], text: filler } : { jobKey, text: filler };
+        const body = canonicalJson({ envelopeId: `e${envN}`, index: 0, parents: [], producer: { agentId: 'synthetic', contractHash: 'h', version: '1.0.0' }, stepKey: `s${envN}`, type, payload });
+        runStepKeys.push(`s${envN}`);
         insEnv.run(`e${envN}`, `s${envN}`, type, body);
         if (spec.withRuns === true) {
           // short lineage chains, as a real job's (seed -> raw -> posting -> verdict -> score -> plans -> render -> qa):
@@ -163,10 +182,14 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
         envN++;
       }
       // this run's events, hash-chained
+      let doneN = 0;
       for (let i = 0; i < per(spec.events, r); i++) {
         seq++;
         const kind = rnd() < 0.65 ? 'step_done' : 'transition_rejected';
-        const row = { run_id: runId, at, kind, data: canonicalJson({ agent: pick(['normalizer', 'eligibility', 'scorer-lexicon', 'src-greenhouse']), stepKey: `s${seq}`, outputs: [`e${seq}`], item: pick(keys), note: text(300) }), policy_hash: policy };
+        // a step_done event names a step of this run that wrote envelopes (in order), as the executor's do; the rest of the
+        // events name steps with no envelope (transition_rejected, replays)
+        const stepKey = kind === 'step_done' && doneN < runStepKeys.length ? (runStepKeys[doneN++] as string) : `x${seq}`;
+        const row = { run_id: runId, at, kind, data: canonicalJson({ agent: pick(['normalizer', 'eligibility', 'scorer-lexicon', 'src-greenhouse']), stepKey, outputs: [`e${seq}`], item: pick(keys), note: text(300) }), policy_hash: policy };
         const hash = eventHash(prev, row);
         insEvent.run(seq, row.run_id, row.at, row.kind, row.data, row.policy_hash, prev, hash);
         prev = hash;

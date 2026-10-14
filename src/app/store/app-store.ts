@@ -329,7 +329,9 @@ function registerListFunctions(db: import('better-sqlite3').Database): void {
  * An envelope with no such event (a seed) comes last. Backed by the `events_step_done` index (migration 19).
  */
 export const STEP_DONE_SEQ = (alias: string): string =>
-  `(SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ${alias}.step_key)`;
+  // `+`: the unary plus drops the TEXT affinity of the step_key column; without it SQLite will not use the expression
+  // index for this comparison and scans every step_done event per envelope (12 s for 2,000 envelopes on 80k events)
+  `(SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = +${alias}.step_key)`;
 export const NEWEST_FIRST = (alias: string): string => `${STEP_DONE_SEQ(alias)} DESC NULLS LAST, ${alias}.idx DESC, ${alias}.envelope_id DESC`;
 
 /** Job keys per envelope query in `contractPostings` (well under SQLite's bound-parameter limit). */
