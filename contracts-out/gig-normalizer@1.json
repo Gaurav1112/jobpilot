@@ -1,5 +1,5 @@
 {
-  "hash": "6329ceebd08b037c196c6796bf5892c29da6854004f5587d1e0212a78be7e152",
+  "hash": "3c17d527769e861b896d30556d6255a6e79e7f4b77042e63b41934735e03181b",
   "shape": {
     "breaker": {
       "consecutiveFailures": 10000
@@ -23,7 +23,8 @@
               "boards",
               "gmail",
               "upwork",
-              "reddit"
+              "reddit",
+              "himalayas"
             ],
             "type": "string"
           },
@@ -312,7 +313,8 @@
               "boards",
               "gmail",
               "upwork",
-              "reddit"
+              "reddit",
+              "himalayas"
             ],
             "type": "string"
           },

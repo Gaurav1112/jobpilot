@@ -147,7 +147,7 @@ describe('the real pipeline decides relevance', () => {
 
 describe('sources probed', () => {
   it('lists the kept sources and the parked ones; GitHub, bounties and Algora are absent', () => {
-    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'freelancer', 'golangprojects', 'hn-freelancer', 'hn-hiring', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
+    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'freelancer', 'golangprojects', 'himalayas', 'hn-freelancer', 'hn-hiring', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
     expect(PARKED_IDS).toEqual(['arbeitnow', 'golangprojects', 'remoteok', 'workingnomads', 'wwr']);
     for (const id of PROBE_SOURCE_IDS) expect(id).not.toMatch(/github|algora|bount/i);
   });

@@ -85,6 +85,7 @@ const PLATFORM_NAME: Readonly<Record<Platform, string>> = {
   gmail: 'Gmail',
   upwork: 'Upwork',
   reddit: 'Reddit',
+  himalayas: 'Himalayas',
 };
 
 const TITLE_MAX = 40;

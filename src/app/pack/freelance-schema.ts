@@ -2,6 +2,12 @@ import { z } from 'zod';
 import { Platform } from '../freelance/types.js';
 
 const FREELANCER_QUERIES = ['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm'];
+/**
+ * The default freelance keywords (freelance-boost, research C1/B2 2026-10-14): backend and AI-agent work, the stack
+ * the research found paying at or above the floor; the generic `react` and `python` are left out (they pulled consumer
+ * app work). One search per keyword; a pack's freelance.yaml replaces a platform's list whole.
+ */
+export const FREELANCE_KEYWORDS: readonly string[] = ['backend', 'api development', 'java', 'spring boot', 'kafka', 'golang', 'microservices', 'aws', 'llm', 'ai agent', 'rag', 'node.js', 'typescript', 'kubernetes'];
 
 const PlatformConfig = (enabledByDefault: boolean) =>
   z.strictObject({ enabled: z.boolean().default(enabledByDefault), queries: z.array(z.string()).default([]) });
@@ -17,6 +23,7 @@ const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
   gmail: { enabled: true, queries: [] },
   upwork: { enabled: false, queries: [] },
   reddit: { enabled: false, queries: [] },
+  himalayas: { enabled: true, queries: [...FREELANCE_KEYWORDS] },
 };
 
 /** One entry per platform; a platform the file leaves out takes its default; one it names is replaced whole (platform config) or merged over the defaults (platform rules). */
@@ -98,6 +105,8 @@ const DEFAULT_RULES: Record<Platform, PlatformRule> = {
   boards: PLAIN_DEFAULTS,
   gmail: PLAIN_DEFAULTS,
   reddit: PLAIN_DEFAULTS,
+  // src-himalayas-gigs: at least 2 s between requests to himalayas.app (the brief's politeness floor).
+  himalayas: { ...PLAIN_DEFAULTS, minIntervalMs: 2000 },
 };
 
 /** A user-written entry MERGES over the platform's defaults: every field it leaves out keeps the default (an explicit `presetBrackets: []` stays empty). */

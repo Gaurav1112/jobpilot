@@ -198,7 +198,7 @@ export function flagText(f: { readonly id: string; readonly detail: string }): {
 
 const PLATFORM_NAME: Readonly<Record<string, string>> = {
   freelancer: 'Freelancer.com', remotive: 'Remotive', 'hn-freelancer': 'HN freelancer thread', 'hn-hiring': 'HN who is hiring', boards: 'Job boards (contract roles)',
-  gmail: 'Gmail', upwork: 'Upwork', reddit: 'Reddit',
+  gmail: 'Gmail', upwork: 'Upwork', reddit: 'Reddit', himalayas: 'Himalayas',
 };
 /** A gig platform id as the user reads it. */
 export const platformName = (id: string): string => PLATFORM_NAME[id] ?? id;

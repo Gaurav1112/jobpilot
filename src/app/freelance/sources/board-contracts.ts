@@ -12,7 +12,7 @@ import { GigRequest, RawGig } from '../types.js';
  */
 export const srcBoardContractsContract = defineContract({
   id: 'src-board-contracts',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Converts a stored daily contract posting into a raw gig',
   skills: ['gig-sourcing'],
   team: 'sourcing',

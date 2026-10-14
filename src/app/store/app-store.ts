@@ -1151,6 +1151,8 @@ export class AppStore {
   /**
    * `duplicate_of` for one gig dedupe group, the v1 rule: the earliest first_seen row (then gig key) is the group's
    * row; every row from another platform points at it, and rows from its own platform stay separate gigs.
+   * freelance-boost: a `boards` row (the freelance run's re-read of a stored daily posting) yields to a row from any
+   * direct source (the Himalayas gigs source reads the same postings with their structured pay): boards rows sort last.
    */
   private relinkGigs(dedupeKey: string): void {
     const rows = (this.db.prepare(`SELECT gig_key, platform, first_seen, duplicate_of FROM gigs WHERE dedupe_key = ?`).all(dedupeKey) as {
@@ -1158,7 +1160,7 @@ export class AppStore {
       platform: string;
       first_seen: string;
       duplicate_of: string | null;
-    }[]).sort((a, b) => cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
+    }[]).sort((a, b) => Number(a.platform === 'boards') - Number(b.platform === 'boards') || cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
     const top = rows[0];
     if (!top) return;
     const set = this.db.prepare(`UPDATE gigs SET duplicate_of = ? WHERE gig_key = ?`);

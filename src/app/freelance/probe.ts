@@ -11,6 +11,7 @@ import type { RunPack } from '../kernel.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import { packOf as scorerPackOf, scoreText } from '../agents/scorer-lexicon.js';
+import { FREELANCE_KEYWORDS } from '../pack/freelance-schema.js';
 import { homePaths } from '../pack/paths.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore } from '../store/app-store.js';
@@ -24,6 +25,7 @@ import { rateNormalizer } from './rate.js';
 import { gigEligibility } from './gig-eligibility.js';
 import { mergeGigs } from './sources/common.js';
 import { freelancerUrl, srcFreelancer } from './sources/freelancer.js';
+import { himalayasGigsHosts, himalayasGigsUrl, makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { srcHn } from './sources/hn.js';
 import { srcRemotive } from './sources/remotive.js';
 import type { Gig, GigRequest, RatedGig, RawGig, ScoredGig } from './types.js';
@@ -52,7 +54,7 @@ import type { Gig, GigRequest, RatedGig, RawGig, ScoredGig } from './types.js';
 export type Access = 'ok' | 'partial' | 'key' | 'email' | 'failed';
 export const ACCESS_POINTS: Readonly<Record<Access, number>> = { ok: 30, partial: 22, key: 20, email: 10, failed: 0 };
 
-export const KEPT_IDS = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring'] as const;
+export const KEPT_IDS = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'himalayas'] as const;
 export const PARKED_IDS = ['arbeitnow', 'golangprojects', 'remoteok', 'workingnomads', 'wwr'] as const;
 export const PROBE_SOURCE_IDS: readonly string[] = [...KEPT_IDS, ...PARKED_IDS];
 const NAMES: Readonly<Record<string, string>> = {
@@ -60,6 +62,7 @@ const NAMES: Readonly<Record<string, string>> = {
   remotive: 'Remotive',
   'hn-freelancer': 'HN Freelancer? Seeking freelancer?',
   'hn-hiring': 'HN Who is hiring? (contract)',
+  himalayas: 'Himalayas (contract and part-time, India)',
   arbeitnow: 'Arbeitnow DE/UK',
   golangprojects: 'Golang Projects',
   remoteok: 'RemoteOK',
@@ -531,6 +534,7 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     remotive: d.loaded.pack.platformRules.remotive.minIntervalMs,
     'hn-freelancer': d.loaded.pack.platformRules['hn-freelancer'].minIntervalMs,
     'hn-hiring': d.loaded.pack.platformRules['hn-hiring'].minIntervalMs,
+    himalayas: d.loaded.pack.platformRules.himalayas.minIntervalMs,
   };
   const keptSkips: string[] = [];
 
@@ -577,6 +581,27 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     } catch (e) {
       r.errors.push(errText(e));
     }
+    r.notes.push(...keptSkips.slice(before));
+    kept.push(r);
+  }
+
+  // Himalayas (freelance-boost): one request per pack query (page 1 only) after one robots.txt, merged by id. Probed
+  // whether or not the run has it on, like the other kept sources; with no queries in the pack, the default keywords.
+  {
+    const r: Raw = { id: 'himalayas', requests: 0, errors: [], gigs: [], notes: [] };
+    const agent = makeSrcHimalayasGigs(himalayasGigsHosts());
+    const batches: RawGig[][] = [];
+    const before = keptSkips.length;
+    const queries = rules.platforms.himalayas.queries.length > 0 ? rules.platforms.himalayas.queries : FREELANCE_KEYWORDS;
+    for (const query of [...new Set(queries)]) {
+      r.requests += 1;
+      try {
+        batches.push([...(await callAgent(agent, { platform: 'himalayas', query, ...at0 }, 'himalayas'))]);
+      } catch (e) {
+        r.errors.push(`${query}: ${errText(e)} (${himalayasGigsUrl(query)})`);
+      }
+    }
+    r.gigs.push(...mergeGigs(batches));
     r.notes.push(...keptSkips.slice(before));
     kept.push(r);
   }

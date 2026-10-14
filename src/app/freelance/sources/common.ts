@@ -14,7 +14,7 @@ export { getBoard, idOf, isRecord } from '../../agents/sources/common.js';
 export function gigSourceContract(id: string, host: string, description: string, timeoutMs = SOURCE_TIMEOUT_MS): Contract<GigRequest, RawGig> {
   return defineContract({
     id,
-    version: '1.0.0',
+    version: '1.1.0',
     description,
     skills: ['gig-sourcing'],
     team: 'sourcing',

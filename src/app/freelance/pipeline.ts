@@ -9,6 +9,7 @@ import { gigRisk } from './gig-risk.js';
 import { gigScorer } from './gig-scorer.js';
 import { GMAIL_LABEL, GMAIL_MAX_INTERVAL_MS, GMAIL_MAX_REQUESTS } from './mail/gmail.js';
 import { rateNormalizer } from './rate.js';
+import { makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { gigSources } from './sources/index.js';
 import { GigRequest, type Platform } from './types.js';
 import { gigQa } from './writing/gig-qa.js';
@@ -30,18 +31,23 @@ import { proposalPlanner } from './writing/proposal-planner.js';
  */
 export const FREELANCE_PIPELINE = { id: 'jobpilot-freelance', version: '1.0.0' } as const;
 
-const TEAM_ORDER = ['sourcing', 'understanding', 'evaluation', 'writing'] as const;
+const TEAM_ORDER = ['sourcing', 'sourcing-himalayas', 'understanding', 'evaluation', 'writing'] as const;
 
 /** Every agent of the freelance run, in a stable order. */
-export const freelanceAgents = (): AnyAgent[] => [...gigSources, gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa];
+export const freelanceAgents = (): AnyAgent[] => [
+  // The Himalayas source holds the run's host state (robots.txt once, a disabled host): a fresh one per wiring.
+  ...gigSources.map((a) => (a.contract.id === 'src-himalayas-gigs' ? makeSrcHimalayasGigs() : a)),
+  gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa,
+];
 
 /**
  * The wiring for `agents`. Teams follow each contract's `team`; a team breaker follows its most tolerant member (the
  * daily rule), except **sourcing**: its threshold is the sum of its members' thresholds. Each source answers one
  * platform, so a team breaker at the largest member's threshold would let one dead platform (5 failed Freelancer
  * queries) skip every other platform's fetch for the run. With the sum, only a member's own breaker stops it, and the
- * team breaker opens only when every source could have opened its own. (One team per source is not possible: the
- * wiring proof requires a member's team to be its contract's `team`, and the source contracts all say `sourcing`.)
+ * team breaker opens only when every source could have opened its own. (The older source contracts all say
+ * `sourcing`; `src-himalayas-gigs` (freelance-boost) declares its own team, `sourcing-himalayas`, so its breaker is its
+ * own.)
  */
 export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
   const teams: Team[] = TEAM_ORDER.map((id) => {
@@ -75,7 +81,7 @@ export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
 }
 
 /** The platforms whose source fetches over the network (boards reads the store). */
-export const FETCHING_PLATFORMS: readonly Platform[] = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'gmail'];
+export const FETCHING_PLATFORMS: readonly Platform[] = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'gmail', 'himalayas'];
 
 /** The platforms this build has a source agent for, and the agent that answers each. */
 export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
@@ -85,12 +91,14 @@ export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
   'hn-hiring': 'src-hn',
   gmail: 'src-gig-mail',
   boards: 'src-board-contracts',
+  himalayas: 'src-himalayas-gigs',
 };
 
 /**
  * The run's seeds, all dated `runDate` and `half`, in this order: Freelancer one request per pack query (each query
  * once), Remotive one, HN two (hn-freelancer, hn-hiring), Gmail one (the label `jobpilot/gigs`, only when
- * `gmailConnected`: without a refresh token in the Keychain the source is disabled, not failed), then one `boards`
+ * `gmailConnected`: without a refresh token in the Keychain the source is disabled, not failed), Himalayas one request
+ * per pack query (freelance-boost, `src-himalayas-gigs`), then one `boards`
  * request per stored daily contract posting. Only enabled platforms with a source agent in this build are seeded
  * (upwork and reddit have none yet).
  */
@@ -109,6 +117,7 @@ export function freelanceSeeds(
   if (on('hn-freelancer')) seeds.push({ platform: 'hn-freelancer', query: '', ...at });
   if (on('hn-hiring')) seeds.push({ platform: 'hn-hiring', query: '', ...at });
   if (on('gmail') && o.gmailConnected === true) seeds.push({ platform: 'gmail', query: GMAIL_LABEL, ...at });
+  if (on('himalayas')) for (const query of [...new Set(rules.platforms.himalayas.queries)]) seeds.push({ platform: 'himalayas', query, ...at });
   if (on('boards')) for (const item of boardPostings) seeds.push({ platform: 'boards', query: '', ...at, item });
   return seeds;
 }

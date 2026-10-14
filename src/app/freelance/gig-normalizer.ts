@@ -22,6 +22,12 @@ import { Gig, RawGig } from './types.js';
  * - boards: a daily Posting@1. `kind` is `contract`. The budget is read from the title and description text by PAY
  *   (freelance-boost; before, it was always `unknown`) and labelled `from: 'description'`; the Posting's annual `comp`
  *   is never read: an annual salary is not a freelance budget.
+ * - himalayas (freelance-boost, `src-himalayas-gigs`): `url` is the job's himalayas.app page (`guid`, the attribution
+ *   link), `kind` is `contract` (employment types Contractor, Part Time, Temporary; any other is `invalid_output`),
+ *   `postedAt` is `pubDate` (epoch seconds). Pay: the structured `hourly`/`monthly` salary with a known currency,
+ *   labelled `from: 'platform'` (`himalayasPay`; a figure the text states per task or project voids it), else the text
+ *   by PAY, labelled `from: 'description'`. Location: `locationRestrictions` names (none: worldwide), and time zones
+ *   that leave out IST make it not worldwide, said in `location.text`.
  * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
  *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
  *   read from `pay` and the description by the same rule.
@@ -315,15 +321,86 @@ function gmail(r: RawGig, o: Rec): Draft {
   };
 }
 
+const HIMALAYAS_KINDS: readonly string[] = ['Contractor', 'Part Time', 'Temporary'];
+/** A figure followed by a unit that is not time-based work ("$500/task"): the platform's `hourly` label is then wrong. */
+const NOT_HOURLY_UNIT = /^\s?(?:\/|per\s|an?\s)\s?(?:task|project|item|word|page|unit|submission|annotation|piece|video|image|deliverable|article)s?\b/i;
+
+/** Whether the text names `figure` (as money) with a non-time unit: "$500/task", "$500 per project". */
+function statedPerTask(text: string, figure: number): boolean {
+  for (const m of text.matchAll(/(?:[$€£₹]|\b(?:USD|EUR|GBP|INR)\s?)\s?(\d[\d,]*(?:\.\d+)?)/gi)) {
+    if (Number((m[1] ?? '').replace(/,/g, '')) !== figure) continue;
+    if (NOT_HOURLY_UNIT.test(text.slice((m.index ?? 0) + m[0].length))) return true;
+  }
+  return false;
+}
+
+/**
+ * Himalayas' structured pay (`minSalary`, `maxSalary`, `salaryPeriod`, `currency`): `hourly` or `monthly` with a
+ * figure and a known currency is the budget, labelled `from: 'platform'`. Contradicted by the text (the figure stated
+ * per task, project, item ...: the platform's period is wrong, live 2026-10-14 "Up to $500/task" filed as hourly 500),
+ * it is no budget at all. Anything else (an `annual` salary, no figure) is null: the text is read instead.
+ */
+function himalayasPay(o: Rec, text: string): Budget | 'contradicted' | null {
+  const period = o.salaryPeriod;
+  if (period !== 'hourly' && period !== 'monthly') return null;
+  const min = positive(o.minSalary);
+  const max = positive(o.maxSalary);
+  const currency = currencyOf(o.currency);
+  if ((min === null && max === null) || currency === null) return null;
+  if ([min, max].some((f) => f !== null && statedPerTask(text, f))) return 'contradicted';
+  return { type: period, min, max, currency, usdPerUnit: null, from: 'platform' };
+}
+
+/** `locationRestrictions` as place names: live strings, or the documented `{name}` objects. */
+const restrictionNames = (v: unknown): string[] =>
+  Array.isArray(v) ? v.flatMap((x) => (typeof x === 'string' && x.trim() !== '' ? [x.trim()] : isRec(x) && typeof x.name === 'string' ? [x.name.trim()] : [])) : [];
+
+function himalayas(r: RawGig, o: Rec): Draft {
+  const title = collapse(nonBlank(o.title) ?? '');
+  if (title === '') throw fail(r, 'missing title');
+  const url = nonBlank(o.guid);
+  if (url === null) throw fail(r, 'missing url');
+  if (typeof o.employmentType !== 'string' || !HIMALAYAS_KINDS.includes(o.employmentType)) throw fail(r, `unsupported employmentType ${JSON.stringify(o.employmentType ?? null)}`);
+  const description = stripped(o.description);
+  const text = `${title}\n${description}`;
+  const pay = himalayasPay(o, text);
+  const names = restrictionNames(o.locationRestrictions);
+  const zones = Array.isArray(o.timezoneRestrictions) ? o.timezoneRestrictions.filter((z): z is number => typeof z === 'number' && Number.isFinite(z)) : [];
+  // Time zones that leave out IST (UTC+5:30, so nothing from +5 to +6): not worldwide, and said so in the location text.
+  const zonesExcludeIst = zones.length > 0 && !zones.some((z) => z >= 5 && z <= 6);
+  const zoneText = zonesExcludeIst ? `time zones UTC${fmtZone(Math.min(...zones))} to UTC${fmtZone(Math.max(...zones))} only` : null;
+  const place = [names.join(', '), zoneText].filter((x) => x !== null && x !== '').join('; ');
+  const where = placesOf(names.join(', '));
+  return {
+    url,
+    title,
+    description,
+    clientName: nonBlank(o.companyName),
+    kind: 'contract',
+    budget: pay === 'contradicted' ? UNKNOWN_BUDGET : (pay ?? fromText(payOf(text))),
+    location: { countries: where.countries, worldwide: names.length === 0 ? !zonesExcludeIst : where.worldwide, text: place === '' ? null : place },
+    skills: [],
+    postedAt: postedAtOf(o.pubDate, 's'),
+    bids: null,
+  };
+}
+
+const fmtZone = (z: number): string => `${z >= 0 ? '+' : '−'}${Math.floor(Math.abs(z))}${Math.abs(z) % 1 === 0 ? '' : `:${String(Math.round((Math.abs(z) % 1) * 60)).padStart(2, '0')}`}`;
+
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */
 export function normalizeGig(r: RawGig): Gig {
-  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail') {
+  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas') {
     throw new KernelError('invalid_output', `gig-normalizer: unsupported platform ${r.platform}`);
   }
   if (r.platform !== 'boards' && !isRec(r.raw)) throw fail(r, 'raw is not an object');
   const o = r.raw as Rec;
   const d =
-    r.platform === 'freelancer' ? freelancer(r, o) : r.platform === 'remotive' ? remotive(r, o) : r.platform === 'boards' ? boards(r, r.raw) : r.platform === 'gmail' ? gmail(r, o) : hn(r, o);
+    r.platform === 'freelancer' ? freelancer(r, o)
+    : r.platform === 'remotive' ? remotive(r, o)
+    : r.platform === 'boards' ? boards(r, r.raw)
+    : r.platform === 'gmail' ? gmail(r, o)
+    : r.platform === 'himalayas' ? himalayas(r, o)
+    : hn(r, o);
   const text = `${d.title}\n${d.description}`;
   return {
     gigKey: gigKey(r.platform, r.sourceId),
