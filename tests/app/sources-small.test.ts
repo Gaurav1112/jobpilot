@@ -86,7 +86,8 @@ function harness(row: Pick<Row, 'fb' | 'host'>, routes: Record<string, Route>) {
     const r = routes[url] ?? { status: 404, body: 'not found' };
     return { status: r.status, text: async () => r.body ?? '', headers: { get: (n: string) => r.headers?.[n.toLowerCase()] ?? null } };
   };
-  const hostPacer = createHostPacer(PRODUCT_POLICY_V1.minHostIntervalMs, clock, async (ms) => {
+  // a policy spacing of 500 ms: the 2 s between a platform's requests is the adapter's own (minIntervalMs)
+  const hostPacer = createHostPacer(500, clock, async (ms) => {
     slept.push(ms);
     now += ms;
   });
@@ -190,7 +191,8 @@ describe('requests: one feed request, the honest user agent, the platform\'s Acc
     await run(a, { ...req(row), slug: 'other' }, h.ctx);
     // robots.txt once for the host and the run, then the two feeds
     expect(h.calls).toEqual(['https://api.rippling.com/robots.txt', row.url, 'https://api.rippling.com/platform/api/ats/v1/board/other/jobs']);
-    expect(h.slept.filter((ms) => ms >= 2000).length).toBeGreaterThanOrEqual(2);
+    // robots.txt → feed → second feed: each waits the full 2 s after the previous request to the host
+    expect(h.slept.filter((ms) => ms === 2000)).toHaveLength(2);
   });
 
   it('a documented API is read without robots.txt (the host\'s robots.txt is never asked); the strict four ask it once per host per run', async () => {
@@ -312,7 +314,7 @@ describe('shapes: a page-level problem fails the company (input_rejected), a mal
       bamboohr: (j) => ({ ...(j as object), result: [{ id: '1' }, ...(j as { result: unknown[] }).result] }),
       breezy: (j) => [{ id: 'z' }, ...(j as unknown[])],
       pinpoint: (j) => ({ data: [{ id: '1', title: '  ', url: 'https://a.test/' }, ...(j as { data: unknown[] }).data] }),
-      rippling: (j) => [{ uuid: 'x', name: 'n' }, ...(j as unknown[])],
+      rippling: (j) => [{ uuid: 'x', name: 'n', url: 'https://ats.rippling.com/a/jobs/x' }, ...(j as unknown[])],
       gem: (j) => [{ id: 1, title: 'x', absolute_url: 'javascript:alert(1)' }, ...(j as unknown[])],
     };
     for (const row of ROWS.filter((r) => r.file.endsWith('.json'))) {
