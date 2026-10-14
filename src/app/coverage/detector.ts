@@ -2,7 +2,7 @@ import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
-import { asHttps, BudgetExhausted, budgetReason, gateOf, HOST_DISABLED, limitsOf, MAX_HOPS, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate, type StepLimits } from './gate.js';
+import { asHttps, BudgetExhausted, budgetReason, failTransient, gateOf, HOST_DISABLED, limitsOf, MAX_HOPS, refuseSiblingDependent, stepFetcher, transientOf, type Fetched, type GateSource, type RunGate, type StepLimits, type TransientCode } from './gate.js';
 import { locatorHosts } from './locator.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
@@ -36,7 +36,9 @@ import { CareersSite, PlatformGuess } from './types.js';
  * the same platform that names no board (Workable's `/oops`) is the vendor's not-found page: null, unavailable.
  *
  * Memo safety (as the locator): a step that met a host disabled by another step fails with `input_rejected`
- * (`host-disabled:<why>`); a disable this step causes is persisted before it returns.
+ * (`host-disabled:<why>`); a disable this step causes is persisted before it returns. A fetch that failed transiently
+ * (a network error, a timeout, a 5xx, a `robots-transient` host) makes the step FAIL with that transport code (C1): a
+ * page that did not load because of an outage is never memoised as "no platform".
  */
 
 /** The most of a page the detector reads (the broker's response cap, so a page is never cut short twice). */
@@ -444,6 +446,8 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limit
   const notes: string[] = [];
   /** Every miss reason, for the sibling-dependence check. */
   const reasons: string[] = [];
+  /** The transport codes of transient fetches: the outcome rests on them, so the step fails (C1). */
+  const transient: TransientCode[] = [];
   const addUrl = (u: URL): void => {
     const s = urlSignal(u, 'url');
     if (s !== null && !c.signals.some((x) => x.where === 'url' && x.url === s.url)) c.signals.push(s);
@@ -458,22 +462,30 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limit
     }
   };
   const fetchSafe = async (url: string): Promise<Fetched> => {
+    let r: Fetched;
     try {
-      return await fetchUrl(url, true);
+      r = await fetchUrl(url, true);
     } catch (e) {
       if (e instanceof BudgetExhausted) return { kind: 'miss', reason: budgetReason(e) };
       throw e;
     }
+    const code = transientOf(r);
+    if (code !== null) {
+      transient.push(code);
+      reasons.push(r.kind === 'miss' ? r.reason : `${short(url)}: ${r.kind === 'ok' ? r.status : r.kind}`);
+    }
+    return r;
   };
   const finish = (g: PlatformGuess): PlatformGuess => {
     refuseSiblingDependent(reasons, null);
+    failTransient(transient, reasons);
     return g;
   };
 
   addUrl(start);
   const r1 = await fetchSafe(start.href);
   if (r1.kind === 'miss') {
-    reasons.push(r1.reason);
+    if (r1.transient === undefined) reasons.push(r1.reason);
     return finish(nullWith(`unavailable: ${r1.reason}`, signalLines(c)));
   }
   if (r1.kind === 'challenge') return finish(nullWith(`refused: ${r1.reason}`, signalLines(c)));

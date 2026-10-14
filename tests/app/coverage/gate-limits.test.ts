@@ -30,46 +30,49 @@ describe('the gate\'s request timeout and candidate deadline', () => {
     expect(CANDIDATE_DEADLINE_MS + REQUEST_TIMEOUT_MS).toBeLessThan(careersLocatorContract.timeoutMs);
   });
 
-  it('a request past the timeout is a miss with the reason "timeout"; the host is NOT disabled and the next probe goes on', async () => {
+  it('a request past the timeout is a transient miss "timeout": the host is NOT disabled, the next probe goes on, a "none" resting on it fails (C1)', async () => {
     const store = memoryHostStateStore();
     const gate = makeRunGate({ runKey: 'r', store });
     const c = cand('acme.test');
     // the homepage hangs; robots.txt and every other probe answer 404
     const n = net((u) => u === 'https://www.acme.test/');
     const t0 = Date.now();
-    const [site] = await makeCareersLocator({ gate, requestTimeoutMs: 20 }).run(c, ctxFor(n.fetch, c, { now: () => new Date().toISOString() }));
+    await expect(makeCareersLocator({ gate, requestTimeoutMs: 20 }).run(c, ctxFor(n.fetch, c, { now: () => new Date().toISOString() }))).rejects.toMatchObject({
+      code: 'timeout',
+      message: expect.stringMatching(/homepage: timeout: request to www\.acme\.test timed out/),
+    });
     expect(Date.now() - t0).toBeLessThan(5000);
-    const s = CareersSite.schema.parse(site);
-    expect(s.method).toBe('none');
-    expect(s.reasons?.join('\n')).toMatch(/homepage: timeout: request to www\.acme\.test timed out/);
     expect(n.calls).toContain('https://www.acme.test/careers');
     expect([...store.coverageHostState('r')]).toEqual([]);
     expect(gate.state.disabled.size).toBe(0);
   });
 
-  it('a robots.txt that times out is not cached and not a disable: this step skips the host, a later step asks again', async () => {
+  it('a robots.txt that times out is not cached; the host is off for an hour only (robots-transient), then asked again', async () => {
     const store = memoryHostStateStore();
     const gate = makeRunGate({ runKey: 'r', store });
     const c = cand('acme.test');
     const n = net((u) => u === 'https://www.acme.test/robots.txt');
-    const [site] = await makeCareersLocator({ gate, requestTimeoutMs: 20 }).run(c, ctxFor(n.fetch, c, { now: () => new Date().toISOString() }));
-    expect(CareersSite.schema.parse(site).reasons?.join('\n')).toMatch(/robots-unavailable \(www\.acme\.test\)/);
-    expect(gate.state.disabled.has('www.acme.test')).toBe(false);
-    expect([...store.coverageHostState('r')]).toEqual([]);
+    const T = Date.parse('2026-10-11T02:00:00.000Z');
+    await expect(makeCareersLocator({ gate, requestTimeoutMs: 20 }).run(c, ctxFor(n.fetch, c, { now: () => new Date(T).toISOString() }))).rejects.toMatchObject({ code: 'timeout' });
+    expect(gate.state.robots.has('www.acme.test')).toBe(false);
+    expect([...store.coverageHostState('r')]).toContainEqual(['www.acme.test', 'robots-transient']);
     const before = n.calls.filter((u) => u === 'https://www.acme.test/robots.txt').length;
-    await makeCareersLocator({ gate, requestTimeoutMs: 20 }).run(c, ctxFor(n.fetch, c, { now: () => new Date().toISOString() }));
+    await makeCareersLocator({ gate, requestTimeoutMs: 20 })
+      .run(c, ctxFor(n.fetch, c, { now: () => new Date(T + 3_600_000).toISOString() }))
+      .catch(() => undefined);
     expect(n.calls.filter((u) => u === 'https://www.acme.test/robots.txt').length).toBeGreaterThan(before);
   });
 
   it('a candidate past its wall-clock deadline (injected clock) ends "none" with budget-exhausted:time, no further request', async () => {
     const c = cand('acme.test');
     let t = Date.parse('2026-10-11T01:30:00.000Z');
-    // every request takes 40 s of the injected clock; robots.txt is absent, every page a 500 (so the probes go on)
+    // every request takes 40 s of the injected clock; robots.txt is absent, every page a 301 without Location (a
+    // definitive miss, so the probes go on; a 5xx would be transient and fail the step)
     const calls: string[] = [];
     const fetch: FetchLike = async (url) => {
       calls.push(url);
       t += 40_000;
-      return url.endsWith('/robots.txt') ? { status: 404, headers: { get: () => null }, text: async () => 'Not Found' } : { status: 500, headers: { get: () => null }, text: async () => 'oops' };
+      return url.endsWith('/robots.txt') ? { status: 404, headers: { get: () => null }, text: async () => 'Not Found' } : { status: 301, headers: { get: () => null }, text: async () => '' };
     };
     const clock: Clock = { now: () => new Date(t).toISOString() };
     const [site] = await makeCareersLocator({ runKey: 'r', store: memoryHostStateStore() }).run(c, ctxFor(fetch, c, clock));
@@ -82,7 +85,7 @@ describe('the gate\'s request timeout and candidate deadline', () => {
 
   it('the request-count budget keeps its own reason', async () => {
     const c = cand('acme.test');
-    const fetch: FetchLike = async (url) => (url.endsWith('/robots.txt') ? { status: 404, text: async () => '' } : { status: 500, text: async () => 'oops' });
+    const fetch: FetchLike = async (url) => (url.endsWith('/robots.txt') ? { status: 404, text: async () => '' } : { status: 301, headers: { get: () => null }, text: async () => '' });
     const [site] = await makeCareersLocator({ runKey: 'r', store: memoryHostStateStore(), maxRequests: 2 }).run(c, ctxFor(fetch, c, { now: () => '2026-10-11T01:30:00.000Z' }));
     expect(CareersSite.schema.parse(site).reasons).toContain('budget-exhausted');
   });

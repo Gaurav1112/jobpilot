@@ -80,17 +80,17 @@ describe('run-scoped host state is persisted per run key', () => {
     expect(out[0]).toMatchObject({ method: 'listed' });
   });
 
-  it('a robots.txt fetch that throws (timeout) is robots-unavailable, disables the host, and is not cached as a rejection', async () => {
+  it('a robots.txt fetch that throws (timeout) is robots-transient (C1): the step fails, the host is off for an hour only, never cached', async () => {
     const app = AppStore.on((await import('../../../src/kernel/store/store.js')).Store.open(':memory:'));
     const fetch: FetchLike = async (url) => {
       if (url === 'https://boards.greenhouse.io/robots.txt') throw Object.assign(new Error('timed out'), { name: 'TimeoutError' });
       return { status: 404, text: async () => 'Not Found' };
     };
     const agent = makeCareersLocator({ runKey: 'run-1', store: app });
-    const [a] = await run(agent, ALL[0] as CompanyCandidate, fetch);
-    expect((a as CareersSite).reasons?.join(' ')).toMatch(/robots-unavailable/);
-    expect([...app.coverageHostState('run-1')]).toEqual([['boards.greenhouse.io', 'robots-unavailable']]);
-    await expect(run(agent, ALL[1] as CompanyCandidate, fetch)).rejects.toMatchObject({ code: 'input_rejected' });
+    await expect(run(agent, ALL[0] as CompanyCandidate, fetch)).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/robots-transient/) });
+    expect([...app.coverageHostState('run-1')]).toEqual([['boards.greenhouse.io', 'robots-transient']]);
+    // a sibling meeting the host within the hour is deferred (re-queued by the coverage run once the hour is over)
+    await expect(run(agent, ALL[1] as CompanyCandidate, fetch)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/host-disabled:robots-transient on boards\.greenhouse\.io/) });
   });
 });
 

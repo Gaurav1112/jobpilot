@@ -168,11 +168,9 @@ describe('careers locator: rules', () => {
     expect(site.reasons).toContain('/careers: robots-disallow /careers (www.acme.test)');
   });
 
-  it('robots.txt 5xx disallows the host for the run: none with robots-unavailable', async () => {
+  it('robots.txt 5xx (C1): the host is robots-transient, nothing is fetched from it, and the step FAILS overloaded (never a memoised none)', async () => {
     const s = serve({ 'https://www.acme.test/robots.txt': { status: 503, body: 'down' }, 'https://www.acme.test/': file('drupal-home.html') });
-    const site = await locate(cand('acme.test'), s.fetch);
-    expect(site.method).toBe('none');
-    expect(site.reasons?.join(' ')).toMatch(/robots-unavailable/);
+    await expect(locate(cand('acme.test'), s.fetch)).rejects.toMatchObject({ code: 'overloaded', message: expect.stringMatching(/robots-transient/) });
     expect(s.calls).not.toContain('https://www.acme.test/');
   });
 
@@ -299,11 +297,11 @@ describe('locator: run-scoped host state, status handling, budget (fix round 1)'
     }
   });
 
-  it('robots.txt 400, 5xx are robots-unavailable; 429 disables the host', async () => {
-    for (const status of [400, 500]) {
-      const s = serve({ 'https://www.acme.test/robots.txt': { status }, 'https://www.acme.test/': file('drupal-home.html') });
-      expect((await locate(cand('acme.test'), s.fetch)).reasons?.join(' ')).toMatch(/robots-unavailable/);
-    }
+  it('robots.txt 400 is robots-unavailable, a 5xx robots-transient (the step fails); 429 disables the host', async () => {
+    const s400 = serve({ 'https://www.acme.test/robots.txt': { status: 400 }, 'https://www.acme.test/': file('drupal-home.html') });
+    expect((await locate(cand('acme.test'), s400.fetch)).reasons?.join(' ')).toMatch(/robots-unavailable/);
+    const s500 = serve({ 'https://www.acme.test/robots.txt': { status: 500 }, 'https://www.acme.test/': file('drupal-home.html') });
+    await expect(locate(cand('acme.test'), s500.fetch)).rejects.toMatchObject({ code: 'overloaded' });
     const s = serve({ 'https://www.acme.test/robots.txt': { status: 429 }, 'https://www.acme.test/': file('drupal-home.html') });
     expect((await locate(cand('acme.test'), s.fetch)).reasons?.join(' ')).toMatch(/http-429/);
     expect(s.calls).not.toContain('https://www.acme.test/');

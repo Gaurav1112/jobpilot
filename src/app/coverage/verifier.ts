@@ -4,7 +4,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { BoardRefused, platformClient, type BoardRead, type PlatformClient } from '../agents/sources/platforms/client.js';
 import { HostDisabled, RobotsDenied, type PlatformHosts } from '../agents/sources/platforms/shared.js';
-import { gateOf, HOST_DISABLED, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
+import { gateOf, HOST_DISABLED, REFUSALS, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 import { sameCompany } from './names.js';
 import { CompanyVerdict, PlatformGuess } from './types.js';
@@ -21,8 +21,10 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  *   (`board name not available, please confirm`) or names several companies, or the board has 0 jobs; when the
  *   platform has no adapter in this build (`adapter not built yet: <platform>`, nothing fetched); and when no platform
  *   was detected (the detector's reasons carried, nothing fetched; the coverage pipeline does not even route those here).
- * - `failed` on an error: 404 (`board not found`), another 4xx, a response of the wrong shape, a 5xx or a network
- *   failure. A URL-only detection of a dead board ends here, never verified.
+ * - `failed` on an error: 404 (`board not found`), another 4xx or a response of the wrong shape. A URL-only detection
+ *   of a dead board ends here, never verified. A 5xx, a network failure or a timeout is NOT a verdict (C1): the step
+ *   fails with that transport code (the breaker sees an outage; the coverage run asks again later), so an outage
+ *   never adds a failed week to a registry company.
  *
  * Politeness and memo safety (the run's shared gate, `gate.ts`): the read host of a platform is a public job-board API
  * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not), except
@@ -35,7 +37,9 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  * or 429 from it DISABLES the host for the rest of the run (written to `coverage_host_state` before the step returns,
  * this agent's one side channel outside its output) and the step is deferred: it fails `input_rejected` with
  * `host-disabled:<why> on <host>`, so it is never stored as a finished result and is asked again in a later run. A step that
- * meets a host already disabled (by itself or a sibling) is deferred the same way, without a request.
+ * meets a host already disabled (by itself or a sibling) is deferred the same way, without a request. A read exempt
+ * from robots.txt (a documented public API: `client.robots` false) is deferred only by a REFUSAL of its host (401,
+ * 403, 429, a challenge: `REFUSALS`), never by a robots.txt state page crawling set on that host (C1-e).
  */
 
 export const boardVerifierContract = defineContract({
@@ -81,6 +85,7 @@ function gateHosts(ctx: AgentContext, gate: RunGate, host: string, timeoutMs: nu
     const r = await fetcher.fetchUrl(`https://${h}/robots.txt`, false);
     // a challenge has disabled the host: the read sees that and defers
     if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason };
+    if (r.kind === 'miss' && r.transient !== undefined) return { kind: 'disallow-all', reason: 'robots-transient', why: r.reason, transient: r.transient };
     if (r.kind !== 'ok') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved' };
     if (r.status === 401 || r.status === 403) return { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` };
     return robotsVerdictOf(r.status, r.body);
@@ -138,7 +143,8 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
   const host = ref === null ? null : client.hostOf(ref);
   if (ref === null || host === null) return verdict('proposed', [`no readable ${g.platform} board in ${g.boardUrl ?? g.slug}, please confirm`]);
   const off = gate.disabledWhy(host, ctx.clock.now());
-  if (off !== undefined) throw deferred(off, host, 'disabled earlier in this run');
+  // C1-e: a documented API read is not governed by robots.txt, so only a refusal by the host stops it
+  if (off !== undefined && (client.robots || REFUSALS.has(off))) throw deferred(off, host, 'disabled earlier in this run');
 
   let read: BoardRead;
   try {
@@ -146,6 +152,8 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
   } catch (e) {
     if (e instanceof HostDisabled) throw deferred(e.why, e.host, 'disabled earlier in this run');
     if (e instanceof RobotsDenied) {
+      // C1: this step's own robots.txt failed transiently: not a verdict, the step fails and is asked again later
+      if (/robots-transient/.test(e.reason)) throw new KernelError('network', `${e.reason} on ${e.host}: the board was not read; asked again later in the run`);
       const why = gate.disabledWhy(e.host, ctx.clock.now());
       if (why !== undefined) throw deferred(why, e.host, 'its robots.txt refused this run');
       return verdict('proposed', [`${e.reason} on ${e.host}: the board was not read, please confirm`, `detected: ${g.platform} ${ref}`]);
@@ -164,9 +172,9 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
       throw deferred('challenge', host, 'it answered with a challenge page');
     }
     if (e instanceof KernelError && e.code === 'gone') return verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]);
-    if (e instanceof KernelError && (e.code === 'invalid_output' || e.code === 'overloaded' || e.code === 'network' || (e.code === 'timeout' && !ctx.signal.aborted))) {
-      return verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]);
-    }
+    if (e instanceof KernelError && e.code === 'invalid_output') return verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]);
+    // C1: an outage, a timeout or an overloaded board is not a verdict: the step fails with its transport code
+    if (e instanceof KernelError && (e.code === 'overloaded' || e.code === 'network' || e.code === 'timeout')) throw new KernelError(e.code, `${g.platform} board ${g.slug}: ${e.message}`, e.sysCode);
     throw e;
   }
 

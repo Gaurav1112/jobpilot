@@ -4,13 +4,13 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
-import { lookup } from 'node:dns/promises';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
+import { dnsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
@@ -49,12 +49,7 @@ export interface RunCommandDeps {
 /** An offline run never reads Gmail (the fixtures have no mailbox). */
 const GMAIL_OFFLINE: GmailRunAccess = { ...GMAIL_OFF, reason: 'Gmail is not read in an offline run' };
 
-/** Hosts every pack's sources depend on; one resolving means the network is up (Wi-Fi is often still down at wake). */
-const PROBE_HOSTS = ['boards-api.greenhouse.io', 'api.lever.co', 'api.ashbyhq.com'];
-export async function dnsOnline(hosts: readonly string[] = PROBE_HOSTS): Promise<boolean> {
-  const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
-  return (await Promise.all(hosts.map(one))).some(Boolean);
-}
+export { dnsOnline } from './net.js';
 
 /**
  * The pack's forbidden terms, if naming.yaml can be read at all (for the failure notification and the stderr

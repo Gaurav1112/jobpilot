@@ -16,7 +16,9 @@ import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/ro
  * - robots.txt is fetched once per host per run, through the adapter's own broker context (its egress, the honest
  *   user agent, the platform's spacing), and matched with the coverage run's robots.txt rules (`coverage/robots.ts`:
  *   the parser, the matcher and the status rules; nothing of the coverage run's tables or run state). A robots.txt
- *   that fails to arrive (network, timeout) is not cached: the step fails and its retry asks again.
+ *   that fails to arrive (network, timeout) or answers 5xx is not cached (C1, final review): the step fails as a
+ *   transport failure (`network`, `timeout`, `overloaded`); the adapters' retry (`on: overloaded, network`, after 8 s)
+ *   asks again, and the next company on the host asks again too, so one blip never drops a shared host for the day.
  * - `unreadableRobots: 'allow'` (Oracle Recruiting Cloud only, a controller decision): a robots.txt answering a plain
  *   401 or 403 (Oracle's WAF answers 403 for every robots.txt) is "unknown", not a refusal: RFC 9309 §2.3.1.3 lets a
  *   crawler access resources when robots.txt answers 4xx, and the spec (§4) reads it at the minimal rate. A challenge
@@ -30,12 +32,6 @@ import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/ro
 export function dailyPlatformHosts<S>(o: {
   readonly minIntervalMs: number;
   readonly unreadableRobots?: 'refuse' | 'allow';
-  /**
-   * A robots.txt that never arrives (network, timeout): `fail` (the default) fails the step, uncached, so its retry asks
-   * again; `unavailable` (the page adapters, Task 8 fix round 2) is the verdict `robots-unavailable` for the run, a
-   * named skip like any other unreadable robots.txt.
-   */
-  readonly unreachableRobots?: 'fail' | 'unavailable';
 }): PlatformHosts<S> {
   const robots = new Map<string, Promise<{ verdict: RobotsVerdict; hash: string }>>();
   const disabled = new Map<string, string>();
@@ -43,14 +39,8 @@ export function dailyPlatformHosts<S>(o: {
 
   async function verdictOf(host: string, http: HttpTool): Promise<{ verdict: RobotsVerdict; hash: string }> {
     let r: { status: number; body: string };
-    try {
-      r = await http.getPage(`https://${host}/robots.txt`, { minIntervalMs: o.minIntervalMs });
-    } catch (e) {
-      if (o.unreachableRobots === 'unavailable' && e instanceof KernelError && (e.code === 'network' || e.code === 'timeout')) {
-        return { verdict: { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt unreachable (${e.code})` }, hash: `unreachable:${e.code}` };
-      }
-      throw e;
-    }
+    // a robots.txt that never arrives (network, timeout) throws here: the step fails, nothing is cached
+    r = await http.getPage(`https://${host}/robots.txt`, { minIntervalMs: o.minIntervalMs });
     if (isChallenge(r.status, r.body)) {
       disabled.set(host, 'challenge');
       throw new KernelError('challenged', `${host} answered its robots.txt with a challenge page (${r.status}): the host is disabled for this run, never retried around`);
@@ -61,7 +51,10 @@ export function dailyPlatformHosts<S>(o: {
     }
     const hash = createHash('sha256').update(`${r.status}\n${r.body}`).digest('hex').slice(0, 16);
     if (o.unreadableRobots === 'allow' && (r.status === 401 || r.status === 403)) return { verdict: { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` }, hash };
-    return { verdict: robotsVerdictOf(r.status, r.body), hash };
+    const verdict = robotsVerdictOf(r.status, r.body);
+    // C1: a 5xx is the server's trouble, not an answer: the step fails `overloaded`, uncached, and is asked again
+    if (verdict.kind === 'disallow-all' && verdict.reason === 'robots-transient') throw new KernelError('overloaded', `${host} answered its robots.txt with ${r.status}: not read now, asked again (never kept for the run)`);
+    return { verdict, hash };
   }
 
   function cached(host: string, http: HttpTool): Promise<{ verdict: RobotsVerdict; hash: string }> {
@@ -117,10 +110,10 @@ export function dailyOracleHosts(): OracleHosts {
 /**
  * A page adapter's host state (Task 8: iCIMS, SuccessFactors, SmartRecruiters, jsonld-sitemap): the strict page rule,
  * robots.txt at the 2 s page spacing, a 401/403 robots.txt refuses (never `unreadableRobots`), the sitemaps robots.txt
- * names readable by the generic adapter; an unreachable robots.txt is `robots-unavailable` (a named skip, fix round 2).
+ * names readable by the generic adapter. A robots.txt that does not arrive or answers 5xx fails the step (C1), uncached.
  */
 export function dailyPageHosts(): PlatformHosts<never> {
-  return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS, unreadableRobots: 'refuse', unreachableRobots: 'unavailable' });
+  return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS, unreadableRobots: 'refuse' });
 }
 
 /**
@@ -128,10 +121,10 @@ export function dailyPageHosts(): PlatformHosts<never> {
  * Recruitee, Personio, Pinpoint, Gem) is read as Greenhouse, Lever and Ashby are: robots.txt is not asked, so it never
  * denies; the disabled hosts are still kept, so a 401/403/429 or a challenge ends the host's reads for the run. Any other
  * feed (Teamtailor, BambooHR, Breezy, Rippling) is under the strict page rule (`dailyPageHosts`: robots.txt once per
- * host per run at the 2 s spacing, a 401/403 robots.txt refuses, an unreachable one is `robots-unavailable`).
+ * host per run at the 2 s spacing, a 401/403 robots.txt refuses, an unreachable or 5xx one fails the step, uncached).
  */
 export function dailyFeedHosts(documented: boolean): PlatformHosts<never> {
-  if (!documented) return dailyPlatformHosts({ minIntervalMs: FEED_MIN_INTERVAL_MS, unreadableRobots: 'refuse', unreachableRobots: 'unavailable' });
+  if (!documented) return dailyPlatformHosts({ minIntervalMs: FEED_MIN_INTERVAL_MS, unreadableRobots: 'refuse' });
   return documentedHosts();
 }
 
