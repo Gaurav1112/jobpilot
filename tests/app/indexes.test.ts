@@ -117,7 +117,8 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
     expect(scans.length).toBe(4);
     for (const sql of scans) {
       const p = plan(db, sql, { floor: 4_000_000, newAfter: 0, limit: 100, offset: 0, minScore: 10, text: 'eng' });
-      expect(p, sql).toMatch(/USING COVERING INDEX jobs_list/);
+      // the default view's `duplicate_of IS NULL` is an equality search on the index's first column, not a full index scan
+      expect(p, sql).toMatch(/SEARCH j USING COVERING INDEX jobs_list \(duplicate_of=\?/);
       expect(p, sql).not.toMatch(/SCAN j\b(?! USING COVERING)/);
     }
   });
@@ -127,13 +128,13 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
     const db = app.kernel.db;
     expect(plan(db, `SELECT * FROM events WHERE run_id = ? ORDER BY seq`, 'r')).toMatch(/SEARCH events USING INDEX events_by_run \(run_id=\?\)/);
     expect(plan(db, `SELECT body FROM envelopes WHERE type = 'Rendered@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY envelope_id`, 'k')).toMatch(
-      /SEARCH envelopes USING INDEX envelopes_rendered_by_job/,
+      /SEARCH envelopes USING (COVERING )?INDEX envelopes_rendered_by_job \(<expr>=\?\)/,
     );
     // the "newest envelope" readers (NEWEST_FIRST): the step_done lookup, correlated with an envelope's step_key (a
     // column, whose TEXT affinity would block the expression index without the unary plus), is an index search
-    expect(plan(db, `SELECT ${STEP_DONE_SEQ('e')} FROM envelopes e`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
-    expect(plan(db, `SELECT e.envelope_id FROM envelopes e ORDER BY ${NEWEST_FIRST('e')}`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
-    expect(plan(db, `SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ?`, 'k')).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
+    expect(plan(db, `SELECT ${STEP_DONE_SEQ('e')} FROM envelopes e`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done \(<expr>=\?\)/);
+    expect(plan(db, `SELECT e.envelope_id FROM envelopes e ORDER BY ${NEWEST_FIRST('e')}`)).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done \(<expr>=\?\)/);
+    expect(plan(db, `SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ?`, 'k')).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done \(<expr>=\?\)/);
   });
 
   it('contractPostings and gigExtras look their step_done events up through events_step_done (every statement)', () => {
@@ -156,10 +157,10 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
     }
     const newest = seen.filter((q) => q.includes("v.kind = 'step_done'"));
     expect(newest.length).toBe(3); // contractPostings, gigExtras Gig@1, gigExtras GigRendered@1
-    const byKey: Record<string, RegExp> = { "'Posting@1'": /SEARCH e USING INDEX envelopes_posting_by_job/, "'Gig@1'": /SEARCH e USING INDEX envelopes_gig_by_key/, "'GigRendered@1'": /SEARCH e USING INDEX envelopes_gig_rendered_by_key/ };
+    const byKey: Record<string, RegExp> = { "'Posting@1'": /SEARCH e USING (COVERING )?INDEX envelopes_posting_by_job \(<expr>=\?\)/, "'Gig@1'": /SEARCH e USING (COVERING )?INDEX envelopes_gig_by_key \(<expr>=\?\)/, "'GigRendered@1'": /SEARCH e USING (COVERING )?INDEX envelopes_gig_rendered_by_key \(<expr>=\?\)/ };
     for (const q of newest) {
       const p = plan(db, q, ...Array.from({ length: (q.match(/\?/g) ?? []).length }, () => 'k'));
-      expect(p, q).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
+      expect(p, q).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done \(<expr>=\?\)/);
       expect(p, q).not.toMatch(/SCAN v\b/);
       // and the envelopes themselves are found by type and key, never by scanning every envelope
       const [type, re] = Object.entries(byKey).find(([t]) => q.includes(`e.type = ${t}`)) as [string, RegExp];

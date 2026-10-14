@@ -534,6 +534,11 @@ Migrations are one-way, so the order matters:
    (about 8 s on a 4 GB home, up to 30 s when the file is not in memory).
 5. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node.
 
+**Release note (dashboard-perf).** The first run after upgrading builds new indexes (app
+migrations 16-22) inside the run lock: about 20 s on a large (4 GB) database, up to a minute or
+more when the file is not in memory. Until it finishes, the dashboard shows "jobpilot is being
+upgraded" (HTTP 503) and works again on the next page load after it.
+
 When the branches are merged by hand, merge **career-sites first, then dashboard-perf**: the
 dashboard-perf migrations (16-18) are numbered after career-sites' 15.
 
