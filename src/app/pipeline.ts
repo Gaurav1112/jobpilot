@@ -176,7 +176,8 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
     if (!out.has(key)) out.set(key, { platform: c.platform, company: c.name, ref });
   }
   // by platform, then the board itself (an Eightfold API variant prefix does not move a board)
-  const order = (b: RegistryBoard): string => `${Object.keys(REGISTRY_PLATFORMS).indexOf(b.platform)} ${b.ref.replace(/^(?:v2|pcsx):/u, '')}`;
+  // the platform's place in the table, zero-padded: with ten or more platforms "10" would sort before "7"
+  const order = (b: RegistryBoard): string => `${String(Object.keys(REGISTRY_PLATFORMS).indexOf(b.platform)).padStart(2, '0')} ${b.ref.replace(/^(?:v2|pcsx):/u, '')}`;
   return [...out.values()].sort((a, b) => (order(a) < order(b) ? -1 : order(a) > order(b) ? 1 : 0));
 }
 

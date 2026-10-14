@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Recruitee (career-sites spec §4, Task 9): the Careers Site API, Recruitee's documented public API
@@ -26,14 +26,10 @@ export const recruiteeHost = (slug: string): string => `${slug}.recruitee.com`;
 export const recruiteeUrl = (slug: string): string => `https://${slug}.recruitee.com/api/offers/`;
 
 export function recruiteeBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.port !== '') return null;
-    const m = HOST.exec(u.hostname);
-    return m === null || u.pathname.replace(/\/+$/u, '') !== '/api/offers' ? null : parseRecruiteeRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null) return null;
+  const m = HOST.exec(u.hostname);
+  return m === null || u.pathname.replace(/\/+$/u, '') !== '/api/offers' ? null : parseRecruiteeRef(m[1] as string);
 }
 
 const Str = z.string().nullish();
@@ -57,7 +53,7 @@ const Offer = z
     description: Str,
     requirements: Str,
     company_name: Str,
-    salary: z.object({ min: z.unknown(), max: z.unknown(), period: Str, currency: Str }).passthrough().nullish(),
+    salary: z.object({ min: z.unknown().optional(), max: z.unknown().optional(), period: Str, currency: Str }).passthrough().nullish(),
     locations: z.array(z.object({ name: Str, state: Str, country: Str, country_code: Str }).passthrough()).nullish(),
   })
   .passthrough();

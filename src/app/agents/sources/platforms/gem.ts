@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Gem (career-sites spec §4, Task 9): the Job Board API, Gem's documented public API for a company's job board
@@ -23,20 +23,17 @@ export const parseGemRef = (ref: string): string | null => (SLUG.test(ref) ? ref
 export const gemUrl = (slug: string): string => `https://${GEM_HOST}/job_board/v0/${slug}/job_posts/`;
 
 export function gemBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.hostname !== GEM_HOST || u.port !== '') return null;
-    const m = /^\/job_board\/v0\/([^/]+)\/job_posts\/?$/u.exec(u.pathname);
-    return m === null ? null : parseGemRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null || u.hostname !== GEM_HOST) return null;
+  const m = /^\/job_board\/v0\/([^/]+)\/job_posts\/?$/u.exec(u.pathname);
+  return m === null ? null : parseGemRef(m[1] as string);
 }
 
 const Str = z.string().nullish();
 const Post = z
   .object({
-    id: z.union([z.string().regex(/^\d{1,18}$/u), z.number().int().nonnegative().transform(String)]),
+    // seen live: a numeric id (Greenhouse-style) and an opaque base64-like one
+    id: z.union([z.string().regex(/^[A-Za-z0-9_=-]{1,128}$/u), z.number().int().nonnegative().transform(String)]),
     title: z.string().refine((t) => t.trim() !== '', 'blank title'),
     absolute_url: z.string().refine((u) => httpsUrl(u) !== null, 'no url'),
     content: Str,

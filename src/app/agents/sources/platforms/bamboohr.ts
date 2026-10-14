@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, jsonBody, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, jsonBody, plainHttps, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * BambooHR (career-sites spec §4, Task 9): the careers page's own list, `GET https://<slug>.bamboohr.com/careers/list`
@@ -28,14 +28,10 @@ export const bambooHost = (slug: string): string => `${slug}.bamboohr.com`;
 export const bambooUrl = (slug: string): string => `https://${slug}.bamboohr.com/careers/list`;
 
 export function bambooBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.port !== '') return null;
-    const m = HOST.exec(u.hostname);
-    return m === null || u.pathname !== '/careers/list' ? null : parseBambooRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null) return null;
+  const m = HOST.exec(u.hostname);
+  return m === null || u.pathname !== '/careers/list' ? null : parseBambooRef(m[1] as string);
 }
 
 const Str = z.string().nullish();

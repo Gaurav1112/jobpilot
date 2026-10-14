@@ -203,6 +203,16 @@ export function feedBoard<B>(spec: FeedSpec<B>): FeedBoard<B> {
 // Helpers the platform parsers share
 // ---------------------------------------------------------------------------
 
+/** A board URL as a URL when it is plain `https` (no port, no credentials, no fragment worth reading); else null. */
+export function plainHttps(url: string): URL | null {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.port === '' && u.username === '' && u.password === '' ? u : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Parses a JSON body; a body that is not JSON is a page-level problem. */
 export function jsonBody(body: string, what: string): unknown {
   try {

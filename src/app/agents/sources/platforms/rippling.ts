@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Rippling ATS (career-sites spec §4, Task 9): the board JSON the public page itself calls,
@@ -25,14 +25,10 @@ export const parseRipplingRef = (ref: string): string | null => (SLUG.test(ref) 
 export const ripplingUrl = (slug: string): string => `https://${RIPPLING_HOST}/platform/api/ats/v1/board/${slug}/jobs`;
 
 export function ripplingBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.hostname !== RIPPLING_HOST || u.port !== '') return null;
-    const m = /^\/platform\/api\/ats\/v1\/board\/([^/]+)\/jobs\/?$/u.exec(u.pathname);
-    return m === null ? null : parseRipplingRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null || u.hostname !== RIPPLING_HOST) return null;
+  const m = /^\/platform\/api\/ats\/v1\/board\/([^/]+)\/jobs\/?$/u.exec(u.pathname);
+  return m === null ? null : parseRipplingRef(m[1] as string);
 }
 
 const Str = z.string().nullish();

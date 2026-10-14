@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { childText, children, parseXml, XmlError, type XmlNode } from '../../../text/xml-lite.js';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, sortedNames, textOf, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, plainHttps, httpsUrl, sortedNames, textOf, type FeedPage } from './feed-board.js';
 
 /**
  * Teamtailor (career-sites spec §4, Task 9): the board's RSS feed, `GET https://<host>/jobs.rss` with `Accept:
@@ -29,12 +29,8 @@ export function parseTeamtailorRef(ref: string): string | null {
 export const teamtailorUrl = (host: string): string => `https://${host}/jobs.rss`;
 
 export function teamtailorBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    return u.protocol === 'https:' && u.port === '' && u.pathname === '/jobs.rss' ? parseTeamtailorRef(u.hostname.toLowerCase()) : null;
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  return u !== null && u.pathname === '/jobs.rss' ? parseTeamtailorRef(u.hostname.toLowerCase()) : null;
 }
 
 const Item = z.object({

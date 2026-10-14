@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Workable (career-sites spec §4, Task 9): the widget API, Workable's documented public API for a company's board
@@ -25,14 +25,10 @@ export const workableUrl = (slug: string): string => `https://${WORKABLE_HOST}/a
 
 /** The board of a stored board URL (`…/api/v1/widget/accounts/<slug>`, with or without a query). */
 export function workableBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.hostname !== WORKABLE_HOST || u.port !== '') return null;
-    const m = /^\/api\/v1\/widget\/accounts\/([^/]+)\/?$/u.exec(u.pathname);
-    return m === null ? null : parseWorkableRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null || u.hostname !== WORKABLE_HOST) return null;
+  const m = /^\/api\/v1\/widget\/accounts\/([^/]+)\/?$/u.exec(u.pathname);
+  return m === null ? null : parseWorkableRef(m[1] as string);
 }
 
 const Str = z.string().nullish();

@@ -1,0 +1,662 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { decideEligibility, type EligibilityPack } from '../../src/app/agents/eligibility.js';
+import { normalize } from '../../src/app/agents/normalizer.js';
+import { platformClient } from '../../src/app/agents/sources/platforms/client.js';
+import { documentedHosts, FEED_MAX_JOBS, FEED_MAX_PAGES, FEED_MAX_REQUESTS, FEED_MIN_INTERVAL_MS, FEED_TIMEOUT_MS, type FeedBoard } from '../../src/app/agents/sources/platforms/feed-board.js';
+import { SMALL_PLATFORMS } from '../../src/app/agents/sources/platforms/small.js';
+import { parseTeamtailor } from '../../src/app/agents/sources/platforms/teamtailor.js';
+import { parsePersonio } from '../../src/app/agents/sources/platforms/personio.js';
+import { boardVerifierContract, makeBoardVerifier, verifierEgressSets } from '../../src/app/coverage/verifier.js';
+import { memoryHostStateStore } from '../../src/app/coverage/gate.js';
+import type { CareersSite, CompanyCandidate, Platform, PlatformGuess } from '../../src/app/coverage/types.js';
+import { dailyFeedHosts } from '../../src/app/daily-hosts.js';
+import { dailyAgents, dailyPipeline, pacingProblems, registryBoards, registryEgressSets, dailySeeds } from '../../src/app/pipeline.js';
+import { Posting, type DiscoveryRequest, type RawPosting } from '../../src/app/types.js';
+import type { Agent, AgentContext } from '../../src/kernel/agent.js';
+import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
+import { fixedClock } from '../../src/kernel/clock.js';
+import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
+import type { FetchLike } from '../../src/kernel/providers.js';
+import { BUILD, PLACES, TITLE, type Where } from '../support/small-feeds.js';
+
+/**
+ * Task 9: the daily adapters for the nine small ATS platforms (Workable, Recruitee, Teamtailor, Personio, BambooHR,
+ * Breezy, Pinpoint, Rippling, Gem) and their verifier clients. The recorded fixtures (2026-10-14, one polite request
+ * each, trimmed and scrubbed) are the real shapes: Hugging Face (Workable), bunq (Recruitee), Teamtailor's own board,
+ * Personio's, Red Nucleus (BambooHR), the Breezy trial board, Grasshopper (Pinpoint), Rippling's own (Rippling) and Gem's.
+ */
+
+const root = join(import.meta.dirname, '../..');
+const fx = (name: string): string => readFileSync(join(root, 'tests/fixtures/small', name), 'utf8');
+
+interface Row {
+  readonly fb: FeedBoard<string>;
+  readonly ref: string;
+  readonly host: string;
+  readonly url: string;
+  readonly boardUrl: string;
+  readonly file: string;
+  readonly n: number;
+  /** Distinct ids among the n entries (the recorded Rippling feed lists one uuid twice). */
+  readonly kept?: number;
+  readonly firstId: string;
+  readonly documented: boolean;
+  /** The company name the feed carries (verifier); null: none. */
+  readonly name: string | null;
+  readonly robots?: string;
+}
+const byName = (n: string): FeedBoard<string> => SMALL_PLATFORMS.find((f) => f.spec.platform === n) as FeedBoard<string>;
+const ROWS: readonly Row[] = [
+  { fb: byName('workable'), ref: 'huggingface', host: 'apply.workable.com', url: 'https://apply.workable.com/api/v1/widget/accounts/huggingface?details=true', boardUrl: 'https://apply.workable.com/api/v1/widget/accounts/huggingface', file: 'workable-huggingface.json', n: 3, firstId: '81B46579FE', documented: true, name: 'Hugging Face' },
+  { fb: byName('recruitee'), ref: 'bunq', host: 'bunq.recruitee.com', url: 'https://bunq.recruitee.com/api/offers/', boardUrl: 'https://bunq.recruitee.com/api/offers/', file: 'recruitee-bunq.json', n: 3, firstId: '2781634', documented: true, name: 'bunq' },
+  { fb: byName('teamtailor'), ref: 'career.teamtailor.com', host: 'career.teamtailor.com', url: 'https://career.teamtailor.com/jobs.rss', boardUrl: 'https://career.teamtailor.com/jobs.rss', file: 'teamtailor-career.rss', n: 3, firstId: '4ff07fd5-3ac0-4333-8f4c-955380396321', documented: false, name: 'Teamtailor', robots: 'robots-teamtailor.txt' },
+  { fb: byName('personio'), ref: 'personio.jobs.personio.de', host: 'personio.jobs.personio.de', url: 'https://personio.jobs.personio.de/xml', boardUrl: 'https://personio.jobs.personio.de/xml', file: 'personio-personio.xml', n: 1, firstId: '1834171', documented: true, name: 'Personio SE & Co. KG' },
+  { fb: byName('bamboohr'), ref: 'rednucleus', host: 'rednucleus.bamboohr.com', url: 'https://rednucleus.bamboohr.com/careers/list', boardUrl: 'https://rednucleus.bamboohr.com/careers/list', file: 'bamboohr-rednucleus.json', n: 5, firstId: 'rednucleus:546', documented: false, name: null, robots: 'robots-bamboohr.txt' },
+  { fb: byName('breezy'), ref: 'breezy', host: 'breezy.breezy.hr', url: 'https://breezy.breezy.hr/json', boardUrl: 'https://breezy.breezy.hr/json', file: 'breezy-breezy.json', n: 3, firstId: '98323abf2296', documented: false, name: 'MS Breezy Trial', robots: 'robots-breezy.txt' },
+  { fb: byName('pinpoint'), ref: 'grasshopper', host: 'grasshopper.pinpointhq.com', url: 'https://grasshopper.pinpointhq.com/postings.json', boardUrl: 'https://grasshopper.pinpointhq.com/postings.json', file: 'pinpoint-grasshopper.json', n: 2, firstId: '540608', documented: true, name: null },
+  { fb: byName('rippling'), ref: 'rippling', host: 'api.rippling.com', url: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', boardUrl: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', file: 'rippling-rippling.json', n: 8, kept: 7, firstId: 'ef0b7266-678c-4a23-a439-1a5e7362b604', documented: false, name: null, robots: 'robots-rippling.txt' },
+  { fb: byName('gem'), ref: 'gem', host: 'api.gem.com', url: 'https://api.gem.com/job_board/v0/gem/job_posts/', boardUrl: 'https://api.gem.com/job_board/v0/gem/job_posts/', file: 'gem-gem.json', n: 2, firstId: '4965519002', documented: true, name: null, robots: 'robots-gem.txt' },
+];
+const STRICT = ROWS.filter((r) => !r.documented);
+const DOCUMENTED = ROWS.filter((r) => r.documented);
+
+const ELIG: EligibilityPack = {
+  filters: { roleDeny: [], companyDeny: [], employmentDeny: [] },
+  eligibility: { employmentTypes: ['full-time'], officeCities: ['bengaluru'] },
+  watchlist: [],
+  offers: { floor: null },
+  fx: { toINR: { INR: 1, USD: 85, EUR: 92, GBP: 108 } },
+};
+
+type Route = { status: number; body?: string; headers?: Record<string, string> };
+function harness(row: Pick<Row, 'fb' | 'host'>, routes: Record<string, Route>) {
+  const calls: string[] = [];
+  const accepts: (string | undefined)[] = [];
+  const agents: (string | undefined)[] = [];
+  let now = Date.parse('2026-10-14T01:30:00Z');
+  const clock = { now: () => new Date(now).toISOString() };
+  const slept: number[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    calls.push(url);
+    const h = (init as { headers?: Record<string, string> }).headers ?? {};
+    accepts.push(h['accept']);
+    agents.push(h['user-agent']);
+    const r = routes[url] ?? { status: 404, body: 'not found' };
+    return { status: r.status, text: async () => r.body ?? '', headers: { get: (n: string) => r.headers?.[n.toLowerCase()] ?? null } };
+  };
+  const hostPacer = createHostPacer(PRODUCT_POLICY_V1.minHostIntervalMs, clock, async (ms) => {
+    slept.push(ms);
+    now += ms;
+  });
+  const skipped: string[] = [];
+  const base = issueContext({ contract: row.fb.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock, signal: new AbortController().signal, egressSets: { [row.fb.spec.egress]: [row.host] }, hostPacer });
+  const ctx = { ...base, skipped: (n: readonly string[]) => void skipped.push(...n) } as AgentContext;
+  return { ctx, calls, accepts, agents, slept, skipped };
+}
+const req = (row: Row, company = 'Acme', runDate = '2026-10-14'): DiscoveryRequest => ({ ats: row.fb.spec.platform as DiscoveryRequest['ats'], slug: row.ref, company, runDate });
+const run = (a: Agent<DiscoveryRequest, RawPosting>, r: DiscoveryRequest, ctx: AgentContext): Promise<RawPosting[]> => a.run(r, ctx) as Promise<RawPosting[]>;
+const feedRoutes = (row: Row, body = fx(row.file), extra: Record<string, Route> = {}): Record<string, Route> => ({
+  ...(row.robots === undefined ? {} : { [`https://${row.host}/robots.txt`]: { status: row.robots === 'robots-rippling.txt' ? 404 : row.robots === 'robots-gem.txt' ? 403 : 200, body: fx(row.robots) } }),
+  [row.url]: { status: 200, body },
+  ...extra,
+});
+const REC = (company = 'Acme', slug = 'x') => ({ company, slug });
+
+describe('the recorded feeds', () => {
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: parses the recorded feed to postings keyed by the platform id, the company name and the apply URL', (_n, row) => {
+    const page = row.fb.spec.parse(fx(row.file), row.fb.spec.parseRef(row.ref) as string, REC());
+    expect(page.postings).toHaveLength(row.n);
+    expect(page.malformed).toEqual([]);
+    expect(page.postings[0]).toMatchObject({ source: row.fb.spec.platform, sourceId: row.firstId, company: 'Acme', slug: 'x' });
+    for (const p of page.postings) {
+      const posting = normalize(p);
+      expect(Posting.schema.safeParse(posting).success).toBe(true);
+      expect(posting.url).toMatch(/^https:\/\//u);
+      expect(posting.title).toBe(posting.title.trim());
+    }
+    if (row.name === null || row.fb.spec.platform === 'personio') expect(page.names).toEqual(row.fb.spec.platform === 'personio' ? ['Personio SE & Co. KG'] : []);
+    else expect(page.names).toEqual([row.name]);
+  });
+
+  it('the recorded values: Workable (remote, Paris), Recruitee (hybrid, Amsterdam, pay none), Teamtailor (RFC 822 date, hybrid), Personio (offices, no country), BambooHR (US, no description), Breezy, Pinpoint (remote), Rippling (labels), Gem (hybrid)', () => {
+    const post = (n: string) => ROWS.find((r) => r.fb.spec.platform === n) as Row;
+    const first = (n: string) => normalize(post(n).fb.spec.parse(fx(post(n).file), post(n).fb.spec.parseRef(post(n).ref) as string, REC()).postings[0] as RawPosting);
+    expect(first('workable')).toMatchObject({ title: 'Open-Source Machine Learning Engineer - EMEA Remote', url: 'https://apply.workable.com/j/81B46579FE', locationText: 'Paris, Île-de-France, France', employmentType: 'Full-time', postedAt: '2026-05-29', remote: { structured: 'remote', countries: [] } });
+    expect(first('workable').descriptionText).toContain('Hugging Face');
+    expect(first('recruitee')).toMatchObject({ title: '(Senior) Product Owner', url: 'https://careers.bunq.com/o/senior-product-owner-1', locationText: 'Amsterdam, Noord-Holland, Netherlands', postedAt: '2026-10-13T10:58:56Z', remote: { structured: 'hybrid', countries: ['netherlands'] }, comp: null });
+    expect(first('teamtailor')).toMatchObject({ title: 'UK Account Executive - SMB', url: 'https://career.teamtailor.com/jobs/8118064-uk-account-executive-smb', locationText: 'London, United Kingdom', postedAt: '2026-07-24T07:05:16.000Z', remote: { structured: 'hybrid', countries: ['united kingdom'] } });
+    expect(first('teamtailor').descriptionText).toContain('Teamtailor is an Employer Branding');
+    expect(first('personio')).toMatchObject({ title: 'Staff Software Engineer, Data Platform', url: 'https://personio.jobs.personio.de/job/1834171', locationText: 'Munich; Berlin', postedAt: '2024-11-13T14:10:41+00:00', employmentType: 'permanent, full-time', remote: { structured: null, countries: [] } });
+    expect(first('bamboohr')).toMatchObject({ title: 'Managing Director, Medical Affairs Consulting', url: 'https://rednucleus.bamboohr.com/careers/546', locationText: 'United States', descriptionText: '', employmentType: 'Full-Time', remote: { countries: ['united states'] } });
+    expect(first('breezy')).toMatchObject({ title: 'Employee #12', locationText: 'Chaos, FL, United States', employmentType: 'Other', remote: { structured: null, countries: ['united states'] } });
+    expect(first('pinpoint')).toMatchObject({ title: 'Fintech Risk Analyst', url: 'https://grasshopper.pinpointhq.com/en/postings/7a2878fd-2d14-4783-84e3-59b47ac3553b', locationText: 'Remote, New York', remote: { structured: 'remote' }, employmentType: 'Full Time' });
+    expect(first('rippling')).toMatchObject({ title: 'Account Executive, Broker Channel (Arkansas)', locationText: 'AR', url: 'https://ats.rippling.com/rippling/jobs/ef0b7266-678c-4a23-a439-1a5e7362b604', remote: { countries: [] } });
+    expect(first('gem')).toMatchObject({ title: 'Software Engineer', url: 'https://jobs.gem.com/gem/4965519002', locationText: 'San Francisco, United States', postedAt: '2020-11-17T15:37:23.000Z', employmentType: 'full time', remote: { structured: 'hybrid' } });
+  });
+
+  it('refs and stored board URLs: the detector\'s board URL reads back to the ref; anything else is not a board', () => {
+    for (const r of ROWS) {
+      expect(r.fb.spec.boardOfUrl(r.boardUrl), r.fb.spec.platform).toBe(r.ref);
+      expect(r.fb.spec.parseRef(r.ref), r.fb.spec.platform).toBe(r.ref);
+      expect(r.fb.spec.urlOf(r.ref), r.fb.spec.platform).toBe(r.url);
+      expect(r.fb.spec.hostOf(r.ref), r.fb.spec.platform).toBe(r.host);
+      // a Teamtailor board may be the company's own domain: any host serving /jobs.rss is one
+      if (r.fb.spec.platform !== 'teamtailor') expect(r.fb.spec.boardOfUrl('https://evil.test/jobs.rss'), r.fb.spec.platform).toBeNull();
+      expect(r.fb.spec.boardOfUrl('http://' + r.boardUrl.slice(8)), r.fb.spec.platform).toBeNull();
+      expect(r.fb.spec.boardOfUrl(r.boardUrl.replace('https://', 'https://user@')), r.fb.spec.platform).toBeNull();
+      expect(r.fb.spec.boardOfUrl('not a url'), r.fb.spec.platform).toBeNull();
+      for (const bad of ['', 'a b', 'a/b', '../x', 'a@b', '-x', 'x'.repeat(200)]) expect(r.fb.spec.parseRef(bad), `${r.fb.spec.platform} ${bad}`).toBeNull();
+    }
+    const p = (n: string) => byName(n).spec;
+    expect(p('workable').boardOfUrl('https://apply.workable.com/api/v1/widget/accounts/Acme-Inc?details=true')).toBe('Acme-Inc');
+    expect(p('workable').boardOfUrl('https://apply.workable.com/acme')).toBeNull();
+    expect(p('recruitee').boardOfUrl('https://www.recruitee.com/api/offers/')).toBeNull();
+    expect(p('teamtailor').boardOfUrl('https://www.teamtailor.com/jobs.rss')).toBeNull();
+    expect(p('teamtailor').parseRef('10.0.0.1')).toBeNull();
+    expect(p('personio').parseRef('acme.jobs.personio.com')).toBe('acme.jobs.personio.com');
+    expect(p('personio').parseRef('acme.example.com')).toBeNull();
+    expect(p('bamboohr').boardOfUrl('https://acme.bamboohr.com/careers/list?x=1')).toBe('acme');
+  });
+
+  it('BambooHR ids are per company: the sourceId carries the slug; the platform total above the list is a short-list note', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'bamboohr') as Row;
+    const h = harness(row, feedRoutes(row));
+    const out = await run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx);
+    expect(out.map((p) => p.sourceId)).toEqual(['rednucleus:546', 'rednucleus:589', 'rednucleus:613', 'rednucleus:618', 'rednucleus:619']);
+    expect(h.skipped).toEqual(['short-list Acme: total 61, listed 5']);
+  });
+});
+
+describe('requests: one feed request, the honest user agent, the platform\'s Accept, robots', () => {
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: reads the board with one feed request (+ robots.txt only where it governs), at least 2 s apart, honest user agent', async (_n, row) => {
+    const h = harness(row, feedRoutes(row));
+    const out = await run(row.fb.make({ hosts: dailyFeedHosts(row.documented) }), req(row), h.ctx);
+    expect(out).toHaveLength(row.kept ?? row.n);
+    expect(h.calls).toEqual(row.documented ? [row.url] : [`https://${row.host}/robots.txt`, row.url]);
+    expect(h.agents.every((a) => a === 'jobpilot/0.1 (+local)')).toBe(true);
+    if (!row.documented) expect(h.slept.length).toBeGreaterThanOrEqual(0);
+    expect(h.accepts.at(-1)).toBe(row.fb.spec.platform === 'teamtailor' ? 'application/rss+xml' : 'application/json, text/plain;q=0.8, */*;q=0.1');
+    expect(FEED_MIN_INTERVAL_MS).toBe(2000);
+  });
+
+  it('every feed request names a 2 s spacing: two companies on one host are at least 2 s apart', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'rippling') as Row;
+    const hosts = dailyFeedHosts(false);
+    const h = harness(row, feedRoutes(row, fx(row.file), { 'https://api.rippling.com/platform/api/ats/v1/board/other/jobs': { status: 200, body: '[]' } }));
+    const a = row.fb.make({ hosts });
+    await run(a, req(row), h.ctx);
+    await run(a, { ...req(row), slug: 'other' }, h.ctx);
+    // robots.txt once for the host and the run, then the two feeds
+    expect(h.calls).toEqual(['https://api.rippling.com/robots.txt', row.url, 'https://api.rippling.com/platform/api/ats/v1/board/other/jobs']);
+    expect(h.slept.filter((ms) => ms >= 2000).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('a documented API is read without robots.txt (the host\'s robots.txt is never asked); the strict four ask it once per host per run', async () => {
+    for (const row of DOCUMENTED) {
+      const h = harness(row, { [`https://${row.host}/robots.txt`]: { status: 200, body: 'User-agent: *\nDisallow: /' }, [row.url]: { status: 200, body: fx(row.file) } });
+      await expect(run(row.fb.make({ hosts: dailyFeedHosts(true) }), req(row), h.ctx), row.fb.spec.platform).resolves.toHaveLength(row.kept ?? row.n);
+      expect(h.calls.some((u) => u.endsWith('/robots.txt')), row.fb.spec.platform).toBe(false);
+    }
+    const row = ROWS.find((r) => r.fb.spec.platform === 'bamboohr') as Row;
+    const hosts = dailyFeedHosts(false);
+    const h = harness(row, feedRoutes(row));
+    await run(row.fb.make({ hosts }), req(row), h.ctx);
+    await run(row.fb.make({ hosts }), req(row, 'Acme 2'), h.ctx);
+    expect(h.calls.filter((u) => u.endsWith('/robots.txt'))).toHaveLength(1);
+  });
+
+  it.each(STRICT.map((r) => [r.fb.spec.platform, r] as const))('%s: a robots.txt that disallows the feed is the named skip, nothing else is fetched', async (_n, row) => {
+    const path = new URL(row.url).pathname;
+    const h = harness(row, { [`https://${row.host}/robots.txt`]: { status: 200, body: `User-agent: *\nDisallow: ${path}` }, [row.url]: { status: 200, body: fx(row.file) } });
+    await expect(run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx)).resolves.toEqual([]);
+    expect(h.calls).toEqual([`https://${row.host}/robots.txt`]);
+    expect(h.skipped).toEqual([`robots-disallow ${row.host}: Acme not read today (robots-disallow ${path})`]);
+  });
+
+  it.each(STRICT.map((r) => [r.fb.spec.platform, r] as const))('%s: a 401/403 robots.txt refuses (named skip), a 5xx one is robots-unavailable, a 404 allows all', async (_n, row) => {
+    for (const [status, ok] of [[403, false], [401, false], [500, false], [503, false], [404, true]] as const) {
+      const h = harness(row, { [`https://${row.host}/robots.txt`]: { status, body: 'nope' }, [row.url]: { status: 200, body: fx(row.file) } });
+      const out = await run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx);
+      expect(out.length > 0, `${row.fb.spec.platform} ${status}`).toBe(ok);
+      if (!ok) expect(h.skipped[0], `${row.fb.spec.platform} ${status}`).toMatch(/^robots-disallow .*not read today \(robots-(?:forbidden|unavailable)\)$/u);
+    }
+  });
+
+  it('the strict rule matches the path and the query; the allow rule of the recorded robots.txt files lets the four feeds through', async () => {
+    for (const row of STRICT) {
+      const h = harness(row, feedRoutes(row));
+      await expect(run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx), row.fb.spec.platform).resolves.toHaveLength(row.kept ?? row.n);
+    }
+  });
+});
+
+describe('refusals: the host is disabled for the run, nothing is retried around, Retry-After is never read', () => {
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: a 401/403 is challenged and a sibling is deferred without a request; a 429 is rate_limit, disabled; Retry-After is ignored; a 5xx is overloaded', async (_n, row) => {
+    for (const status of [401, 403]) {
+      const hosts = dailyFeedHosts(row.documented);
+      const h = harness(row, feedRoutes(row, '', { [row.url]: { status, body: 'no' } }));
+      await expect(run(row.fb.make({ hosts }), req(row), h.ctx), `${status}`).rejects.toMatchObject({ code: 'challenged' });
+      expect(hosts.disabledWhy(row.host)).toBe(`http-${status}`);
+      const before = h.calls.length;
+      await expect(run(row.fb.make({ hosts }), req(row, 'Sibling'), h.ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`^host-disabled:http-${status} on ${row.host.replaceAll('.', '\\.')}`, 'u')) });
+      expect(h.calls.length).toBe(before);
+    }
+    const hosts = dailyFeedHosts(row.documented);
+    const h = harness(row, feedRoutes(row, '', { [row.url]: { status: 429, body: 'slow down', headers: { 'retry-after': '1' } } }));
+    await expect(run(row.fb.make({ hosts }), req(row), h.ctx)).rejects.toMatchObject({ code: 'rate_limit' });
+    expect(hosts.disabledWhy(row.host)).toBe('http-429');
+    // Retry-After: 1 never made the request wait or repeat: one feed request, no sleep for it beyond the pacer's own
+    expect(h.calls.filter((u) => u === row.url)).toHaveLength(1);
+    expect(h.slept.every((ms) => ms <= 2000)).toBe(true);
+    const h5 = harness(row, feedRoutes(row, '', { [row.url]: { status: 503, body: 'down' } }));
+    await expect(run(row.fb.make({ hosts: dailyFeedHosts(row.documented) }), req(row), h5.ctx)).rejects.toMatchObject({ code: 'overloaded' });
+  });
+
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: a challenge page (403 or a small 200 that is not the feed) disables the host: challenged', async (_n, row) => {
+    const wall = '<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/h/b/orchestrate/jsch/v1"></script></html>';
+    for (const [status, body] of [[403, wall], [503, wall], [200, wall]] as const) {
+      const hosts = dailyFeedHosts(row.documented);
+      const h = harness(row, feedRoutes(row, '', { [row.url]: { status, body } }));
+      await expect(run(row.fb.make({ hosts }), req(row), h.ctx), `${status}`).rejects.toMatchObject({ code: 'challenged' });
+      expect(hosts.disabledWhy(row.host), `${status}`).toMatch(/^(?:challenge|http-403)$/u);
+    }
+  });
+
+  it('a robots.txt that answers with a challenge or 429 disables the strict host; a sibling is deferred', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'teamtailor') as Row;
+    const hosts = dailyFeedHosts(false);
+    const h = harness(row, { [`https://${row.host}/robots.txt`]: { status: 429, body: 'slow' } });
+    await expect(run(row.fb.make({ hosts }), req(row), h.ctx)).rejects.toMatchObject({ code: 'rate_limit' });
+    await expect(run(row.fb.make({ hosts }), req(row, 'Sibling'), h.ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-429/u) });
+    expect(h.calls).toEqual([`https://${row.host}/robots.txt`]);
+  });
+
+  it('a 404 is gone; a redirect (BambooHR\'s unknown slug) and another 4xx are input_rejected, never followed', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'bamboohr') as Row;
+    const go = async (route: Route) => {
+      const h = harness(row, feedRoutes(row, '', { [row.url]: route }));
+      const p = run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx);
+      return { p, h };
+    };
+    const a = await go({ status: 404 });
+    await expect(a.p).rejects.toMatchObject({ code: 'gone' });
+    const b = await go({ status: 302, headers: { location: 'https://www.bamboohr.com/' } });
+    await expect(b.p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/redirected \(302 to www\.bamboohr\.com\)/u) });
+    expect(b.h.calls).toEqual([`https://${row.host}/robots.txt`, row.url]);
+    const c = await go({ status: 410 });
+    await expect(c.p).rejects.toMatchObject({ code: 'gone' });
+    const d = await go({ status: 418 });
+    await expect(d.p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/returned 418/u) });
+  });
+});
+
+describe('shapes: a page-level problem fails the company (input_rejected), a malformed entry is skipped by name', () => {
+  const page = (row: Row, body: string) => {
+    const h = harness(row, feedRoutes(row, body));
+    return { p: run(row.fb.make({ hosts: dailyFeedHosts(row.documented) }), req(row), h.ctx), h };
+  };
+
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: a body that is not the feed (HTML, empty, the wrong envelope) is input_rejected, nothing read', async (_n, row) => {
+    for (const body of ['<html><body>Sorry</body></html>', '', 'null', row.file.endsWith('.json') ? '{"unexpected":true}' : '<root/>', '{']) {
+      const { p } = page(row, body);
+      await expect(p, JSON.stringify(body).slice(0, 30)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/nothing read from it/u) });
+    }
+  });
+
+  it('one malformed entry is skipped with a named note; the others flow (Workable, Recruitee, BambooHR, Breezy, Pinpoint, Rippling, Gem)', async () => {
+    const break1: Record<string, (j: unknown) => unknown> = {
+      workable: (j) => ({ ...(j as object), jobs: [{ shortcode: 'bad id', title: 'x' }, ...(j as { jobs: unknown[] }).jobs] }),
+      recruitee: (j) => ({ offers: [{ id: 'abc', title: 'x' }, ...(j as { offers: unknown[] }).offers] }),
+      bamboohr: (j) => ({ ...(j as object), result: [{ id: '1' }, ...(j as { result: unknown[] }).result] }),
+      breezy: (j) => [{ id: 'z' }, ...(j as unknown[])],
+      pinpoint: (j) => ({ data: [{ id: '1', title: '  ', url: 'https://a.test/' }, ...(j as { data: unknown[] }).data] }),
+      rippling: (j) => [{ uuid: 'x', name: 'n' }, ...(j as unknown[])],
+      gem: (j) => [{ id: 1, title: 'x', absolute_url: 'javascript:alert(1)' }, ...(j as unknown[])],
+    };
+    for (const row of ROWS.filter((r) => r.file.endsWith('.json'))) {
+      const body = JSON.stringify(break1[row.fb.spec.platform]?.(JSON.parse(fx(row.file))));
+      const { p, h } = page(row, body);
+      const out = await p;
+      expect(out, row.fb.spec.platform).toHaveLength(row.kept ?? row.n);
+      expect(h.skipped, row.fb.spec.platform).toHaveLength(1 + (row.fb.spec.platform === 'bamboohr' ? 1 : 0));
+      expect(h.skipped[0], row.fb.spec.platform).toMatch(new RegExp(`^${row.fb.spec.platform} Acme entry 0: `, 'u'));
+    }
+  });
+
+  it('XML feeds: an <item> without a guid or a <position> without an id is skipped by name', async () => {
+    const tt = ROWS.find((r) => r.fb.spec.platform === 'teamtailor') as Row;
+    const body = fx(tt.file).replace('<item>', '<item><title>No guid</title><link>https://career.teamtailor.com/jobs/1-x</link></item><item>');
+    const a = page(tt, body);
+    expect(await a.p).toHaveLength(3);
+    expect(a.h.skipped).toEqual(['teamtailor Acme entry 0: no guid']);
+    const pe = ROWS.find((r) => r.fb.spec.platform === 'personio') as Row;
+    const b = page(pe, fx(pe.file).replace('<position>', '<position><name>No id</name></position><position>'));
+    expect(await b.p).toHaveLength(1);
+    expect(b.h.skipped).toEqual(['personio Acme entry 0: no id']);
+  });
+
+  it('every entry malformed is schema drift: input_rejected, not an empty board', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'rippling') as Row;
+    const { p } = page(row, JSON.stringify([{ uuid: 'x' }, { name: 'y' }]));
+    await expect(p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/all 2 entries are malformed/u) });
+    // an empty feed is a board with no jobs, not a problem
+    const q = page(row, '[]');
+    await expect(q.p).resolves.toEqual([]);
+  });
+
+  it('an entry the platform lists twice is one posting (the first)', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'gem') as Row;
+    const j = JSON.parse(fx(row.file)) as unknown[];
+    const { p } = page(row, JSON.stringify([...j, j[0]]));
+    expect(await p).toHaveLength(2);
+  });
+
+  it('the loud job cap: a feed over FEED_MAX_JOBS is input_rejected (job-cap), never truncated; at the cap it is read', async () => {
+    expect(FEED_MAX_JOBS).toBe(5000);
+    const row = ROWS.find((r) => r.fb.spec.platform === 'rippling') as Row;
+    const mk = (n: number) => JSON.stringify(Array.from({ length: n }, (_, i) => ({ uuid: `uuid-${String(i).padStart(8, '0')}`, name: `Job ${i}`, url: `https://ats.rippling.com/x/jobs/${i}`, workLocation: { label: 'Remote' } })));
+    await expect(page(row, mk(FEED_MAX_JOBS + 1)).p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^job-cap Rippling rippling: the feed lists 5001 jobs, over the cap of 5000; nothing read, never truncated/u) });
+    await expect(page(row, mk(FEED_MAX_JOBS)).p).resolves.toHaveLength(FEED_MAX_JOBS);
+  });
+
+  it('the named constants: 10 list pages at most, one request per feed, the pacing arithmetic', () => {
+    expect(FEED_MAX_PAGES).toBe(10);
+    expect(FEED_MAX_REQUESTS).toBe(1 + FEED_MAX_PAGES);
+    for (const fb of SMALL_PLATFORMS) expect(fb.contract.timeoutMs / FEED_MAX_REQUESTS, fb.spec.platform).toBeGreaterThan(PRODUCT_POLICY_V1.minHostIntervalMs);
+    expect(FEED_TIMEOUT_MS).toBe(300_000);
+  });
+
+  it('1 MB adversarial XML and JSON bodies are rejected or read in well under a second (linear parsing)', () => {
+    const MB = 1024 * 1024;
+    const rep = (x: string): string => x.repeat(Math.ceil(MB / x.length)).slice(0, MB);
+    const time = (f: () => unknown): number => {
+      const t = performance.now();
+      try {
+        f();
+      } catch {
+        /* a rejection is fine */
+      }
+      return performance.now() - t;
+    };
+    const rss = '<rss><channel><title>t</title>';
+    for (const body of [rss + rep('<item>'), rss + rep('<item><title>'), rss + rep('&amp;'), rss + rep('<![CDATA['), rss + rep('<!--'), rss + rep('<a '), rss + rep('<item><guid>1</guid>'), rss + rep('&#'), rss + `<item><description>${rep('&')}`]) {
+      expect(time(() => parseTeamtailor(body, 'career.test', REC())), body.slice(rss.length, rss.length + 20)).toBeLessThan(500);
+    }
+    const px = '<workzag-jobs>';
+    for (const body of [px + rep('<position>'), px + rep('<position><id>1</id>'), px + rep('<jobDescription>'), px + rep('&lt;'), px + rep('<![CDATA[')]) {
+      expect(time(() => parsePersonio(body, 'a.jobs.personio.de', REC())), body.slice(px.length, px.length + 20)).toBeLessThan(500);
+    }
+    for (const row of ROWS.filter((r) => r.file.endsWith('.json'))) {
+      const ref = row.fb.spec.parseRef(row.ref) as string;
+      for (const body of [rep('['), rep('{"a":'), rep('[{},'), rep('"x'), '[' + rep('{"id":"1","name":"n"},')]) expect(time(() => row.fb.spec.parse(body, ref, REC())), row.fb.spec.platform).toBeLessThan(1000);
+    }
+  });
+});
+
+describe('location: the platform\'s own place fields map to the unchanged eligibility rules (India, Bengaluru, remote)', () => {
+  const verdict = (name: string, w: Where) => {
+    const fb = byName(name);
+    const ref = name === 'personio' ? 'acme.jobs.personio.de' : name === 'teamtailor' ? 'career.acme.test' : 'acme';
+    const page = fb.spec.parse(BUILD[name]!(w), ref, REC());
+    expect(page.postings).toHaveLength(1);
+    const p = normalize(page.postings[0] as RawPosting);
+    expect(Posting.schema.safeParse(p).success).toBe(true);
+    return { p, d: decideEligibility(p, ELIG) };
+  };
+  const NAMES = ROWS.map((r) => r.fb.spec.platform);
+
+  it.each(NAMES)('%s: an office in Bengaluru is eligible (office city), the same job in Paris is rejected', (name) => {
+    const blr = verdict(name, 'blr');
+    expect(blr.d).toMatchObject({ verdict: 'eligible', notes: expect.arrayContaining(['office/hybrid: Bengaluru']) });
+    expect(blr.p.remote.countries).toContain('india');
+    expect(blr.p.locationText).toMatch(/Bengaluru/u);
+    expect(verdict(name, 'paris').d.verdict).toBe('rejected');
+  });
+
+  it.each(NAMES)('%s: remote and located in India is eligible; remote located abroad is review (never rejected from its office country)', (name) => {
+    const inIndia = verdict(name, 'remote-in');
+    expect(inIndia.d.verdict).toBe('eligible');
+    expect(inIndia.p.remote.countries).toContain('india');
+    const eu = verdict(name, 'remote-eu');
+    if (name === 'personio' || name === 'rippling') {
+      // no remote flag: the text says "Remote EU" / "Remote (Paris, France)", which the unchanged rules read as written
+      expect(eu.d).toMatchObject({ verdict: 'rejected', reasons: [expect.stringMatching(/^remote-excludes-india/u)] });
+    } else {
+      expect(eu.d).toMatchObject({ verdict: 'review', reasons: ['remote-unclear'] });
+      expect(eu.p.remote.structured).toBe('remote');
+      expect(eu.p.remote.countries).toEqual([]);
+    }
+  });
+
+  it('an unflagged job with only a state code (Rippling "AR") or a country-less city (Personio "Munich") invents no country', () => {
+    const rip = normalize(byName('rippling').spec.parse(fx('rippling-rippling.json'), 'rippling', REC()).postings[0] as RawPosting);
+    expect(rip.remote.countries).toEqual([]);
+    expect(rip.locationText).toBe('AR');
+    const per = normalize(byName('personio').spec.parse(fx('personio-personio.xml'), 'personio.jobs.personio.de', REC()).postings[0] as RawPosting);
+    expect(per.remote.countries).toEqual([]);
+    expect(decideEligibility(per, ELIG).verdict).toBe('rejected');
+  });
+
+  it('Teamtailor remoteStatus: fully is remote, hybrid is hybrid, none is a signal only', () => {
+    const mk = (s: string) => normalize(byName('teamtailor').spec.parse(BUILD['teamtailor']!('paris').replace('<remoteStatus>none', `<remoteStatus>${s}`), 'career.acme.test', REC()).postings[0] as RawPosting);
+    expect(mk('fully').remote).toMatchObject({ structured: 'remote' });
+    expect(mk('hybrid').remote).toMatchObject({ structured: 'hybrid', countries: ['france'] });
+    expect(mk('none').remote).toMatchObject({ structured: null, signals: expect.arrayContaining(['remoteStatus:none']) });
+  });
+
+  it('pay: Recruitee\'s and Pinpoint\'s own range maps to an annual comp; absent, none', () => {
+    const rec = JSON.parse(BUILD['recruitee']!('blr')) as { offers: Record<string, unknown>[] };
+    (rec.offers[0] as Record<string, unknown>)['salary'] = { min: '2400000', max: '3600000', period: 'year', currency: 'INR' };
+    const r = normalize(byName('recruitee').spec.parse(JSON.stringify(rec), 'acme', REC()).postings[0] as RawPosting);
+    expect(r.comp).toMatchObject({ min: 2_400_000, max: 3_600_000, currency: 'INR', period: 'year' });
+    const pin = JSON.parse(BUILD['pinpoint']!('blr')) as { data: Record<string, unknown>[] };
+    Object.assign(pin.data[0] as object, { compensation_visible: true, compensation_minimum: 100000, compensation_maximum: 150000, compensation_currency: 'USD', compensation_frequency: 'annual' });
+    const q = normalize(byName('pinpoint').spec.parse(JSON.stringify(pin), 'acme', REC()).postings[0] as RawPosting);
+    expect(q.comp).toMatchObject({ min: 100000, max: 150000, currency: 'USD' });
+    Object.assign(pin.data[0] as object, { compensation_visible: false });
+    expect(normalize(byName('pinpoint').spec.parse(JSON.stringify(pin), 'acme', REC()).postings[0] as RawPosting).comp).toBeNull();
+  });
+
+  it('the places table is what the tests use', () => {
+    expect(Object.keys(PLACES)).toEqual(['blr', 'remote-in', 'paris', 'remote-eu']);
+    expect(TITLE).toBe('Senior Software Engineer');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// the verifier clients
+// ---------------------------------------------------------------------------
+
+const RUN = '2026-10-14';
+const cand = (companyKey: string, name: string): CompanyCandidate => ({ companyKey, name, website: `https://www.${companyKey}`, careersUrl: null, source: 'yc', runDate: RUN });
+const site = (c: CompanyCandidate): CareersSite => ({ candidate: c, careersUrl: `https://www.${c.companyKey}/careers`, method: 'path', evidence: 'GET /careers 200' });
+const guess = (c: CompanyCandidate, platform: Platform, slug: string, boardUrl: string | null): PlatformGuess => ({ site: site(c), platform, slug, boardUrl, signature: `${platform}:a`, routedFrom: null, evidence: [`detected: ${platform} ${slug}`] });
+const fresh = () => ({ runKey: 'test', store: memoryHostStateStore() });
+function vctx(fetch: FetchLike, guesses: readonly PlatformGuess[]) {
+  return issueContext({ contract: boardVerifierContract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock: fixedClock('2026-10-14T01:30:00.000Z'), signal: new AbortController().signal, egressSets: verifierEgressSets(guesses) });
+}
+function serve(routes: Record<string, Route>) {
+  const calls: string[] = [];
+  const accepts: (string | undefined)[] = [];
+  const fetch: FetchLike = async (url, init) => {
+    calls.push(url);
+    accepts.push(((init as { headers?: Record<string, string> }).headers ?? {})['accept']);
+    const r = routes[url] ?? { status: 404, body: 'Not Found' };
+    return { status: r.status, text: async () => r.body ?? '', headers: { get: (n: string) => r.headers?.[n.toLowerCase()] ?? null } };
+  };
+  return { fetch, calls, accepts };
+}
+
+describe('the verifier clients: one feed request, the daily adapter\'s own', () => {
+  // company key, display name: the feed's own name (or the slug / domain label) must match
+  const COMPANY: Record<string, [string, string]> = {
+    workable: ['huggingface.co', 'Hugging Face'],
+    recruitee: ['bunq.com', 'bunq'],
+    teamtailor: ['teamtailor.com', 'Teamtailor'],
+    personio: ['personio.com', 'Personio SE & Co. KG'],
+    bamboohr: ['rednucleus.com', 'Red Nucleus'],
+    breezy: ['breezy.hr', 'MS Breezy Trial'],
+    pinpoint: ['grasshopper.com', 'Grasshopper Bank'],
+    rippling: ['rippling.com', 'Rippling'],
+    gem: ['gem.com', 'Gem'],
+  };
+  const slugOf = (r: Row): string => (r.fb.spec.platform === 'teamtailor' ? r.ref : r.fb.spec.platform === 'personio' ? 'personio' : r.ref);
+  const g = (r: Row, name = COMPANY[r.fb.spec.platform]![1]) => guess(cand(COMPANY[r.fb.spec.platform]![0], name), r.fb.spec.platform as Platform, slugOf(r), r.boardUrl);
+  const routes = (r: Row, extra: Record<string, Route> = {}) => feedRoutes(r, fx(r.file), extra);
+
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: reads the board once and verifies the company (name from the feed, else the slug / domain label)', async (_n, row) => {
+    const n = serve(routes(row));
+    const v = await makeBoardVerifier(fresh()).run(g(row), vctx(n.fetch, [g(row)]));
+    expect(v[0]).toMatchObject({ status: 'verified', jobsSeen: row.kept ?? row.n });
+    // exactly one feed request (+ robots.txt where it governs)
+    expect(n.calls.filter((u) => u === row.url)).toHaveLength(1);
+    expect(n.calls.filter((u) => u.endsWith('/robots.txt')).length).toBe(row.documented ? 0 : 1);
+    expect(n.calls.length).toBe(row.documented ? 1 : 2);
+    if (row.fb.spec.platform === 'teamtailor') expect(n.accepts.at(-1)).toBe('application/rss+xml');
+    const p = platformClient(row.fb.spec.platform);
+    expect([p?.platform, p?.robots, p?.host]).toEqual([row.fb.spec.platform, !row.documented, row.fb.spec.fixedHost]);
+    expect(p?.refOf(slugOf(row), row.boardUrl)).toBe(row.ref);
+    expect(p?.hostOf(row.ref)).toBe(row.host);
+    expect(p?.boardUrl(row.ref)).toBe(row.url);
+  });
+
+  it('a feed that names the company differently is proposed (board name x ≈ y), not verified; a feed with no name and an unrelated slug is proposed', async () => {
+    const wk = ROWS[0] as Row;
+    const n = serve(routes(wk));
+    // (the domain label counts too: the company's own domain must not be the feed's name for this case)
+    const gw = guess(cand('acme.test', 'Acme Robotics'), 'workable', wk.ref, wk.boardUrl);
+    const v = await makeBoardVerifier(fresh()).run(gw, vctx(n.fetch, [gw]));
+    expect(v[0]).toMatchObject({ status: 'proposed', boardName: 'Hugging Face' });
+    expect((v[0] as { reasons: string[] }).reasons[0]).toBe("board name 'Hugging Face' ≈ 'Acme Robotics', please confirm");
+    const pp = ROWS.find((r) => r.fb.spec.platform === 'pinpoint') as Row;
+    const m = serve(routes(pp));
+    const gz = guess(cand('zebra.test', 'Zebra Ltd'), 'pinpoint', pp.ref, pp.boardUrl);
+    const w = await makeBoardVerifier(fresh()).run(gz, vctx(m.fetch, [gz]));
+    expect(w[0]).toMatchObject({ status: 'proposed', boardName: null });
+    expect((w[0] as { reasons: string[] }).reasons[0]).toBe('board name not available, please confirm');
+  });
+
+  it('Personio names the legal entity (subcompany): a plain company name that differs from it is proposed, for a person to confirm', async () => {
+    const pe = ROWS.find((r) => r.fb.spec.platform === 'personio') as Row;
+    const n = serve(routes(pe));
+    const gp = guess(cand('example.test', 'Example'), 'personio', 'personio', pe.boardUrl);
+    const v = await makeBoardVerifier(fresh()).run(gp, vctx(n.fetch, [gp]));
+    expect(v[0]).toMatchObject({ status: 'proposed', boardName: 'Personio SE & Co. KG' });
+  });
+
+  it('Personio\'s several subcompanies are not "several company names": the host label is compared instead', async () => {
+    const pe = ROWS.find((r) => r.fb.spec.platform === 'personio') as Row;
+    const two = fx(pe.file).replace('</position>', '</position><position><id>2</id><subcompany>Personio Ltd</subcompany><office>London</office><name>Engineer</name></position>');
+    const n = serve(routes(pe, { [pe.url]: { status: 200, body: two } }));
+    const v = await makeBoardVerifier(fresh()).run(g(pe), vctx(n.fetch, [g(pe)]));
+    expect(v[0]).toMatchObject({ status: 'verified', jobsSeen: 2 });
+  });
+
+  it('0 jobs is proposed ("board has 0 open jobs"); a page-level shape problem is a failed verdict (invalid_output), not a thrown step', async () => {
+    const rp = ROWS.find((r) => r.fb.spec.platform === 'rippling') as Row;
+    const empty = serve(routes(rp, { [rp.url]: { status: 200, body: '[]' } }));
+    const a = await makeBoardVerifier(fresh()).run(g(rp), vctx(empty.fetch, [g(rp)]));
+    expect(a[0]).toMatchObject({ status: 'proposed', jobsSeen: 0 });
+    expect((a[0] as { reasons: string[] }).reasons).toContain('board has 0 open jobs');
+    const bad = serve(routes(rp, { [rp.url]: { status: 200, body: '<html>oops</html>' } }));
+    const b = await makeBoardVerifier(fresh()).run(g(rp), vctx(bad.fetch, [g(rp)]));
+    expect(b[0]).toMatchObject({ status: 'failed' });
+    expect((b[0] as { reasons: string[] }).reasons.join('\n')).toMatch(/response is not JSON/u);
+    const gone = serve(routes(rp, { [rp.url]: { status: 404 } }));
+    expect((await makeBoardVerifier(fresh()).run(g(rp), vctx(gone.fetch, [g(rp)])))[0]).toMatchObject({ status: 'failed' });
+  });
+
+  it.each(ROWS.map((r) => [r.fb.spec.platform, r] as const))('%s: a 401/403, a 429 and a challenge are DEFERRALS (input_rejected host-disabled), never a failed verdict; a sibling is deferred without a request', async (_n, row) => {
+    const wall = '<html><title>Just a moment...</title><script src="/cdn-cgi/challenge-platform/x"></script></html>';
+    for (const [route, why] of [[{ status: 403, body: 'no' }, 'http-403'], [{ status: 401, body: 'no' }, 'http-401'], [{ status: 429, body: 'slow' }, 'http-429'], [{ status: 403, body: wall }, 'http-403|challenge'], [{ status: 200, body: wall }, 'challenge']] as const) {
+      const n = serve(routes(row, { [row.url]: route }));
+      const gate = fresh();
+      const agent = makeBoardVerifier(gate);
+      const ctx = vctx(n.fetch, [g(row)]);
+      await expect(agent.run(g(row), ctx), why).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`^host-disabled:(?:${why}) on ${row.host.replaceAll('.', '\\.')}`, 'u')) });
+      const before = n.calls.length;
+      await expect(agent.run(g(row), ctx), why).rejects.toMatchObject({ code: 'input_rejected' });
+      expect(n.calls.length).toBe(before);
+    }
+  });
+
+  it.each(STRICT.map((r) => [r.fb.spec.platform, r] as const))('%s: a robots.txt that disallows the feed is proposed (the board was not read); a 403 robots.txt is a refusal, proposed', async (_n, row) => {
+    const path = new URL(row.url).pathname;
+    const n = serve(routes(row, { [`https://${row.host}/robots.txt`]: { status: 200, body: `User-agent: *\nDisallow: ${path}` } }));
+    const v = await makeBoardVerifier(fresh()).run(g(row), vctx(n.fetch, [g(row)]));
+    expect(v[0]).toMatchObject({ status: 'proposed', jobsSeen: null });
+    expect((v[0] as { reasons: string[] }).reasons[0]).toMatch(/robots-disallow .* on .*: the board was not read, please confirm$/u);
+    expect(n.calls).toEqual([`https://${row.host}/robots.txt`]);
+  });
+
+  it('a stored board URL with no usable slug still reads (the board URL names the board); no board at all is proposed', async () => {
+    const wk = ROWS[0] as Row;
+    const n = serve(routes(wk));
+    const a = guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'not a slug!', wk.boardUrl);
+    expect((await makeBoardVerifier(fresh()).run(a, vctx(n.fetch, [a])))[0]).toMatchObject({ status: 'verified' });
+    const b = guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'not a slug!', null);
+    const m = serve({});
+    expect((await makeBoardVerifier(fresh()).run(b, vctx(m.fetch, [b])))[0]).toMatchObject({ status: 'proposed' });
+    expect(m.calls).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// wiring
+// ---------------------------------------------------------------------------
+
+describe('wiring: teams, egress, pacing, and an empty registry changes nothing', () => {
+  const boards = registryBoards(ROWS.map((r) => ({ name: `Co ${r.fb.spec.platform}`, platform: r.fb.spec.platform, boardUrl: r.boardUrl })));
+
+  it('every stored board URL becomes a registry board, one per platform, in registry order; the seeds carry the ref', () => {
+    expect(boards.map((b) => `${b.platform} ${b.ref}`)).toEqual(ROWS.map((r) => `${r.fb.spec.platform} ${r.ref}`));
+    const seeds = dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', undefined, boards);
+    expect(seeds.map((s) => `${s.ats} ${s.slug}`)).toEqual(ROWS.map((r) => `${r.fb.spec.platform} ${r.ref}`));
+  });
+
+  it('with an empty registry no small-platform agent, team or edge exists: the pipeline is the same', () => {
+    const none = dailyAgents([], []);
+    expect(none.some((a) => a.contract.id.startsWith('src-') && SMALL_PLATFORMS.some((f) => f.contract.id === a.contract.id))).toBe(false);
+    const wiring = dailyPipeline(none);
+    expect(wiring.teams.map((t) => t.id).filter((t) => SMALL_PLATFORMS.some((f) => f.spec.team === t))).toEqual([]);
+    expect(JSON.stringify(wiring.edges)).not.toMatch(/src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem)/u);
+    expect(registryEgressSets([])).toEqual({});
+  });
+
+  it('one team and one agent per platform, its own symbolic egress resolved to exact hosts', () => {
+    const agents = dailyAgents([], boards);
+    const wiring = dailyPipeline(agents);
+    for (const fb of SMALL_PLATFORMS) {
+      expect(agents.filter((a) => a.contract.id === fb.contract.id)).toHaveLength(1);
+      expect(wiring.teams.find((t) => t.id === fb.spec.team)?.members).toEqual([fb.contract.id]);
+      expect(fb.contract.team).toBe(fb.spec.team);
+      expect(fb.contract.egress).toEqual([fb.spec.egress]);
+      expect(fb.contract.capabilities).toEqual({ http: true });
+    }
+    expect(new Set(SMALL_PLATFORMS.map((f) => f.spec.team)).size).toBe(9);
+    const sets = registryEgressSets(boards);
+    expect(sets).toEqual(Object.fromEntries(ROWS.map((r) => [r.fb.spec.egress, [r.host]])));
+    // a dead tenant on one platform never touches another's host state: one fresh host state per agent
+    expect(dailyAgents([], boards).find((a) => a.contract.id === 'src-gem')).not.toBe(agents.find((a) => a.contract.id === 'src-gem'));
+  });
+
+  it('the pacing arithmetic accepts the 2 s spacing and refuses a spacing the feed timeout cannot hold', () => {
+    const pack = { watchlist: [], feeds: { enabled: [] } };
+    expect(pacingProblems({ minHostIntervalMs: 2000, minBrowserIntervalMs: 2000 }, pack, boards)).toEqual([]);
+    const slow = pacingProblems({ minHostIntervalMs: 40_000, minBrowserIntervalMs: 2000 }, pack, boards);
+    expect(slow.filter((p) => /src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem)/u.test(p))).toHaveLength(9);
+  });
+
+  it('only the documented hosts skip robots.txt: dailyFeedHosts(true) never denies and still disables; dailyFeedHosts(false) is the strict page rule', async () => {
+    const d = dailyFeedHosts(true);
+    await expect(d.robots('a.test', '/x', {} as never)).resolves.toBeNull();
+    d.disable('a.test', 'http-403');
+    d.disable('a.test', 'http-429');
+    expect(d.disabledWhy('a.test')).toBe('http-403');
+    expect(documentedHosts().disabledWhy('a.test')).toBeUndefined();
+    const s = dailyFeedHosts(false);
+    expect(s.robotsHash).toBeDefined();
+  });
+});

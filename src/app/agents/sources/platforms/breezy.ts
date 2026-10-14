@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, sortedNames, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Breezy HR (career-sites spec §4, Task 9): the portal's JSON list, `GET https://<slug>.breezy.hr/json`. Not a documented
@@ -24,14 +24,10 @@ export const breezyHost = (slug: string): string => `${slug}.breezy.hr`;
 export const breezyUrl = (slug: string): string => `https://${slug}.breezy.hr/json`;
 
 export function breezyBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.port !== '') return null;
-    const m = HOST.exec(u.hostname);
-    return m === null || u.pathname !== '/json' ? null : parseBreezyRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null) return null;
+  const m = HOST.exec(u.hostname);
+  return m === null || u.pathname !== '/json' ? null : parseBreezyRef(m[1] as string);
 }
 
 const Str = z.string().nullish();

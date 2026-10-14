@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, httpsUrl, jsonBody, textOf, zodWhy, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, textOf, zodWhy, type FeedPage } from './feed-board.js';
 
 /**
  * Pinpoint (career-sites spec §4, Task 9): the documented JSON feed for custom career sites,
@@ -26,14 +26,10 @@ export const pinpointHost = (slug: string): string => `${slug}.pinpointhq.com`;
 export const pinpointUrl = (slug: string): string => `https://${slug}.pinpointhq.com/postings.json`;
 
 export function pinpointBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    if (u.protocol !== 'https:' || u.port !== '') return null;
-    const m = HOST.exec(u.hostname);
-    return m === null || u.pathname !== '/postings.json' ? null : parsePinpointRef(m[1] as string);
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  if (u === null) return null;
+  const m = HOST.exec(u.hostname);
+  return m === null || u.pathname !== '/postings.json' ? null : parsePinpointRef(m[1] as string);
 }
 
 const Str = z.string().nullish();
@@ -51,8 +47,8 @@ const Posting = z
     employment_type_text: Str,
     deadline_at: Str,
     compensation_visible: z.boolean().nullish(),
-    compensation_minimum: z.unknown(),
-    compensation_maximum: z.unknown(),
+    compensation_minimum: z.unknown().optional(),
+    compensation_maximum: z.unknown().optional(),
     compensation_currency: Str,
     compensation_frequency: Str,
     location: z.object({ name: Str, city: Str, province: Str }).passthrough().nullish(),

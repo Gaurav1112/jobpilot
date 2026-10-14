@@ -1,6 +1,6 @@
 import { childText, children, parseXml, XmlError, type XmlNode } from '../../../text/xml-lite.js';
 import type { RawPosting } from '../../../types.js';
-import { feedBoard, feedProblem, sortedNames, textOf, type FeedPage } from './feed-board.js';
+import { feedBoard, feedProblem, plainHttps, sortedNames, textOf, type FeedPage } from './feed-board.js';
 
 /**
  * Personio (career-sites spec §4, Task 9): the officially documented XML feed, `GET https://<slug>.jobs.personio.de/xml`
@@ -23,12 +23,8 @@ export const parsePersonioRef = (ref: string): string | null => (HOST.test(ref) 
 export const personioUrl = (host: string): string => `https://${host}/xml`;
 
 export function personioBoardOfUrl(boardUrl: string): string | null {
-  try {
-    const u = new URL(boardUrl);
-    return u.protocol === 'https:' && u.port === '' && u.pathname === '/xml' ? parsePersonioRef(u.hostname.toLowerCase()) : null;
-  } catch {
-    return null;
-  }
+  const u = plainHttps(boardUrl);
+  return u !== null && u.pathname === '/xml' ? parsePersonioRef(u.hostname.toLowerCase()) : null;
 }
 
 export function parsePersonio(body: string, host: string, req: { company: string; slug: string }): FeedPage {

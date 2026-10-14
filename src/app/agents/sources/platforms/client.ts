@@ -3,7 +3,7 @@ import type { AgentContext } from '../../../../kernel/agent.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import type { DiscoveryRequest, RawPosting } from '../../../types.js';
 import { ASHBY_HOST, ashbyParse, ashbyUrl } from '../ashby.js';
-import type { Parsed } from '../common.js';
+import { finish, type Parsed } from '../common.js';
 import { GREENHOUSE_HOST, greenhouseParse, greenhouseUrl } from '../greenhouse.js';
 import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
 import * as ef from './eightfold.js';
@@ -437,7 +437,7 @@ function feedClient(fb: FeedBoard<string>): PlatformClient {
       return {
         boardName: page.names.length === 1 ? (page.names[0] as string) : null,
         boardNames: page.names.length > 1 ? page.names : [],
-        jobs: page.postings,
+        jobs: finish(page.postings),
         complete: page.total === null || page.total <= page.listed,
         url: s.urlOf(b),
         nameKey: page.names.length === 0 && s.nameKey !== undefined ? s.nameKey(b) : null,

@@ -57,8 +57,8 @@ import { Posting, RawPosting } from '../types.js';
  *   location text is the platform's own place fields, never invented (Rippling's label may be only a state code, Personio's
  *   offices have no country). A job the platform flags REMOTE (Workable `telecommuting`, Recruitee `remote`, Teamtailor
  *   `remoteStatus: fully`, BambooHR `isRemote`, Breezy `is_remote`, Pinpoint `workplace_type`, Gem `location_type`) is
- *   structured remote with NO country (its office country is not a restriction, so eligibility says review unless the
- *   text says more); any other keeps its office's countries. Hybrid and on-site are mapped where the platform states
+ *   structured remote with no country but India, if its own location names it (an office or hiring country elsewhere
+ *   is not a restriction, so eligibility says review, never reject); any other keeps its office's countries. Hybrid and on-site are mapped where the platform states
  *   them (Recruitee, Teamtailor `hybrid`, Pinpoint, Gem); Teamtailor `none` (no remote work) stays a signal only.
  *   Descriptions are the feeds' HTML (Breezy, BambooHR and Rippling publish none in the list); pay is the platform's
  *   own range where it has one (Recruitee, Pinpoint), else read from the text.
@@ -753,11 +753,16 @@ function successfactors(raw: RawPosting, r: Rec): Posting {
 const joinUnique = (parts: readonly unknown[], sep: string): string => [...new Set(parts.map(str).filter((x): x is string => x !== null).map(oneLine).filter((x) => x !== ''))].join(sep);
 
 /**
+ * The countries of a small-platform job. A job flagged REMOTE keeps only India among its countries: an office or hiring
+ * country elsewhere is not a restriction on where applicants live (as the careers mapping reads TELECOMMUTE), so it
+ * must not make the unchanged eligibility reject the job as `remote-excludes-india` (it says review, `remote-unclear`);
+ * India named by the platform's own location fields is a stated place and counts. Any other job keeps all its countries.
+ */
+const remoteScope = (structured: Remote['structured'], countries: readonly string[]): string[] => (structured === 'remote' ? countries.filter((c) => c === 'india') : [...countries]);
+
+/**
  * What the small platforms share: a location text from the platform's own place fields (never invented), the countries
- * from that text and the platform's ISO codes, and the arrangement the platform states. A job flagged REMOTE carries no
- * country: its office or hiring country is not a restriction on where applicants live (as the careers mapping reads
- * TELECOMMUTE), so eligibility reads it as remote-unclear (review) unless the title, location or description says
- * more; any other job keeps its office's country, which the unchanged eligibility rules judge.
+ * from that text and the platform's ISO codes (`remoteScope`), and the arrangement the platform states.
  */
 function smallPosting(
   raw: RawPosting,
@@ -771,7 +776,7 @@ function smallPosting(
     url: str(m.url),
     locationText,
     structured: m.structured,
-    countries: m.structured === 'remote' ? [] : [...countriesIn(locationText), ...places((m.codes ?? []).filter((c): c is string => c !== null))],
+    countries: remoteScope(m.structured, [...countriesIn(locationText), ...places((m.codes ?? []).filter((c): c is string => c !== null))]),
     signals: m.signals ?? [],
     employmentType: str(m.employmentType),
     descriptionText,
