@@ -10,7 +10,7 @@ import type { NamingRules } from '../pack/rules.js';
 import type { Pack } from '../pack/schema.js';
 import { readsDaily, registryBoardOf } from '../pipeline.js';
 import { istDate } from '../run.js';
-import type { AppStore, Band, Company, JobView } from '../store/app-store.js';
+import type { AppStore, Band, Company } from '../store/app-store.js';
 import { companyKeys, jobKeys, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { Html } from './html.js';
 import { companiesBody, companyPlatformName, deferWhy, type AddFormView, type CompaniesPageData, type CompanyRowView, type DeferredHost } from './views/companies.js';
@@ -198,11 +198,13 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     const data = d.withStore((s) => {
       const companies = s.listCompanies();
       // each company's jobs by `jobOfCompany` (key, board or name), through one index per key so it stays linear
-      const index = { norm: new Map<string, JobView[]>(), domain: new Map<string, JobView[]>(), board: new Map<string, JobView[]>() };
-      const put = (m: Map<string, JobView[]>, k: string | null, j: JobView): void => {
+      // dashboard-perf: the matching keys and the rejected flag only (`companyJobRefs`), never whole job rows
+      type Ref = ReturnType<AppStore['companyJobRefs']>[number];
+      const index = { norm: new Map<string, Ref[]>(), domain: new Map<string, Ref[]>(), board: new Map<string, Ref[]>() };
+      const put = (m: Map<string, Ref[]>, k: string | null, j: Ref): void => {
         if (k !== null && k !== '') m.set(k, [...(m.get(k) ?? []), j]);
       };
-      for (const j of s.listJobs({ band: ALL_BANDS })) {
+      for (const j of s.companyJobRefs()) {
         const k = jobKeys(j);
         put(index.norm, k.norm, j);
         put(index.domain, k.domain, j);
@@ -211,10 +213,10 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
       const counts = new Map<string, { passing: number; notEligible: number }>();
       for (const co of companies) {
         const k = companyKeys(companyJobsOf(co));
-        const mine = new Map<string, JobView>();
+        const mine = new Map<string, Ref>();
         for (const [m, v] of [[index.norm, k.norm], [index.domain, k.domain], [index.board, k.board]] as const) for (const j of v === null || v === '' ? [] : (m.get(v) ?? [])) mine.set(j.jobKey, j);
         const all = [...mine.values()];
-        counts.set(co.companyKey, { passing: all.filter((j) => j.band !== 'rejected').length, notEligible: all.filter((j) => j.band === 'rejected').length });
+        counts.set(co.companyKey, { passing: all.filter((j) => !j.rejected).length, notEligible: all.filter((j) => j.rejected).length });
       }
       const run = weekRun(s, at);
       const hosts = run === undefined ? new Map<string, string>() : s.coverageHostState(run);

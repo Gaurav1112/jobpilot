@@ -172,6 +172,16 @@ export interface JobFilter {
   readonly companyOf?: CompanyJobs;
 }
 
+/** One page of the jobs list (`listJobsPage`). */
+export interface JobsPage {
+  readonly jobs: JobView[];
+  readonly page: number;
+  readonly pages: number;
+  readonly total: number;
+  readonly newCount: number;
+  readonly hiddenCount: number;
+}
+
 export interface RunSummary {
   readonly runId: string;
   readonly at: string;
@@ -219,6 +229,44 @@ interface JobRowDb {
   applied_at: string | null;
   notified_at: string | null;
   cited_facts: string | null;
+}
+
+/** Every jobs column but the description (`jd_text`): what the jobs list reads (dashboard-perf fix 2). */
+const LEAN_COLUMNS = [
+  'job_key', 'source', 'source_id', 'dedupe_key', 'duplicate_of', 'company', 'title', 'url', 'ats', 'location', 'remote', 'comp', 'comp_min_inr',
+  'comp_max_inr', 'comp_basis', 'score', 'breakdown', 'verdict', 'reasons', 'notes', 'terms', 'recommended_format', 'docs_state', 'docs_detail',
+  'posted_at', 'unplaced', 'first_seen', 'last_seen', 'status', 'note', 'applied_at', 'notified_at', 'cited_facts',
+].join(', ');
+const ALL_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
+
+/**
+ * The jobs list's SQL functions, on this connection (once): the JS rules `listJobs` applies, so the SQL path cannot
+ * drift from them. Deterministic, pure, no I/O.
+ * - `jp_text_match(company, title, q)`: `company.toLowerCase().includes(q) || title.toLowerCase().includes(q)` (q lower-cased).
+ * - `jp_job_of_company(company, url, source, source_id, norm, domain, board)`: `jobOfCompany(jobKeys(row), {norm, domain, board})`.
+ * - `jp_epoch_ms(iso)`: `Date.parse(iso)`, NULL when it does not parse (`NaN > x` is false, as NULL is in SQL).
+ */
+const LIST_FUNCTIONS = new WeakSet<object>();
+function registerListFunctions(db: import('better-sqlite3').Database): void {
+  if (LIST_FUNCTIONS.has(db)) return;
+  const opts = { deterministic: true, directOnly: true } as const;
+  db.function('jp_text_match', opts, (company: unknown, title: unknown, q: unknown) =>
+    String(company).toLowerCase().includes(String(q)) || String(title).toLowerCase().includes(String(q)) ? 1 : 0,
+  );
+  db.function('jp_job_of_company', opts, (company: unknown, url: unknown, source: unknown, sourceId: unknown, norm: unknown, domain: unknown, board: unknown) =>
+    jobOfCompany(jobKeys({ company: String(company), url: String(url), source: String(source), sourceId: String(sourceId) }), {
+      norm: String(norm),
+      domain: domain === null ? null : String(domain),
+      board: board === null ? null : String(board),
+    })
+      ? 1
+      : 0,
+  );
+  db.function('jp_epoch_ms', opts, (iso: unknown) => {
+    const ms = Date.parse(String(iso));
+    return Number.isNaN(ms) ? null : ms;
+  });
+  LIST_FUNCTIONS.add(db);
 }
 
 /** Job keys per envelope query in `contractPostings` (well under SQLite's bound-parameter limit). */
@@ -749,6 +797,111 @@ export class AppStore {
           cmp(b.firstSeen, a.firstSeen) ||
           cmp(a.jobKey, b.jobKey),
       );
+  }
+
+  /**
+   * dashboard-perf fix 2: one page of `listJobs(filter)` and its counts, with the band, every filter, the sort, the
+   * paging and the counts done in SQL over the list's columns only (never the description, `jd_text`, which holds most
+   * of the table's bytes in overflow pages). The same rows in the same order as `listJobs(filter).slice(...)` (pinned by
+   * tests/app/jobs-page.test.ts), every `JobView` field but `jdText`, which is ''.
+   *
+   * - `page` is clamped to 1..pages; `pages` is at least 1. Offset paging: the dashboard has numbered pages, and the
+   *   offset walks the covering index `jobs_list` (migration 16), not the table.
+   * - `newCount`: the listed rows first seen after `newAfterMs` (epoch ms, as `Date.parse`).
+   * - `hiddenCount`: the rows every other filter passes whose band is not listed (the "N hidden" line).
+   * - Only the shown rows and their groups' rows are read in full (by key).
+   */
+  listJobsPage(filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }): JobsPage {
+    registerListFunctions(this.db);
+    const listed = new Set(filter.band ?? DEFAULT_BANDS);
+    const where: string[] = [];
+    const args: Record<string, unknown> = { floor: filter.floorInr ?? null };
+    if (filter.duplicates !== true) where.push('j.duplicate_of IS NULL');
+    if (filter.minScore !== undefined) {
+      where.push('j.score >= @minScore');
+      args['minScore'] = filter.minScore;
+    }
+    if (filter.text !== undefined) {
+      where.push('jp_text_match(j.company, j.title, @text) = 1');
+      args['text'] = filter.text.toLowerCase();
+    }
+    if (filter.companyOf !== undefined) {
+      const c = companyKeys(filter.companyOf);
+      where.push('jp_job_of_company(j.company, j.url, j.source, j.source_id, @cNorm, @cDomain, @cBoard) = 1');
+      Object.assign(args, { cNorm: c.norm, cDomain: c.domain, cBoard: c.board });
+    }
+    if (filter.status !== undefined) {
+      // the group's status: the furthest of the preferred row's and its duplicates' (`groupStatus`)
+      const prec = (col: string): string => `CASE ${col} ${JOB_STATUSES.map((st) => `WHEN '${st}' THEN ${STATUS_PRECEDENCE[st]}`).join(' ')} END`;
+      const wanted = [...new Set(filter.status)].map((st) => STATUS_PRECEDENCE[st]);
+      where.push(
+        `MAX(${prec(`CASE WHEN j.duplicate_of IS NULL THEN j.status ELSE (SELECT t.status FROM jobs t WHERE t.job_key = j.duplicate_of) END`)},
+             COALESCE((SELECT MAX(${prec('d.status')}) FROM jobs d WHERE d.duplicate_of = COALESCE(j.duplicate_of, j.job_key)), -1))
+         IN (${wanted.length === 0 ? 'NULL' : wanted.join(', ')})`,
+      );
+    }
+    // `bandOf`, as a rank (BAND_RANK)
+    const band = `CASE WHEN j.verdict = 'rejected' THEN 4 WHEN j.docs_state = 'below-floor' THEN 3 WHEN j.verdict = 'eligible' THEN
+      CASE WHEN j.comp_max_inr IS NULL THEN 1 WHEN @floor IS NOT NULL AND j.comp_max_inr < @floor THEN 3 ELSE 0 END ELSE 2 END`;
+    const base = `SELECT j.job_key, j.score, j.first_seen, j.comp_max_inr, ${band} AS band FROM jobs j${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`;
+    const counts = this.db
+      .prepare(`SELECT band, COUNT(*) AS n, SUM(CASE WHEN jp_epoch_ms(first_seen) > @newAfter THEN 1 ELSE 0 END) AS fresh FROM (${base}) GROUP BY band`)
+      .all({ ...args, newAfter: opts.newAfterMs }) as { band: number; n: number; fresh: number }[];
+    const ranks = ALL_BANDS.filter((b) => listed.has(b)).map((b) => BAND_RANK[b]);
+    let total = 0;
+    let newCount = 0;
+    let hiddenCount = 0;
+    for (const c of counts) {
+      if (ranks.includes(c.band)) {
+        total += c.n;
+        newCount += c.fresh;
+      } else hiddenCount += c.n;
+    }
+    const pages = Math.max(1, Math.ceil(total / opts.size));
+    const page = Math.min(Math.max(1, opts.page), pages);
+    const keys = total === 0
+      ? []
+      : (this.db
+          .prepare(
+            `SELECT job_key FROM (${base}) WHERE band IN (${ranks.join(', ')})
+             ORDER BY band, CASE WHEN band = 0 THEN comp_max_inr END DESC, score DESC, first_seen DESC, job_key LIMIT @limit OFFSET @offset`,
+          )
+          .all({ ...args, limit: opts.size, offset: (page - 1) * opts.size }) as { job_key: string }[]).map((r) => r.job_key);
+    return { jobs: this.leanViews(keys, filter.floorInr), page, pages, total, newCount, hiddenCount };
+  }
+
+  /**
+   * dashboard-perf: what the Companies tab matches jobs on (`jobKeys`) and counts, for every listed job (no duplicate
+   * listing) of every band, by job key: `listJobs({ band: every band })` without materialising whole rows. `rejected`
+   * is its band (`bandOf` gives `rejected` for a rejected verdict whatever the floor).
+   */
+  companyJobRefs(): { jobKey: string; company: string; url: string; source: string; sourceId: string; rejected: boolean }[] {
+    const rows = this.db
+      .prepare(`SELECT job_key, company, url, source, source_id, verdict FROM jobs WHERE duplicate_of IS NULL ORDER BY job_key`)
+      .all() as { job_key: string; company: string; url: string; source: string; source_id: string; verdict: Verdict | null }[];
+    return rows.map((r) => ({ jobKey: r.job_key, company: r.company, url: r.url, source: r.source, sourceId: r.source_id, rejected: r.verdict === 'rejected' }));
+  }
+
+  /** `JobView`s of these keys, in this order, read by key without the description (`jdText` is ''). */
+  private leanViews(keys: readonly string[], floorInr: number | undefined): JobView[] {
+    if (keys.length === 0) return [];
+    const byKeys = (col: 'job_key' | 'duplicate_of', ks: readonly string[]): JobRowDb[] =>
+      ks.length === 0
+        ? []
+        : (this.db.prepare(`SELECT ${LEAN_COLUMNS} FROM jobs WHERE ${col} IN (${ks.map(() => '?').join(', ')}) ORDER BY job_key`).all(...ks) as Omit<JobRowDb, 'jd_text'>[]).map(
+            (r) => ({ ...r, jd_text: '' }),
+          );
+    const rows = new Map(byKeys('job_key', keys).map((r) => [r.job_key, r]));
+    const tops = new Map([...rows.values()].filter((r) => r.duplicate_of === null).map((r) => [r.job_key, r]));
+    const missing = [...new Set([...rows.values()].map((r) => r.duplicate_of).filter((k): k is string => k !== null && !tops.has(k)))];
+    for (const r of byKeys('job_key', missing)) tops.set(r.job_key, r);
+    const dupsOf = new Map<string, JobRowDb[]>();
+    for (const d of byKeys('duplicate_of', [...tops.keys()])) dupsOf.set(d.duplicate_of as string, [...(dupsOf.get(d.duplicate_of as string) ?? []), d]);
+    return keys.map((k) => {
+      const r = rows.get(k) as JobRowDb;
+      const top = r.duplicate_of === null ? r : (tops.get(r.duplicate_of) as JobRowDb);
+      return view(r, top, dupsOf.get(top.job_key) ?? [], floorInr);
+    });
   }
 
   /** The user's fact status overrides, by fact id, for `loadPack`. */

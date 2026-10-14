@@ -20,7 +20,7 @@ import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
 import { diskDocCheck } from '../docs-check.js';
 import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
-import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } from '../store/app-store.js';
+import { AppStore, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
 import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
@@ -74,6 +74,8 @@ export interface DashboardTestHooks {
   readonly beforeSnapshot?: () => void;
   /** Runs before every route; throwing reaches the error page. */
   readonly beforeRoute?: () => void;
+  /** Replaces `listJobsPage` for `GET /` (the equivalence test runs the pre-fix-2 JS path through the real route). */
+  readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }) => JobsPage;
 }
 
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
@@ -361,22 +363,20 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     else if (nowMs - last > VISIT_GAP_MS) prev = last;
     setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
 
+    // dashboard-perf fix 2: the page, its counts and the hidden count in SQL over the covering index (`listJobsPage`)
     const { jobs, hidden, overrides, total, newCount, pageNo, pages } = withStore((s) => {
-      const list = s.listJobs(filter);
-      const pages = Math.max(1, Math.ceil(list.length / PAGE_SIZE));
-      const page = Math.min(pageAsked, pages);
-      const slice = list.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-      const hist = s.histories(slice.map((j) => j.jobKey));
-      const hiddenCount = bands.length === 0 ? s.listJobs({ ...filter, band: ALL.filter((b) => !DEFAULT_BANDS.includes(b)) }).length : 0;
+      const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev };
+      const p = hooks.jobsPage !== undefined ? hooks.jobsPage(s, filter, opts) : s.listJobsPage(filter, opts);
+      const hist = s.histories(p.jobs.map((j) => j.jobKey));
       return {
         // rereview R6: the list never shows the description, so it is dropped before the (strict, per-string) redaction
-        jobs: slice.map((j): ListedJob => ({ ...j, jdText: '', isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
-        hidden: hiddenCount,
+        jobs: p.jobs.map((j): ListedJob => ({ ...j, jdText: '', isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
+        hidden: bands.length === 0 ? p.hiddenCount : 0,
         overrides: s.factOverrides(),
-        total: list.length,
-        newCount: list.filter((j) => Date.parse(j.firstSeen) > prev).length,
-        pageNo: page,
-        pages,
+        total: p.total,
+        newCount: p.newCount,
+        pageNo: p.page,
+        pages: p.pages,
       };
     });
     const pageHref = (n: number): string => {
