@@ -15,8 +15,8 @@ export interface JobsFilterView {
   readonly band: readonly Band[];
   readonly min: number | undefined;
   readonly q: string;
-  /** One company's jobs only (the Companies tab's links), or '' for every company. */
-  readonly company?: string;
+  /** One registry company's jobs only (the Companies tab's links): its key and its shown name. */
+  readonly company?: { readonly key: string; readonly name: string };
 }
 
 export interface JobsPageData {
@@ -42,9 +42,9 @@ const check = (name: string, value: string, label: string, on: boolean): Html =>
 
 function filterForm(f: JobsFilterView, defaultBands: boolean): Html {
   const bandsOn = defaultBands ? (['disclosed', 'undisclosed', 'review'] as Band[]) : f.band;
-  const company = f.company ?? '';
+  const company = f.company;
   return html`<form class="filters" method="get" action="/" role="search" aria-label="Filter jobs">
-${company !== '' ? html`<input type="hidden" name="company" value="${company}"><p class="filter-company">Jobs at <strong>${company}</strong> only <a href="/">Show every company</a></p>` : ''}
+${company !== undefined ? html`<input type="hidden" name="companyKey" value="${company.key}"><p class="filter-company">Jobs at <strong>${company.name}</strong> only <a href="/">Show every company</a></p>` : ''}
 <div class="filter-row">
 <label class="field grow"><span>Search</span><input type="search" name="q" value="${f.q}" placeholder="Company or title" maxlength="100"></label>
 <label class="field narrow"><span>Min score</span><input type="number" name="min" value="${f.min ?? ''}" min="0" max="200" step="1" inputmode="numeric"></label>

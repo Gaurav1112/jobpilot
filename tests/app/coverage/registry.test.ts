@@ -84,8 +84,8 @@ describe('migration 9: the companies registry', () => {
     const before = dumpHash(db);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toBeUndefined();
     const s = AppStore.on(kernel);
-    expect(APP_MIGRATIONS.length).toBe(14);
-    expect(s.schemaVersion()).toBe(14);
+    expect(APP_MIGRATIONS.length).toBe(15);
+    expect(s.schemaVersion()).toBe(15);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toEqual({ name: 'companies' });
     expect(dumpHash(db, ['companies', 'coverage_host_state', 'platform_pages', 'job_ats', 'job_board_ids'])).toBe(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
@@ -96,7 +96,7 @@ describe('migration 9: the companies registry', () => {
     const cols = (s.kernel.db.prepare(`PRAGMA table_info(companies)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual([
       'company_key', 'name', 'website', 'careers_url', 'platform', 'platform_slug', 'board_url', 'status', 'reasons', 'source', 'jobs_seen',
-      'last_verified', 'failing_since', 'fail_weeks', 'user_override', 'updated_at',
+      'last_verified', 'failing_since', 'fail_weeks', 'user_override', 'updated_at', 'coverage_status',
     ]);
   });
 
@@ -109,7 +109,7 @@ describe('migration 9: the companies registry', () => {
 describe('migration 10: coverage host state', () => {
   it('adds coverage_host_state, keeps the earlier SQL, and round-trips a disabled host per run', () => {
     const s = AppStore.on(Store.open(':memory:'));
-    expect(s.schemaVersion()).toBe(14);
+    expect(s.schemaVersion()).toBe(15);
     const cols = (s.kernel.db.prepare(`PRAGMA table_info(coverage_host_state)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(['run_key', 'host', 'reason', 'at']);
     s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-429', '2026-10-13T01:00:00.000Z');
@@ -129,7 +129,7 @@ describe('the registry methods', () => {
       {
         companyKey: 'example-one.test', name: 'Example One', website: 'https://example-one.test', careersUrl: 'https://careers.example-one.test/',
         platform: 'greenhouse', platformSlug: 'exampleone', boardUrl: 'https://boards.example.test/exampleone', status: 'verified', reasons: ['name matches'],
-        source: 'pick', jobsSeen: 12, lastVerified: AT, failingSince: null, failWeeks: 0, userOverride: null, updatedAt: AT,
+        source: 'pick', jobsSeen: 12, lastVerified: AT, failingSince: null, failWeeks: 0, userOverride: null, updatedAt: AT, coverageStatus: 'verified',
       },
     ]);
     expect(s.verifiedCompanies().map((c) => c.companyKey)).toEqual(['example-one.test']);
@@ -243,5 +243,31 @@ describe('companies.yaml', () => {
     expect(problems.join('\n')).not.toContain(term);
     expect(() => loadRunPack(d, {}, '2026-10', undefined, 'strict')).toThrow(/text problem/);
     expect(loadRunPack(d, {}, '2026-10', undefined, 'daily').companies).toEqual([]);
+  });
+});
+
+describe('migration 15: coverage_status (Task 11 fix round 1)', () => {
+  it('backfills rows no override touched; leaves overridden rows and dashboard-added picks NULL', () => {
+    const kernel = Store.open(':memory:');
+    const db = kernel.db;
+    db.exec(`CREATE TABLE IF NOT EXISTS app_schema (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)`);
+    db.prepare(`INSERT INTO app_schema (id, version) VALUES (1, 0)`).run();
+    for (const [i, m] of APP_MIGRATIONS.slice(0, 14).entries()) {
+      if (typeof m === 'string') db.exec(m);
+      else {
+        db.pragma('foreign_keys = OFF');
+        m.run(db);
+        db.pragma('foreign_keys = ON');
+      }
+      db.prepare(`UPDATE app_schema SET version = ?`).run(i + 1);
+    }
+    const ins = db.prepare(`INSERT INTO companies (company_key, name, website, status, reasons, source, user_override, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'a')`);
+    ins.run('v.test', 'V', 'https://v.test', 'verified', '[]', 'yc', null);
+    ins.run('a.test', 'A', 'https://a.test', 'verified', '[]', 'yc', 'approved');
+    ins.run('r.test', 'R', 'https://r.test', 'rejected', '[]', 'yc', 'rejected');
+    ins.run('p.test', 'P', 'https://p.test', 'proposed', '["added by you, resolves on the next coverage run"]', 'pick', null);
+    const s = AppStore.on(kernel);
+    expect(s.schemaVersion()).toBe(15);
+    expect(Object.fromEntries(s.listCompanies().map((c) => [c.companyKey, c.coverageStatus]))).toEqual({ 'a.test': null, 'p.test': null, 'r.test': null, 'v.test': 'verified' });
   });
 });

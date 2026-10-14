@@ -4,14 +4,15 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { parse as parseYaml } from 'yaml';
 import type { RunGate } from '../../src/app/coverage/gate.js';
-import { registryPickItems } from '../../src/app/coverage/seed.js';
+import { registrableDomain, registryPickItems } from '../../src/app/coverage/seed.js';
 import { resolveCompany } from '../../src/app/coverage/resolve.js';
 import { runCoverage } from '../../src/app/coverage/run.js';
 import type { CompanyVerdict } from '../../src/app/coverage/types.js';
 import { withLock } from '../../src/app/lock.js';
 import { offlineProviders } from '../../src/app/offline.js';
-import { registryBoards } from '../../src/app/pipeline.js';
+import { readsDaily, registryBoards } from '../../src/app/pipeline.js';
 import { ADDED_PICK_REASON, AppStore } from '../../src/app/store/app-store.js';
+import { MAX_PENDING_ADDED } from '../../src/app/web/companies.js';
 import { createDashboard, type DashboardDeps } from '../../src/app/web/server.js';
 import { Sessions } from '../../src/app/web/security.js';
 import type { FetchLike } from '../../src/kernel/providers.js';
@@ -268,32 +269,33 @@ describe('companies: approve and reject', () => {
 describe('companies: add a company', () => {
   it('writes a pick to Proposed with the added reason; never the pack; logged', async () => {
     const pack = readFileSync(join(home, 'pack', 'companies.yaml'), 'utf8');
-    const r = await post('/companies/add', { _csrf: token, website: 'https://www.Globex.example/about', name: '  Globex   Corporation ' });
+    const r = await post('/companies/add', { _csrf: token, website: 'https://www.Globex-Industries.com:443/about', name: '  Globex   Corporation ' });
     expect(r.status).toBe(303);
-    expect(r.headers.get('location')).toBe('/companies?done=added&key=globex.example#co-globex-example');
-    expect(company('globex.example')).toMatchObject({ name: 'Globex Corporation', website: 'https://www.globex.example', status: 'proposed', source: 'pick', reasons: [ADDED_PICK_REASON], platform: null, userOverride: null });
+    expect(r.headers.get('location')).toBe('/companies?done=added&key=globex-industries.com#co-globex-industries-com');
+    expect(company('globex-industries.com')).toMatchObject({ name: 'Globex Corporation', website: 'https://www.globex-industries.com', status: 'proposed', source: 'pick', reasons: [ADDED_PICK_REASON], platform: null, userOverride: null });
     expect(readFileSync(join(home, 'pack', 'companies.yaml'), 'utf8')).toBe(pack);
-    expect(withStore((s) => s.userActions())).toEqual([{ at: NOW, kind: 'company.add', data: { companyKey: 'globex.example', name: 'Globex Corporation', website: 'https://www.globex.example' } }]);
+    expect(withStore((s) => s.userActions())).toEqual([{ at: NOW, kind: 'company.add', data: { companyKey: 'globex-industries.com', name: 'Globex Corporation', website: 'https://www.globex-industries.com' } }]);
     const page = (await get(r.headers.get('location') as string)).body;
-    expect(keysIn(sectionOf(page, 'proposed'))).toContain('globex.example');
+    expect(keysIn(sectionOf(page, 'proposed'))).toContain('globex-industries.com');
     expect(page).toContain(ADDED_PICK_REASON);
     // the next weekly coverage run seeds it as a pick
-    expect(withStore((s) => registryPickItems(s, []))).toContainEqual({ name: 'Globex Corporation', website: 'https://www.globex.example' });
+    expect(withStore((s) => registryPickItems(s, []))).toContainEqual({ name: 'Globex Corporation', website: 'https://www.globex-industries.com' });
   });
 
   it('a website alone: the name is its domain label', async () => {
-    await post('/companies/add', { _csrf: token, website: 'https://stark.example' });
-    expect(company('stark.example')).toMatchObject({ name: 'stark' });
+    await post('/companies/add', { _csrf: token, website: 'https://stark-industries.net' });
+    expect(company('stark-industries.net')).toMatchObject({ name: 'stark-industries' });
   });
 
   it('a duplicate company key: a clear message, no new row', async () => {
+    await post('/companies/add', { _csrf: token, website: 'https://globex-industries.com', name: 'Globex' });
     const before = withStore((s) => s.listCompanies().length);
-    const r = await post('/companies/add', { _csrf: token, website: 'https://careers.acme.example', name: 'Acme Again' });
+    const r = await post('/companies/add', { _csrf: token, website: 'https://careers.globex-industries.com', name: 'Globex Again' });
     expect(r.status).toBe(409);
-    expect(await r.text()).toContain('Acme Robotics (acme.example) is already in your companies, under verified; nothing was added.');
+    expect(await r.text()).toContain('Globex (globex-industries.com) is already in your companies, under proposed; nothing was added.');
     expect(withStore((s) => s.listCompanies().length)).toBe(before);
-    expect(company('acme.example')).toMatchObject({ name: 'Acme Robotics' });
-    expect(withStore((s) => s.userActions())).toEqual([]);
+    expect(company('globex-industries.com')).toMatchObject({ name: 'Globex' });
+    expect(withStore((s) => s.userActions().map((a) => a.kind))).toEqual(['company.add']);
   });
 
   it.each([
@@ -302,15 +304,29 @@ describe('companies: add a company', () => {
     [{ website: 'javascript:alert(1)' }, 'Only https:// websites are accepted.'],
     [{ website: 'not a url' }, 'not a web address'],
     [{ website: 'https://user:pw@x.example' }, 'must not carry a user name or password'],
-    [{ website: 'https://localhost' }, 'no registrable domain'],
-    [{ website: 'https://10.0.0.1' }, 'no registrable domain'],
+    [{ website: 'https://localhost' }, 'is not a public website'],
+    [{ website: 'https://10.0.0.1' }, 'is not a public website'],
+    [{ website: 'https://[::1]' }, 'is not a public website'],
+    [{ website: 'https://intranet' }, 'is not a public website'],
+    [{ website: 'https://acmecorp' }, 'is not a public website'],
+    [{ website: 'https://printer.local' }, 'is not a public website'],
+    [{ website: 'https://nas.home.arpa' }, 'is not a public website'],
+    [{ website: 'https://wiki.corp.internal' }, 'is not a public website'],
+    [{ website: 'https://app.localhost' }, 'is not a public website'],
+    [{ website: 'https://alpha.test' }, 'is not a public website'],
+    [{ website: 'https://ok.example' }, 'is not a public website'],
+    [{ website: 'https://nothing.invalid' }, 'is not a public website'],
+    [{ website: 'https://acme.c0m' }, 'is not a public website'],
+    [{ website: 'https://ok-company.com:8443' }, 'without a port'],
+    [{ website: 'https://sites.google.com/view/acme' }, 'no registrable domain'],
+    [{ website: 'https://workers.dev' }, 'no registrable domain'],
     [{ website: 'https://boards.greenhouse.io/acme' }, 'is a job board or applicant system'],
     [{ website: 'https://www.linkedin.com/company/acme' }, 'is a job board or applicant system'],
     [{ website: `https://${'a'.repeat(300)}.example` }, 'longer than 300 characters'],
-    [{ website: 'https://ok.example', name: 'x'.repeat(101) }, 'longer than 100 characters'],
-    [{ website: 'https://ok.example', name: 'Careers' }, 'does not say which company'],
-    [{ website: 'https://ok.example', name: 'Inc.' }, 'does not say which company'],
-    [{ website: 'https://ok.example', name: 'bad\u0007name' }, 'control characters'],
+    [{ website: 'https://ok-company.com', name: 'x'.repeat(101) }, 'longer than 100 characters'],
+    [{ website: 'https://ok-company.com', name: 'Careers' }, 'does not say which company'],
+    [{ website: 'https://ok-company.com', name: 'Inc.' }, 'does not say which company'],
+    [{ website: 'https://ok-company.com', name: 'bad\u0007name' }, 'control characters'],
     [{ name: 'Nobody Knows Co' }, 'needs the company’s website'],
   ])('refuses %j with a message, writing nothing', async (form, message) => {
     const before = withStore((s) => s.listCompanies().length);
@@ -329,16 +345,17 @@ describe('companies: add a company', () => {
   });
 
   it('a name alone resolves through a careers page you already have jobs from', async () => {
-    withStore((s) => s.upsertJob(jobRow({ jobKey: 'b1b1b1b1b1b1b1b1', sourceId: '9', dedupeKey: 'e1e1e1e1e1e1e1e1', company: 'Wayne Enterprises', source: 'careers', ats: 'careers', url: 'https://jobs.wayne.example/o/1' })));
+    withStore((s) => s.upsertJob(jobRow({ jobKey: 'b1b1b1b1b1b1b1b1', sourceId: '9', dedupeKey: 'e1e1e1e1e1e1e1e1', company: 'Wayne Enterprises', source: 'careers', ats: 'careers', url: 'https://jobs.wayne-enterprises.com/o/1' })));
     const r = await post('/companies/add', { _csrf: token, name: 'Wayne Enterprises' });
     expect(r.status).toBe(303);
-    expect(company('wayne.example')).toMatchObject({ name: 'Wayne Enterprises', website: 'https://jobs.wayne.example' });
+    expect(company('wayne-enterprises.com')).toMatchObject({ name: 'Wayne Enterprises', website: 'https://jobs.wayne-enterprises.com' });
   });
 });
 
 describe('companies: resolve now', () => {
+  // alpha.test is a reserved test host the add form refuses, so the recorded fixtures' company is written directly
   const add = async () => {
-    expect((await post('/companies/add', { _csrf: token, website: 'https://alpha.test', name: 'Alpha Robotics' })).status).toBe(303);
+    expect(withStore((s) => s.addCompanyPick({ companyKey: 'alpha.test', name: 'Alpha Robotics', website: 'https://alpha.test' }, NOW))).toBe(true);
   };
 
   it('runs the four coverage agents for that one company on the recorded fixtures and writes the verdict', async () => {
@@ -350,19 +367,19 @@ describe('companies: resolve now', () => {
     expect(calls.every((u) => /^https:\/\/(alpha\.test|boards-api\.greenhouse\.io)\//.test(u))).toBe(true);
     expect(calls.some((u) => u.includes('boards-api.greenhouse.io/v1/boards/alpharobotics/jobs'))).toBe(true);
     expect(gates.map((g) => g.runId)).toEqual(['resolve-2026-10-14-alpha-test']);
-    expect(withStore((s) => s.userActions().map((a) => a.kind))).toEqual(['company.add', 'company.resolve']);
+    expect(withStore((s) => s.userActions().map((a) => a.kind))).toEqual(['company.resolve']);
     expect((await get(r.headers.get('location') as string)).body).toContain('Resolved now: verified.');
     // the lock is released
     expect(() => readFileSync(join(home, 'jobpilot.lock'))).toThrow();
   });
 
   it('builds a fresh gate and run key per request', async () => {
-    await add();
-    await post('/companies/alpha.test/resolve', { _csrf: token });
-    await post('/companies/alpha.test/resolve', { _csrf: token });
+    // hooli's careers page is not in the fixtures: it stays proposed, so it can be resolved twice
+    await post('/companies/hooli.example/resolve', { _csrf: token });
+    await post('/companies/hooli.example/resolve', { _csrf: token });
     expect(gates).toHaveLength(2);
     expect(gates[0]?.gate).not.toBe(gates[1]?.gate);
-    expect(gates.map((g) => g.runId)).toEqual(['resolve-2026-10-14-alpha-test', 'resolve-2026-10-14-alpha-test-2']);
+    expect(gates.map((g) => g.runId)).toEqual(['resolve-2026-10-14-hooli-example', 'resolve-2026-10-14-hooli-example-2']);
   });
 
   it('holds the run lock while it runs', async () => {
@@ -422,8 +439,8 @@ describe('companies: resolve now', () => {
 describe('companies: the weekly coverage run and added companies', () => {
   it('the next weekly run seeds a company added on the dashboard as a pick and verifies it; a rejected one is never seeded', async () => {
     writeFileSync(join(home, 'pack', 'companies.yaml'), 'companies: []\n');
-    expect((await post('/companies/add', { _csrf: token, website: 'https://alpha.test', name: 'Alpha Robotics' })).status).toBe(303);
-    await post('/companies/add', { _csrf: token, website: 'https://nope.example', name: 'Nope' });
+    withStore((s) => s.addCompanyPick({ companyKey: 'alpha.test', name: 'Alpha Robotics', website: 'https://alpha.test' }, NOW));
+    withStore((s) => s.addCompanyPick({ companyKey: 'nope.example', name: 'Nope', website: 'https://nope.example' }, NOW));
     await post('/companies/nope.example/reject', { _csrf: token });
     expect(withStore((s) => registryPickItems(s, []).map((i) => i.website))).toEqual(['https://alpha.test', 'https://vandelay.example']);
     const r = await runCoverage({ home, clock: { now: () => '2026-10-18T01:30:00.000Z' }, fetch: fixtures, sleep: async () => {}, codeHash: 'web-companies', yieldCheck: () => null, limit: 0 });
@@ -438,13 +455,208 @@ describe('companies: the weekly coverage run and added companies', () => {
 describe('companies: links to their jobs', () => {
   it('a company links to its jobs in the jobs list, every band; a not-eligible job shows its reason', async () => {
     const v = sectionOf((await get('/companies')).body, 'verified');
-    const href = /<a href="(\/\?company=[^"]+)">/.exec(v)?.[1]?.replace(/&amp;/g, '&');
-    expect(href).toBe('/?company=Acme+Robotics&band=disclosed&band=undisclosed&band=review&band=below-floor&band=rejected');
+    const href = /<a href="(\/\?companyKey=[^"]+)">/.exec(v)?.[1]?.replace(/&amp;/g, '&');
+    expect(href).toBe('/?companyKey=acme.example&band=disclosed&band=undisclosed&band=review&band=below-floor&band=rejected');
     const { body } = await get(href as string);
     const keys = [...body.matchAll(/data-job="([0-9a-f]{16})"/g)].map((m) => m[1]);
     expect(keys.sort()).toEqual(['a1a1a1a1a1a1a1a1', 'a2a2a2a2a2a2a2a2']);
     expect(body).toContain('Jobs at <strong>Acme Robotics</strong> only');
-    expect(body).toContain('<input type="hidden" name="company" value="Acme Robotics">');
+    expect(body).toContain('<input type="hidden" name="companyKey" value="acme.example">');
     expect(body).toContain('Not eligible: The title matches a role you filtered out <code>role:product manager</code>');
+  });
+});
+
+describe('fix round 1: undo', () => {
+  it('reject then undo: back to proposed, not read daily; Approve and Reject stay explicit; both logged', async () => {
+    await post('/companies/bank.example/reject', { _csrf: token });
+    const rej = sectionOf((await get('/companies')).body, 'rejected');
+    expect(rej).toContain('action="/companies/bank.example/undo"');
+    expect(rej).toContain('action="/companies/bank.example/approve"');
+    const r = await post('/companies/bank.example/undo', { _csrf: token });
+    expect(r.status).toBe(303);
+    expect(company('bank.example')).toMatchObject({ status: 'proposed', userOverride: null });
+    expect(withStore((s) => s.verifiedCompanies().map((c) => c.companyKey))).not.toContain('bank.example');
+    expect(withStore((s) => s.userActions().map((a) => (a.data as { to: unknown }).to))).toEqual(['rejected', null]);
+  });
+
+  it('approve then undo: back to proposed when coverage never verified it', async () => {
+    await post('/companies/bank.example/approve', { _csrf: token });
+    expect(company('bank.example')).toMatchObject({ status: 'verified' });
+    expect(sectionOf((await get('/companies')).body, 'verified')).toContain('action="/companies/bank.example/undo"');
+    await post('/companies/bank.example/undo', { _csrf: token });
+    expect(company('bank.example')).toMatchObject({ status: 'proposed', userOverride: null });
+    expect(withStore((s) => s.verifiedCompanies().map((c) => c.companyKey))).not.toContain('bank.example');
+  });
+
+  it('approve then undo: verified again when coverage had verified it', async () => {
+    await post('/companies/acme.example/approve', { _csrf: token });
+    await post('/companies/acme.example/undo', { _csrf: token });
+    expect(company('acme.example')).toMatchObject({ status: 'verified', userOverride: null });
+  });
+
+  it('approve, then a coverage week that only proposes it, then undo: proposed', async () => {
+    await post('/companies/acme.example/approve', { _csrf: token });
+    withStore((s) => s.upsertCompanyVerdict(verdict('acme.example', 'Acme Robotics', 'proposed', { platform: 'workday', boardUrl: WD_BOARD, reasons: ['board name changed'] }), NOW));
+    expect(company('acme.example')).toMatchObject({ status: 'verified' });
+    await post('/companies/acme.example/undo', { _csrf: token });
+    expect(company('acme.example')).toMatchObject({ status: 'proposed', userOverride: null });
+  });
+
+  it('undo with no override is refused', async () => {
+    expect((await post('/companies/hooli.example/undo', { _csrf: token })).status).toBe(409);
+  });
+});
+
+describe('fix round 1: the cap on added companies', () => {
+  const fill = (n: number) => withStore((s) => {
+    for (let i = 0; i < n; i++) s.addCompanyPick({ companyKey: `pending${i}.com`, name: `Pending ${i}`, website: `https://pending${i}.com` }, NOW);
+  });
+
+  it(`refuses a new company while ${MAX_PENDING_ADDED} you added are still waiting`, async () => {
+    expect(MAX_PENDING_ADDED).toBe(50);
+    fill(MAX_PENDING_ADDED);
+    const r = await post('/companies/add', { _csrf: token, website: 'https://one-more.com' });
+    expect(r.status).toBe(409);
+    expect(await r.text()).toContain('50 companies you added are still waiting');
+    expect(company('one-more.com')).toBeUndefined();
+  });
+
+  it('a pick coverage has decided, or one you rejected, no longer counts', async () => {
+    fill(MAX_PENDING_ADDED - 1);
+    withStore((s) => {
+      s.addCompanyPick({ companyKey: 'decided.com', name: 'Decided', website: 'https://decided.com' }, NOW);
+      s.upsertCompanyVerdict(verdict('decided.com', 'Decided', 'proposed', { source: 'pick', reasons: ['careers site not located'] }), NOW);
+      s.addCompanyPick({ companyKey: 'nope.com', name: 'Nope', website: 'https://nope.com' }, NOW);
+      s.setCompanyOverride('nope.com', 'rejected', NOW);
+    });
+    expect((await post('/companies/add', { _csrf: token, website: 'https://one-more.com' })).status).toBe(303);
+  });
+});
+
+describe('fix round 1: website hosts', () => {
+  it('strips the default port; keeps the tenant label on a shared host', async () => {
+    expect((await post('/companies/add', { _csrf: token, website: 'https://acme-co.workers.dev:443/jobs' })).status).toBe(303);
+    expect(company('acme-co.workers.dev')).toMatchObject({ website: 'https://acme-co.workers.dev' });
+    expect((await post('/companies/add', { _csrf: token, website: 'https://jobs.beta-co.pages.dev' })).status).toBe(303);
+    expect(company('beta-co.pages.dev')).toBeDefined();
+    expect((await post('/companies/add', { _csrf: token, website: 'https://gamma-co.netlify.app' })).status).toBe(303);
+    expect((await post('/companies/add', { _csrf: token, website: 'https://delta-co.netlify.app' })).status).toBe(303);
+    expect(company('gamma-co.netlify.app')).toBeDefined();
+    expect(registrableDomain('acme.sites.google.com')).toBe('acme.sites.google.com');
+    expect(registrableDomain('sites.google.com')).toBeNull();
+    expect(registrableDomain('api.shop.myshopify.com')).toBe('shop.myshopify.com');
+    expect(company('delta-co.netlify.app')).toBeDefined();
+  });
+});
+
+describe('fix round 1: resolve guards', () => {
+  const add = () => withStore((s) => s.addCompanyPick({ companyKey: 'alpha.test', name: 'Alpha Robotics', website: 'https://alpha.test' }, NOW));
+
+  it('M5: a daily run that becomes due mid-resolve makes it yield before the next step, writing nothing', async () => {
+    add();
+    app = makeApp({ resolve: { fetch: (async (url, init) => {
+      calls.push(url);
+      // the scheduled daily run becomes owed while resolve is running
+      writeFileSync(join(home, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-14', attempts: [] }));
+      return fixtures(url, init);
+    }) as FetchLike, sleep: async () => {}, codeHash: 'web-companies' } });
+    const r = await post('/companies/alpha.test/resolve', { _csrf: token });
+    expect(r.headers.get('location')).toBe('/companies?done=resolve-stopped&key=alpha.test#co-alpha-test');
+    expect(calls.some((u) => u.includes('greenhouse'))).toBe(false);
+    expect(company('alpha.test')).toMatchObject({ status: 'proposed', reasons: [ADDED_PICK_REASON] });
+    expect(withStore((s) => s.userActions().at(-1)?.data)).toMatchObject({ result: 'stopped', reason: 'yielded to daily' });
+  });
+
+  it('M6: a failed resolve never adds a fail week', async () => {
+    const before = company('globodyne.example');
+    app = makeApp({ resolve: { fetch: (async (url) => (calls.push(url), { status: 404, text: async () => 'Not Found' })) as FetchLike, sleep: async () => {}, codeHash: 'web-companies' } });
+    const r = await post('/companies/globodyne.example/resolve', { _csrf: token });
+    expect(r.headers.get('location')).toBe('/companies?done=resolved&key=globodyne.example#co-globodyne-example');
+    expect(calls.length).toBeGreaterThan(0);
+    expect(company('globodyne.example')).toMatchObject({ status: 'failing', failWeeks: before?.failWeeks, failingSince: before?.failingSince });
+  });
+
+  it('M9: a host that refuses during resolve defers it; no verdict is written', async () => {
+    add();
+    app = makeApp({ resolve: { fetch: (async (url, init) => (calls.push(url), url === 'https://alpha.test/careers' ? { status: 403, text: async () => 'Forbidden' } : fixtures(url, init))) as FetchLike, sleep: async () => {}, codeHash: 'web-companies' } });
+    const r = await post('/companies/alpha.test/resolve', { _csrf: token });
+    expect(r.headers.get('location')).toMatch(/^\/companies\?done=resolve-deferred&key=alpha\.test&run=resolve-2026-10-14-alpha-test#co-alpha-test$/);
+    expect(company('alpha.test')).toMatchObject({ status: 'proposed', reasons: [ADDED_PICK_REASON], updatedAt: NOW });
+    expect((await get(r.headers.get('location') as string)).body).toContain('alpha.test (refused access)');
+  });
+
+  it('refuses an already-verified company and leaves its source alone', async () => {
+    const r = await post('/companies/acme.example/resolve', { _csrf: token });
+    expect(r.headers.get('location')).toBe('/companies?done=resolve-verified&key=acme.example#co-acme-example');
+    expect((await get(r.headers.get('location') as string)).body).toContain('already verified; it is re-checked weekly');
+    expect(company('acme.example')).toMatchObject({ source: 'remoteintech', status: 'verified' });
+    expect(calls).toEqual([]);
+    expect(sectionOf((await get('/companies')).body, 'verified')).not.toContain('/resolve"');
+  });
+});
+
+describe('fix round 1: rendering', () => {
+  it('M7: a careers URL carrying a user name and password is text, never a link', async () => {
+    withStore((s) => s.upsertCompanyVerdict(verdict('cred.example', 'Cred Co', 'proposed', { careersUrl: 'https://user:pw@cred.example/careers' }), AT));
+    const p = sectionOf((await get('/companies')).body, 'proposed');
+    expect(p).not.toMatch(/href="https:\/\/user:pw@/);
+    expect(p).toContain('<code>https://user:pw@cred.example/careers</code>');
+  });
+
+  it('M8: reasons show only on not-eligible jobs', async () => {
+    withStore((s) => s.upsertJob(jobRow({ jobKey: 'a4a4a4a4a4a4a4a4', sourceId: '4', dedupeKey: 'd4d4d4d4d4d4d4d4', company: 'Acme Robotics', title: 'SRE', verdict: 'review', reasons: ['remote-unclear'] })));
+    const { body } = await get('/?companyKey=acme.example&band=review&band=rejected&band=disclosed&band=undisclosed');
+    const row = (k: string) => body.slice(body.indexOf(`data-job="${k}"`), body.indexOf('</li>', body.indexOf(`data-job="${k}"`)));
+    expect(row('a4a4a4a4a4a4a4a4')).not.toContain('Not eligible');
+    expect(row('a4a4a4a4a4a4a4a4')).not.toContain('remote-unclear');
+    expect(row('a2a2a2a2a2a2a2a2')).toContain('Not eligible');
+  });
+
+  it('M10: "Read daily" exactly when the daily run reads it (board AND a platform it reads), one helper shared with the daily seeding', async () => {
+    withStore((s) => {
+      s.upsertCompanyVerdict(verdict('ghco.example', 'GH Co', 'verified', { platform: 'greenhouse', boardUrl: 'https://boards-api.greenhouse.io/v1/boards/ghco/jobs', slug: 'ghco' }), AT);
+      s.upsertCompanyVerdict(verdict('noboard.example', 'No Board', 'verified', { platform: 'workday', boardUrl: null }), AT);
+    });
+    const { body } = await get('/companies');
+    const daily = new Set(withStore((s) => s.verifiedCompanies().filter((c) => readsDaily(c)).map((c) => c.companyKey)));
+    expect(registryBoards(withStore((s) => s.verifiedCompanies())).map((b) => b.company).sort()).toEqual(
+      withStore((s) => s.verifiedCompanies().filter((c) => daily.has(c.companyKey)).map((c) => c.name)).sort(),
+    );
+    for (const c of withStore((s) => s.listCompanies())) {
+      const li = body.slice(body.indexOf(`data-company="${c.companyKey}"`), body.indexOf('</li>', body.indexOf(`data-company="${c.companyKey}"`)));
+      expect(/Read daily\.|Still read daily/.test(li), c.companyKey).toBe(daily.has(c.companyKey));
+    }
+    expect(daily.has('ghco.example')).toBe(false);
+    expect(daily.has('noboard.example')).toBe(false);
+    expect(daily.has('acme.example')).toBe(true);
+  });
+
+  it('the jobs link of a company whose name is hidden still lists its jobs (by company key)', async () => {
+    const term = (parseYaml(readFileSync(join(home, 'pack', 'naming.yaml'), 'utf8')) as { forbiddenTerms: string[] }).forbiddenTerms[0] as string;
+    withStore((s) => {
+      s.upsertCompanyVerdict(verdict('hidden-co.example', `${term} Labs`, 'verified', { platform: 'workday', boardUrl: 'https://hid.wd1.myworkdayjobs.com/wday/cxs/hid/Ext/jobs' }), AT);
+      s.upsertJob(jobRow({ jobKey: 'c1c1c1c1c1c1c1c1', sourceId: '11', dedupeKey: 'f1f1f1f1f1f1f1f1', company: `${term} Labs`, title: 'Backend Engineer' }));
+    });
+    const v = sectionOf((await get('/companies')).body, 'verified');
+    expect(v).toContain('href="/?companyKey=hidden-co.example&amp;band=');
+    expect(v).not.toContain(term);
+    const { body } = await get('/?companyKey=hidden-co.example&band=disclosed&band=undisclosed&band=review');
+    expect(body).toContain('data-job="c1c1c1c1c1c1c1c1"');
+    expect(body).not.toContain(term);
+  });
+
+  it('job counts and links match by company key: a job on the company domain, or on its registry board, whatever its name', async () => {
+    withStore((s) => {
+      s.addCompanyPick({ companyKey: 'stark-industries.net', name: 'SI Group', website: 'https://stark-industries.net' }, NOW);
+      s.upsertJob(jobRow({ jobKey: 'c2c2c2c2c2c2c2c2', sourceId: 'https://careers.stark-industries.net/jobs/1', dedupeKey: 'f2f2f2f2f2f2f2f2', company: 'Stark Industries Inc', source: 'careers', ats: 'careers', url: 'https://careers.stark-industries.net/jobs/1' }));
+      s.upsertJob(jobRow({ jobKey: 'c3c3c3c3c3c3c3c3', sourceId: 'acme.wd5.myworkdayjobs.com/acme/External|JR9', dedupeKey: 'f3f3f3f3f3f3f3f3', company: 'ACME Holdings Group', source: 'workday', ats: 'workday', url: 'https://acme.wd5.myworkdayjobs.com/External/job/JR9' }));
+    });
+    const { body } = await get('/companies');
+    const stark = body.slice(body.indexOf('data-company="stark-industries.net"'), body.indexOf('</li>', body.indexOf('data-company="stark-industries.net"')));
+    expect(stark).toMatch(/<span class="num">1<\/span> passing your rules/);
+    expect(sectionOf(body, 'verified')).toMatch(/<span class="num">2<\/span> passing your rules, <span class="num">1<\/span> not eligible/);
+    expect((await get('/?companyKey=stark-industries.net&band=disclosed&band=undisclosed&band=review')).body).toContain('data-job="c2c2c2c2c2c2c2c2"');
+    const acme = (await get('/?companyKey=acme.example&band=disclosed&band=undisclosed&band=review&band=rejected')).body;
+    expect([...acme.matchAll(/data-job="([0-9a-f]{16})"/g)].map((m) => m[1]).sort()).toEqual(['a1a1a1a1a1a1a1a1', 'a2a2a2a2a2a2a2a2', 'c3c3c3c3c3c3c3c3']);
   });
 });

@@ -44,6 +44,9 @@ export const MAX_EXPANDED_BYTES = 80_000_000;
 const CC_SECOND_LEVEL: ReadonlySet<string> = new Set(['co', 'com', 'org', 'net', 'gov', 'ac', 'edu', 'ne', 'or', 'go', 'gob', 'nic', 'mil', 'ltd', 'plc', 'sch']);
 export const HOSTING_SUFFIXES: ReadonlySet<string> = new Set([
   'herokuapp.com', 'netlify.app', 'pages.dev', 'web.app', 'vercel.app', 'github.io', 'firebaseapp.com', 'azurewebsites.net', 'onrender.com',
+  // Task 11 fix round 1: more shared hosts whose tenants are different companies (a three-label one included)
+  'workers.dev', 'sites.google.com', 'gitlab.io', 'webflow.io', 'wixsite.com', 'myshopify.com', 'blogspot.com', 'wordpress.com', 'notion.site',
+  'framer.website', 'framer.app', 'surge.sh', 'fly.dev', 'appspot.com', 'azurestaticapps.net', 'readthedocs.io', 'carrd.co', 'netlify.com',
 ]);
 export const MULTI_PART_SUFFIXES: ReadonlySet<string> = new Set([
   'co.in', 'co.uk', 'com.au', 'com.br', 'co.jp', 'co.nz', 'com.sg', 'com.cn', 'org.uk', 'ac.in', 'net.in', 'firm.in', 'gen.in', 'ind.in',
@@ -57,6 +60,11 @@ export function registrableDomain(host: string): string | null {
   if (h === '' || h === 'localhost' || h.includes(':') || h.startsWith('[') || IPV4.test(h)) return null;
   const labels = h.split('.');
   if (labels.length < 2 || labels.some((l) => l === '')) return null;
+  // a shared hosting suffix (of any length): the tenant label under it is the domain; the bare suffix has none
+  for (const suffix of HOSTING_SUFFIXES) {
+    if (h === suffix) return null;
+    if (h.endsWith(`.${suffix}`)) return labels.slice(-(suffix.split('.').length + 1)).join('.');
+  }
   const tld = labels[labels.length - 1] as string;
   const second = labels[labels.length - 2] as string;
   const last2 = `${second}.${tld}`;

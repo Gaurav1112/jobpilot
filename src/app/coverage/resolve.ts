@@ -30,7 +30,10 @@ import { deferralHosts, projectCoverage } from './project.js';
  *   resolve never adds a fail week; the weekly run counts weeks). The user's override still wins.
  * - Finished steps are memoised as in every run: resolving the same company again the same IST day replays them (no
  *   new request); the next day asks afresh.
- * - The candidate is a pick (`source: pick`), so a resolved company is re-verified by each weekly run afterwards.
+ * - The candidate is a pick (`source: pick`), so a resolved company is re-verified by each weekly run afterwards. A
+ *   company already `verified` is refused (the weekly run re-checks it), so it never becomes a pick this way.
+ * - **A refusal is a deferral.** When any host was disabled in this run's gate (401/403/429, a challenge, robots) or a
+ *   step was deferred, nothing is written: the result names the hosts and the weekly run asks again.
  */
 
 /** The longest resolve-now keeps starting steps (the injected clock). */
@@ -54,7 +57,7 @@ export interface ResolveOptions {
 }
 
 export type ResolveResult =
-  | { readonly kind: 'refused'; readonly why: 'busy' | 'due' | 'unknown' | 'rejected'; readonly reason: string }
+  | { readonly kind: 'refused'; readonly why: 'busy' | 'due' | 'unknown' | 'rejected' | 'verified'; readonly reason: string }
   | { readonly kind: 'resolved'; readonly runId: string; readonly company: Company }
   | { readonly kind: 'deferred'; readonly runId: string; readonly hosts: readonly (readonly [host: string, why: string])[] }
   | { readonly kind: 'stopped'; readonly runId: string; readonly reason: string };
@@ -90,6 +93,8 @@ async function resolveLocked(o: ResolveOptions): Promise<ResolveResult> {
     const company = app.getCompany(o.companyKey);
     if (company === undefined) return { kind: 'refused', why: 'unknown', reason: 'no such company' };
     if (company.status === 'rejected' || company.userOverride === 'rejected') return { kind: 'refused', why: 'rejected', reason: 'you rejected this company; approve it first' };
+    // a verified company is re-checked by the weekly run; resolving it would only turn it into a pick
+    if (company.status === 'verified') return { kind: 'refused', why: 'verified', reason: 'already verified; it is re-checked weekly' };
     // the pack only for the user's policy; a pack that does not load refuses here, before any request
     const { pack } = loadPack(paths.pack, {}, { asOf: istMonth(start), mode: 'daily' });
     const policy = coveragePolicy(pack);
@@ -120,9 +125,13 @@ async function resolveLocked(o: ResolveOptions): Promise<ResolveResult> {
       app.logUserAction('company.resolve', { companyKey: company.companyKey, runId, result: 'stopped', reason: outcome.paused }, at);
       return { kind: 'stopped', runId, reason: outcome.paused };
     }
+    // a host that refused (disabled in this run's gate: 401/403/429, a challenge, robots) or a step it deferred: like the
+    // weekly run's deferrals, nothing is known this time, so no verdict is written
     const deferred = STAGES.flatMap((s) => outcome.stages[s].deferred);
-    if (deferred.length > 0) {
-      const hosts = deferralHosts(deferred.map((d) => d.detail));
+    const disabled = app.coverageHostState(runId);
+    if (deferred.length > 0 || disabled.size > 0) {
+      const named = deferralHosts(deferred.map((d) => d.detail));
+      const hosts = [...named, ...[...disabled].filter(([h]) => !named.some(([n]) => n === h))].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
       app.logUserAction('company.resolve', { companyKey: company.companyKey, runId, result: 'deferred', hosts }, at);
       return { kind: 'deferred', runId, hosts };
     }

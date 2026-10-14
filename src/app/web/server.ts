@@ -24,7 +24,8 @@ import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } fr
 import { JOB_STATUSES } from '../store/schema.js';
 import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
-import { mountCompanies, type ResolveDeps } from './companies.js';
+import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
+import type { CompanyJobs } from '../coverage/company-jobs.js';
 import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
@@ -43,7 +44,7 @@ import { runsBody } from './views/runs.js';
  * `GET /jobs/:key/files/:name` a current document, `GET /jobs/:key/sent/:day/:name` an applied snapshot file,
  * `GET /facts`, `POST /facts/:id/verify|reject`, `GET /runs`, `GET /static/*`, the freelance tab under `/freelance`
  * (`freelance.ts`, Task 10) and the Companies tab under `/companies` (`companies.ts`, career-sites Task 11). `GET /`
- * takes `company=<name>` to list one company's jobs (the Companies tab's links). Security rules: `security.ts`.
+ * takes `companyKey=<registry key>` to list one company's jobs (the Companies tab's links). Security rules: `security.ts`.
  *
  * Forbidden terms: the dashboard is generated output, so every text it shows from the store or the pack is checked
  * against the pack's `naming.forbiddenTerms` and replaced with "[hidden]" when it names one.
@@ -333,7 +334,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const minRaw = c.req.query('min')?.trim() ?? '';
     const min = /^\d{1,3}(\.\d+)?$/.test(minRaw) ? Number(minRaw) : undefined;
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
-    const company = (c.req.query('company') ?? '').trim().slice(0, 100);
+    const keyRaw = (c.req.query('companyKey') ?? '').trim();
+    const companyKey = COMPANY_KEY.test(keyRaw) ? keyRaw : '';
+    // the registry company the link names, matched by key (never by the shown name); unknown: an empty list
+    const registryCompany = companyKey === '' ? undefined : withStore((s) => s.getCompany(companyKey));
+    const companyOf: CompanyJobs | undefined =
+      companyKey === '' ? undefined : registryCompany === undefined ? { key: companyKey, name: '', board: null } : companyJobsOf(registryCompany);
     const pageRaw = c.req.query('page') ?? '1';
     const pageAsked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
     const floor = ps.pack?.offers.floor;
@@ -343,7 +349,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       ...(bands.length > 0 ? { band: bands } : {}),
       ...(min !== undefined ? { minScore: min } : {}),
       ...(q !== '' ? { text: q } : {}),
-      ...(company !== '' ? { company } : {}),
+      ...(companyOf !== undefined ? { companyOf } : {}),
       ...(floorInr !== undefined ? { floorInr } : {}),
     };
     // "New since your last visit": the previous visit's start, kept in a cookie (prev.last, epoch ms).
@@ -379,13 +385,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       for (const v of bands) qs.append('band', v);
       if (min !== undefined) qs.set('min', String(min));
       if (q !== '') qs.set('q', q);
-      if (company !== '') qs.set('company', company);
+      if (companyKey !== '') qs.set('companyKey', companyKey);
       if (n > 1) qs.set('page', String(n));
       const t = qs.toString();
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, company: r.text(company) }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
       page: pageNo, pages, total, newCount, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);

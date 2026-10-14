@@ -383,4 +383,12 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   );
   CREATE INDEX job_board_ids_by_company ON job_board_ids (company_norm);
   `,
+  // Career-sites Task 11 fix round 1: the status the coverage verdicts alone give a company (no user override), so undoing
+  // an approve restores what coverage last decided. NULL: no coverage verdict yet (a company added on the dashboard).
+  // Backfilled from rows no override has touched. Additive; a literal.
+  `
+  ALTER TABLE companies ADD COLUMN coverage_status TEXT;
+  UPDATE companies SET coverage_status = status WHERE user_override IS NULL AND status <> 'rejected'
+    AND NOT (source = 'pick' AND last_verified IS NULL AND reasons = '["added by you, resolves on the next coverage run"]');
+  `,
 ];

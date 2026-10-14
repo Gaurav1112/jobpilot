@@ -101,7 +101,7 @@ export function deferWhy(why: string): string {
 }
 
 const anchor = (key: string): string => 'co-' + key.replace(/[^a-z0-9-]/g, '-');
-const action = (key: string, verb: 'approve' | 'reject' | 'resolve', label: string, csrf: string, primary = false): Html =>
+const action = (key: string, verb: 'approve' | 'reject' | 'resolve' | 'undo', label: string, csrf: string, primary = false): Html =>
   html`<form method="post" action="/companies/${encodeURIComponent(key)}/${verb}">${csrfField(csrf)}<button class="btn${primary ? ' btn-primary' : ''}">${label}</button></form>`;
 
 function careersLink(c: CompanyRowView): Html {
@@ -137,8 +137,10 @@ function row(c: CompanyRowView, list: Exclude<CompanyList, 'deferred'>, d: Compa
   };
   const [label, tone] = status[list];
   const buttons: Html[] = [];
-  if (list === 'proposed' || list === 'rejected') buttons.push(action(c.key, 'approve', list === 'rejected' ? 'Approve (undo)' : 'Approve', d.csrf, list === 'proposed'));
+  if (list === 'proposed' || list === 'rejected') buttons.push(action(c.key, 'approve', 'Approve', d.csrf, list === 'proposed'));
   if (list !== 'rejected') buttons.push(action(c.key, 'reject', 'Reject', d.csrf));
+  // Undo clears your choice (it does not approve a rejected company): the status goes back to what coverage decided
+  if (c.userOverride !== null) buttons.push(action(c.key, 'undo', c.userOverride === 'approved' ? 'Undo approve' : 'Undo reject', d.csrf));
   if (d.canResolve && list !== 'rejected' && list !== 'verified') buttons.push(action(c.key, 'resolve', 'Resolve now', d.csrf));
   const flash = d.flash !== null && d.flash.key === c.key ? html`<p class="flash" role="status">${d.flash.text}</p>` : '';
   return html`<li class="co" id="${anchor(c.key)}" data-company="${c.key}">
@@ -206,7 +208,7 @@ ${section('proposed', d, 'Found, but a check did not pass, so nothing is read un
 ${section('verified', d, 'Read by the daily run. Reject one to stop reading it from the next run.', 'No verified company yet.')}
 ${section('failing', d, 'Verified companies whose board stopped answering 3 weeks running. Still tried daily so they can recover; never removed without you.', 'No board is failing.')}
 ${deferredSection(d)}
-${section('rejected', d, 'Never read and never verified again. Approve one to undo.', 'You have rejected none.')}
+${section('rejected', d, 'Never read and never verified again. Undo reject puts one back in Proposed; Approve makes it read daily.', 'You have rejected none.')}
 ${section('unverified', d, 'Companies you picked whose board did not pass the check; the weekly run tries again.' + (d.hiddenFailed > 0 ? ' ' + String(d.hiddenFailed) + (d.hiddenFailed === 1 ? ' company' : ' companies') + ' from the seed lists did not pass either (not listed).' : ''), 'None.')}
 ${addForm(d)}
 </div>`;

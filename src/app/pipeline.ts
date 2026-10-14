@@ -160,6 +160,25 @@ export interface RegistryCompany {
 }
 
 /**
+ * The daily board of one registry row: its platform has a daily adapter in this build (REGISTRY_PLATFORMS, the one
+ * place a platform is added) and its stored board URL is a board of that platform; else null. `registryBoards` (the
+ * daily seeding) and `readsDaily` (the dashboard) both ask this.
+ */
+export function registryBoardOf(c: RegistryCompany): RegistryBoard | null {
+  if (!isRegistryPlatform(c.platform) || c.boardUrl === null) return null;
+  const ref = REGISTRY_PLATFORMS[c.platform].ref(c.boardUrl, c.platformSlug);
+  return ref === null ? null : { platform: c.platform, company: c.name, ref };
+}
+
+/**
+ * Whether the daily run reads this registry row: it is one `verifiedCompanies()` returns (verified or failing, not
+ * rejected) AND it has a daily board (`registryBoardOf`). The dashboard's "Read daily" asks only this.
+ */
+export function readsDaily(c: RegistryCompany & { readonly status: string; readonly userOverride: string | null }): boolean {
+  return (c.status === 'verified' || c.status === 'failing') && c.userOverride !== 'rejected' && registryBoardOf(c) !== null;
+}
+
+/**
  * The boards of the verified registry companies (`verifiedCompanies()`: verified or failing, never rejected) whose
  * platform has a daily adapter in this build (Task 6: Workday; Task 7: Eightfold, Oracle; Task 8: iCIMS,
  * SuccessFactors, SmartRecruiters, jsonld-sitemap), sorted by platform then
@@ -169,11 +188,10 @@ export interface RegistryCompany {
 export function registryBoards(companies: readonly RegistryCompany[]): RegistryBoard[] {
   const out = new Map<string, RegistryBoard>();
   for (const c of companies) {
-    if (!isRegistryPlatform(c.platform) || c.boardUrl === null) continue;
-    const ref = REGISTRY_PLATFORMS[c.platform].ref(c.boardUrl, c.platformSlug);
-    if (ref === null) continue;
-    const key = `${c.platform} ${ref}`;
-    if (!out.has(key)) out.set(key, { platform: c.platform, company: c.name, ref });
+    const board = registryBoardOf(c);
+    if (board === null) continue;
+    const key = `${board.platform} ${board.ref}`;
+    if (!out.has(key)) out.set(key, board);
   }
   // by platform, then the board itself (an Eightfold API variant prefix does not move a board)
   // the platform's place in the table, zero-padded: with ten or more platforms "10" would sort before "7"

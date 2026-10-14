@@ -6,6 +6,7 @@ import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import type { CompanyVerdict, Platform } from '../coverage/types.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
+import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
@@ -167,11 +168,8 @@ export interface JobFilter {
   readonly floorInr?: number;
   /** Also list duplicate listings (rows with `duplicateOf` set). Default false. */
   readonly duplicates?: boolean;
-  /**
-   * Only jobs of this company (the Companies tab's links): the job's company equals it after `normalCompanyName`
-   * (the coverage name matcher's normalisation), so "Okta, Inc." and "Okta" are one company. Empty: no job.
-   */
-  readonly company?: string;
+  /** Only the jobs of this registry company (the Companies tab's links), matched by `jobOfCompany` (its key, board or name). */
+  readonly companyOf?: CompanyJobs;
 }
 
 export interface RunSummary {
@@ -726,7 +724,7 @@ export class AppStore {
     const bands = new Set(filter.band ?? DEFAULT_BANDS);
     const statuses = filter.status === undefined ? undefined : new Set<string>(filter.status);
     const text = filter.text?.toLowerCase();
-    const company = filter.company === undefined ? undefined : normalCompanyName(filter.company);
+    const company = filter.companyOf === undefined ? undefined : companyKeys(filter.companyOf);
     const all = this.db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all() as JobRowDb[];
     const byKey = new Map(all.map((r) => [r.job_key, r]));
     const dupsOf = new Map<string, JobRowDb[]>();
@@ -742,7 +740,7 @@ export class AppStore {
       .filter((j) => statuses === undefined || statuses.has(j.status))
       .filter((j) => filter.minScore === undefined || (j.score !== null && j.score >= filter.minScore))
       .filter((j) => text === undefined || j.company.toLowerCase().includes(text) || j.title.toLowerCase().includes(text))
-      .filter((j) => company === undefined || (company !== '' && normalCompanyName(j.company) === company))
+      .filter((j) => company === undefined || jobOfCompany(jobKeys(j), company))
       .sort(
         (a, b) =>
           BAND_RANK[a.band] - BAND_RANK[b.band] ||
@@ -1242,46 +1240,54 @@ export class AppStore {
       const keep = <T>(fresh: T | null, old: T | null | undefined): T | null => (failed ? (old ?? fresh) : fresh);
       const wasLive = prev !== undefined && (prev.status === 'verified' || prev.status === 'failing');
       let status: CompanyStatus;
+      // the status the verdicts alone give it (no override): what undoing an approve restores
+      let natural: CompanyStatus;
       let failWeeks = 0;
       let failingSince: string | null = null;
       let lastVerified = prev?.last_verified ?? null;
       if (v.status === 'verified') {
         status = 'verified';
+        natural = 'verified';
         lastVerified = at;
       } else if (v.status === 'proposed') {
         status = prev?.user_override === 'approved' ? 'verified' : 'proposed';
+        natural = 'proposed';
       } else if (opts.countFailure === false && prev !== undefined) {
         failWeeks = prev.fail_weeks;
         failingSince = prev.failing_since;
         status = prev.status;
+        natural = prev.coverage_status ?? prev.status;
       } else {
         failWeeks = (prev?.fail_weeks ?? 0) + 1;
         failingSince = prev?.failing_since ?? at;
         status = wasLive ? (failWeeks >= FAIL_WEEKS_TO_FAILING ? 'failing' : 'verified') : 'failed';
+        natural = status;
       }
       this.db
         .prepare(
-          `INSERT INTO companies (company_key, name, website, careers_url, platform, platform_slug, board_url, status, reasons, source, jobs_seen, last_verified, failing_since, fail_weeks, user_override, updated_at)
-           VALUES (@key, @name, @website, @careersUrl, @platform, @slug, @boardUrl, @status, @reasons, @source, @jobsSeen, @lastVerified, @failingSince, @failWeeks, @override, @at)
+          `INSERT INTO companies (company_key, name, website, careers_url, platform, platform_slug, board_url, status, reasons, source, jobs_seen, last_verified, failing_since, fail_weeks, user_override, updated_at, coverage_status)
+           VALUES (@key, @name, @website, @careersUrl, @platform, @slug, @boardUrl, @status, @reasons, @source, @jobsSeen, @lastVerified, @failingSince, @failWeeks, @override, @at, @natural)
            ON CONFLICT (company_key) DO UPDATE SET name = excluded.name, website = excluded.website, careers_url = excluded.careers_url, platform = excluded.platform,
              platform_slug = excluded.platform_slug, board_url = excluded.board_url, status = excluded.status, reasons = excluded.reasons, source = excluded.source,
              jobs_seen = excluded.jobs_seen, last_verified = excluded.last_verified, failing_since = excluded.failing_since, fail_weeks = excluded.fail_weeks,
-             updated_at = excluded.updated_at`,
+             updated_at = excluded.updated_at, coverage_status = excluded.coverage_status`,
         )
         .run({
           key: cand.companyKey, name: cand.name, website: cand.website,
           careersUrl: v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
           platform: keep(v.guess.platform, prev?.platform), slug: keep(v.guess.slug, prev?.platform_slug), boardUrl: keep(v.guess.boardUrl, prev?.board_url),
           status, reasons: JSON.stringify(v.reasons), source: cand.source, jobsSeen: keep(v.jobsSeen, prev?.jobs_seen),
-          lastVerified, failingSince, failWeeks, override: prev?.user_override ?? null, at,
+          lastVerified, failingSince, failWeeks, override: prev?.user_override ?? null, at, natural,
         });
     });
   }
 
   /**
-   * The user's approve or reject of a company (null clears it). Rejecting sets the status `rejected`; approving
-   * promotes a proposed or rejected company that has a platform to `verified`; clearing a rejection returns it to
-   * `proposed` until the next verdict. False when there is no such company.
+   * The user's approve or reject of a company (null clears it, the dashboard's Undo). Rejecting sets the status
+   * `rejected`; approving promotes a proposed or rejected company that has a platform to `verified`; clearing a
+   * rejection returns it to `proposed` until the next verdict; clearing an approval restores what the coverage verdicts
+   * alone last decided (`coverage_status`; `proposed` when coverage has decided nothing yet). False when there is no
+   * such company.
    */
   setCompanyOverride(companyKey: string, override: CompanyOverride | null, at: string): boolean {
     if (override !== null && !(COMPANY_OVERRIDES as readonly string[]).includes(override)) throw new Error(`not a company override: ${String(override)}`);
@@ -1292,6 +1298,7 @@ export class AppStore {
       if (override === 'rejected') status = 'rejected';
       else if (override === 'approved' && (prev.status === 'proposed' || prev.status === 'rejected')) status = prev.platform !== null ? 'verified' : 'proposed';
       else if (override === null && prev.status === 'rejected') status = 'proposed';
+      else if (override === null && prev.user_override === 'approved') status = prev.coverage_status ?? 'proposed';
       this.db.prepare(`UPDATE companies SET user_override = ?, status = ?, updated_at = ? WHERE company_key = ?`).run(override, status, at, companyKey);
       return true;
     });
@@ -1340,6 +1347,18 @@ export class AppStore {
     return this.kernel.events(USER_ACTIONS_RUN).map((e) => ({ at: e.at, kind: e.kind, data: JSON.parse(e.data) as unknown }));
   }
 
+  /**
+   * Companies the user added on the dashboard that no coverage verdict has decided yet (source `pick`, no coverage
+   * status) and that are not rejected: what the Add form's cap counts.
+   */
+  pendingAddedPicks(): number {
+    return (
+      this.db
+        .prepare(`SELECT COUNT(*) AS n FROM companies WHERE source = 'pick' AND coverage_status IS NULL AND status <> 'rejected' AND (user_override IS NULL OR user_override <> 'rejected')`)
+        .get() as { n: number }
+    ).n;
+  }
+
   /** Every company, or those with the given status, platform or source; by key. */
   listCompanies(filter: { readonly status?: CompanyStatus; readonly platform?: Platform; readonly source?: string } = {}): Company[] {
     const where: string[] = [];
@@ -1382,7 +1401,7 @@ const FAIL_WEEKS_TO_FAILING = 3;
 interface CompanyRowDb {
   company_key: string; name: string; website: string; careers_url: string | null; platform: Platform | null; platform_slug: string | null;
   board_url: string | null; status: CompanyStatus; reasons: string; source: string; jobs_seen: number | null; last_verified: string | null;
-  failing_since: string | null; fail_weeks: number; user_override: CompanyOverride | null; updated_at: string;
+  failing_since: string | null; fail_weeks: number; user_override: CompanyOverride | null; updated_at: string; coverage_status: CompanyStatus | null;
 }
 
 /** One registry row. */
@@ -1403,6 +1422,8 @@ export interface Company {
   readonly failWeeks: number;
   readonly userOverride: CompanyOverride | null;
   readonly updatedAt: string;
+  /** The status the coverage verdicts alone give it (no override); null before any verdict. */
+  readonly coverageStatus: CompanyStatus | null;
 }
 
 function companyOf(r: CompanyRowDb): Company {
@@ -1410,6 +1431,7 @@ function companyOf(r: CompanyRowDb): Company {
     companyKey: r.company_key, name: r.name, website: r.website, careersUrl: r.careers_url, platform: r.platform, platformSlug: r.platform_slug,
     boardUrl: r.board_url, status: r.status, reasons: JSON.parse(r.reasons) as string[], source: r.source, jobsSeen: r.jobs_seen,
     lastVerified: r.last_verified, failingSince: r.failing_since, failWeeks: r.fail_weeks, userOverride: r.user_override, updatedAt: r.updated_at,
+    coverageStatus: r.coverage_status,
   };
 }
 
