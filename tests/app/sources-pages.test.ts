@@ -232,6 +232,16 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
     ]);
   });
 
+  it('a gone page a stale listing still names is not fetched again within the week (live: 11 of Okta\'s sitemap URLs answered 404)', async () => {
+    const state = memoryPageState();
+    await crawl(harness(routes({ [job('a').url]: () => resp(404, 'nf') })), [job('a')], state);
+    const h = harness(routes());
+    expect(await crawl(h, [job('a')], state)).toEqual([]);
+    expect(h.calls).toEqual([]);
+    const later = harness(routes());
+    expect((await crawl(later, [job('a')], state, '2026-10-22')).map((p) => p.sourceId)).toEqual(['a']);
+  });
+
   it('a page without a valid JobPosting is named (with the zod issue) and not fetched again within the week', async () => {
     const state = memoryPageState();
     const h = harness(routes({ [job('a').url]: () => resp(200, '<html>no ld</html>'), [job('b').url]: () => resp(200, page({ description: 'x' })) }));

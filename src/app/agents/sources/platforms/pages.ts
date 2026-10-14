@@ -40,7 +40,8 @@ import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type P
  * **Parsing:** the page's JobPosting JSON-LD (`jsonLdJobPostings`), the first node that passes `checkJobPosting` (zod),
  * kept as `keptJobPosting` (only the fields the normalizer reads). A page with none is named (`no-jobposting
  * <company>: …`, with the zod issue) and recorded, so it is not fetched again within the week. A gone page (404/410) is
- * dropped with a `detail-gone` note.
+ * dropped with a `detail-gone` note; like a page redirected off the board (`page-moved`) it is recorded without a
+ * posting, so a stale listing that still names it does not spend the budget on it again within the week.
  */
 
 /** Job-page fetches per company per daily run. */
@@ -274,13 +275,15 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
       deniedHost ||= e.host;
       continue;
     }
+    // a gone or moved page is recorded without a posting: a listing that still names it (a stale sitemap: 11 of
+    // Okta's, seen live) does not spend the budget on it again within the week; the record goes with the listing entry
     if (a.kind === 'gone') {
-      o.state.forget(o.board, j.url);
+      o.state.put(o.board, j.url, { fetchedOn: o.runDate, hash: sha256Hex(''), raw: null });
       gone.push(j.sourceId);
       continue;
     }
     if (a.kind === 'moved') {
-      o.state.forget(o.board, j.url);
+      o.state.put(o.board, j.url, { fetchedOn: o.runDate, hash: sha256Hex(''), raw: null });
       moved.push(`${j.sourceId} to ${a.to}`);
       continue;
     }
