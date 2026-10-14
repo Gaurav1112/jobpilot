@@ -188,6 +188,24 @@ describe('capability broker', () => {
       expect(await thrown(issue(fetcher, 'P0', { fetch: badBody }).http!.getText(`${H}/x`))).toMatchObject({ code: 'network' });
     });
 
+    it('keeps the cause code of a failed fetch (undici puts it on `cause`), so a no-such-host can be told from an outage', async () => {
+      const dns: FetchLike = async () => {
+        throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('getaddrinfo ENOTFOUND x'), { code: 'ENOTFOUND' }) });
+      };
+      const many: FetchLike = async () => {
+        throw Object.assign(new TypeError('fetch failed'), { cause: new AggregateError([Object.assign(new Error('a'), { code: 'ECONNREFUSED' })]) });
+      };
+      const bare: FetchLike = async () => {
+        throw new TypeError('fetch failed');
+      };
+      const e1 = await thrown(issue(fetcher, 'P0', { fetch: dns }).http!.getText(`${H}/x`));
+      expect(e1).toMatchObject({ code: 'network', sysCode: 'ENOTFOUND', message: 'fetch failed (ENOTFOUND)' });
+      expect(await thrown(issue(fetcher, 'P0', { fetch: many }).http!.getPage(`${H}/x`))).toMatchObject({ code: 'network', sysCode: 'ECONNREFUSED' });
+      const e3 = await thrown(issue(fetcher, 'P0', { fetch: bare }).http!.getText(`${H}/x`));
+      expect(e3).toMatchObject({ code: 'network', message: 'fetch failed' });
+      expect((e3 as KernelError).sysCode).toBeUndefined();
+    });
+
     it('maps provider status failures to retryable codes', async () => {
       const a = issue(thinker, 'P0', { fetch: fakeFetch({}), llm: stubLlm({ status: 429 }) });
       const b = issue(thinker, 'P0', { fetch: fakeFetch({}), llm: stubLlm({ status: 529 }) });

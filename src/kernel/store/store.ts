@@ -327,6 +327,15 @@ export class Store {
     this.db.prepare(`UPDATE queue SET status = ? WHERE run_id = ? AND agent_id = ? AND envelope_id = ?`).run(status, runId, agentId, envelopeId);
   }
 
+  /**
+   * Puts a failed or skipped queue item back to pending (a step that failed for a transient reason, retried later in
+   * the same run). Returns false, changing nothing, for any other status. The caller records why.
+   */
+  requeue(runId: string, agentId: string, envelopeId: string): boolean {
+    const r = this.db.prepare(`UPDATE queue SET status = 'pending' WHERE run_id = ? AND agent_id = ? AND envelope_id = ? AND status IN ('failed', 'skipped')`).run(runId, agentId, envelopeId);
+    return r.changes > 0;
+  }
+
   queueCounts(runId: string): Record<QueueStatus, number> {
     const rows = this.db.prepare(`SELECT status, COUNT(*) AS n FROM queue WHERE run_id = ? GROUP BY status`).all(runId) as { status: QueueStatus; n: number }[];
     const out: Record<QueueStatus, number> = { pending: 0, done: 0, failed: 0, quarantined: 0, skipped: 0 };

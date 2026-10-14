@@ -17,6 +17,7 @@ export interface DemoKernelOptions {
   readonly onInvoke?: SupervisorDeps['onInvoke'];
   readonly afterStep?: SupervisorDeps['afterStep'];
   readonly pauseBefore?: SupervisorDeps['pauseBefore'];
+  readonly beforeFinish?: SupervisorDeps['beforeFinish'];
 }
 
 /** Wires the demo pipeline end to end; the CLI and the kernel tests both use it. */
@@ -42,6 +43,7 @@ export function demoKernel(o: DemoKernelOptions = {}) {
     ...(o.onInvoke ? { onInvoke: o.onInvoke } : {}),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
     ...(o.pauseBefore ? { pauseBefore: o.pauseBefore } : {}),
+    ...(o.beforeFinish ? { beforeFinish: o.beforeFinish } : {}),
   });
   return { store, registry, compiled, supervisor, policy, policyHash: pHash };
 }
