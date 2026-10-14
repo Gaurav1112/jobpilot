@@ -357,3 +357,24 @@ read); session-browse of any marketplace.
   as its own first task (plan Task 0) with new golden cases; the existing eligibility eval (n=192)
   must stay at 1.000 apart from the cases this decision deliberately flips, each listed in the
   task.
+
+## 14. freelance-boost (2026-10-14, user-approved scope)
+
+Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/freelance-boost-report.md`.
+
+- **Parsing fixes.** Hours ranges accept "–", "—" and "to" ("10–39 hours per week" is 10–39, not 39). Boards gigs read
+  pay from the posting text with the same PAY rule (labelled `budget.from: description`; an annual salary is still no
+  budget). "Upto $X/hr" / "up to $X per hour" is a stated ceiling (`budget.bound: ceiling`, rate method
+  `stated-ceiling`): below the floor it rejects, at or above it is review `ceiling-only`; it never passes alone. A
+  ceiling repeating the top of the one stated range yields to the range; "ranges from $A–$B" is a closed range.
+- **D3 (user, 2026-10-14), the one rule change.** A Freelancer.com hourly contract whose stated rate after FX reaches
+  `rateFloorUsdHour` and whose text states no per-week hours (and no full-time wording tied to it) goes to Contracts
+  with the note "hours not stated; you set them". Kept as they were (user): presets under the budget floor stay in
+  review; boards postings with no pay stay in review.
+- **Source 7b, `src-himalayas-gigs`.** Himalayas' public JSON API, one search per freelance keyword,
+  `employment_type=Contractor,Part Time&country=India`, page 1 only (its robots.txt body disallows `/jobs*&page=`),
+  structured hourly/monthly pay labelled `from: platform`, link back to the Himalayas page, its own team.
+- **Ranking.** Default freelance keywords are backend/AI terms (no `react`, `python`); a Freelancer gig whose skill
+  tags are all off-stack loses 10 fit points (`stack:off`); lists sort by `maxUsdH × fit` after the red-flag rule.
+- **Networks.** A catalogue of 13 networks (India eligibility, rates, hours, link, recommended order; Lemon.io not open
+  to India) joined to `pack/networks/` by id; one-click "Mark applied", logged as `network.status`.
