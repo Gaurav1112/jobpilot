@@ -903,9 +903,9 @@ function pinpoint(raw: RawPosting, r: Rec): Posting {
   });
 }
 
-/** Rippling: only the `workLocation.label` (a state code, a city, "Remote (Dallas, Texas, US)"); a country is never invented from it. */
+/** Rippling: the `workLocation.label`s of every entry the job is listed under (a state code, a city, "Remote (Dallas, Texas, US)"); a country is never invented from them. */
 function rippling(raw: RawPosting, r: Rec): Posting {
-  return smallPosting(raw, 'rippling', { title: r.title, url: r.url, places: [joinUnique([r.location], ', ')], structured: null, employmentType: null, description: '', postedAt: null });
+  return smallPosting(raw, 'rippling', { title: r.title, url: r.url, places: arr(r.locations).map(str).filter((x): x is string => x !== null).map(oneLine), structured: null, employmentType: null, description: '', postedAt: null });
 }
 
 const GEM_WORKPLACE: Readonly<Record<string, Remote['structured']>> = { remote: 'remote', hybrid: 'hybrid', onsite: 'onsite', 'on-site': 'onsite', in_office: 'onsite' };

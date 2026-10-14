@@ -39,7 +39,7 @@ interface Row {
   readonly boardUrl: string;
   readonly file: string;
   readonly n: number;
-  /** Distinct ids among the n entries (the recorded Rippling feed lists one uuid twice). */
+  /** Distinct ids among the n entries when fewer (none of the recorded feeds now). */
   readonly kept?: number;
   readonly firstId: string;
   readonly documented: boolean;
@@ -56,7 +56,7 @@ const ROWS: readonly Row[] = [
   { fb: byName('bamboohr'), ref: 'rednucleus', host: 'rednucleus.bamboohr.com', url: 'https://rednucleus.bamboohr.com/careers/list', boardUrl: 'https://rednucleus.bamboohr.com/careers/list', file: 'bamboohr-rednucleus.json', n: 5, firstId: 'rednucleus:546', documented: false, name: null, robots: 'robots-bamboohr.txt' },
   { fb: byName('breezy'), ref: 'breezy', host: 'breezy.breezy.hr', url: 'https://breezy.breezy.hr/json', boardUrl: 'https://breezy.breezy.hr/json', file: 'breezy-breezy.json', n: 3, firstId: '98323abf2296', documented: false, name: 'MS Breezy Trial', robots: 'robots-breezy.txt' },
   { fb: byName('pinpoint'), ref: 'grasshopper', host: 'grasshopper.pinpointhq.com', url: 'https://grasshopper.pinpointhq.com/postings.json', boardUrl: 'https://grasshopper.pinpointhq.com/postings.json', file: 'pinpoint-grasshopper.json', n: 2, firstId: '540608', documented: true, name: null },
-  { fb: byName('rippling'), ref: 'rippling', host: 'api.rippling.com', url: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', boardUrl: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', file: 'rippling-rippling.json', n: 8, kept: 7, firstId: 'ef0b7266-678c-4a23-a439-1a5e7362b604', documented: false, name: null, robots: 'robots-rippling.txt' },
+  { fb: byName('rippling'), ref: 'rippling', host: 'api.rippling.com', url: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', boardUrl: 'https://api.rippling.com/platform/api/ats/v1/board/rippling/jobs', file: 'rippling-rippling.json', n: 7, firstId: 'ef0b7266-678c-4a23-a439-1a5e7362b604', documented: false, name: null, robots: 'robots-rippling.txt' },
   { fb: byName('gem'), ref: 'gem', host: 'api.gem.com', url: 'https://api.gem.com/job_board/v0/gem/job_posts/', boardUrl: 'https://api.gem.com/job_board/v0/gem/job_posts/', file: 'gem-gem.json', n: 2, firstId: '4965519002', documented: true, name: null, robots: 'robots-gem.txt' },
 ];
 const STRICT = ROWS.filter((r) => !r.documented);
@@ -346,6 +346,23 @@ describe('shapes: a page-level problem fails the company (input_rejected), a mal
     // an empty feed is a board with no jobs, not a problem
     const q = page(row, '[]');
     await expect(q.p).resolves.toEqual([]);
+  });
+
+  it('Rippling lists a job once per location: the entries of one uuid are one posting with every location (a Bangalore entry after others still counts)', async () => {
+    const row = ROWS.find((r) => r.fb.spec.platform === 'rippling') as Row;
+    const page0 = row.fb.spec.parse(fx(row.file), 'rippling', REC());
+    // the recorded feed: 8 entries, 7 jobs; the Orlando / Jacksonville job is listed under both places
+    expect(page0.listed).toBe(8);
+    const two = page0.postings.find((p) => p.sourceId === 'f6253878-a8c0-43f8-adac-00b4a4885258') as RawPosting;
+    expect((two.raw as { locations: string[] }).locations).toEqual(['Jacksonville, FL', 'Orlando, FL']);
+    expect(normalize(two).locationText).toBe('Jacksonville, FL; Orlando, FL');
+    const e = (label: string) => ({ uuid: '11111111-2222-3333-4444-555555555555', name: 'Senior Software Engineer', url: 'https://ats.rippling.com/a/jobs/1', workLocation: { label, id: label } });
+    const { p } = page(row, JSON.stringify([e('Remote (Paris, France)'), e('Bengaluru, India'), e('Bengaluru, India')]));
+    const out = await p;
+    expect(out).toHaveLength(1);
+    const posting = normalize(out[0] as RawPosting);
+    expect(posting.locationText).toBe('Remote (Paris, France); Bengaluru, India');
+    expect(posting.remote.countries).toEqual(expect.arrayContaining(['india']));
   });
 
   it('an entry the platform lists twice is one posting (the first)', async () => {

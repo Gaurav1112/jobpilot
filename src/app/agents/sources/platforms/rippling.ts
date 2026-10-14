@@ -12,9 +12,13 @@ import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, textOf, zodWhy,
  * eligibility judges the title, department and location label.
  *
  * Response: a JSON array; anything else is a page-level problem. An entry needs a `uuid`, a `name` and a `url`, else it
- * is skipped with a note. `raw` (normalizer mapper `rippling`): `{ uuid, title, url, department, location }` (the
- * `workLocation.label`, which can be a state code or a city: "AR", "Louisville, KY", "Remote (Dallas, Texas, US)"; a
- * country is never invented from it). `sourceId` = the uuid.
+ * is skipped with a note. The list has ONE ENTRY PER LOCATION: a job open in several places is listed once for each,
+ * with the same uuid (seen live: Rippling's board has 614 entries for 355 jobs, one job in 20 places). Entries sharing a
+ * uuid are one posting, whose locations are all their labels in feed order (so a job listed in "Bangalore, India" among
+ * other places is read as located there, never judged by its first location only). `raw` (normalizer mapper
+ * `rippling`): `{ uuid, title, url, department, locations }`, `locations` the distinct `workLocation.label`s, each of
+ * which can be a state code or a city: "AR", "Louisville, KY", "Remote (Dallas, Texas, US)"; a country is never invented
+ * from them. `sourceId` = the uuid.
  */
 
 export const RIPPLING_HOST = 'api.rippling.com';
@@ -48,12 +52,22 @@ export function parseRippling(body: string, slug: string, req: { company: string
   if (!Array.isArray(json)) throw feedProblem(what, 'response shape is not valid (root: expected a list of jobs)');
   const postings: RawPosting[] = [];
   const malformed: string[] = [];
+  const byUuid = new Map<string, { posting: RawPosting; locations: string[] }>();
   json.forEach((e: unknown, i) => {
     const r = Entry.safeParse(e);
     if (!r.success) return void malformed.push(`entry ${i}: ${zodWhy(r.error)}`);
     const d = r.data;
-    const raw = { uuid: d.uuid, title: d.name.trim(), url: httpsUrl(d.url), department: textOf(d.department?.label), location: textOf(d.workLocation?.label) };
-    postings.push({ source: 'rippling', sourceId: d.uuid, company: req.company, slug: req.slug, raw });
+    const label = textOf(d.workLocation?.label);
+    const had = byUuid.get(d.uuid);
+    if (had !== undefined) {
+      if (label !== null && !had.locations.includes(label)) had.locations.push(label);
+      return;
+    }
+    const locations = label === null ? [] : [label];
+    const raw = { uuid: d.uuid, title: d.name.trim(), url: httpsUrl(d.url), department: textOf(d.department?.label), locations };
+    const posting: RawPosting = { source: 'rippling', sourceId: d.uuid, company: req.company, slug: req.slug, raw };
+    byUuid.set(d.uuid, { posting, locations });
+    postings.push(posting);
   });
   return { postings, malformed, listed: json.length, names: [], total: null };
 }
