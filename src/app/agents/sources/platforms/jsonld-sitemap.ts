@@ -4,7 +4,7 @@ import { KernelError } from '../../../../kernel/errors.js';
 import { isSitemapIndex, sitemapLocs } from '../../../text/sitemap.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { careersSourceId } from '../careers.js';
-import { getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing } from './pages.js';
+import { getListing, looksLikeSitemap, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing } from './pages.js';
 import { memoryPageLedger, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 import type { SrcPageOptions } from './icims.js';
 
@@ -124,7 +124,7 @@ export async function fetchJsonLdListing(http: HttpTool, hosts: PlatformHosts, b
   const read = async (url: string): Promise<{ url: string; body: string } | null> => {
     requests++;
     try {
-      return await getListing(http, hosts, url, what, sameHost(b.host), timeoutMs);
+      return await getListing(http, hosts, url, what, sameHost(b.host), looksLikeSitemap, timeoutMs);
     } catch (e) {
       if (e instanceof KernelError && e.code === 'gone') return null;
       throw e;

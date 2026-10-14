@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { KernelError } from '../kernel/errors.js';
 import { EIGHTFOLD_V2_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
 import { ORACLE_MIN_INTERVAL_MS, type OracleHosts } from './agents/sources/platforms/oracle.js';
@@ -25,13 +26,30 @@ import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/ro
  * - Each board's discovery (facet scopes, an API flavour) is kept for the run only, never persisted: a retry of the
  *   company skips it, the next run discovers again.
  */
-export function dailyPlatformHosts<S>(o: { readonly minIntervalMs: number; readonly unreadableRobots?: 'refuse' | 'allow' }): PlatformHosts<S> {
-  const robots = new Map<string, Promise<RobotsVerdict>>();
+export function dailyPlatformHosts<S>(o: {
+  readonly minIntervalMs: number;
+  readonly unreadableRobots?: 'refuse' | 'allow';
+  /**
+   * A robots.txt that never arrives (network, timeout): `fail` (the default) fails the step, uncached, so its retry asks
+   * again; `unavailable` (the page adapters, Task 8 fix round 2) is the verdict `robots-unavailable` for the run, a
+   * named skip like any other unreadable robots.txt.
+   */
+  readonly unreachableRobots?: 'fail' | 'unavailable';
+}): PlatformHosts<S> {
+  const robots = new Map<string, Promise<{ verdict: RobotsVerdict; hash: string }>>();
   const disabled = new Map<string, string>();
   const scopes = new Map<string, S>();
 
-  async function verdictOf(host: string, http: HttpTool): Promise<RobotsVerdict> {
-    const r = await http.getPage(`https://${host}/robots.txt`, { minIntervalMs: o.minIntervalMs });
+  async function verdictOf(host: string, http: HttpTool): Promise<{ verdict: RobotsVerdict; hash: string }> {
+    let r: { status: number; body: string };
+    try {
+      r = await http.getPage(`https://${host}/robots.txt`, { minIntervalMs: o.minIntervalMs });
+    } catch (e) {
+      if (o.unreachableRobots === 'unavailable' && e instanceof KernelError && (e.code === 'network' || e.code === 'timeout')) {
+        return { verdict: { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt unreachable (${e.code})` }, hash: `unreachable:${e.code}` };
+      }
+      throw e;
+    }
     if (isChallenge(r.status, r.body)) {
       disabled.set(host, 'challenge');
       throw new KernelError('challenged', `${host} answered its robots.txt with a challenge page (${r.status}): the host is disabled for this run, never retried around`);
@@ -40,11 +58,12 @@ export function dailyPlatformHosts<S>(o: { readonly minIntervalMs: number; reado
       disabled.set(host, 'http-429');
       throw new KernelError('rate_limit', `429 from ${host} for robots.txt: the host is disabled for this run`);
     }
-    if (o.unreadableRobots === 'allow' && (r.status === 401 || r.status === 403)) return { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` };
-    return robotsVerdictOf(r.status, r.body);
+    const hash = createHash('sha256').update(`${r.status}\n${r.body}`).digest('hex').slice(0, 16);
+    if (o.unreadableRobots === 'allow' && (r.status === 401 || r.status === 403)) return { verdict: { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` }, hash };
+    return { verdict: robotsVerdictOf(r.status, r.body), hash };
   }
 
-  function cached(host: string, http: HttpTool): Promise<RobotsVerdict> {
+  function cached(host: string, http: HttpTool): Promise<{ verdict: RobotsVerdict; hash: string }> {
     let p = robots.get(host);
     if (p === undefined) {
       p = verdictOf(host, http);
@@ -57,12 +76,16 @@ export function dailyPlatformHosts<S>(o: { readonly minIntervalMs: number; reado
 
   return {
     async robots(host, path, http) {
-      return robotsDenial(await cached(host, http), new URL(`https://${host}${path}`));
+      return robotsDenial((await cached(host, http)).verdict, new URL(`https://${host}${path}`));
     },
     // Task 8: the generic adapter may read the sitemaps robots.txt names (the same cached fetch)
     async sitemaps(host, http) {
-      const v = await cached(host, http);
+      const v = (await cached(host, http)).verdict;
       return v.kind === 'rules' ? v.robots.sitemaps : [];
+    },
+    // Task 8 fix round 2: a fingerprint of the robots.txt answer, so a page it denied is planned again when it changes
+    async robotsHash(host, http) {
+      return (await cached(host, http)).hash;
     },
     scopes,
     disabledWhy: (host) => disabled.get(host),
@@ -93,10 +116,10 @@ export function dailyOracleHosts(): OracleHosts {
 /**
  * A page adapter's host state (Task 8: iCIMS, SuccessFactors, SmartRecruiters, jsonld-sitemap): the strict page rule,
  * robots.txt at the 2 s page spacing, a 401/403 robots.txt refuses (never `unreadableRobots`), the sitemaps robots.txt
- * names readable by the generic adapter.
+ * names readable by the generic adapter; an unreachable robots.txt is `robots-unavailable` (a named skip, fix round 2).
  */
 export function dailyPageHosts(): PlatformHosts<never> {
-  return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS });
+  return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS, unreadableRobots: 'refuse', unreachableRobots: 'unavailable' });
 }
 
 /** What `appPageState` needs of the app store (its `platform_pages` table, migration 11). */

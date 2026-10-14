@@ -163,7 +163,8 @@ describe('iCIMS: sitemap → job pages → JSON-LD', () => {
     const h = harness(srcIcimsContract, ICIMS_EGRESS, [ICIMS], routes({ [`${IC}/robots.txt`]: { status: 200, body: robots } }));
     expect(await runAgent(makeSrcIcims({ hosts: dailyPlatformHosts({ minIntervalMs: 2000 }), maxPages: 2 }), req('icims', ICIMS, 'Atlassian'), h.ctx)).toEqual([]);
     expect(h.calls).toEqual([`${IC}/robots.txt`, `${IC}/sitemap.xml`]);
-    expect(h.skipped).toContainEqual(expect.stringMatching(new RegExp(`^robots-disallow ${ICIMS.replaceAll('.', '\\.')}: 2 job pages of Atlassian not read \\(robots-disallow /jobs/`)));
+    // fix round 2: every denied page leaves the plan without spending the budget, so all 24 title-passing pages are named
+    expect(h.skipped).toContainEqual(expect.stringMatching(new RegExp(`^robots-disallow ${ICIMS.replaceAll('.', '\\.')}: 24 job pages of Atlassian not read \\(robots-disallow /jobs/`)));
   });
 
   it('a missing sitemap is gone (never a breaker); a 429 on it disables the host, named, Retry-After never honoured', async () => {
@@ -506,5 +507,81 @@ describe('verifier clients: the listing once, at least one job URL, one job page
     expect(read.jobs).toEqual([]);
     expect(h.calls).toHaveLength(2);
     void fetchIcimsListing;
+  });
+});
+
+describe('fix round 2', () => {
+  it('mutant M22: the SmartRecruiters title pre-filter runs before the budget (a failing title is never fetched, and named)', async () => {
+    const listing = `<a href="/BoschGroup/744000100000009-senior-software-engineer">a</a><a href="/BoschGroup/744000100000010-qa-intern">b</a>`;
+    const routes: Record<string, Route> = {
+      [`${JOBS}/robots.txt`]: { status: 404, body: 'nf' },
+      [`${JOBS}/BoschGroup`]: { status: 200, body: listing },
+      [`${JOBS}/BoschGroup/744000100000009-senior-software-engineer`]: { status: 200, body: ld({ title: 'Senior Software Engineer', description: 'x' }) },
+    };
+    const h = harness(srcSmartRecruitersContract, SR_EGRESS, SR_HOSTS, routes);
+    expect((await runAgent(makeSrcSmartRecruiters({ hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) }), req('smartrecruiters', 'BoschGroup', 'Bosch'), h.ctx)).map((p) => p.sourceId)).toEqual(['744000100000009']);
+    expect(h.calls.some((c) => c.includes('qa-intern'))).toBe(false);
+    expect(h.skipped).toEqual(['title-prefilter Bosch: 1 of 2 listed jobs not fetched (the title pre-filter)']);
+  });
+
+  it('minor 3: a SmartRecruiters listing that loads a captcha script but lists job links is read, not a challenge', async () => {
+    const listing = `<script src="https://www.google.com/recaptcha/api.js"></script><a href="/BoschGroup/744000100000009-senior-software-engineer">a</a>`;
+    const h = harness(srcSmartRecruitersContract, SR_EGRESS, SR_HOSTS, { [`${JOBS}/robots.txt`]: { status: 404 }, [`${JOBS}/BoschGroup`]: { status: 200, body: listing }, [`${JOBS}/BoschGroup/744000100000009-senior-software-engineer`]: { status: 200, body: ld({ title: 'Senior Software Engineer', description: 'x' }) } });
+    expect(await runAgent(makeSrcSmartRecruiters({ hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) }), req('smartrecruiters', 'BoschGroup', 'Bosch'), h.ctx)).toHaveLength(1);
+  });
+
+  it('mutant M23: the jsonld-sitemap title pre-filter runs before the budget', async () => {
+    const sm = `<urlset><url><loc>${OK}/careers/senior-software-engineer-1/</loc></url><url><loc>${OK}/careers/account-executive-2/</loc></url></urlset>`;
+    const h = harness(srcJsonLdContract, JSONLD_EGRESS, [OKTA], { [`${OK}/robots.txt`]: { status: 404 }, [`${OK}/sitemap.xml`]: { status: 200, body: sm }, [`${OK}/careers/senior-software-engineer-1/`]: { status: 200, body: ld({ title: 'Senior Software Engineer', description: 'x' }) } });
+    expect(await runAgent(makeSrcJsonLd({ hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) }), req('jsonld-sitemap', OKTA, 'Okta'), h.ctx)).toHaveLength(1);
+    expect(h.calls.some((c) => c.includes('account-executive'))).toBe(false);
+    expect(h.skipped).toEqual(['title-prefilter Okta: 1 of 2 listed jobs not fetched (the title pre-filter)']);
+  });
+
+  it('mutant M29: a 429 on sitemal.xml disables the host (named, never retried around); a sibling is deferred without a request', async () => {
+    const hosts = dailyPlatformHosts({ minIntervalMs: 2000 });
+    const h = harness(srcSuccessFactorsContract, SF_EGRESS, [HCL], { [`${SF}/robots.txt`]: { status: 404 }, [`${SF}/sitemal.xml`]: { status: 429, body: 'slow down', headers: { 'retry-after': '600' } } });
+    await expect(runAgent(makeSrcSuccessFactors({ hosts }), req('successfactors', HCL, 'HCLTech'), h.ctx)).rejects.toMatchObject({ code: 'rate_limit' });
+    expect(hosts.disabledWhy(HCL)).toBe('http-429');
+    const again = harness(srcSuccessFactorsContract, SF_EGRESS, [HCL], {});
+    await expect(runAgent(makeSrcSuccessFactors({ hosts }), req('successfactors', HCL, 'HCLTech'), again.ctx)).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-429 on /) });
+    expect(again.calls).toEqual([]);
+  });
+
+  it('minor 5: a 2xx bot wall instead of the feed is a challenge (the host disabled), not "not a sitemal feed"', async () => {
+    const hosts = dailyPlatformHosts({ minIntervalMs: 2000 });
+    const h = harness(srcSuccessFactorsContract, SF_EGRESS, [HCL], { [`${SF}/robots.txt`]: { status: 404 }, [`${SF}/sitemal.xml`]: { status: 200, body: '<html><head><title>Just a moment...</title></head><body>cf-chl</body></html>' } });
+    await expect(runAgent(makeSrcSuccessFactors({ hosts }), req('successfactors', HCL, 'HCLTech'), h.ctx)).rejects.toMatchObject({ code: 'challenged' });
+    expect(hosts.disabledWhy(HCL)).toBe('challenge');
+  });
+
+  it('important 2: the sitemal parser is linear in the stream, an item never closed included (< 500 ms each)', () => {
+    const chunked = (total: number, size: number, prefix: string): number => {
+      const p = sitemalParser();
+      const filler = 'x'.repeat(size);
+      return time(() => {
+        p.feed(prefix);
+        for (let n = 0; n < total; n += size) p.feed(filler);
+        p.result();
+      });
+    };
+    expect(chunked(32 * MB, 16 * 1024, '<rss><channel><item><title>never closed')).toBeLessThan(500);
+    expect(chunked(MB, 64, '<rss><channel><item><description><![CDATA[')).toBeLessThan(500);
+    // a split end marker across chunks still closes the item
+    const p = sitemalParser();
+    for (const c of ['<rss><channel><it', 'em><title>A</title><link>https://a.test/job/101/</link></ite', 'm><item><title>B</title><link>https://a.test/job/102/</link></item', '>']) p.feed(c);
+    expect(p.result().items.map((i) => i.title)).toEqual(['A', 'B']);
+  });
+
+  it('minor 4: the verifier tries up to 3 listed job pages, in order, before failing (Okta lists stale 404s first)', async () => {
+    const c = platformClient('jsonld-sitemap')!;
+    const sm = (n: number) => `<urlset>${Array.from({ length: n }, (_, i) => `<url><loc>${OK}/careers/job-${i + 1}/</loc></url>`).join('')}</urlset>`;
+    const good = { status: 200, body: ld({ title: 'Engineer', description: 'x', hiringOrganization: { name: 'Okta, Inc.' } }) };
+    const ok = harness(srcJsonLdContract, JSONLD_EGRESS, [OKTA], { [`${OK}/robots.txt`]: { status: 404 }, [`${OK}/sitemap.xml`]: { status: 200, body: sm(4) }, [`${OK}/careers/job-3/`]: good });
+    await expect(c.readBoard(OKTA, ok.ctx.http!, { hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) })).resolves.toMatchObject({ boardName: 'Okta, Inc.' });
+    expect(ok.calls.filter((u) => u.includes('/careers/job-'))).toEqual([`${OK}/careers/job-1/`, `${OK}/careers/job-2/`, `${OK}/careers/job-3/`]);
+    const bad = harness(srcJsonLdContract, JSONLD_EGRESS, [OKTA], { [`${OK}/robots.txt`]: { status: 404 }, [`${OK}/sitemap.xml`]: { status: 200, body: sm(4) }, [`${OK}/careers/job-4/`]: good });
+    await expect(c.readBoard(OKTA, bad.ctx.http!, { hosts: dailyPlatformHosts({ minIntervalMs: 2000 }) })).rejects.toMatchObject({ code: 'invalid_output', message: expect.stringMatching(/no valid JobPosting on 3 job pages/) });
+    expect(bad.calls.some((u) => u.endsWith('/careers/job-4/'))).toBe(false);
   });
 });

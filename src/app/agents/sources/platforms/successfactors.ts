@@ -1,7 +1,7 @@
 import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/agent.js';
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
-import { isChallenge } from '../../../challenge.js';
+import { hasChallengeMarker, isChallenge } from '../../../challenge.js';
 import { decodeEntities } from '../../../text/html.js';
 import { countriesIn } from '../../../text/norm.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
@@ -120,45 +120,74 @@ function parseItem(t: string): SitemalItem | null {
 }
 
 /**
- * The streaming parser of a sitemal feed: `feed` each decoded chunk as it arrives, `result` at the end. Linear: the
- * buffer holds at most one unfinished item; `<item>` and `</item>` are found by forward searches that resume where the
- * last one stopped; each finished item is parsed once and dropped from the buffer.
+ * The streaming parser of a sitemal feed: `feed` each decoded chunk as it arrives, `result` at the end. Linear in the
+ * stream (fix round 2): each chunk is searched once, with only a few characters carried over so a marker split across
+ * chunks (`<it|em>`, `</ite|m>`) is still found; an unfinished item is kept as a list of chunks and joined once, when its
+ * `</item>` arrives. A never-closed item is never searched again from its start.
  */
-export function sitemalParser(): { feed(text: string): void; result(): SitemalResult; count(): number } {
-  let buf = '';
-  let scanFrom = 0;
+export function sitemalParser(): { feed(text: string): void; result(): SitemalResult; count(): number; head(): string } {
+  const OPEN = '<item>';
+  const CLOSE = '</item>';
   let head = '';
   const items: SitemalItem[] = [];
   let malformed = 0;
-  const drain = (): void => {
-    for (;;) {
-      const s = buf.indexOf('<item>');
-      if (s < 0) {
-        buf = buf.slice(Math.max(0, buf.length - 5));
-        scanFrom = 0;
-        return;
-      }
-      const e = buf.indexOf('</item>', Math.max(s + 6, scanFrom));
-      if (e < 0) {
-        buf = buf.slice(s);
-        scanFrom = Math.max(6, buf.length - 6);
-        return;
-      }
-      const item = parseItem(buf.slice(s + 6, e));
-      if (item === null) malformed++;
-      else items.push(item);
-      buf = buf.slice(e + 7);
-      scanFrom = 0;
-    }
+  let inItem = false;
+  /** Outside an item: the last characters seen (a split `<item>`). */
+  let carry = '';
+  /** Inside an item: its text so far, in chunks, and the last characters of it (a split `</item>`). */
+  let parts: string[] = [];
+  let tail = '';
+  const close = (text: string): void => {
+    const item = parseItem(text);
+    if (item === null) malformed++;
+    else items.push(item);
   };
   return {
-    feed(text) {
-      if (head.length < 4096) head += text.slice(0, 4096 - head.length);
-      buf += text;
-      drain();
+    feed(chunk) {
+      if (head.length < 4096) head += chunk.slice(0, 4096 - head.length);
+      let text = chunk;
+      while (text !== '') {
+        if (!inItem) {
+          const s = carry + text;
+          const i = s.indexOf(OPEN);
+          if (i < 0) {
+            carry = s.slice(-(OPEN.length - 1));
+            return;
+          }
+          inItem = true;
+          parts = [];
+          tail = '';
+          carry = '';
+          text = s.slice(i + OPEN.length);
+          continue;
+        }
+        const s = tail + text;
+        const i = s.indexOf(CLOSE);
+        if (i < 0) {
+          parts.push(text);
+          tail = s.slice(-(CLOSE.length - 1));
+          return;
+        }
+        // the end marker begins `i - tail.length` characters into this chunk (negative: inside the kept tail)
+        const at = i - tail.length;
+        let body: string;
+        if (at >= 0) {
+          parts.push(text.slice(0, at));
+          body = parts.join('');
+        } else {
+          const joined = parts.join('');
+          body = joined.slice(0, joined.length + at);
+        }
+        close(body);
+        inItem = false;
+        parts = [];
+        tail = '';
+        text = text.slice(at + CLOSE.length);
+      }
     },
     result: () => ({ items: [...items], malformed, sawFeed: /<rss[\s>]|<channel[\s>]/iu.test(head) }),
     count: () => items.length,
+    head: () => head,
   };
 }
 
@@ -197,6 +226,11 @@ export async function readSitemal(http: HttpTool, hosts: PlatformHosts, host: st
   if (r.status < 200 || r.status >= 300) throw new KernelError('input_rejected', `successfactors ${company}: sitemal.xml answered ${r.status}${r.location === null ? '' : ` (to ${r.location.slice(0, 80)})`}; nothing read`);
   if (r.capped) throw new KernelError('input_rejected', `listing-cap ${company}: sitemal.xml passed its ${o.maxBytes}-byte cap; nothing read, never truncated`);
   const res = parser.result();
+  // a 2xx bot wall in place of the feed is a refusal, never "not a feed" (fix round 2)
+  if (!res.sawFeed && res.items.length === 0 && hasChallengeMarker(parser.head())) {
+    hosts.disable(host, 'challenge');
+    throw new KernelError('challenged', `${host} answered sitemal.xml with a challenge page (${r.status}): the host is disabled for this run, never retried around`);
+  }
   if (!res.sawFeed && res.items.length === 0) throw new KernelError('input_rejected', `successfactors ${company}: sitemal.xml is not a sitemal feed (no <rss> or <channel>); nothing read`);
   if (res.items.length === 0 && res.malformed > 0 && !r.stopped) throw new KernelError('input_rejected', `successfactors ${company}: all ${res.malformed} sitemal items lack a title or a link; nothing read`);
   return res;

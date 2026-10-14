@@ -97,7 +97,10 @@ export function srJobs(html: string, company: string, pageUrl: string): PageList
 /** The company's listing (robots.txt first; one redirect to careers.smartrecruiters.com, after its robots.txt), as its jobs. */
 export async function fetchSrListing(http: HttpTool, hosts: PlatformHosts, company: string, timeoutMs?: number): Promise<PageListing> {
   const sameCompany = (u: URL): boolean => onSr(u) && u.pathname.split('/').filter((x) => x !== '')[0]?.toLowerCase() === company.toLowerCase();
-  const page = await getListing(http, hosts, srListingUrl(company), `smartrecruiters ${company}`, sameCompany, timeoutMs);
+  // a listing's expected content is a job link of the company (for the challenge check)
+  const marker = `/${company.toLowerCase()}/`;
+  const hasJobLink = (body: string): boolean => anchorHrefs(body).some((h) => h.toLowerCase().includes(marker));
+  const page = await getListing(http, hosts, srListingUrl(company), `smartrecruiters ${company}`, sameCompany, hasJobLink, timeoutMs);
   return srJobs(page.body, company, page.url);
 }
 

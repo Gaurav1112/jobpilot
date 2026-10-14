@@ -6,6 +6,7 @@ import {
   PAGE_MAX_FETCHES,
   PAGE_MAX_HOPS,
   PAGE_STALE_DAYS,
+  PAGE_STALE_RESERVE,
   planPages,
   readJobPages,
   slugTitle,
@@ -14,7 +15,7 @@ import {
 } from '../../src/app/agents/sources/platforms/pages.js';
 import { HostDisabled, HostRefused, memoryPageLedger, RobotsDenied, type PageLedger, type PlatformHosts } from '../../src/app/agents/sources/platforms/shared.js';
 import { isSitemapIndex, sitemapLocs } from '../../src/app/text/sitemap.js';
-import { dailyPlatformHosts } from '../../src/app/daily-hosts.js';
+import { dailyPageHosts } from '../../src/app/daily-hosts.js';
 import type { RawPosting } from '../../src/app/types.js';
 import type { AgentContext } from '../../src/kernel/agent.js';
 import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
@@ -112,7 +113,7 @@ const job = (n: string): ListedJob => ({ url: `https://jobs.acme.test/jobs/${n}`
 const rec = (fetchedOn: string): PageRecord => ({ fetchedOn, hash: 'h', raw: { url: 'x', title: 't', jsonLd: null } });
 
 describe('planPages: the fair daily rotation', () => {
-  it('never-fetched pages first in sitemap order, then stale ones oldest first (ties by URL); fresh ones are kept', () => {
+  it(`stale pages first up to the stale reserve (${PAGE_STALE_RESERVE}), then never-fetched in sitemap order, then the other stale ones, oldest first, ties by URL; fresh ones are kept`, () => {
     const jobs = ['u3', 'u1', 'u5', 'u2', 'u4', 'u6'].map(job);
     const records = new Map<string, PageRecord>([
       [job('u1').url, rec('2026-10-01')],
@@ -121,12 +122,26 @@ describe('planPages: the fair daily rotation', () => {
       [job('u6').url, rec('2026-09-30')],
     ]);
     const p = planPages(jobs, records, '2026-10-14', 4);
-    expect(p.fetch.map((j) => j.sourceId)).toEqual(['u3', 'u5', 'u4', 'u6']);
-    expect(p.keep.map((j) => j.sourceId).sort()).toEqual(['u1', 'u2']);
-    expect(p).toMatchObject({ queuedNew: 0, queuedStale: 1 });
+    // fix round 2: the 3 stale pages fit the reserve, so they come first
+    expect(p.fetch.map((j) => j.sourceId)).toEqual(['u4', 'u6', 'u1', 'u3']);
+    expect(p.keep.map((j) => j.sourceId).sort()).toEqual(['u2']);
+    expect(p).toMatchObject({ queuedNew: 1, queuedStale: 0 });
     const q = planPages(jobs, records, '2026-10-14', 1);
-    expect(q.fetch.map((j) => j.sourceId)).toEqual(['u3']);
-    expect(q).toMatchObject({ queuedNew: 1, queuedStale: 3 });
+    expect(q.fetch.map((j) => j.sourceId)).toEqual(['u4']);
+    expect(q).toMatchObject({ queuedNew: 2, queuedStale: 2 });
+    expect(q.order.map((j) => j.sourceId)).toEqual(['u4', 'u3', 'u5', 'u6', 'u1']);
+  });
+
+  it(`fix round 2: ${PAGE_STALE_RESERVE} of the ${PAGE_MAX_FETCHES} daily fetches are reserved for stale pages when there are any; without stale pages new ones take the whole budget`, () => {
+    const stale = Array.from({ length: 15 }, (_, i) => job(`s${String(i).padStart(2, '0')}`));
+    const fresh = Array.from({ length: 50 }, (_, i) => job(`n${String(i).padStart(2, '0')}`));
+    const records = new Map<string, PageRecord>(stale.map((j, i) => [j.url, rec(`2026-09-${String(10 + i).padStart(2, '0')}`)]));
+    const p = planPages([...fresh, ...stale], records, '2026-10-14', PAGE_MAX_FETCHES);
+    expect(p.fetch.slice(0, PAGE_STALE_RESERVE).map((j) => j.sourceId)).toEqual(stale.slice(0, PAGE_STALE_RESERVE).map((j) => j.sourceId));
+    expect(p.fetch.slice(PAGE_STALE_RESERVE).map((j) => j.sourceId)).toEqual(fresh.slice(0, PAGE_MAX_FETCHES - PAGE_STALE_RESERVE).map((j) => j.sourceId));
+    expect(p).toMatchObject({ queuedNew: 50 - (PAGE_MAX_FETCHES - PAGE_STALE_RESERVE), queuedStale: 5 });
+    expect(planPages(fresh, new Map(), '2026-10-14', PAGE_MAX_FETCHES).fetch).toHaveLength(PAGE_MAX_FETCHES);
+    expect(PAGE_STALE_RESERVE).toBe(10);
   });
 
   it(`a page fetched ${PAGE_STALE_DAYS} days ago is still fresh; one day more is stale`, () => {
@@ -177,7 +192,7 @@ function harness(routes: Record<string, () => { status: number; text: () => Prom
   const skipped: string[] = [];
   const base = issueContext({ contract: probe, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock, signal: new AbortController().signal, hostPacer });
   const ctx = { ...base, skipped: (notes: readonly string[]) => void skipped.push(...notes) } as AgentContext;
-  return { ctx, calls, slept, skipped, hosts: dailyPlatformHosts<never>({ minIntervalMs: 2000 }) };
+  return { ctx, calls, slept, skipped, hosts: dailyPageHosts() };
 }
 
 const crawl = (h: ReturnType<typeof harness>, jobs: readonly ListedJob[], state = memoryPageState(), runDate = '2026-10-14', max = 2, ledger: PageLedger = memoryPageLedger()): Promise<RawPosting[]> =>
@@ -316,20 +331,91 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
     expect(h.hosts.disabledWhy('jobs.acme.test')).toBeUndefined();
   });
 
+  it('fix round 2: robots-disallowed pages spend no budget and leave the plan (the reviewer\'s probe: budget 2, two denied, then a good one)', async () => {
+    const state = memoryPageState();
+    const ledger = memoryPageLedger();
+    const jobs = [job('blocked-1'), job('blocked-2'), job('a')];
+    const h = harness(routes());
+    expect((await crawl(h, jobs, state, '2026-10-14', 2, ledger)).map((p) => p.sourceId)).toEqual(['a']);
+    expect(h.calls).toEqual([ROBOTS, job('a').url]);
+    expect(ledger.used('2026-10-14', 'icims jobs.acme.test')).toBe(1);
+    expect(h.skipped).toEqual(['robots-disallow jobs.acme.test: 2 job pages of Acme not read (robots-disallow /jobs/blocked-1)']);
+    // recorded: the next day they are not planned while robots.txt is unchanged (only robots.txt is asked, for its fingerprint)
+    const h2 = harness(routes());
+    expect((await crawl(h2, jobs, state, '2026-10-15', 2, ledger)).map((p) => p.sourceId)).toEqual(['a']);
+    expect(h2.calls).toEqual([ROBOTS]);
+    expect(h2.skipped).toEqual([]);
+    // robots.txt changed: planned again, and now fetched
+    const h3 = harness(routes({ [ROBOTS]: () => resp(200, 'User-agent: *\nDisallow: /nothing\n'), [job('blocked-1').url]: () => resp(200, page({ ...T, title: 'B1' })), [job('blocked-2').url]: () => resp(200, page({ ...T, title: 'B2' })) }));
+    expect((await crawl(h3, jobs, state, '2026-10-16', 2, ledger)).map((p) => p.sourceId)).toEqual(['a', 'blocked-1', 'blocked-2']);
+  });
+
+  it('fix round 2: a robots-denied page is evaluated again after the week even when robots.txt is unchanged', async () => {
+    const state = memoryPageState();
+    await crawl(harness(routes()), [job('blocked-1')], state, '2026-10-14');
+    const h = harness(routes());
+    await crawl(h, [job('blocked-1')], state, '2026-10-22');
+    expect(h.skipped).toEqual(['robots-disallow jobs.acme.test: 1 job pages of Acme not read (robots-disallow /jobs/blocked-1)']);
+  });
+
+  it('fix round 2: a non-404 4xx on a stale refetch keeps the good posting (retried next week); only 404/410 is gone', async () => {
+    const state = memoryPageState();
+    await crawl(harness(routes()), [job('a')], state, '2026-10-01');
+    const h = harness(routes({ [job('a').url]: () => resp(451, 'unavailable for legal reasons') }));
+    const out = await crawl(h, [job('a')], state, '2026-10-14');
+    expect(out.map((p) => (p.raw as { title: string }).title)).toEqual(['A']);
+    expect(h.skipped).toEqual(['page-error Acme: 1 job pages answered an error (a: 451)']);
+    expect(state.records('icims jobs.acme.test').get(job('a').url)).toMatchObject({ fetchedOn: '2026-10-14' });
+    // not fetched again the next day
+    const h2 = harness(routes());
+    expect((await crawl(h2, [job('a')], state, '2026-10-15')).map((p) => p.sourceId)).toEqual(['a']);
+    expect(h2.calls).toEqual([]);
+  });
+
+  it('fix round 2: a JobPosting without a description is not valid (schema.org and Google require it): named, never partially read', async () => {
+    const h = harness(routes({ [job('a').url]: () => resp(200, page({ title: 'A' })) }));
+    expect(await crawl(h, [job('a')])).toEqual([]);
+    expect(h.skipped).toEqual(['no-jobposting Acme: 1 job pages without a valid JobPosting (a: description: Invalid input: expected string, received undefined)']);
+  });
+
+  it('fix round 2: a small 2xx that loads a captcha script but carries the expected content is not a challenge', async () => {
+    const small = `<html><script src="https://www.google.com/recaptcha/api.js"></script>${ld({ '@type': 'JobPosting', ...T, title: 'A' })}</html>`;
+    const h = harness(routes({ [job('a').url]: () => resp(200, small) }));
+    expect((await crawl(h, [job('a')])).map((p) => p.sourceId)).toEqual(['a']);
+    const sitemap = harness(routes({ 'https://jobs.acme.test/sitemap.xml': () => resp(200, '<script>grecaptcha</script><urlset><url><loc>x</loc></url></urlset> captcha') }));
+    await expect(getRuledPage(sitemap.ctx.http!, sitemap.hosts as PlatformHosts, 'https://jobs.acme.test/sitemap.xml', { follow: () => true, expected: (b) => b.includes('<urlset') })).resolves.toMatchObject({ kind: 'ok' });
+    const wall = harness(routes({ 'https://jobs.acme.test/sitemap.xml': () => resp(200, '<html>captcha</html>') }));
+    await expect(getRuledPage(wall.ctx.http!, wall.hosts as PlatformHosts, 'https://jobs.acme.test/sitemap.xml', { follow: () => true, expected: (b) => b.includes('<urlset') })).rejects.toMatchObject({ code: 'challenged' });
+  });
+
+  it('fix round 2 (mutant M16): the SmartRecruiters API host is refused at run time, whatever builds it and whatever the egress allows', async () => {
+    const api = ['api', 'smartrecruiters', 'com'].join('.');
+    const calls: string[] = [];
+    const contract = defineContract({ ...probe, id: 'probe-api', egress: [api, 'jobs.acme.test'] });
+    const ctx = issueContext({ contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async (u) => (calls.push(u), resp(200, '{}')) }, clock: { now: () => '2026-10-14T01:30:00.000Z' }, signal: new AbortController().signal });
+    await expect(getRuledPage(ctx.http!, dailyPageHosts(), `https://${api}/v1/companies/BoschGroup/postings`, { follow: () => true })).rejects.toMatchObject({ code: 'policy_denied', message: expect.stringMatching(/never read/) });
+    expect(calls).toEqual([]);
+  });
+
   it('the strict robots rule: a 401/403 robots.txt refuses (robots-forbidden), a 5xx or other 4xx too (robots-unavailable), a 404 allows all', async () => {
+    // through dailyPageHosts itself, the daily wiring's host state (mutant M13: a lenient one fails here)
     for (const [status, reason] of [
       [403, 'robots-forbidden'],
       [401, 'robots-forbidden'],
       [500, 'robots-unavailable'],
+      [503, 'robots-unavailable'],
       [418, 'robots-unavailable'],
       [302, 'robots-unavailable'],
     ] as const) {
-      const h = harness(routes({ [ROBOTS]: () => resp(status, 'x') }));
+      const h = harness(routes({ [ROBOTS]: () => resp(status, 'x', status === 302 ? { location: 'https://other.test/robots.txt' } : {}) }));
       const answer = getRuledPage(h.ctx.http!, h.hosts as PlatformHosts, job('a').url, { follow: () => true });
       await expect(answer).rejects.toBeInstanceOf(RobotsDenied);
       await expect(answer).rejects.toMatchObject({ reason: reason });
       expect(h.calls).toEqual([ROBOTS]);
     }
+    // fix round 2: an unreachable robots.txt is robots-unavailable (a named skip), not a network failure of the step
+    const unreachable = harness({ [ROBOTS]: () => { throw new TypeError('fetch failed'); } });
+    await expect(getRuledPage(unreachable.ctx.http!, unreachable.hosts as PlatformHosts, job('a').url, { follow: () => true })).rejects.toMatchObject({ reason: 'robots-unavailable' });
     const ok = harness(routes({ [ROBOTS]: () => resp(404, 'nf') }));
     await expect(getRuledPage(ok.ctx.http!, ok.hosts as PlatformHosts, job('a').url, { follow: () => true })).resolves.toMatchObject({ kind: 'ok' });
   });

@@ -3,7 +3,7 @@ import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import { isSitemapIndex, sitemapLocs } from '../../../text/sitemap.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
-import { getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing, type PageState } from './pages.js';
+import { getListing, looksLikeSitemap, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing, type PageState } from './pages.js';
 import { memoryPageLedger, refusal, titlePackOf, type HttpTool, type PageLedger, type PlatformHosts } from './shared.js';
 
 /**
@@ -74,7 +74,7 @@ const sameHost = (host: string) => (u: URL): boolean => u.hostname.toLowerCase()
 
 /** The portal's sitemap (one request, robots.txt first), as its jobs. */
 export async function fetchIcimsListing(http: HttpTool, hosts: PlatformHosts, host: string, timeoutMs?: number): Promise<PageListing> {
-  const { body } = await getListing(http, hosts, icimsSitemapUrl(host), `icims ${host}`, sameHost(host), timeoutMs);
+  const { body } = await getListing(http, hosts, icimsSitemapUrl(host), `icims ${host}`, sameHost(host), looksLikeSitemap, timeoutMs);
   if (isSitemapIndex(body)) throw new KernelError('input_rejected', `icims ${host}: the sitemap is a sitemap index, which this adapter does not read; nothing read`);
   if (!/<urlset[\s>]/iu.test(body.slice(0, 4096))) throw new KernelError('input_rejected', `icims ${host}: sitemap.xml is not a sitemap; nothing read`);
   const jobs = icimsJobs(body, host);

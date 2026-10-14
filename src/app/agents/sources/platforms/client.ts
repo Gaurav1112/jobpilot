@@ -61,8 +61,8 @@ import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workda
  * The page adapters (Task 8) read PAGES, so robots.txt governs them under the strict page rule (a 401/403 robots.txt
  * refuses): `readBoard` reads the listing once (iCIMS: the portal sitemap; SmartRecruiters: the jobs.smartrecruiters.com
  * listing; jsonld-sitemap: the site's sitemaps), requires at least one job URL (none: 0 jobs, proposed, no page
- * fetched), then fetches ONE job page (the first listed) and requires a valid JobPosting (else `invalid_output`, a
- * failed verdict). The board name is that JobPosting's `hiringOrganization.name`, matched by the existing name rules;
+ * fetched), then fetches job pages in listing order, at most VERIFY_MAX_PAGES (3, fix round 2: a stale sitemap lists
+ * gone pages first), until one has a valid JobPosting (none: `invalid_output`, a failed verdict). The board name is that JobPosting's `hiringOrganization.name`, matched by the existing name rules;
  * without one, proposed. SuccessFactors is read the way its daily adapter reads it: `sitemal.xml` streamed only up to
  * its first item, within the policy's response cap, and no job page is fetched (the daily postings come from the feed
  * itself, not job pages; an accepted deviation from "one job page with a valid JobPosting", Task 8 fix round 1); the
@@ -324,7 +324,7 @@ async function pageRead(platform: string, ref: string, http: HttpTool, opts: Rea
     const jobs: RawPosting[] = l.jobs.map((j) => ({ source: platform, sourceId: j.sourceId, company: ref, slug: ref, raw: { url: j.url, title: j.title } }));
     const first = l.jobs[0];
     if (first === undefined) return { boardName: null, boardNames: [], jobs, complete: true, url, nameKey: null };
-    const ld = await readOneJobPage(http, hosts, first, follow, `${platform} ${ref}`, opts?.timeoutMs);
+    const ld = await readOneJobPage(http, hosts, l.jobs, follow, `${platform} ${ref}`, opts?.timeoutMs);
     const name = hiringOrganizationOf(ld);
     return { boardName: name, boardNames: name === null ? [] : [name], jobs, complete: true, url, nameKey: null };
   });
@@ -394,7 +394,10 @@ const PAGE_CLIENTS: Readonly<Record<string, PlatformClient>> = {
   },
 };
 
-/** The verifier's SuccessFactors read stops at the first item: well within the policy's response cap. */
+/**
+ * The verifier's SuccessFactors read stops at the first item, within the policy's response cap: it needs a
+ * `maxResponseBytes` of at least this (accepted, fix round 2; the product policy's is 16 MB).
+ */
 const VERIFY_STREAM_BYTES = 8 * 1024 * 1024;
 
 /** The board of a ref, or `invalid_output` naming the platform's ref shape. */

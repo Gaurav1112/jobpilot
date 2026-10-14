@@ -30,6 +30,8 @@ export interface PlatformHosts<S = unknown> {
   readonly scopes?: Map<string, S>;
   /** The `Sitemap:` URLs of the host's robots.txt (Task 8, the generic adapter), in file order; absent or empty: none known. */
   sitemaps?(host: string, http: HttpTool): Promise<readonly string[]>;
+  /** A fingerprint of the host's robots.txt answer (Task 8 fix round 2); absent: unknown. */
+  robotsHash?(host: string, http: HttpTool): Promise<string>;
 }
 
 /** robots.txt refuses the board's host or path. */
@@ -66,10 +68,18 @@ export class HostRefused extends Error {
 }
 
 /**
+ * Hosts no platform adapter may ever ask, checked at run time on every request (Task 8 fix round 2, mutant M16): the
+ * SmartRecruiters Posting API. Its name is assembled here so the `src/` grep test for it stays meaningful: no other
+ * source file may name it.
+ */
+const NEVER_READ: ReadonlySet<string> = new Set([['api', 'smartrecruiters', 'com'].join('.')]);
+
+/**
  * One request with the run's host rules: a disabled host is never asked; robots.txt is checked for the path (and
  * query); 401/403 → the host is disabled and `HostRefused`; 429 (the broker's `rate_limit`) → disabled, rethrown.
  */
 export async function hostRequest<R extends { status: number }>(http: HttpTool, hosts: PlatformHosts, host: string, url: string, send: () => Promise<R>): Promise<R> {
+  if (NEVER_READ.has(host.toLowerCase())) throw new KernelError('policy_denied', `${host} is never read (its robots.txt admits only LinkedInBot, spec D3), whatever builds the request`);
   const off = hosts.disabledWhy(host);
   if (off !== undefined) throw new HostDisabled(host, off);
   const u = new URL(url);
