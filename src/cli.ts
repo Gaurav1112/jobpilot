@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import { checkDrift, exportContracts } from './kernel/contracts-export.js';
 import { systemClock } from './kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from './kernel/policy.js';
@@ -34,6 +34,7 @@ import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './ap
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
 import { probeCommand } from './app/freelance/probe.js';
+import { coverageProbeCommand, parseDays } from './app/coverage/probe.js';
 import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app/freelance/mail/connect.js';
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
@@ -494,6 +495,24 @@ sources
         home: jobpilotHome(), repoRoot: root, json: o.json === true, ...(o.record !== undefined ? { record: o.record } : {}), force: o.force === true,
         clock: systemClock, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out: (l) => console.log(l),
       });
+    }),
+  );
+
+const coverage = program.command('coverage').description('Career-site coverage tools');
+coverage
+  .command('probe')
+  .description('Read-only, no network: companies by status and platform, the NEW jobs only the platform adapters found (not on any existing source) and how many pass your rules, and today\'s requests and the latest run\'s problems per platform. Takes the run lock; refuses while another jobpilot process holds it')
+  .option('--json', 'machine-readable output (documented in src/app/coverage/probe.ts, version 1)')
+  .option('--days <n>', 'the window for new jobs: the last <n> IST days by first seen (1 to 90, default 7)', (v: string) => {
+    try {
+      return parseDays(v);
+    } catch (e) {
+      throw new InvalidArgumentError((e as Error).message);
+    }
+  })
+  .action((o: { json?: boolean; days?: number }) =>
+    guarded(async () => {
+      process.exitCode = await coverageProbeCommand({ home: jobpilotHome(), json: o.json === true, ...(o.days !== undefined ? { days: o.days } : {}), clock: systemClock, out: (l) => console.log(l) });
     }),
   );
 
