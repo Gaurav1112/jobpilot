@@ -444,3 +444,33 @@ describe('projector: the plan\'s unplaced facts (Task 13)', () => {
     expect(app.getJob(p.jobKey)).toMatchObject({ unplaced: ['f-old-01', 'f-old-02'], terms: { covered: ['java'], missing: ['go'] } });
   });
 });
+
+describe('projector: the ATS job id (career-sites Task 10)', () => {
+  it('passes each posting\'s slug and ATS id: two careers entries of one company stating one id are one job, no collision note', () => {
+    const b = new RunBuilder();
+    const ref = { platform: 'greenhouse' as const, board: 'example-identity', id: '7001' };
+    const a = posting(1, { source: 'careers', ats: 'careers', sourceId: 'aaaa000000000001', company: 'Example Identity Co', slug: 'identity-careers', title: 'Backend Engineer', url: 'https://careers.identity.example/jobs/a?gh_jid=7001', atsRef: ref });
+    const c = posting(2, { source: 'careers', ats: 'careers', sourceId: 'aaaa000000000002', company: 'Example Identity Co', slug: 'identity-careers-eu', title: 'Backend Engineer (EU hub)', url: 'https://eu.identity.example/jobs/a?gh_jid=7001', atsRef: ref });
+    b.chain(a, 'eligible');
+    b.chain(c, 'eligible');
+    const app = AppStore.on(b.store);
+    const r = projectRun(b.store, app, RUN, OPTS);
+    expect(r.dedupeNotes).toEqual([]);
+    const shown = app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] });
+    expect(shown.map((j) => j.jobKey)).toEqual([[a.jobKey, c.jobKey].sort()[0]]);
+  });
+
+  it('one careers entry stating one id on two pages is a collision note, never a merge', () => {
+    const b = new RunBuilder();
+    const ref = { platform: 'greenhouse' as const, board: 'example-identity', id: '7001' };
+    const a = posting(1, { source: 'careers', ats: 'careers', sourceId: 'aaaa000000000001', company: 'Example Identity Co', slug: 'identity-careers', title: 'Backend Engineer', atsRef: ref });
+    const c = posting(2, { source: 'careers', ats: 'careers', sourceId: 'aaaa000000000002', company: 'Example Identity Co', slug: 'identity-careers', title: 'Backend Engineer (EU hub)', atsRef: ref });
+    b.chain(a, 'eligible');
+    b.chain(c, 'eligible');
+    const app = AppStore.on(b.store);
+    const r = projectRun(b.store, app, RUN, OPTS);
+    expect(r.dedupeNotes).toHaveLength(1);
+    expect(r.dedupeNotes[0]).toContain('ats-id-collision greenhouse:example-identity:7001: careers identity-careers lists it 2 times');
+    expect(app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] })).toHaveLength(2);
+  });
+});

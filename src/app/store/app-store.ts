@@ -262,8 +262,9 @@ interface LinkRowDb {
   ats_id: string | null;
   slug: string | null;
   company_norm: string | null;
+  notified_at: string | null;
 }
-const LINK_COLUMNS = `j.job_key, j.source, j.first_seen, j.dedupe_key, j.duplicate_of, a.platform, a.board, a.ats_id, a.slug, a.company_norm`;
+const LINK_COLUMNS = `j.job_key, j.source, j.first_seen, j.dedupe_key, j.duplicate_of, a.platform, a.board, a.ats_id, a.slug, a.company_norm, j.notified_at`;
 
 /**
  * The app catalogue, beside the kernel's tables in the same DB file.
@@ -501,6 +502,8 @@ export class AppStore {
         if (r.company_norm !== null) cq.push(r.company_norm);
       }
     };
+    // A row's old group is inside this closure: every link was made over the same two relations, and a write that
+    // changes a row's dedupe key or company seeds the old ones too (upsertJob, putAts).
     while (dq.length > 0 || cq.length > 0) {
       for (const d of dq.splice(0)) if (!doneDedupe.has(d)) (doneDedupe.add(d), add(byDedupe.all(d) as LinkRowDb[]));
       for (const c of cq.splice(0)) if (!doneCompany.has(c) && c !== '') (doneCompany.add(c), add(byCompany.all(c) as LinkRowDb[]));
@@ -515,10 +518,21 @@ export class AppStore {
     }));
     const { duplicateOf, notes } = linkJobs(linkRows, (companyNorm, platform) => this.registryBoards(companyNorm, platform));
     const set = this.db.prepare(`UPDATE jobs SET duplicate_of = ? WHERE job_key = ?`);
-    // the new primaries first, so no row ever points at a row that is itself a duplicate (the foreign key holds anyway)
+    // Fix round 1 (I2b): announced never regresses. A row whose group changes carries its old group's first
+    // announcement, so a job announced once is never announced again because of a re-link.
+    const announced = new Map<string, string>();
+    for (const r of rows.values()) {
+      const root = r.duplicate_of ?? r.job_key;
+      const was = announced.get(root);
+      if (r.notified_at !== null && (was === undefined || r.notified_at < was)) announced.set(root, r.notified_at);
+    }
+    const stamp = this.db.prepare(`UPDATE jobs SET notified_at = ? WHERE job_key = ? AND notified_at IS NULL`);
     for (const r of [...rows.values()].sort((a, b) => cmp(a.job_key, b.job_key))) {
       const dup = duplicateOf.get(r.job_key) ?? null;
-      if (dup !== r.duplicate_of) set.run(dup, r.job_key);
+      if (dup === r.duplicate_of) continue;
+      set.run(dup, r.job_key);
+      const was = announced.get(r.duplicate_of ?? r.job_key);
+      if (was !== undefined && r.notified_at === null) stamp.run(was, r.job_key);
     }
     return notes;
   }

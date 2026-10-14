@@ -41,9 +41,11 @@ interface Comp {
  * named notes of the ATS-id collisions it refused. Deterministic: it depends on the rows' fields, never their order.
  *
  * 1. **ATS id.** Rows of one company (`companyNorm`, the coverage name matcher's fixed normalisation; a generic name has
- *    none) with the same `<platform>:<board>:<id>` are one job. A board-less ref (a bare `gh_jid`) takes the company's
- *    one known board on that platform: the boards its other rows state plus `knownBoards` (the verified registry); with
- *    none or several it stays unmerged. Two rows from the SAME source and board with one key are a source bug, never
+ *    none) with the same `<platform>:<board>:<id>` are one job. A board-less ref (a bare `gh_jid`) takes the board of
+ *    the company's stored rows that carry this very id (Greenhouse ids are global): one board, that board; several, no
+ *    merge and an `ats-id-ambiguous` note. Only with no such row yet does it fall back to the company's one known board
+ *    on the platform (the boards its other rows state plus `knownBoards`, the verified registry); none or several:
+ *    unmerged. So a second board appearing later can never split a pair the stored row joined. Two rows from the SAME source and board with one key are a source bug, never
  *    hidden: no row of that key is merged, and an `ats-id-collision` note names them.
  * 2. **v1 dedupe key, unchanged.** In each dedupe group the preferred row (`preferred`) takes every row from another
  *    source. Such a link is refused when it would put two different ids of one platform board in one job (two openings
@@ -63,16 +65,42 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
     const k = `${r.ats.companyNorm}\u0000${r.ats.platform}`;
     boardsOf.set(k, (boardsOf.get(k) ?? new Set()).add(r.ats.board));
   }
+  // Fix round 1 (I2a): the boards whose stored rows carry each job id (Greenhouse job ids are global)
+  const idBoards = new Map<string, Set<string>>();
+  for (const r of sorted) {
+    if (r.ats === null || r.ats.board === null) continue;
+    const k = `${r.ats.companyNorm}\u0000${r.ats.platform}\u0000${r.ats.id}`;
+    idBoards.set(k, (idBoards.get(k) ?? new Set()).add(r.ats.board));
+  }
+  const ambiguous = new Map<string, { platform: AtsIdPlatform; id: string; boards: string[]; keys: string[] }>();
   const slotOf = new Map<string, { slot: string; id: string; key: string }>();
   for (const r of sorted) {
     if (r.ats === null || r.ats.companyNorm === '') continue;
     let board = r.ats.board;
     if (board === null) {
-      const known = new Set([...(boardsOf.get(`${r.ats.companyNorm}\u0000${r.ats.platform}`) ?? []), ...knownBoards(r.ats.companyNorm, r.ats.platform)]);
-      if (known.size !== 1) continue;
-      board = [...known][0] as string;
+      // a bare id: the one board a stored row of the company lists this very id on; else (no such row yet) the company's
+      // one known board on the platform. A stored match is never undone by another board appearing later.
+      const k = `${r.ats.companyNorm}\u0000${r.ats.platform}\u0000${r.ats.id}`;
+      const withId = [...(idBoards.get(k) ?? [])].sort();
+      if (withId.length > 1) {
+        const a = ambiguous.get(k) ?? { platform: r.ats.platform, id: r.ats.id, boards: withId, keys: [] };
+        a.keys.push(r.jobKey);
+        ambiguous.set(k, a);
+        continue;
+      }
+      if (withId.length === 1) board = withId[0] as string;
+      else {
+        const known = new Set([...(boardsOf.get(`${r.ats.companyNorm}\u0000${r.ats.platform}`) ?? []), ...knownBoards(r.ats.companyNorm, r.ats.platform)]);
+        if (known.size !== 1) continue;
+        board = [...known][0] as string;
+      }
     }
     slotOf.set(r.jobKey, { slot: `${r.ats.companyNorm}\u0000${r.ats.platform}:${board}`, id: r.ats.id, key: `${r.ats.platform}:${board}:${r.ats.id}` });
+  }
+  for (const k of [...ambiguous.keys()].sort()) {
+    const a = ambiguous.get(k) as { platform: AtsIdPlatform; id: string; boards: string[]; keys: string[] };
+    const what = a.platform === 'greenhouse' ? 'gh_jid' : a.platform;
+    notes.push(`ats-id-ambiguous ${what} ${a.id}: boards ${a.boards.join(', ')} ${a.boards.length === 2 ? 'both' : 'all'} list it (${a.keys.sort().join(', ')}); not merged`);
   }
 
   // union-find over components

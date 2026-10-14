@@ -66,6 +66,8 @@ const hostIs = (host: string, re: RegExp): boolean => re.test(host);
 
 /** The ref one URL states unambiguously, or null (also for a URL that is not one). */
 function refOfUrl(raw: string): AtsRef | null | 'ambiguous' {
+  // Every parse is total: `new URL` is the one call that throws (caught); URLSearchParams decodes a bad escape to U+FFFD
+  // (then not digits, so no id) and path segments are read raw. An uncertain id is null, never an exception.
   let u: URL;
   try {
     u = new URL(raw.trim());
@@ -91,14 +93,17 @@ function refOfUrl(raw: string): AtsRef | null | 'ambiguous' {
   // Lever: jobs.lever.co/<site>/<uuid>[/apply]
   if (hostIs(host, /^jobs(?:\.eu)?\.lever\.co$/u) && seg.length >= 2) return normalAtsRef('lever', seg[0] as string, seg[1] as string);
   // Ashby: jobs.ashbyhq.com/<board>/<uuid>[/application]
-  if (host === 'jobs.ashbyhq.com' && seg.length >= 2) return normalAtsRef('ashby', decodeURIComponent(seg[0] as string), seg[1] as string);
+  // Fix round 1 (I1): no percent-decoding anywhere here: a raw segment with an escape fails BOARD's shape and gives no
+  // id, so a malformed escape (`%E0%A4%A`) can never throw out of the normalizer and drop the job
+  if (host === 'jobs.ashbyhq.com' && seg.length >= 2) return normalAtsRef('ashby', seg[0] as string, seg[1] as string);
   // Workday: <tenant>.wdN.myworkdayjobs.com/[<locale>/]<site>/job/<location>/<title>_<reqId>
   const wd = /^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$/u.exec(host);
   if (wd !== null) {
     const job = seg.indexOf('job');
     const last = seg.at(-1) ?? '';
     const cut = last.lastIndexOf('_');
-    if (job < 1 || job === seg.length - 1 || cut < 0) return null;
+    // a `job` segment after the site, and a last segment `<title>_<reqId>` (when `job` is itself last, it has no `_`)
+    if (job < 1 || cut < 0) return null;
     return normalAtsRef('workday', wd[1] as string, last.slice(cut + 1));
   }
   return null;

@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,7 +8,7 @@ import { runDaily } from '../../src/app/run.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { linkJobs, type LinkRow } from '../../src/app/store/links.js';
 import { AppStore, type JobUpsert } from '../../src/app/store/app-store.js';
-import { atsJobKey, atsRefFromIdentity, atsRefFromUrls, atsRefOf } from '../../src/app/text/ats-id.js';
+import { atsJobKey, atsRefFromIdentity, atsRefFromUrls, atsRefOf, normalAtsRef } from '../../src/app/text/ats-id.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { AT, jobRow, LATER } from '../support/app-fixtures.js';
 
@@ -65,6 +65,36 @@ describe('the ATS job id key (text/ats-id)', () => {
     // two boards for one id disagree: no key
     expect(atsRefFromUrls(['https://boards.greenhouse.io/a/jobs/7001', 'https://boards.greenhouse.io/b/jobs/7001'])).toBeNull();
     expect(atsRefFromUrls(['not a url', ''])).toBeNull();
+  });
+
+  it('never throws: a malformed URL, escape or query in any form is no id', () => {
+    const bad = [
+      'https://jobs.ashbyhq.com/%E0%A4%A/0d3a2b1c-1111-2222-3333-444455556666',
+      'https://jobs.ashbyhq.com/%/0d3a2b1c-1111-2222-3333-444455556666',
+      'https://jobs.lever.co/%E0%A4%A/0d3a2b1c-1111-2222-3333-444455556666',
+      'https://boards.greenhouse.io/%E0%A4%A/jobs/7001',
+      'https://boards.greenhouse.io/embed/job_app?for=%E0%A4%A&token=7001',
+      'https://www.identity.example/c?gh_jid=%E0%A4%A',
+      'https://acme.wd5.myworkdayjobs.com/External/job/%E0%A4%A/Senior_%E0%A4%A',
+      'https://[::1', 'http://%', 'https://exa mple.com/?gh_jid=1 2',
+    ];
+    for (const u of bad) expect(() => atsRefFromUrls([u]), u).not.toThrow();
+    for (const u of bad) expect(atsRefFromUrls([u]), u).toBeNull();
+    // the normalizer keeps the job, with no ref
+    const ld = { '@type': 'JobPosting', title: 'Engineer', description: 'Build services.', sameAs: bad[0], url: bad[1] };
+    const p = normalize({ source: 'careers', sourceId: 's', company: CO, slug: 'c', raw: { url: 'https://www.identity.example/careers/x', jsonLd: ld, title: 'Engineer', text: '' } });
+    expect('atsRef' in p).toBe(false);
+  });
+
+  it('folds the Workday tenant (a host label) and reads a req id only from a /<site>/job/…/<title>_<id> path', () => {
+    expect(normalAtsRef('workday', 'ACME', 'JR1')).toEqual({ platform: 'workday', board: 'acme', id: 'JR1' });
+    const r = { title: 'E', url: 'https://acme.wd5.myworkdayjobs.com/External/job/X/E_JR1', externalPath: '/job/X/E_JR1', locationsText: 'India', reqId: 'JR1', detail: null };
+    expect(normalize({ source: 'workday', sourceId: 'JR1', company: 'Acme', slug: 'ACME.wd5.myworkdayjobs.com/ACME/External', raw: r }).atsRef).toEqual(atsRefFromUrls([r.url]));
+    expect(atsRefFromUrls(['https://acme.wd5.myworkdayjobs.com/External/details/X/E_JR1'])).toBeNull();
+    expect(atsRefFromUrls(['https://acme.wd5.myworkdayjobs.com/job/X/E_JR1'])).toBeNull();
+    expect(atsRefFromUrls(['https://acme.wd5.myworkdayjobs.com/External/job'])).toBeNull();
+    expect(atsRefFromUrls(['https://acme.wd5.myworkdayjobs.com/External/job/X/Engineer'])).toBeNull();
+    expect(atsRefFromUrls(['https://acme.wd5.myworkdayjobs.com/External/job/X/E_JR1'])).toEqual({ platform: 'workday', board: 'acme', id: 'JR1' });
   });
 
   it('takes an ATS adapter posting id from its identity; a feed or a page has none', () => {
@@ -199,28 +229,96 @@ describe('cross-source dedupe in the store', () => {
     expect([GH, PAGE, PAGE2].map((k) => s.getJob(k)?.duplicateOf)).toEqual([null, null, null]);
   });
 
-  it('a bare gh_jid takes the company\'s one known Greenhouse board; two known boards leave it unmerged', () => {
+  const registry = (st: AppStore, slug: string, status = 'verified', override: string | null = null): void => {
+    st.kernel.db
+      .prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, board_url, status, source, user_override, updated_at) VALUES (?, ?, 'https://identity.example', 'greenhouse', ?, ?, ?, 'picks', ?, ?)`)
+      .run(`k-${slug}-${status}-${override ?? ''}`, CO, slug, `https://boards.greenhouse.io/${slug}`, status, override, AT);
+  };
+  const intern = (over: Partial<JobUpsert> & { id?: string } = {}): JobUpsert => {
+    const { id = '9001', ...rest } = over;
+    return gh({ jobKey: GH2, id, slug: 'example-identity-intern', dedupeKey: '3333333333333333', atsJob: { platform: 'greenhouse', board: 'example-identity-intern', id }, ...rest });
+  };
+  /** A second company page (another source) with the same bare gh_jid. */
+  const page2 = (over: Partial<JobUpsert> = {}): JobUpsert =>
+    page({ jobKey: PAGE2, source: 'jsonld-sitemap', ats: 'jsonld-sitemap', sourceId: 'p2', slug: 'www.identity.example', dedupeKey: '8888888888888888', ...over });
+
+  it('a bare gh_jid matches the one stored Greenhouse row with that job id, on any of the company\'s boards', () => {
     const s = AppStore.on(Store.open(':memory:'));
     s.upsertJob(gh());
-    s.upsertJob(gh({ jobKey: GH2, id: '9001', slug: 'example-identity-intern', dedupeKey: '3333333333333333', atsJob: { platform: 'greenhouse', board: 'example-identity-intern', id: '9001' } }));
+    s.upsertJob(intern());
     s.upsertJob(page());
-    expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
-    // a verified registry Greenhouse board is a known board too
+    expect(s.getJob(PAGE)?.duplicateOf).toBe(GH);
+    // a registry board the stored row does not use changes nothing: the stored row wins
     const t = AppStore.on(Store.open(':memory:'));
-    t.kernel.db
-      .prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, board_url, status, source, updated_at) VALUES ('k', ?, 'https://identity.example', 'greenhouse', 'example-identity-eu', 'https://boards.greenhouse.io/example-identity-eu', 'verified', 'picks', ?)`)
-      .run(CO, AT);
+    registry(t, 'example-identity-eu');
     t.upsertJob(gh());
     t.upsertJob(page());
-    expect(t.getJob(PAGE)?.duplicateOf).toBeNull();
-    // the registry naming the same board agrees
+    expect(t.getJob(PAGE)?.duplicateOf).toBe(GH);
+  });
+
+  it('two stored Greenhouse rows with the job id at the company: no merge, a named note', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh());
+    // one source key holds one Greenhouse row per id, so the second stored row is a page naming another board's URL
+    s.upsertJob(page2({ atsJob: { platform: 'greenhouse', board: 'example-identity-intern', id: '7001' } }));
+    const r = s.upsertJob(page());
+    expect([GH, PAGE2, PAGE].map((k) => s.getJob(k)?.duplicateOf)).toEqual([null, null, null]);
+    expect(r.notes).toEqual([`ats-id-ambiguous gh_jid 7001: boards example-identity, example-identity-intern both list it (${PAGE}); not merged`]);
+  });
+
+  it('with no stored row of the id yet, two bare-gh_jid pages share the company\'s one known board; two boards keep them apart', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ id: '5555' }));
+    s.upsertJob(page());
+    s.upsertJob(page2());
+    expect(s.getJob(PAGE2)?.duplicateOf).toBe(PAGE);
+    const t = AppStore.on(Store.open(':memory:'));
+    t.upsertJob(gh({ id: '5555' }));
+    registry(t, 'example-identity-eu');
+    t.upsertJob(page());
+    t.upsertJob(page2());
+    expect(t.getJob(PAGE2)?.duplicateOf).toBeNull();
+    // the registry alone may name the one board
     const u = AppStore.on(Store.open(':memory:'));
-    u.kernel.db
-      .prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, board_url, status, source, updated_at) VALUES ('k', ?, 'https://identity.example', 'greenhouse', 'Example-Identity', 'https://boards.greenhouse.io/example-identity', 'verified', 'picks', ?)`)
-      .run(CO, AT);
-    u.upsertJob(gh());
+    registry(u, 'Example-Identity');
     u.upsertJob(page());
-    expect(u.getJob(PAGE)?.duplicateOf).toBe(GH);
+    u.upsertJob(page2());
+    expect(u.getJob(PAGE2)?.duplicateOf).toBe(PAGE);
+  });
+
+  it('a rejected or user-rejected registry board is never a known board', () => {
+    for (const [status, override] of [['rejected', null], ['proposed', null], ['verified', 'rejected']] as const) {
+      const s = AppStore.on(Store.open(':memory:'));
+      s.upsertJob(gh({ id: '5555' }));
+      registry(s, 'example-identity-eu', status, override);
+      s.upsertJob(page());
+      s.upsertJob(page2());
+      expect(s.getJob(PAGE2)?.duplicateOf, `${status}/${override}`).toBe(PAGE);
+    }
+  });
+
+  it('the reviewer\'s split: a second board appearing never splits a merged pair, nor announces it again', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.upsertJob(page({ docsState: 'ready' }));
+    s.markNotified([GH], AT);
+    s.upsertJob(intern({ at: LATER }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBe(GH);
+    expect(s.listJobs().filter((j) => j.company === CO && j.jobKey !== GH2).map((j) => j.jobKey)).toEqual([GH]);
+    expect(s.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null)).toEqual([]);
+  });
+
+  it('a row that leaves an announced group stays announced', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(page({ docsState: 'ready', at: AT }));
+    s.upsertJob(gh({ docsState: 'ready', at: LATER }));
+    expect(s.getJob(GH)?.duplicateOf).toBe(PAGE);
+    s.markNotified([PAGE], AT);
+    // the page stops stating the id: the board row leaves the group, already announced
+    s.upsertJob(page({ docsState: 'ready', at: LATER, atsJob: null }));
+    expect(s.getJob(GH)?.duplicateOf).toBeNull();
+    expect(s.getJob(GH)?.notifiedAt).toBe(AT);
+    expect(s.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null)).toEqual([]);
   });
 
   it('status, note and documents follow the primary; the job is announced once', () => {
@@ -296,6 +394,16 @@ describe('linkJobs (pure)', () => {
     ];
     expect(Object.fromEntries(linkJobs(rows, () => []).duplicateOf)).toEqual({ g1: null, p1: null, p2: 'g1' });
   });
+  it('an ATS-joined job stays ATS-joined through a v1 merge: no second row of one source joins later', () => {
+    const rows = [
+      row('a1', { dedupeKey: 'd2', ats: { platform: 'greenhouse', board: 'b', id: '1', slug: 'b', companyNorm: 'acme' } }),
+      row('b1', { source: 'careers', dedupeKey: 'd1', ats: { platform: 'greenhouse', board: 'b', id: '1', slug: 'c', companyNorm: 'acme' } }),
+      // a feed row whose job key sorts first: it becomes the union-find root when it joins the page's job
+      row('01', { source: 'himalayas', dedupeKey: 'd1' }),
+      row('b2', { source: 'careers', dedupeKey: 'd2' }),
+    ];
+    expect(Object.fromEntries(linkJobs(rows, () => []).duplicateOf)).toEqual({ a1: null, b1: 'a1', '01': 'a1', b2: null });
+  });
   it('is the same for every input order', () => {
     const rows = [
       row('g1', { ats: { platform: 'greenhouse', board: 'b', id: '1', slug: 'b', companyNorm: 'acme' } }),
@@ -315,6 +423,55 @@ const pdftotext = (() => {
     return undefined;
   }
 })();
+
+/** One offline daily run over `tests/fixtures/dedupe` with the given careers entry beside the Greenhouse board. */
+async function runDedupe(careers: { slug: string; listUrl: string }, forbidden?: string) {
+  const root = join(import.meta.dirname, '../..');
+  const home = mkdtempSync(join(tmpdir(), 'jobpilot-dedupe-'));
+  try {
+    cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
+    writeFileSync(join(home, 'pack/feeds.yaml'), 'enabled: []\n');
+    if (forbidden !== undefined) {
+      const naming = join(home, 'pack/naming.yaml');
+      writeFileSync(naming, readFileSync(naming, 'utf8').replace('forbiddenTerms: [Initech]', `forbiddenTerms: [Initech, ${forbidden}]`));
+    }
+    writeFileSync(
+      join(home, 'pack/watchlist.yaml'),
+      [
+        'watchlist:',
+        `  - {company: ${CO}, ats: greenhouse, slug: example-identity, hiresInIndia: true, allRemote: false}`,
+        `  - {company: ${CO}, ats: careers, slug: ${careers.slug}, listUrl: '${careers.listUrl}', linkPattern: '^/jobs/[a-z0-9-]+\\?gh_jid=\\d+$', hiresInIndia: true, allRemote: false}`,
+        '',
+      ].join('\n'),
+    );
+    const offline = offlineProviders(join(root, 'tests/fixtures/dedupe'));
+    const r = await runDaily({ home, clock: { now: () => '2026-10-09T01:30:00.000Z' }, fetch: offline.fetch, browser: offline.browser, sleep: async () => {}, pdftotext: pdftotext as string });
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      return { r, jobs: app.listJobs(all) };
+    } finally {
+      app.close();
+    }
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+}
+
+describe.skipIf(pdftotext === undefined)('offline daily run: one careers source lists one gh_jid twice', () => {
+  it('names the collision in the run warnings, redacted by the pack naming, and merges nothing', async () => {
+    const plain = await runDedupe({ slug: 'example-identity-careers', listUrl: 'https://careers.identity.example/jobs-twice' });
+    expect(plain.r.projection.dedupeNotes).toHaveLength(1);
+    const note = plain.r.projection.dedupeNotes[0] as string;
+    expect(note).toMatch(/^ats-id-collision greenhouse:example-identity:7001: careers example-identity-careers lists it 2 times \([0-9a-f]{16}, [0-9a-f]{16}\); not merged$/);
+    expect(plain.r.warnings).toContain(note);
+    expect(plain.jobs.filter((j) => j.duplicateOf !== null)).toEqual([]);
+    // a note holding a forbidden term of the pack (here a word only the note has) is replaced by the fixed notice
+    const named = await runDedupe({ slug: 'example-identity-careers', listUrl: 'https://careers.identity.example/jobs-twice' }, 'collision');
+    expect(named.r.projection.dedupeNotes).toHaveLength(1);
+    expect(named.r.warnings.filter((w) => w.includes('ats-id-collision'))).toEqual([]);
+    expect(named.r.warnings).toContain('[hidden: contains a forbidden term]');
+  }, 120_000);
+});
 
 describe.skipIf(pdftotext === undefined)('offline daily run: a company page and its Greenhouse board', () => {
   it('yield one row for the job both list in the dashboard\'s list query; the other board job stays its own row', async () => {

@@ -1,5 +1,7 @@
 {
   "https://boards-api.greenhouse.io/v1/boards/example-identity/jobs?content=true&pay_transparency=true": "greenhouse-example-identity.json",
   "https://careers.identity.example/jobs": "careers-listing.html",
-  "https://careers.identity.example/jobs/senior-backend-engineer-identity?gh_jid=7001": "careers-job.html"
+  "https://careers.identity.example/jobs/senior-backend-engineer-identity?gh_jid=7001": "careers-job.html",
+  "https://careers.identity.example/jobs-twice": "careers-listing-twice.html",
+  "https://careers.identity.example/jobs/senior-backend-engineer-identity-hub?gh_jid=7001": "careers-job-hub.html"
 }
