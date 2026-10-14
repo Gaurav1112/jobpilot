@@ -22,7 +22,7 @@ tech-adjacent role** can install jobpilot on their own computer and:
    from facts they confirmed;
 5. upload an updated resume later and see only what changed, with their own edits kept.
 
-The existing user becomes the profile `gaurav`. His outputs stay byte-identical, and his profile follows the same
+The existing user becomes the profile `owner` (any id the user picks). Their outputs stay byte-identical, and the profile follows the same
 resume-update flow.
 
 The constraints carry over unchanged:
@@ -44,7 +44,7 @@ The constraints carry over unchanged:
   automatic tailoring per job. Edits are stored as confirmed facts and phrasing variants. Tailoring picks from them and
   never writes an unconfirmed claim.
 - D5 **Architecture:** profiles inside jobpilot (one codebase), not a separate app and not only a converter.
-- D6 **The existing profile** stays separate (`gaurav`) and is updated through the same resume re-import flow when his
+- D6 **The existing profile** stays separate (`owner`) and is updated through the same resume re-import flow when his
   resume changes.
 
 ## 3. Profiles
@@ -57,8 +57,8 @@ The constraints carry over unchanged:
 
 - **Isolation:** a profile is a complete home: pack, DB, outputs, archive, logs and secrets. Profiles share nothing,
   not even a lock or a document.
-- **Migration of the existing home:** a one-time, reversible step (`jobpilot profile adopt gaurav`) moves today's
-  `~/.jobpilot` contents into `profiles/gaurav/`. It takes a backup first and runs under the run lock. A golden test
+- **Migration of the existing home:** a one-time, reversible step (`jobpilot profile adopt owner`) moves today's
+  `~/.jobpilot` contents into `profiles/owner/`. It takes a backup first and runs under the run lock. A golden test
   proves that the adopted profile's daily run is byte-identical to the pre-move run.
 - **CLI:** every command takes `--profile <id>`; without it, the active profile is used. `jobpilot profile
   list|create|use|adopt|remove` (remove archives the profile; it never deletes it).
