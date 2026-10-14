@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { KernelError } from '../kernel/errors.js';
 import { EIGHTFOLD_V2_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
 import { ORACLE_MIN_INTERVAL_MS, type OracleHosts } from './agents/sources/platforms/oracle.js';
+import { documentedHosts, FEED_MIN_INTERVAL_MS } from './agents/sources/platforms/feed-board.js';
 import { PAGE_MIN_INTERVAL_MS, type PageRecord, type PageState } from './agents/sources/platforms/pages.js';
 import type { HttpTool, PageLedger, PlatformHosts } from './agents/sources/platforms/shared.js';
 import { WORKDAY_MIN_INTERVAL_MS, type WorkdayHosts } from './agents/sources/platforms/workday.js';
@@ -120,6 +121,18 @@ export function dailyOracleHosts(): OracleHosts {
  */
 export function dailyPageHosts(): PlatformHosts<never> {
   return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS, unreadableRobots: 'refuse', unreachableRobots: 'unavailable' });
+}
+
+/**
+ * A small-platform feed adapter's host state (Task 9). A feed that is the platform's DOCUMENTED public API (Workable,
+ * Recruitee, Personio, Pinpoint, Gem) is read as Greenhouse, Lever and Ashby are: robots.txt is not asked, so it never
+ * denies; the disabled hosts are still kept, so a 401/403/429 or a challenge ends the host's reads for the run. Any other
+ * feed (Teamtailor, BambooHR, Breezy, Rippling) is under the strict page rule (`dailyPageHosts`: robots.txt once per
+ * host per run at the 2 s spacing, a 401/403 robots.txt refuses, an unreachable one is `robots-unavailable`).
+ */
+export function dailyFeedHosts(documented: boolean): PlatformHosts<never> {
+  if (!documented) return dailyPlatformHosts({ minIntervalMs: FEED_MIN_INTERVAL_MS, unreadableRobots: 'refuse', unreachableRobots: 'unavailable' });
+  return documentedHosts();
 }
 
 /** What `appPageState` needs of the app store (its `platform_pages` table, migration 11). */

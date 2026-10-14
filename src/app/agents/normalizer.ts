@@ -52,6 +52,17 @@ import { Posting, RawPosting } from '../types.js';
  * - successfactors (platforms/successfactors.ts): `{title, url, id, location, employer, description, jsonLd}`; with
  *   `jsonLd`, as careers; without, the `sitemal.xml` item (see `successfactors` below).
  *
+ * - Task 9, the small platforms (platforms/workable.ts, recruitee.ts, teamtailor.ts, personio.ts, bamboohr.ts, breezy.ts,
+ *   pinpoint.ts, rippling.ts, gem.ts): each raw is that platform's kept feed fields (documented in its module). The
+ *   location text is the platform's own place fields, never invented (Rippling's label may be only a state code, Personio's
+ *   offices have no country). A job the platform flags REMOTE (Workable `telecommuting`, Recruitee `remote`, Teamtailor
+ *   `remoteStatus: fully`, BambooHR `isRemote`, Breezy `is_remote`, Pinpoint `workplace_type`, Gem `location_type`) is
+ *   structured remote with NO country (its office country is not a restriction, so eligibility says review unless the
+ *   text says more); any other keeps its office's countries. Hybrid and on-site are mapped where the platform states
+ *   them (Recruitee, Teamtailor `hybrid`, Pinpoint, Gem); Teamtailor `none` (no remote work) stays a signal only.
+ *   Descriptions are the feeds' HTML (Breezy, BambooHR and Rippling publish none in the list); pay is the platform's
+ *   own range where it has one (Recruitee, Pinpoint), else read from the text.
+ *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
  */
@@ -734,6 +745,181 @@ function successfactors(raw: RawPosting, r: Rec): Posting {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Task 9: the small platforms (platforms/workable.ts … gem.ts), one feed each
+// ---------------------------------------------------------------------------
+
+/** Unique, trimmed, non-empty parts joined by `sep`. */
+const joinUnique = (parts: readonly unknown[], sep: string): string => [...new Set(parts.map(str).filter((x): x is string => x !== null).map(oneLine).filter((x) => x !== ''))].join(sep);
+
+/**
+ * What the small platforms share: a location text from the platform's own place fields (never invented), the countries
+ * from that text and the platform's ISO codes, and the arrangement the platform states. A job flagged REMOTE carries no
+ * country: its office or hiring country is not a restriction on where applicants live (as the careers mapping reads
+ * TELECOMMUTE), so eligibility reads it as remote-unclear (review) unless the title, location or description says
+ * more; any other job keeps its office's country, which the unchanged eligibility rules judge.
+ */
+function smallPosting(
+  raw: RawPosting,
+  ats: Posting['ats'],
+  m: { title: unknown; url: unknown; places: readonly string[]; codes?: readonly (string | null)[]; structured: Remote['structured']; signals?: readonly string[]; employmentType: unknown; description: string; postedAt: unknown; structuredComp?: Comp | null | undefined },
+): Posting {
+  const locationText = [...new Set(m.places.filter((x) => x !== ''))].join('; ');
+  const descriptionText = htmlish(m.description);
+  return assemble(raw, ats, {
+    title: str(m.title),
+    url: str(m.url),
+    locationText,
+    structured: m.structured,
+    countries: m.structured === 'remote' ? [] : [...countriesIn(locationText), ...places((m.codes ?? []).filter((c): c is string => c !== null))],
+    signals: m.signals ?? [],
+    employmentType: str(m.employmentType),
+    descriptionText,
+    postedAt: postedAtOf(m.postedAt),
+    comp: compOrText(m.structuredComp, descriptionText),
+  });
+}
+
+/** Workable: `{shortcode, title, url, city, state, country, locations, telecommuting, employmentType, department, publishedOn, description}`; `telecommuting` is remote. */
+function workable(raw: RawPosting, r: Rec): Posting {
+  const locs = arr(r.locations).filter(isRec);
+  const named = locs.map((l) => joinUnique([l.city, l.region, l.country], ', ')).filter((x) => x !== '');
+  const remote = r.telecommuting === true;
+  return smallPosting(raw, 'workable', {
+    title: r.title,
+    url: r.url,
+    places: named.length > 0 ? named : [joinUnique([r.city, r.state, r.country], ', ')],
+    codes: [...locs.map((l) => str(l.countryCode)), str(r.country)],
+    structured: remote ? 'remote' : null,
+    signals: remote ? ['telecommuting:true'] : [],
+    employmentType: r.employmentType,
+    description: str(r.description) ?? '',
+    postedAt: r.publishedOn,
+  });
+}
+
+/** Recruitee: `remote`/`hybrid`/`onSite` flags (remote wins), the offer's `locations` (else `location`), `salary`, description + requirements. */
+function recruitee(raw: RawPosting, r: Rec): Posting {
+  const locs = arr(r.locations).filter(isRec);
+  const named = locs.map((l) => joinUnique([l.name, l.state, l.country], ', ')).filter((x) => x !== '');
+  const flag = r.remote === true ? 'remote' : r.hybrid === true ? 'hybrid' : r.onSite === true ? 'onsite' : null;
+  const sal = isRec(r.salary) ? r.salary : null;
+  const description = [str(r.description), str(r.requirements)].filter((x): x is string => x !== null).join('\n');
+  return smallPosting(raw, 'recruitee', {
+    title: r.title,
+    url: r.url,
+    places: named.length > 0 ? named : [joinUnique([str(r.location) ?? joinUnique([r.city, r.country], ', ')], ', ')],
+    codes: [...locs.map((l) => str(l.countryCode)), str(r.countryCode)],
+    structured: flag,
+    employmentType: str(r.employmentType)?.replace(/_/g, ' ') ?? null,
+    description,
+    postedAt: r.publishedAt,
+    structuredComp: sal === null ? undefined : feedComp(sal.min, sal.max, sal.currency, sal.period),
+  });
+}
+
+/** Teamtailor: `remoteStatus` `fully` is remote and `hybrid` hybrid; `none` states no remote work, which is not "on-site", so it is a signal only. */
+function teamtailor(raw: RawPosting, r: Rec): Posting {
+  const status = str(r.remoteStatus)?.toLowerCase() ?? null;
+  const locs = arr(r.locations).filter(isRec);
+  return smallPosting(raw, 'teamtailor', {
+    title: r.title,
+    url: r.url,
+    places: locs.map((l) => joinUnique([l.city ?? l.name, l.country], ', ')).filter((x) => x !== ''),
+    structured: status === 'fully' || status === 'remote' ? 'remote' : status === 'hybrid' ? 'hybrid' : null,
+    signals: status === null ? [] : [`remoteStatus:${status}`],
+    employmentType: null,
+    description: str(r.description) ?? '',
+    postedAt: r.pubDate,
+  });
+}
+
+/** Personio: offices are city names without a country and the feed has no remote flag, so the arrangement comes from the text only. */
+function personio(raw: RawPosting, r: Rec): Posting {
+  return smallPosting(raw, 'personio', {
+    title: r.title,
+    url: r.url,
+    places: arr(r.offices).map(str).filter((x): x is string => x !== null).map(oneLine),
+    structured: null,
+    employmentType: joinUnique([r.employmentType, r.schedule], ', ') || null,
+    description: str(r.description) ?? '',
+    postedAt: r.createdAt,
+  });
+}
+
+/** BambooHR: `atsLocation` city, state, country; `isRemote` true is remote. The list has no description or date. */
+function bamboohr(raw: RawPosting, r: Rec): Posting {
+  return smallPosting(raw, 'bamboohr', {
+    title: r.title,
+    url: r.url,
+    places: [joinUnique([r.city, r.state, r.country], ', ')],
+    structured: r.isRemote === true ? 'remote' : null,
+    signals: r.isRemote === true ? ['isRemote:true'] : [],
+    employmentType: r.employmentStatus,
+    description: '',
+    postedAt: null,
+  });
+}
+
+/** Breezy: each location's name (city, state) with its country; `is_remote` true on any location is remote. No description. */
+function breezy(raw: RawPosting, r: Rec): Posting {
+  const locs = arr(r.locations).filter(isRec);
+  const remote = locs.some((l) => l.isRemote === true);
+  return smallPosting(raw, 'breezy', {
+    title: r.title,
+    url: r.url,
+    places: locs.map((l) => joinUnique([l.name ?? joinUnique([l.city, l.state], ', '), l.country], ', ')).filter((x) => x !== ''),
+    codes: locs.map((l) => str(l.countryCode)),
+    structured: remote ? 'remote' : null,
+    signals: remote ? ['is_remote:true'] : [],
+    employmentType: r.type,
+    description: '',
+    postedAt: r.publishedDate,
+  });
+}
+
+const PINPOINT_WORKPLACE: Readonly<Record<string, Remote['structured']>> = { remote: 'remote', hybrid: 'hybrid', onsite: 'onsite', 'on-site': 'onsite' };
+
+/** Pinpoint: `workplace_type` (remote, hybrid, onsite), the location's name and city/province, the shown compensation. */
+function pinpoint(raw: RawPosting, r: Rec): Posting {
+  const wp = str(r.workplaceType)?.toLowerCase() ?? null;
+  const comp = isRec(r.compensation) ? r.compensation : null;
+  const description = str(r.description) ?? '';
+  return smallPosting(raw, 'pinpoint', {
+    title: r.title,
+    url: r.url,
+    places: [joinUnique([r.locationName, r.city, r.province], ', ')],
+    structured: wp === null ? null : (PINPOINT_WORKPLACE[wp] ?? null),
+    signals: wp === null ? [] : [`workplaceType:${wp}`],
+    employmentType: r.employmentType,
+    description,
+    postedAt: null,
+    structuredComp: comp === null ? undefined : feedComp(comp.min, comp.max, comp.currency, comp.frequency),
+  });
+}
+
+/** Rippling: only the `workLocation.label` (a state code, a city, "Remote (Dallas, Texas, US)"); a country is never invented from it. */
+function rippling(raw: RawPosting, r: Rec): Posting {
+  return smallPosting(raw, 'rippling', { title: r.title, url: r.url, places: [joinUnique([r.location], ', ')], structured: null, employmentType: null, description: '', postedAt: null });
+}
+
+const GEM_WORKPLACE: Readonly<Record<string, Remote['structured']>> = { remote: 'remote', hybrid: 'hybrid', onsite: 'onsite', 'on-site': 'onsite', in_office: 'onsite' };
+
+/** Gem: `location_type` (remote, hybrid, in_office), the post's location then its offices'. */
+function gem(raw: RawPosting, r: Rec): Posting {
+  const lt = str(r.locationType)?.toLowerCase() ?? null;
+  return smallPosting(raw, 'gem', {
+    title: r.title,
+    url: r.url,
+    places: arr(r.locations).map(str).filter((x): x is string => x !== null).map(oneLine),
+    structured: lt === null ? null : (GEM_WORKPLACE[lt] ?? null),
+    signals: lt === null ? [] : [`locationType:${lt}`],
+    employmentType: str(r.employmentType)?.replace(/_/g, ' ') ?? null,
+    description: str(r.content) ?? '',
+    postedAt: r.firstPublishedAt,
+  });
+}
+
 const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = {
   greenhouse,
   lever,
@@ -748,6 +934,15 @@ const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> 
   smartrecruiters: (raw, r) => jsonLdPosting(raw, r, 'smartrecruiters'),
   'jsonld-sitemap': (raw, r) => jsonLdPosting(raw, r, 'jsonld-sitemap'),
   successfactors,
+  workable,
+  recruitee,
+  teamtailor,
+  personio,
+  bamboohr,
+  breezy,
+  pinpoint,
+  rippling,
+  gem,
 };
 
 /** Maps one raw posting; throws `invalid_output` for an unknown source, a raw that is not an object, no title or no URL. */
@@ -760,7 +955,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.3.0',
+  version: '1.4.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

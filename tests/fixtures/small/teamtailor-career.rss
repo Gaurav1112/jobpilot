@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:tt="https://teamtailor.com/locations">
+  <channel>
+    <title>Teamtailor</title>
+    <description>Current job openings</description>
+    <link>https://career.teamtailor.com/jobs</link>
+    <item>
+      <title>UK Account Executive - SMB</title>
+      <description>&lt;h4&gt;Let's build the future together!&lt;/h4&gt;&lt;p&gt;&lt;a target="_blank" href="https://www.teamtailor.com/en/"&gt;Teamtailor&lt;/a&gt; is an Employer Branding and an ATS SaaS platform used by over 13,000 companies, 250.000 users in 90 countries around the world.&lt;/p&gt;&lt;p&gt;Working at Teamtailor means working at a global, international, and fast-paced tech company that offers an ideal workplace for those who want to have a real impact on the growth of an organisation and are craving for responsibilities. It also means having lots of fun!!! 🥳&lt;/p&gt;&lt;p&gt;&lt;span style="font-size:1em;font-weight:initial;letter-spacing:-0.011em;"&gt;Building a diverse team with various backgrounds and expertise is at the core of Teamtailor since its very beginning, and is truly a part of our strength today! There are no typical profiles, except that every team member shares our visio</description>
+      <pubDate>Fri, 24 Jul 2026 09:05:16 +0200</pubDate>
+      <link>https://career.teamtailor.com/jobs/8118064-uk-account-executive-smb</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>4ff07fd5-3ac0-4333-8f4c-955380396321</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>London</tt:name>
+          <tt:address>16 Laystall Court</tt:address>
+          <tt:zip>EC1R 4</tt:zip>
+          <tt:city>London</tt:city>
+          <tt:country>United Kingdom</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Sales</tt:department>
+      <tt:role>Account Executive</tt:role>
+      <tt:division/>
+    </item>
+<item>
+      <title>Customer Success Manager - Sydney</title>
+      <description>&lt;h4&gt;Let's build the future together!&lt;/h4&gt;&lt;p&gt;&lt;a target="_blank" href="https://career.teamtailor.com/jobs/www.teamtailor.com"&gt;Teamtailor&lt;/a&gt; is an Employer Branding and an ATS SaaS platform used by over 13,000 companies, 200k users in 90 countries around the world 🌏.&lt;/p&gt;&lt;p&gt;Working at Teamtailor means working at an international fast-paced tech company that offers an ideal workplace for those who want to have a real impact on the growth of an organization and are craving responsibilities. It also means having lots of fun 🥳.&lt;/p&gt;&lt;p&gt;Building a diverse team with various backgrounds and expertise is at the core of Teamtailor since its very beginning and is truly part of its strength today! There are no typical profiles, each and every team member shares our vision and wants to be part of its success.&lt;/p&gt;&lt;figure data-alignment="left" </description>
+      <pubDate>Mon, 21 Sep 2026 16:36:16 +0200</pubDate>
+      <link>https://career.teamtailor.com/jobs/8429402-customer-success-manager-sydney</link>
+      <remoteStatus>hybrid</remoteStatus>
+      <guid>ba0c90cd-8ff9-4e4d-8d26-5611833b6ae4</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Sydney</tt:name>
+          <tt:address>WeWork - Office Space &amp; Coworking</tt:address>
+          <tt:zip>2000</tt:zip>
+          <tt:city>Sydney</tt:city>
+          <tt:country>Australia</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Customer Success</tt:department>
+      <tt:role>Customer Success Manager</tt:role>
+      <tt:division/>
+    </item>
+<item>
+      <title>Regional Director CSM</title>
+      <description>&lt;h4&gt;Let's build the future together!&lt;/h4&gt;&lt;p&gt;&lt;a target="_blank" href="https://www.teamtailor.com/en/"&gt;Teamtailor&lt;/a&gt;&lt;span&gt; &lt;/span&gt;is an Employer Branding and an ATS SaaS platform used by over 13,000 companies, 250,000 users in 90 countries around the world 🌏.&lt;/p&gt;&lt;p&gt;Working at Teamtailor means working at an international fast-paced tech company that offers an ideal workplace for those who want to have a real impact on the growth of an organization and are craving responsibilities. It also means having lots of fun 🥳.&lt;/p&gt;&lt;p&gt;Building a diverse team with various backgrounds and expertise is at the core of Teamtailor since its very beginning and is truly part of its strength today! There are no typical profiles, each and every team member shares our vision and wants to be part of its success.&lt;/p&gt;&lt;p&gt;&lt;/p&gt;&lt;figur</description>
+      <pubDate>Tue, 01 Sep 2026 12:01:07 +0200</pubDate>
+      <link>https://career.teamtailor.com/jobs/8297677-regional-director-csm</link>
+      <remoteStatus>none</remoteStatus>
+      <guid>11ef5728-a67d-4543-8b6c-75b2a7f6cd2d</guid>
+      <tt:locations>
+        <tt:location>
+          <tt:name>Stockholm</tt:name>
+          <tt:address>Östgötagatan 16</tt:address>
+          <tt:zip>116 21</tt:zip>
+          <tt:city>Stockholm</tt:city>
+          <tt:country>Sweden</tt:country>
+        </tt:location>
+      </tt:locations>
+      <tt:department>Customer Success</tt:department>
+      <tt:role/>
+      <tt:division/>
+    </item>
+  </channel>
+</rss>

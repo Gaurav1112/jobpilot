@@ -18,12 +18,15 @@ import { eightfoldBoardOfUrl, eightfoldMaxRequests, eightfoldRef, EIGHTFOLD_EGRE
 import { makeSrcOracle, oracleBoardOfUrl, oracleRef, ORACLE_EGRESS, ORACLE_MAX_REQUESTS, ORACLE_TIMEOUT_MS, parseOracleRef } from './agents/sources/platforms/oracle.js';
 import { makeSrcWorkday, parseWorkdayRef, workdayBoardOfUrl, workdayRef, WORKDAY_EGRESS, WORKDAY_MAX_REQUESTS, WORKDAY_TIMEOUT_MS } from './agents/sources/platforms/workday.js';
 import type { PageLedger } from './agents/sources/platforms/shared.js';
+import { SMALL_PLATFORMS } from './agents/sources/platforms/small.js';
+import type { FeedBoard } from './agents/sources/platforms/feed-board.js';
+import { FEED_MAX_REQUESTS, FEED_TIMEOUT_MS } from './agents/sources/platforms/feed-board.js';
 import { icimsBoardOfUrl, ICIMS_EGRESS, ICIMS_MAX_REQUESTS, ICIMS_TIMEOUT_MS, makeSrcIcims, parseIcimsRef } from './agents/sources/platforms/icims.js';
 import { jsonLdBoardOfUrl, jsonLdRef, JSONLD_EGRESS, JSONLD_MAX_REQUESTS, JSONLD_TIMEOUT_MS, makeSrcJsonLd, parseJsonLdRef } from './agents/sources/platforms/jsonld-sitemap.js';
 import type { PageState } from './agents/sources/platforms/pages.js';
 import { makeSrcSmartRecruiters, parseSmartRecruitersRef, smartRecruitersBoardOfUrl, SR_EGRESS, SR_HOSTS, SR_MAX_REQUESTS, SR_TIMEOUT_MS } from './agents/sources/platforms/smartrecruiters.js';
 import { makeSrcSuccessFactors, parseSuccessFactorsRef, successFactorsBoardOfUrl, SF_EGRESS, SF_MAX_REQUESTS, SF_TIMEOUT_MS } from './agents/sources/platforms/successfactors.js';
-import { dailyEightfoldHosts, dailyOracleHosts, dailyPageHosts, dailyWorkdayHosts } from './daily-hosts.js';
+import { dailyEightfoldHosts, dailyFeedHosts, dailyOracleHosts, dailyPageHosts, dailyWorkdayHosts } from './daily-hosts.js';
 import { writingAgents } from './agents/writing/index.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { qaGate } from './agents/writing/qa-gate.js';
@@ -67,6 +70,7 @@ const TEAM_ORDER = [
   'sourcing-successfactors',
   'sourcing-smartrecruiters',
   'sourcing-jsonld',
+  ...SMALL_PLATFORMS.map((p) => p.spec.team),
   'understanding',
   'evaluation',
   'writing',
@@ -88,6 +92,16 @@ export interface RegistryBoard {
 
 /** The registry platforms with a daily adapter in this build: each one's stored-board-URL reader, ref parser and egress. */
 const one = (h: string | null | undefined): string[] => (h === null || h === undefined ? [] : [h]);
+const feedOf = (platform: string): FeedBoard<string> => SMALL_PLATFORMS.find((f) => f.spec.platform === platform) as FeedBoard<string>;
+/** A small platform's registry entry: its stored-board-URL reader, ref parser and egress, from its feed board. */
+const small = (platform: string) => {
+  const f = feedOf(platform);
+  return {
+    ref: (url: string) => f.spec.boardOfUrl(url),
+    hosts: (ref: string) => one(mapNull(f.spec.parseRef(ref), f.spec.hostOf)),
+    egress: f.spec.egress,
+  };
+};
 const REGISTRY_PLATFORMS = {
   workday: { ref: (url: string) => mapNull(workdayBoardOfUrl(url), workdayRef), hosts: (ref: string) => one(parseWorkdayRef(ref)?.host), egress: WORKDAY_EGRESS },
   eightfold: { ref: eightfoldRegistryRef, hosts: (ref: string) => one(parseEightfoldRef(ref)?.host), egress: EIGHTFOLD_EGRESS },
@@ -98,6 +112,16 @@ const REGISTRY_PLATFORMS = {
   // both public SmartRecruiters hosts: the listing may move from jobs. to careers. (its robots.txt is then asked)
   smartrecruiters: { ref: (url: string) => smartRecruitersBoardOfUrl(url), hosts: (ref: string) => (parseSmartRecruitersRef(ref) === null ? [] : [...SR_HOSTS]), egress: SR_EGRESS },
   'jsonld-sitemap': { ref: jsonLdRegistryRef, hosts: (ref: string) => one(parseJsonLdRef(ref)?.host), egress: JSONLD_EGRESS },
+  // Task 9, the small platforms: one feed each (platforms/feed-board.ts)
+  workable: small('workable'),
+  recruitee: small('recruitee'),
+  teamtailor: small('teamtailor'),
+  personio: small('personio'),
+  bamboohr: small('bamboohr'),
+  breezy: small('breezy'),
+  pinpoint: small('pinpoint'),
+  rippling: small('rippling'),
+  gem: small('gem'),
 } as const;
 
 /** A jsonld-sitemap board's ref: the stored board URL's host, with the slug's path prefix when the slug names that host. */
@@ -186,6 +210,8 @@ export function dailyAgents(
     ...(has('successfactors') ? [makeSrcSuccessFactors(pages())] : []),
     ...(has('smartrecruiters') ? [makeSrcSmartRecruiters(pages())] : []),
     ...(has('jsonld-sitemap') ? [makeSrcJsonLd(pages())] : []),
+    // Task 9: each small platform on its own host state (a documented API: no robots.txt; the others: the strict rule)
+    ...SMALL_PLATFORMS.filter((f) => has(f.spec.platform as RegistryPlatform)).map((f) => f.make({ hosts: dailyFeedHosts(f.spec.documented) })),
   ];
   return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }
@@ -228,7 +254,7 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
     ...(has('src-workday') ? [{ type: 'DiscoveryRequest@1', to: 'src-workday' }] : []),
     ...(has('src-eightfold') ? [{ type: 'DiscoveryRequest@1', to: 'src-eightfold' }] : []),
     ...(has('src-oracle') ? [{ type: 'DiscoveryRequest@1', to: 'src-oracle' }] : []),
-    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap'] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
+    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap', ...SMALL_PLATFORMS.map((f) => f.contract.id)] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
     { type: 'RawPosting@1', to: 'normalizer' },
     { type: 'Posting@1', to: 'eligibility' },
     { type: 'EligibilityVerdict@1', to: 'scorer-lexicon' },
@@ -306,6 +332,8 @@ const HTTP_BUDGETS: readonly {
   { agent: 'src-successfactors', perRequestMs: Math.floor(SF_TIMEOUT_MS / SF_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'successfactors') },
   { agent: 'src-smartrecruiters', perRequestMs: Math.floor(SR_TIMEOUT_MS / SR_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'smartrecruiters') },
   { agent: 'src-jsonld-sitemap', perRequestMs: Math.floor(JSONLD_TIMEOUT_MS / JSONLD_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'jsonld-sitemap') },
+  // Task 9: robots.txt and the feed (at most FEED_MAX_PAGES list pages), each at least 2 s apart
+  ...SMALL_PLATFORMS.map((f) => ({ agent: f.contract.id, perRequestMs: Math.floor(FEED_TIMEOUT_MS / FEED_MAX_REQUESTS), applies: (_w: readonly WatchLike[], _f: readonly string[], b: readonly RegistryBoard[]) => b.some((x) => x.platform === f.spec.platform) })),
 ];
 
 /**

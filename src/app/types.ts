@@ -4,9 +4,10 @@ import { defineType } from '../kernel/types.js';
 
 /**
  * Where a posting is read from: the watchlist's boards, the feeds, a careers page, or a verified registry company's
- * platform (Task 6: workday; Task 7: eightfold, oracle; Task 8: icims, successfactors, smartrecruiters, jsonld-sitemap).
+ * platform (Task 6: workday; Task 7: eightfold, oracle; Task 8: icims, successfactors, smartrecruiters, jsonld-sitemap;
+ * Task 9: workable, recruitee, teamtailor, personio, bamboohr, breezy, pinpoint, rippling, gem).
  */
-const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers', 'workday', 'eightfold', 'oracle', 'icims', 'successfactors', 'smartrecruiters', 'jsonld-sitemap']);
+const Ats = z.enum(['greenhouse', 'lever', 'ashby', 'feed', 'careers', 'workday', 'eightfold', 'oracle', 'icims', 'successfactors', 'smartrecruiters', 'jsonld-sitemap', 'workable', 'recruitee', 'teamtailor', 'personio', 'bamboohr', 'breezy', 'pinpoint', 'rippling', 'gem']);
 /** A real calendar date: month 1-12, day within that month (leap years included). */
 export const isCalendarDate = (s: string): boolean => {
   const [y, m, d] = s.split('-').map(Number) as [number, number, number];

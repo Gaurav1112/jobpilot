@@ -1,0 +1,107 @@
+{
+ "meta": {
+  "totalCount": 61
+ },
+ "result": [
+  {
+   "id": "546",
+   "jobOpeningName": "Managing Director, Medical Affairs Consulting",
+   "departmentId": "18851",
+   "departmentLabel": "Strategic",
+   "employmentStatusLabel": "Full-Time",
+   "employmentType": null,
+   "location": {
+    "city": null,
+    "state": null
+   },
+   "atsLocation": {
+    "country": "United States",
+    "state": null,
+    "province": null,
+    "city": null
+   },
+   "isRemote": null,
+   "locationType": "1"
+  },
+  {
+   "id": "589",
+   "jobOpeningName": "Medical Writer (Publications)",
+   "departmentId": "18635",
+   "departmentLabel": "Medical Writing",
+   "employmentStatusLabel": "Full-Time",
+   "employmentType": null,
+   "location": {
+    "city": null,
+    "state": null
+   },
+   "atsLocation": {
+    "country": "United States",
+    "state": null,
+    "province": null,
+    "city": null
+   },
+   "isRemote": null,
+   "locationType": "1"
+  },
+  {
+   "id": "613",
+   "jobOpeningName": "Sr Solutions Architect (Digital, Life Sciences)",
+   "departmentId": null,
+   "departmentLabel": null,
+   "employmentStatusLabel": "Full-Time",
+   "employmentType": null,
+   "location": {
+    "city": null,
+    "state": null
+   },
+   "atsLocation": {
+    "country": "Canada",
+    "state": null,
+    "province": null,
+    "city": null
+   },
+   "isRemote": null,
+   "locationType": "1"
+  },
+  {
+   "id": "618",
+   "jobOpeningName": "Scientific Director (Med Comms)",
+   "departmentId": "18833",
+   "departmentLabel": "Medical Content",
+   "employmentStatusLabel": "Full-Time",
+   "employmentType": null,
+   "location": {
+    "city": null,
+    "state": null
+   },
+   "atsLocation": {
+    "country": "Canada",
+    "state": null,
+    "province": null,
+    "city": null
+   },
+   "isRemote": null,
+   "locationType": "1"
+  },
+  {
+   "id": "619",
+   "jobOpeningName": "Associate Client Engagement Manager (Medical Communications)",
+   "departmentId": "18485",
+   "departmentLabel": "Client Services",
+   "employmentStatusLabel": "Full-Time",
+   "employmentType": null,
+   "location": {
+    "city": null,
+    "state": null
+   },
+   "atsLocation": {
+    "country": "Canada",
+    "state": null,
+    "province": null,
+    "city": null
+   },
+   "isRemote": null,
+   "locationType": "1"
+  }
+ ]
+}

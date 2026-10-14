@@ -1,5 +1,5 @@
 {
-  "hash": "a1b0331efceed9da123818e34f627ad3cf3c55add43301fe3b90b3cdfac653fe",
+  "hash": "a28824d6c75afffeb650b5fe318eeae566e95110497a68a425bc5c35b7cfee38",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -38,7 +38,16 @@
                   "icims",
                   "successfactors",
                   "smartrecruiters",
-                  "jsonld-sitemap"
+                  "jsonld-sitemap",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem"
                 ],
                 "type": "string"
               },
@@ -328,7 +337,16 @@
                   "icims",
                   "successfactors",
                   "smartrecruiters",
-                  "jsonld-sitemap"
+                  "jsonld-sitemap",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem"
                 ],
                 "type": "string"
               },
@@ -530,6 +548,6 @@
     },
     "team": "evaluation",
     "timeoutMs": 10000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

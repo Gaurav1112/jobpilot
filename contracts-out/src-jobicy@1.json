@@ -1,5 +1,5 @@
 {
-  "hash": "cc849803bffce81fe14972446771d0eed06196800eff6469a9deafc9397865b6",
+  "hash": "c8bbaac0e647d4b2918fb7c28f1f20b47d01fd2edd2a13472c8202a5f29af627",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -29,7 +29,16 @@
               "icims",
               "successfactors",
               "smartrecruiters",
-              "jsonld-sitemap"
+              "jsonld-sitemap",
+              "workable",
+              "recruitee",
+              "teamtailor",
+              "personio",
+              "bamboohr",
+              "breezy",
+              "pinpoint",
+              "rippling",
+              "gem"
             ],
             "type": "string"
           },
@@ -130,6 +139,6 @@
     },
     "team": "sourcing",
     "timeoutMs": 180000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

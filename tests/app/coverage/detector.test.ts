@@ -609,7 +609,25 @@ describe('the coverage-detector golden set', () => {
       `${root}tests/fixtures/coverage/e2e/epsilon-cxs.json`,
       // Task 8: the recorded page-adapter fixtures (Atlassian iCIMS, HCLTech SuccessFactors, Bosch SmartRecruiters, Okta)
       ...readdirSync(`${root}tests/fixtures/pages`).map((f) => `${root}tests/fixtures/pages/${f}`),
+      // Task 9: the recorded small-platform feeds (Workable, Recruitee, Teamtailor, Personio, BambooHR, Breezy, Pinpoint, Rippling, Gem) and their robots.txt
+      ...readdirSync(`${root}tests/fixtures/small`).map((f) => `${root}tests/fixtures/small/${f}`),
     ];
+    expect(files.filter((f) => f.includes('/fixtures/small/')).map((f) => f.slice(`${root}tests/fixtures/small/`.length)).sort()).toEqual([
+      'bamboohr-rednucleus.json',
+      'breezy-breezy.json',
+      'gem-gem.json',
+      'personio-personio.xml',
+      'pinpoint-grasshopper.json',
+      'recruitee-bunq.json',
+      'rippling-rippling.json',
+      'robots-bamboohr.txt',
+      'robots-breezy.txt',
+      'robots-gem.txt',
+      'robots-rippling.txt',
+      'robots-teamtailor.txt',
+      'teamtailor-career.rss',
+      'workable-huggingface.json',
+    ]);
     expect(files.filter((f) => f.includes('/fixtures/pages/')).map((f) => f.slice(`${root}tests/fixtures/pages/`.length)).sort()).toEqual([
       'icims-atlassian-job-25565.html',
       'icims-atlassian-robots.txt',

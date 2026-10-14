@@ -1,0 +1,90 @@
+{
+ "data": [
+  {
+   "id": "540608",
+   "benefits": "",
+   "benefits_header": "",
+   "compensation": null,
+   "compensation_minimum": null,
+   "compensation_maximum": null,
+   "compensation_currency": null,
+   "compensation_frequency": null,
+   "compensation_visible": false,
+   "deadline_at": null,
+   "description": "<div><!--block-->Grasshopper Bank is a <strong>client-first</strong>, <strong>digital bank</strong> built for the business and innovation economy, with an obsession for providing leading-edge technology, solutions-driven products and superior service through a combination of passionate people and digital resources.</div><div><!--block--><br></div><div><!--block-->We are a highly experienced team who pride ourselves on <strong>diversity of thought and perspective</strong>.&nbsp; Nationally charte",
+   "employment_type": "full_time",
+   "employment_type_text": "Full Time",
+   "key_responsibilities": "<div><!--block-->Reporting into the Director of Fintech Risk, we are seeking a motivated Fintech Risk Analyst who will contribute to and support a strong risk management culture in working with existing and prospective Fintech partners and business leaders across the organization. This role sits in the second line of defense and is responsible for supporting the adherence and execution of risk pillars across the Banking-as-a-Service (BaaS) portfolio while understanding the competitive landscape ",
+   "key_responsibilities_header": "What you'll do:",
+   "reporting_to": "",
+   "skills_knowledge_expertise": "<ul><li><!--block-->At least 3-5 years of experience in banking or fintech risk management and compliance</li><li><!--block-->Demonstrated experience with financial crimes compliance (BSA/AML, OFAC watchlists and sanctions)</li><li><!--block-->Working knowledge across essential banking compliance areas, including UDAAP, payment network rules (NACHA, VISA/Mastercard, FedNow/TCH RTP), core commercial or consumer compliance regulations (e.g., Reg E, Reg Z, Reg DD, Reg CC, ECOA, FCRA), and/or data p",
+   "skills_knowledge_expertise_header": "What you need:",
+   "title": "Fintech Risk Analyst",
+   "url": "https://grasshopper.pinpointhq.com/en/postings/7a2878fd-2d14-4783-84e3-59b47ac3553b",
+   "path": "/en/postings/7a2878fd-2d14-4783-84e3-59b47ac3553b",
+   "workplace_type": "remote",
+   "workplace_type_text": "Fully remote",
+   "job": {
+    "id": "544915",
+    "requisition_id": "",
+    "department": {
+     "id": "39315",
+     "name": "Risk Management"
+    },
+    "division": null,
+    "structure_custom_group_one": null
+   },
+   "location": {
+    "id": "31362",
+    "city": "New York",
+    "name": "Remote",
+    "postal_code": "",
+    "province": "New York",
+    "street_address": ""
+   }
+  },
+  {
+   "id": "559874",
+   "benefits": "",
+   "benefits_header": "",
+   "compensation": null,
+   "compensation_minimum": null,
+   "compensation_maximum": null,
+   "compensation_currency": null,
+   "compensation_frequency": null,
+   "compensation_visible": false,
+   "deadline_at": null,
+   "description": "<div><!--block-->Grasshopper Bank is a <strong>client-first</strong>, <strong>digital bank</strong> built for the business and innovation economy, with an obsession for providing leading-edge technology, solutions-driven products and superior service through a combination of passionate people and digital resources.</div><div><!--block--><br></div><div><!--block-->We are a highly experienced team who pride ourselves on <strong>diversity of thought and perspective</strong>.&nbsp; Nationally charte",
+   "employment_type": "full_time",
+   "employment_type_text": "Full Time",
+   "key_responsibilities": "<div><!--block-->You will directly manage and mentor a team of BSA/AML analysts responsible for a range of activities including customer onboarding, transaction monitoring, investigations, and SAR filings. You will help foster a culture of compliance and continuous improvement within the Bank, while playing a key role in developing and maintaining processes and controls that align with the Bank’s risk tolerance, while partnering with BaaS customers to ensure their BSA/AML Programs align with the",
+   "key_responsibilities_header": "What you'll do:",
+   "reporting_to": "",
+   "skills_knowledge_expertise": "<ul><li><!--block-->7-10+ years of progressive experience in BSA/AML compliance within a financial institution and/or financial technology (fintech) company</li><li><!--block-->Proven experience managing or leading a team of compliance professionals</li><li><!--block-->Expert knowledge of BSA, AML, and OFAC regulations</li><li><!--block-->Hands-on experience with BSA/AML monitoring systems and case management</li><li><!--block-->Excellent analytical, communication, and decision-making skills</li",
+   "skills_knowledge_expertise_header": "What you need:",
+   "title": "BSA Manager",
+   "url": "https://grasshopper.pinpointhq.com/en/postings/5a7ca7fb-162e-433b-a2fb-6a53e1137756",
+   "path": "/en/postings/5a7ca7fb-162e-433b-a2fb-6a53e1137756",
+   "workplace_type": "remote",
+   "workplace_type_text": "Fully remote",
+   "job": {
+    "id": "562809",
+    "requisition_id": "",
+    "department": {
+     "id": "39315",
+     "name": "Risk Management"
+    },
+    "division": null,
+    "structure_custom_group_one": null
+   },
+   "location": {
+    "id": "31362",
+    "city": "New York",
+    "name": "Remote",
+    "postal_code": "",
+    "province": "New York",
+    "street_address": ""
+   }
+  }
+ ]
+}

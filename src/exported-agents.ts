@@ -17,6 +17,16 @@ const WITH_PLATFORMS = [
   { platform: 'successfactors', company: 'Example', ref: 'careers.example.com' },
   { platform: 'smartrecruiters', company: 'Example', ref: 'Example' },
   { platform: 'jsonld-sitemap', company: 'Example', ref: 'www.example.com' },
+  // Task 9, the small platforms
+  { platform: 'workable', company: 'Example', ref: 'example' },
+  { platform: 'recruitee', company: 'Example', ref: 'example' },
+  { platform: 'teamtailor', company: 'Example', ref: 'career.example.com' },
+  { platform: 'personio', company: 'Example', ref: 'example.jobs.personio.de' },
+  { platform: 'bamboohr', company: 'Example', ref: 'example' },
+  { platform: 'breezy', company: 'Example', ref: 'example' },
+  { platform: 'pinpoint', company: 'Example', ref: 'example' },
+  { platform: 'rippling', company: 'Example', ref: 'example' },
+  { platform: 'gem', company: 'Example', ref: 'example' },
 ] as const;
 
 /**

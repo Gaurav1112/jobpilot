@@ -83,7 +83,7 @@ export async function fetchIcimsListing(http: HttpTool, hosts: PlatformHosts, ho
 
 export const srcIcimsContract = defineContract({
   id: 'src-icims',
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Reads one verified iCIMS company\'s job pages from its portal sitemap, at most forty new or stale pages per day, under the strict page robots rule',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead iCIMS portal never opens a breaker for another platform or the ATS sources.

@@ -1,5 +1,5 @@
 {
-  "hash": "5a04305e9b8a8d3342a83b41be34b7a3703c8279af0ac5a12ccf2e0b1d517f72",
+  "hash": "2bc5ad91d55839444da6706910c599b41baf66f60285180772ee20ed0f5419c7",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -29,7 +29,16 @@
               "icims",
               "successfactors",
               "smartrecruiters",
-              "jsonld-sitemap"
+              "jsonld-sitemap",
+              "workable",
+              "recruitee",
+              "teamtailor",
+              "personio",
+              "bamboohr",
+              "breezy",
+              "pinpoint",
+              "rippling",
+              "gem"
             ],
             "type": "string"
           },
@@ -195,7 +204,16 @@
                           "icims",
                           "successfactors",
                           "smartrecruiters",
-                          "jsonld-sitemap"
+                          "jsonld-sitemap",
+                          "workable",
+                          "recruitee",
+                          "teamtailor",
+                          "personio",
+                          "bamboohr",
+                          "breezy",
+                          "pinpoint",
+                          "rippling",
+                          "gem"
                         ],
                         "type": "string"
                       },
@@ -590,7 +608,16 @@
                   "icims",
                   "successfactors",
                   "smartrecruiters",
-                  "jsonld-sitemap"
+                  "jsonld-sitemap",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem"
                 ],
                 "type": "string"
               },
@@ -756,7 +783,16 @@
                               "icims",
                               "successfactors",
                               "smartrecruiters",
-                              "jsonld-sitemap"
+                              "jsonld-sitemap",
+                              "workable",
+                              "recruitee",
+                              "teamtailor",
+                              "personio",
+                              "bamboohr",
+                              "breezy",
+                              "pinpoint",
+                              "rippling",
+                              "gem"
                             ],
                             "type": "string"
                           },
@@ -1100,6 +1136,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

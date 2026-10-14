@@ -1,0 +1,211 @@
+{
+ "offers": [
+  {
+   "id": 2781634,
+   "guid": "n4moa",
+   "slug": "senior-product-owner-1",
+   "title": "(Senior) Product Owner",
+   "status": "published",
+   "department": "Product",
+   "careers_url": "https://careers.bunq.com/o/senior-product-owner-1",
+   "careers_apply_url": "https://careers.bunq.com/o/senior-product-owner-1/c/new",
+   "location": "Amsterdam, Noord-Holland, Netherlands",
+   "city": "Amsterdam",
+   "country": "Netherlands",
+   "country_code": "NL",
+   "state_name": "Noord-Holland",
+   "state_code": "NH",
+   "remote": false,
+   "hybrid": true,
+   "on_site": false,
+   "published_at": "2026-10-13 10:58:56 UTC",
+   "created_at": "2026-10-13 10:46:23 UTC",
+   "employment_type_code": "fulltime_permanent",
+   "salary": {
+    "max": null,
+    "min": null,
+    "period": null,
+    "currency": null
+   },
+   "description": "<p>At bunq, we're not just building a banking app; we're reshaping how people around the world experience financial freedom. As a (Senior) Product Owner at bunq, you are the driving force behind a core piece of our user's experience. Your mission is to own your product, understand our users (Eva) inside and out, and ship beautiful, effective features that make their lives easy. </p><p style=\"min-height: 1.7em;\"></p><p><strong>We have several exciting and immediate openings within our Product sector. Submit your application, and our team will work with you to understand your unique skillset and interests, helping you find the perfect current opportunity that suits your career aspirations.</st",
+   "requirements": "<ul><li><p>Proven experience in product management, with a track record of owning a product or significant features from concept to launch and beyond.</p></li><li><p><span style=\"color:#5A5F72\">Experience in either P</span>ayments, AI, Business, Wealth, Stocks, Crypto, Savings, Credit, FinCrime &amp; Security, International Expansion, Growth, UX, Retention, or Propositions<span style=\"color:#5A5F7",
+   "company_name": "bunq",
+   "tags": [],
+   "locations": [
+    {
+     "id": 39979,
+     "name": "Amsterdam",
+     "state": "Noord-Holland",
+     "country": "Netherlands",
+     "city": "Amsterdam",
+     "translations": {
+      "en": {
+       "name": "Amsterdam",
+       "city": "Amsterdam",
+       "postal_code": null,
+       "street": null,
+       "note": null
+      }
+     },
+     "country_code": "NL",
+     "state_code": "NH",
+     "postal_code": null,
+     "street": null,
+     "note": null
+    }
+   ]
+  },
+  {
+   "id": 2780064,
+   "guid": "ektd9",
+   "slug": "transaction-review-lead-5",
+   "title": "Transaction Review Lead",
+   "status": "published",
+   "department": "Growth",
+   "careers_url": "https://careers.bunq.com/o/transaction-review-lead-5",
+   "careers_apply_url": "https://careers.bunq.com/o/transaction-review-lead-5/c/new",
+   "location": "Amsterdam, Noord-Holland, Netherlands",
+   "city": "Amsterdam",
+   "country": "Netherlands",
+   "country_code": "NL",
+   "state_name": "Noord-Holland",
+   "state_code": "NH",
+   "remote": false,
+   "hybrid": true,
+   "on_site": false,
+   "published_at": "2026-10-12 13:59:52 UTC",
+   "created_at": "2026-10-12 12:11:18 UTC",
+   "employment_type_code": "fulltime_permanent",
+   "salary": {
+    "max": null,
+    "min": null,
+    "period": null,
+    "currency": null
+   },
+   "description": "<p>At bunq, we’re on a mission to truly make life easy for our user. Part of that is keeping her safe: stopping criminals while making sure clean users are never held up, flagged, or offboarded for nothing. To lead this, we’re looking for a Transaction Review Lead to join our team.</p><p>As Transaction Review Lead, you’ll own bunq’s line against money laundering, terrorist financing, and sanctions evasion, across both Transaction Filtering Review and Transaction Monitoring Review. You’ll bring them together into one team, with 5 direct reports.</p><p style=\"min-height: 1.7em;\"></p><p>Take Ownership: </p><ul><li><p><strong>Simplifying from user’s Perspective:</strong> Redesign every Transacti",
+   "requirements": "<ul><li><p>You lead independently across multiple compliance domains, making quality, redesign, and escalation calls without waiting for supervision.</p></li><li><p>You have strong regulatory and compliance judgment at scale in TF/sanctions and transaction monitoring, where a wrong call has real regulatory consequences.</p></li><li><p>You spot risks early and close them before they become problems",
+   "company_name": "bunq",
+   "tags": [],
+   "locations": [
+    {
+     "id": 39979,
+     "name": "Amsterdam",
+     "state": "Noord-Holland",
+     "country": "Netherlands",
+     "city": "Amsterdam",
+     "translations": {
+      "en": {
+       "name": "Amsterdam",
+       "city": "Amsterdam",
+       "postal_code": null,
+       "street": null,
+       "note": null
+      }
+     },
+     "country_code": "NL",
+     "state_code": "NH",
+     "postal_code": null,
+     "street": null,
+     "note": null
+    },
+    {
+     "id": 39977,
+     "name": "Istanbul",
+     "state": "İstanbul",
+     "country": "Türkiye",
+     "city": "İstanbul",
+     "translations": {
+      "en": {
+       "name": "Istanbul",
+       "city": "İstanbul",
+       "postal_code": null,
+       "street": null,
+       "note": null
+      }
+     },
+     "country_code": "TR",
+     "state_code": "34",
+     "postal_code": null,
+     "street": null,
+     "note": null
+    },
+    {
+     "id": 39967,
+     "name": "Sofia",
+     "state": "Sofia (stolitsa)",
+     "country": "Bulgaria",
+     "city": "Sofia",
+     "translations": {
+      "en": {
+       "name": "Sofia",
+       "city": "Sofia",
+       "postal_code": null,
+       "street": null,
+       "note": null
+      }
+     },
+     "country_code": "BG",
+     "state_code": "22",
+     "postal_code": null,
+     "street": null,
+     "note": null
+    }
+   ]
+  },
+  {
+   "id": 2774877,
+   "guid": "2lk9v",
+   "slug": "technical-website-intern",
+   "title": "Technical Website Intern",
+   "status": "published",
+   "department": null,
+   "careers_url": "https://careers.bunq.com/o/technical-website-intern",
+   "careers_apply_url": "https://careers.bunq.com/o/technical-website-intern/c/new",
+   "location": "Amsterdam, Noord-Holland, Netherlands",
+   "city": "Amsterdam",
+   "country": "Netherlands",
+   "country_code": "NL",
+   "state_name": "Noord-Holland",
+   "state_code": "NH",
+   "remote": false,
+   "hybrid": true,
+   "on_site": false,
+   "published_at": "2026-10-07 14:22:19 UTC",
+   "created_at": "2026-10-07 12:50:46 UTC",
+   "employment_type_code": "fulltime_permanent",
+   "salary": {
+    "max": null,
+    "min": null,
+    "period": null,
+    "currency": null
+   },
+   "description": "<p>Our users lands on <a rel=\"noopener\" target=\"_blank\" href=\"http://bunq.com\">bunq.com</a> with one need. If the page is slow, broken, or behaves differently in their browser, they leave. If it's inaccessible, they can't sign up at all. As our Technical Website Intern, you help keep the site underneath fast, accessible, and reliable, so our users find the one proposition that fits their and signs up for exactly what they get.</p><p>Up for this? Kick off your application by taking our assessment and find out if bunq is your perfect match! 🚀</p><p style=\"min-height: 1.7em;\"></p><p><strong>Take ownership</strong></p><p>As our Technical Website Intern, you'll contribute to Website Growth by str",
+   "requirements": "<ul><li><p>You have a solid understanding of HTML, CSS, and TypeScript</p></li><li><p>You know your web fundamentals: the DOM, the cascade, responsive layout, how browsers render, and what Core Web Vitals measure</p></li><li><p>You understand the basics of automated testing and you're keen to learn Vitest and Playwright</p></li><li><p>You use AI for coding and testing, and you have the judgment to",
+   "company_name": "bunq",
+   "tags": [],
+   "locations": [
+    {
+     "id": 39979,
+     "name": "Amsterdam",
+     "state": "Noord-Holland",
+     "country": "Netherlands",
+     "city": "Amsterdam",
+     "translations": {
+      "en": {
+       "name": "Amsterdam",
+       "city": "Amsterdam",
+       "postal_code": null,
+       "street": null,
+       "note": null
+      }
+     },
+     "country_code": "NL",
+     "state_code": "NH",
+     "postal_code": null,
+     "street": null,
+     "note": null
+    }
+   ]
+  }
+ ]
+}

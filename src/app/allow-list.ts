@@ -25,7 +25,8 @@ import type { AnyContract } from '../kernel/contract.js';
  * - Task 8: `registry:icims-hosts` only `src-icims`, `registry:successfactors-hosts` only `src-successfactors`,
  *   `registry:smartrecruiters-hosts` only `src-smartrecruiters`, `registry:jsonld-hosts` only `src-jsonld-sitemap`;
  *   `capabilities.httpStream` (the broker's `getStream` over the policy's response cap) only `src-successfactors`, for
- *   its `sitemal.xml` (50 MB cap).
+ *   its `sitemal.xml` (50 MB cap);
+ * - Task 9: `registry:<platform>-hosts` for each of the nine small platforms, only its own `src-<platform>`.
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -50,6 +51,16 @@ export const CAPABILITY_ALLOW_LIST = {
   jsonldEgress: ['src-jsonld-sitemap'],
   /** The agents that may stream a response over the policy's response cap (SuccessFactors' sitemal.xml). */
   httpStream: ['src-successfactors'],
+  /** Task 9: the symbolic egress of the nine small platforms' registry hosts, one agent each. */
+  workableEgress: ['src-workable'],
+  recruiteeEgress: ['src-recruitee'],
+  teamtailorEgress: ['src-teamtailor'],
+  personioEgress: ['src-personio'],
+  bamboohrEgress: ['src-bamboohr'],
+  breezyEgress: ['src-breezy'],
+  pinpointEgress: ['src-pinpoint'],
+  ripplingEgress: ['src-rippling'],
+  gemEgress: ['src-gem'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -83,6 +94,15 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
       ['registry:successfactors-hosts', 'successfactorsEgress', 'SuccessFactors'],
       ['registry:smartrecruiters-hosts', 'smartrecruitersEgress', 'SmartRecruiters'],
       ['registry:jsonld-hosts', 'jsonldEgress', 'jsonld-sitemap'],
+      ['registry:workable-hosts', 'workableEgress', 'Workable'],
+      ['registry:recruitee-hosts', 'recruiteeEgress', 'Recruitee'],
+      ['registry:teamtailor-hosts', 'teamtailorEgress', 'Teamtailor'],
+      ['registry:personio-hosts', 'personioEgress', 'Personio'],
+      ['registry:bamboohr-hosts', 'bamboohrEgress', 'BambooHR'],
+      ['registry:breezy-hosts', 'breezyEgress', 'Breezy'],
+      ['registry:pinpoint-hosts', 'pinpointEgress', 'Pinpoint'],
+      ['registry:rippling-hosts', 'ripplingEgress', 'Rippling'],
+      ['registry:gem-hosts', 'gemEgress', 'Gem'],
     ] as const) {
       if (c.egress.includes(egress) && !allowed(CAPABILITY_ALLOW_LIST[key], c.id)) {
         problems.push(`${c.id} declares egress ${egress}; only ${CAPABILITY_ALLOW_LIST[key].join(', ')} may contact the registry's ${what} hosts`);

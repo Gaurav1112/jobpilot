@@ -165,7 +165,7 @@ export async function fetchJsonLdListing(http: HttpTool, hosts: PlatformHosts, b
 
 export const srcJsonLdContract = defineContract({
   id: 'src-jsonld-sitemap',
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Reads one verified in-house careers site\'s JobPosting pages from its sitemap, at most forty new or stale pages per day, under the strict page robots rule',
   skills: ['job-sourcing'],
   team: 'sourcing-jsonld',

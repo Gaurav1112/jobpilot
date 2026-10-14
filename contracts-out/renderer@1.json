@@ -1,5 +1,5 @@
 {
-  "hash": "d00deffdaffe8d893f0e6ead7d523e2d54735c6deb48d985af660ac5850e42d4",
+  "hash": "3b9cbd446afe07f6c5b412f06c40bdf685e50c01d1efff9d5f3cd8664c780be2",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -62,7 +62,16 @@
                   "icims",
                   "successfactors",
                   "smartrecruiters",
-                  "jsonld-sitemap"
+                  "jsonld-sitemap",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem"
                 ],
                 "type": "string"
               },
@@ -228,7 +237,16 @@
                               "icims",
                               "successfactors",
                               "smartrecruiters",
-                              "jsonld-sitemap"
+                              "jsonld-sitemap",
+                              "workable",
+                              "recruitee",
+                              "teamtailor",
+                              "personio",
+                              "bamboohr",
+                              "breezy",
+                              "pinpoint",
+                              "rippling",
+                              "gem"
                             ],
                             "type": "string"
                           },
@@ -685,7 +703,16 @@
                       "icims",
                       "successfactors",
                       "smartrecruiters",
-                      "jsonld-sitemap"
+                      "jsonld-sitemap",
+                      "workable",
+                      "recruitee",
+                      "teamtailor",
+                      "personio",
+                      "bamboohr",
+                      "breezy",
+                      "pinpoint",
+                      "rippling",
+                      "gem"
                     ],
                     "type": "string"
                   },
@@ -851,7 +878,16 @@
                                   "icims",
                                   "successfactors",
                                   "smartrecruiters",
-                                  "jsonld-sitemap"
+                                  "jsonld-sitemap",
+                                  "workable",
+                                  "recruitee",
+                                  "teamtailor",
+                                  "personio",
+                                  "bamboohr",
+                                  "breezy",
+                                  "pinpoint",
+                                  "rippling",
+                                  "gem"
                                 ],
                                 "type": "string"
                               },
@@ -1226,6 +1262,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

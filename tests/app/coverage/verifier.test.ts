@@ -85,7 +85,8 @@ async function verify(g: PlatformGuess, fetch: FetchLike, agent = makeBoardVerif
 describe('platformClient', () => {
   it('reads Greenhouse, Lever, Ashby, Workday, Eightfold and Oracle with the daily adapters\' own URLs; every other platform is not built', () => {
     // Task 8 added the page platforms (their clients are tested in sources-pagesites.test.ts)
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'eightfold', 'greenhouse', 'icims', 'jsonld-sitemap', 'lever', 'oracle', 'smartrecruiters', 'successfactors', 'workday']);
+    // Task 9 added the nine small platforms (their clients are tested in sources-small.test.ts)
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'bamboohr', 'breezy', 'eightfold', 'gem', 'greenhouse', 'icims', 'jsonld-sitemap', 'lever', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday']);
     // Task 7: Eightfold and Oracle read each tenant's own host; robots.txt governs both, Oracle's 403 is "unknown"
     const ef = platformClient('eightfold');
     expect(ef?.refOf('explore.jobs.netflix.net/netflix.com', 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com')).toBe('explore.jobs.netflix.net/netflix.com');
@@ -285,12 +286,16 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
     const n = serve({});
-    // Task 8 built iCIMS; Workable still has no adapter
-    const v = await verify(guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'huggingface'), n.fetch);
-    expect(v).toMatchObject({ status: 'proposed', boardName: null, jobsSeen: null });
-    expect(v.reasons[0]).toBe('adapter not built yet: workable');
+    // Task 9 built the last of the nine small platforms: every platform the detector can name has a client now, so the
+    // path is exercised with a name this build does not know (the CompanyVerdict schema is not applied to it)
+    const g = { ...guess(cand('acme.test', 'Acme'), 'gem', 'acme'), platform: 'avature' as never };
+    const ctx = ctxFor(n.fetch, [g]);
+    const out = await makeBoardVerifier(fresh()).run(g, ctx);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({ status: 'proposed', boardName: null, jobsSeen: null });
+    expect((out[0] as { reasons: string[] }).reasons[0]).toBe('adapter not built yet: avature');
     expect(n.calls).toEqual([]);
-    expect(verifierHosts(guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'x'))).toEqual([]);
+    expect(verifierHosts(g)).toEqual([]);
   });
 
   it('no platform: proposed, the detector\'s reasons carried, nothing fetched (carry 9)', async () => {

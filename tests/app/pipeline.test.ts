@@ -183,6 +183,8 @@ describe('the daily pipeline wiring', () => {
       // Task 8 made iCIMS a registry platform; a platform with no adapter in this build is still left out
       { name: 'iCIMS', platform: 'icims', boardUrl: 'https://careers-acme.icims.com/sitemap.xml' },
       { name: 'Workable', platform: 'workable', boardUrl: 'https://apply.workable.com/api/v1/widget/accounts/acme' },
+      // Task 9 built the nine small platforms; a platform with no adapter in this build is still left out
+      { name: 'Avature', platform: 'avature', boardUrl: 'https://acme.avature.net/careers' },
     ];
     const boards = registryBoards(rows);
     expect(boards).toEqual([
@@ -191,6 +193,7 @@ describe('the daily pipeline wiring', () => {
       { platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' },
       { platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' },
       { platform: 'icims', company: 'iCIMS', ref: 'careers-acme.icims.com' },
+      { platform: 'workable', company: 'Workable', ref: 'acme' },
     ]);
     const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-14', undefined, boards.slice(0, 4));
     expect(seeds.map((x) => `${x.ats} ${x.slug}`)).toEqual([

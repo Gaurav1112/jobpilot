@@ -15,7 +15,8 @@ import type { MessageType } from './types.js';
  * Workday companies in the company registry (the daily Workday adapter's); `registry:eightfold-hosts` and
  * `registry:oracle-hosts` likewise for the verified Eightfold and Oracle Recruiting Cloud companies (Task 7), and
  * `registry:icims-hosts`, `registry:successfactors-hosts`, `registry:smartrecruiters-hosts`, `registry:jsonld-hosts` for
- * the page adapters' companies (Task 8).
+ * the page adapters' companies (Task 8), and `registry:<platform>-hosts` for each of the nine small platforms (Task 9:
+ * workable, recruitee, teamtailor, personio, bamboohr, breezy, pinpoint, rippling, gem).
  */
 export const SYMBOLIC_EGRESS = [
   'pack:careers-hosts',
@@ -27,6 +28,15 @@ export const SYMBOLIC_EGRESS = [
   'registry:successfactors-hosts',
   'registry:smartrecruiters-hosts',
   'registry:jsonld-hosts',
+  'registry:workable-hosts',
+  'registry:recruitee-hosts',
+  'registry:teamtailor-hosts',
+  'registry:personio-hosts',
+  'registry:bamboohr-hosts',
+  'registry:breezy-hosts',
+  'registry:pinpoint-hosts',
+  'registry:rippling-hosts',
+  'registry:gem-hosts',
 ] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);

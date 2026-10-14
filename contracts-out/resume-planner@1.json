@@ -1,5 +1,5 @@
 {
-  "hash": "717e8f5c13ccd6d3f3ed2b54db72aac40ce95b4f5f65302d6439ae4593b808dd",
+  "hash": "26add2002eb2aeae85b5ca2c952a5ab445621b845eee2046766c6a5efdbbd45a",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -131,7 +131,16 @@
                       "icims",
                       "successfactors",
                       "smartrecruiters",
-                      "jsonld-sitemap"
+                      "jsonld-sitemap",
+                      "workable",
+                      "recruitee",
+                      "teamtailor",
+                      "personio",
+                      "bamboohr",
+                      "breezy",
+                      "pinpoint",
+                      "rippling",
+                      "gem"
                     ],
                     "type": "string"
                   },
@@ -377,7 +386,16 @@
               "icims",
               "successfactors",
               "smartrecruiters",
-              "jsonld-sitemap"
+              "jsonld-sitemap",
+              "workable",
+              "recruitee",
+              "teamtailor",
+              "personio",
+              "bamboohr",
+              "breezy",
+              "pinpoint",
+              "rippling",
+              "gem"
             ],
             "type": "string"
           },
@@ -543,7 +561,16 @@
                           "icims",
                           "successfactors",
                           "smartrecruiters",
-                          "jsonld-sitemap"
+                          "jsonld-sitemap",
+                          "workable",
+                          "recruitee",
+                          "teamtailor",
+                          "personio",
+                          "bamboohr",
+                          "breezy",
+                          "pinpoint",
+                          "rippling",
+                          "gem"
                         ],
                         "type": "string"
                       },
@@ -877,6 +904,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

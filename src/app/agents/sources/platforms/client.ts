@@ -13,7 +13,9 @@ import { fetchJsonLdListing, jsonLdBoardOfUrl, jsonLdRef, parseJsonLdRef } from 
 import { hiringOrganizationOf, readOneJobPage, type PageListing } from './pages.js';
 import { fetchSrListing, parseSmartRecruitersRef, smartRecruitersBoardOfUrl, srListingUrl } from './smartrecruiters.js';
 import { parseSuccessFactorsRef, readSitemal, sitemalUrl, successFactorsBoardOfUrl } from './successfactors.js';
+import { documentedHosts, type FeedBoard } from './feed-board.js';
 import { HostRefused, type PlatformHosts } from './shared.js';
+import { SMALL_PLATFORMS } from './small.js';
 import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workdayListUrl, workdayRef, WORKDAY_PAGE_SIZE, type WorkdayHosts } from './workday.js';
 
 /**
@@ -395,6 +397,58 @@ const PAGE_CLIENTS: Readonly<Record<string, PlatformClient>> = {
 };
 
 /**
+ * The small platforms' clients (Task 9): ONE feed request, the daily adapter's own (`fetchFeed`: the same URL, Accept,
+ * pacing, host rules and parser), at least one job wanted (none: 0 jobs, proposed, by the verifier). The board's name is
+ * the feed's own company name where it has one (Workable `name`, Recruitee `company_name`, Teamtailor's channel title,
+ * Breezy `company.name`, Personio's `subcompany` when every position agrees); otherwise the slug is compared with the
+ * domain label under the generic-label rules (Personio: its host's first label), and a mismatch is proposed. A feed
+ * that is the platform's documented public API (Workable, Recruitee, Personio, Pinpoint, Gem) is read without
+ * robots.txt, as Greenhouse, Lever and Ashby are; the other four (Teamtailor, BambooHR, Breezy, Rippling) are read
+ * through the run's host state, robots.txt governing. A 401/403 is `BoardRefused`, a 429 `rate_limit`, a challenge
+ * `challenged`: the verifier defers all three, never a failed week. A page-level shape problem is `invalid_output`
+ * (a failed verdict), not the daily adapter's `input_rejected`.
+ */
+function feedClient(fb: FeedBoard<string>): PlatformClient {
+  const s = fb.spec;
+  const board = (ref: string): string => boardOf(ref, s.parseRef, s.platform, `a ${s.label} board id`);
+  return {
+    platform: s.platform,
+    host: s.fixedHost,
+    robots: !s.documented,
+    refOf: (slug, boardUrl) => (boardUrl === null ? null : s.boardOfUrl(boardUrl)) ?? s.parseRef(slug),
+    hostOf: (ref) => {
+      const b = s.parseRef(ref);
+      return b === null ? null : s.hostOf(b);
+    },
+    boardUrl: (ref) => s.urlOf(board(ref)),
+    async readBoard(ref, http, opts) {
+      const b = board(ref);
+      const hosts = s.documented ? (opts?.hosts ?? documentedHosts()) : hostsOf(opts, s.platform);
+      const req = { company: ref, slug: ref };
+      const page = await refused(async () => {
+        try {
+          return await fb.fetchFeed(http, hosts, b, req, opts?.timeoutMs);
+        } catch (e) {
+          // the daily run defers a deterministic per-tenant problem; the verifier records it as a failed board
+          if (e instanceof KernelError && e.code === 'input_rejected') throw new KernelError('invalid_output', e.message);
+          throw e;
+        }
+      });
+      return {
+        boardName: page.names.length === 1 ? (page.names[0] as string) : null,
+        boardNames: page.names.length > 1 ? page.names : [],
+        jobs: page.postings,
+        complete: page.total === null || page.total <= page.listed,
+        url: s.urlOf(b),
+        nameKey: page.names.length === 0 && s.nameKey !== undefined ? s.nameKey(b) : null,
+      };
+    },
+  };
+}
+
+const FEED_CLIENTS: Readonly<Record<string, PlatformClient>> = Object.fromEntries(SMALL_PLATFORMS.map((f) => [f.spec.platform, feedClient(f)]));
+
+/**
  * The verifier's SuccessFactors read stops at the first item, within the policy's response cap: it needs a
  * `maxResponseBytes` of at least this (accepted, fix round 2; the product policy's is 16 MB).
  */
@@ -426,8 +480,9 @@ async function refused<T>(read: () => Promise<T>): Promise<T> {
 /** The platform's read client, or null when this build has no adapter for it yet (Tasks 6-8 add them). */
 export function platformClient(platform: string): PlatformClient | null {
   if (Object.hasOwn(CLIENTS, platform)) return CLIENTS[platform] as PlatformClient;
-  return Object.hasOwn(PAGE_CLIENTS, platform) ? (PAGE_CLIENTS[platform] as PlatformClient) : null;
+  if (Object.hasOwn(PAGE_CLIENTS, platform)) return PAGE_CLIENTS[platform] as PlatformClient;
+  return Object.hasOwn(FEED_CLIENTS, platform) ? (FEED_CLIENTS[platform] as PlatformClient) : null;
 }
 
 /** The platforms this build can read (and so verify), sorted. */
-export const BUILT_PLATFORMS: readonly string[] = [...Object.keys(CLIENTS), ...Object.keys(PAGE_CLIENTS)].sort();
+export const BUILT_PLATFORMS: readonly string[] = [...Object.keys(CLIENTS), ...Object.keys(PAGE_CLIENTS), ...Object.keys(FEED_CLIENTS)].sort();

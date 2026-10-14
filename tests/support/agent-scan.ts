@@ -39,6 +39,8 @@ export const APP_ALLOWED = [
   'src/app/challenge.ts',
   // Task 8: the pure sitemap reader (moved from the coverage locator) the daily page adapters share.
   'src/app/text/sitemap.ts',
+  // Task 9: the pure linear XML reader the Teamtailor and Personio feed adapters share.
+  'src/app/text/xml-lite.ts',
 ];
 
 /**

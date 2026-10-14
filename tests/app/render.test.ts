@@ -740,6 +740,15 @@ describe('capability allow-list', () => {
       smartrecruitersEgress: ['src-smartrecruiters'],
       jsonldEgress: ['src-jsonld-sitemap'],
       httpStream: ['src-successfactors'],
+      workableEgress: ['src-workable'],
+      recruiteeEgress: ['src-recruitee'],
+      teamtailorEgress: ['src-teamtailor'],
+      personioEgress: ['src-personio'],
+      bamboohrEgress: ['src-bamboohr'],
+      breezyEgress: ['src-breezy'],
+      pinpointEgress: ['src-pinpoint'],
+      ripplingEgress: ['src-rippling'],
+      gemEgress: ['src-gem'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;
