@@ -93,6 +93,12 @@ export const REFUSALS: ReadonlySet<string> = new Set(['http-401', 'http-403', 'h
 export const OFFLINE_AFTER_NETWORK_ERRORS = 5;
 /** How long (the injected clock) one answer of the offline check is reused. */
 export const ONLINE_CHECK_TTL_MS = 30_000;
+/**
+ * Re-check m5: a positive online check under this age is reused instead of probing again, provided a real HTTP answer
+ * has come since it (so the network is known to have worked after it; behind a portal no answer comes, and it is
+ * asked again).
+ */
+export const ONLINE_REUSE_MS = 60_000;
 /** The transport code of a transient miss: the code a step resting on it fails with. */
 export type TransientCode = 'network' | 'timeout' | 'overloaded';
 
@@ -160,6 +166,8 @@ export function makeRunGate(opts: {
   let events = 0;
   let lastAnswer = 0;
   let checked: { readonly at: number; readonly seq: number; readonly online: boolean } | undefined;
+  /** The transport position of the last reuse of a positive check (re-check m5). */
+  let reusedAt = 0;
   /** Run-long disables caused by transport errors since the last real answer (R1). */
   const provisional = new Set<string>();
   const goOffline = (): void => {
@@ -174,6 +182,13 @@ export function makeRunGate(opts: {
     provisional.clear();
   };
   const check = async (now: string): Promise<boolean> => {
+    const t = Date.parse(now);
+    if (checked?.online === true && t >= checked.at && t - checked.at < ONLINE_REUSE_MS && lastAnswer > Math.max(checked.seq, reusedAt)) {
+      // reused once per real answer (the next reuse needs another answer after this point); never proof for `settled`
+      reusedAt = events;
+      errorsInARow = 0;
+      return true;
+    }
     const on = await online();
     checked = { at: Date.parse(now), seq: events, online: on };
     if (on) errorsInARow = 0;
@@ -222,7 +237,11 @@ export function makeRunGate(opts: {
     isOnline,
     seq: () => events,
     markProvisional(host) {
-      if (lastAnswer < events) provisional.add(host);
+      if (offline) {
+        // re-check m4: marked after the machine was found offline: undone at once, never kept for the run
+        provisional.add(host);
+        goOffline();
+      } else if (lastAnswer < events) provisional.add(host);
     },
     async settled(since, now) {
       if (offline) return false;
@@ -456,7 +475,8 @@ export function stepFetcher(o: {
     await gate.noteTransport('network-error', now);
     const kind = networkKind(e);
     const sys = e.sysCode !== undefined ? ` (${e.sysCode})` : '';
-    if (kind === 'transient') return { kind: 'miss', reason: `network: ${where}${sys}`, transient: 'network' };
+    // re-check m4: the error that made the offline check fail is the outage's too, never a fact about the host
+    if (gate.offline() || kind === 'transient') return { kind: 'miss', reason: `network: ${where}${sys}`, transient: 'network' };
     if (kind === 'no-such-host' && !(await gate.isOnline(now))) return { kind: 'miss', reason: `network: ${where}${sys}`, transient: 'network' };
     // a fact about this host, provided the network is proven to work around it (`settle`, `markProvisional`)
     lastTransportMiss = gate.seq();

@@ -1,5 +1,5 @@
 import type { AnyAgent } from '../../kernel/agent.js';
-import type { EgressSets } from '../../kernel/broker.js';
+import type { EgressSets, HostPacer } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
 import type { Envelope } from '../../kernel/envelope.js';
 import type { GuardrailRegistry } from '../../kernel/guardrails/index.js';
@@ -191,6 +191,8 @@ export interface CoverageStagesOptions {
    * run sets it; a one-off run (resolve now) does not: there is no later invocation to wait for.
    */
   readonly retry?: boolean;
+  /** One per-host pacer for every stage and the run's own online probe (re-check m5); default: one per stage. */
+  readonly hostPacer?: HostPacer;
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -378,6 +380,7 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         sleep: o.sleep,
         egressSets,
         codeHash: o.codeHash,
+        ...(o.hostPacer !== undefined ? { hostPacer: o.hostPacer } : {}),
         ...(o.afterStep ? { afterStep: o.afterStep } : {}),
         pauseBefore,
         beforeFinish,

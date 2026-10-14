@@ -235,12 +235,13 @@ export async function runCoverageCommand(
     const outage = checkOutage();
     if (outage !== null) d.err(`warning: ${outage.describe}`);
     const fetch = outage === null ? (offline?.fetch ?? nodeFetch) : outage.fetch(offline?.fetch ?? nodeFetch);
-    const online = offline !== undefined ? async () => true : (d.online ?? (() => httpsOnline(fetch, PROBE_HOSTS_OF.coverage)));
+    // the run's own online check goes through its per-host pacer (re-check m5): only a fixtures run or a caller's check is passed in
+    const online = offline !== undefined ? async () => true : d.online;
     const summary = await runCoverage({
       home: d.home,
       clock: d.clock,
       fetch,
-      online: outage === null ? online : outage.online(online),
+      ...(online !== undefined ? { online: outage === null ? online : outage.online(online) } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),

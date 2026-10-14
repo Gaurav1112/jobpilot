@@ -7,6 +7,7 @@ import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
+import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
 import { httpsOnline } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { runProblems, type Problem } from '../problems.js';
@@ -118,6 +119,20 @@ export interface CoverageRunOptions {
    * `httpsOnline` through this run's `fetch` (R1: HTTPS must work, not only DNS); an offline-fixtures run passes `async () => true`.
    */
   readonly online?: () => Promise<boolean>;
+  /** The run's one per-host pacer (every stage and the online probe); default: a new one at the coverage policy's interval. */
+  readonly hostPacer?: HostPacer;
+}
+
+/**
+ * The run's online check (re-check m5): `httpsOnline` with each probe request waiting on the run's own per-host pacer,
+ * the one every stage's requests use, so a probe host is never asked within the minimum interval of another request.
+ */
+export function pacedOnline(fetch: FetchLike, pacer: HostPacer): () => Promise<boolean> {
+  const paced: FetchLike = async (url, init) => {
+    await pacer.wait(new URL(url).hostname);
+    return fetch(url, init);
+  };
+  return () => httpsOnline(paced);
 }
 
 /** One invocation's time slice: then it pauses between steps and the next `run-coverage` continues the same run. */
@@ -252,7 +267,8 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         }
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
-      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => httpsOnline(o.fetch)) });
+      const hostPacer = o.hostPacer ?? createHostPacer(policy.minHostIntervalMs, o.clock, o.sleep ?? realSleep);
+      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? pacedOnline(o.fetch, hostPacer) });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
       const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
       // the slice limit applies once this invocation has done a step, so every slice makes progress
@@ -281,6 +297,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         afterStep,
         pauseBefore,
         retry: true,
+        hostPacer,
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id

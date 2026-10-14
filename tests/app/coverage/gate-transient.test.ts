@@ -308,3 +308,79 @@ describe('R1: once offline, the invocation trusts no transport error', () => {
     expect(await locate(gate, n.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
   });
 });
+
+describe('re-check m4: the request that finds the machine offline leaves no run-long disable', () => {
+  it('the robots.txt failure that makes the 5th error in a row (offline) is transient; the host is back within the hour', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => false });
+    for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS - 1; i++) await gate.noteTransport('network-error', at(0));
+    const n = net(() => 'cert');
+    expect(await locate(gate, n.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
+    expect(gate.offline()).toBe(true);
+    // the failure that found the outage is transient itself: off for the hour, never the run
+    expect([...store.coverageHostState('r').values()]).toContain('robots-transient');
+    for (const [h] of store.coverageHostState('r')) expect(gate.disabledWhy(h, at(1)), h).toBeUndefined();
+  });
+
+  it('a provisional mark made after the machine went offline undoes the disable at once', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => false });
+    for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS; i++) await gate.noteTransport('network-error', at(0));
+    expect(gate.offline()).toBe(true);
+    gate.disable('late.test', 'robots-unavailable', at(0));
+    gate.markProvisional('late.test');
+    expect(gate.disabledWhy('late.test', at(0))).toBeUndefined();
+    expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+});
+
+describe('re-check m5: the online probe is rare and obeys host spacing', () => {
+  it('a positive check is reused for 60 s while real answers keep coming; without answers it is asked again', async () => {
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, true) });
+    const burst = async (t: string) => {
+      for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS; i++) await gate.noteTransport('network-error', t);
+    };
+    await burst(at(0));
+    expect(asked).toBe(1);
+    await gate.noteTransport('answer', at(0));
+    await burst(new Date(Date.parse(at(0)) + 59_000).toISOString());
+    expect(asked).toBe(1); // reused: answered since, under 60 s
+    await burst(new Date(Date.parse(at(0)) + 59_500).toISOString());
+    expect(asked).toBe(2); // no real answer since the last check: asked again
+  });
+
+  it('pacedOnline: two checks in quick succession put at least the host interval between two requests to one probe host', async () => {
+    const { pacedOnline } = await import('../../../src/app/coverage/run.js');
+    const { createHostPacer } = await import('../../../src/kernel/broker.js');
+    let t = Date.parse(at(0));
+    const clock = { now: () => new Date(t).toISOString() };
+    const pacer = createHostPacer(2000, clock, async (ms) => void (t += ms));
+    const sent: { host: string; t: number }[] = [];
+    const fetch: FetchLike = async (url) => (sent.push({ host: new URL(url).hostname, t }), res(404));
+    const online = pacedOnline(fetch, pacer);
+    await pacer.wait('boards-api.greenhouse.io'); // a board read of the verify stage just now
+    expect(await online()).toBe(true);
+    expect(await online()).toBe(true);
+    const times = [Date.parse(at(0)), ...sent.filter((s) => s.host === 'boards-api.greenhouse.io').map((s) => s.t)];
+    for (let i = 1; i < times.length; i++) expect((times[i] as number) - (times[i - 1] as number)).toBeGreaterThanOrEqual(2000);
+  });
+});
+
+describe('re-check m5: a reused online answer is never proof for a later miss', () => {
+  it('a portal starting right after a real answer: the reuse does not confirm the misses after it; the next settle probes', async () => {
+    let on = true;
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, on) });
+    for (let i = 0; i < 5; i++) await gate.noteTransport('network-error', at(0)); // probe 1: online
+    await gate.noteTransport('answer', at(0));
+    on = false; // the portal starts
+    await gate.noteTransport('network-error', at(0));
+    const miss = gate.seq();
+    for (let i = 0; i < 4; i++) await gate.noteTransport('network-error', at(0)); // 5 in a row: the reuse answers
+    expect(asked).toBe(1);
+    expect(await gate.settled(miss, at(0))).toBe(false); // probed, offline
+    expect(asked).toBe(2);
+    expect(gate.offline()).toBe(true);
+  });
+});

@@ -146,24 +146,46 @@ describe('C1: a network outage mid-run', () => {
       start ??= t;
       return t - start < 40_000 ? 'CERT_HAS_EXPIRED' : null;
     });
-    // no `online` given: the run's own HTTPS check, through the same (portal) fetch
-    const first = await runCoverage({ home, clock: w.clock, fetch: w.fetch, sleep: async () => {}, codeHash: 'outage', yieldCheck: () => null });
+    // every request to the probe host, with its clock time (re-check m5: the probe obeys the run's host spacing)
+    const probeHost: number[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      if (new URL(url).hostname === 'boards-api.greenhouse.io') probeHost.push(w.at());
+      return w.fetch(url, init);
+    };
+    // no `online` given: the run's own HTTPS check, through the same (portal) fetch; sleeping moves the clock
+    const first = await runCoverage({ home, clock: w.clock, fetch, sleep: async (ms) => w.jump(ms), codeHash: 'outage', yieldCheck: () => null });
     expect(first).toMatchObject({ status: 'paused', reason: 'offline' });
+    expect(probeHost.length).toBeGreaterThan(0);
     expect([...db(home, (a) => a.coverageHostState('coverage-2026-10-11')).values()].filter((why) => why !== 'robots-transient')).toEqual([]);
     expect(locateEvents(home, 'step_done').length).toBe(0); // nothing finished as "not located" on the portal's errors
     w.jump(TRANSIENT_DISABLE_MS + 60_000);
     const results: CoverageResult[] = [];
     for (let i = 0; i < 8; i++) {
-      const r = await runCoverage({ home, clock: w.clock, fetch: w.fetch, sleep: async () => {}, codeHash: 'outage', yieldCheck: () => null });
+      const r = await runCoverage({ home, clock: w.clock, fetch, sleep: async (ms) => w.jump(ms), codeHash: 'outage', yieldCheck: () => null });
       results.push(r);
       if (r.status === 'completed') break;
       w.jump(TRANSIENT_DISABLE_MS + 60_000);
     }
+    // the probes and the verify stage's board reads on that host: never within the 2 s host interval
+    expect(probeHost.length).toBeGreaterThan(2);
+    for (let i = 1; i < probeHost.length; i++) expect((probeHost[i] as number) - (probeHost[i - 1] as number)).toBeGreaterThanOrEqual(2000);
     const summary = results.at(-1) as CoverageSummary;
     expect(summary.status).toBe('completed');
     expect(summary.located).toEqual(BASELINE.located);
     expect(summary.verdicts).toEqual(BASELINE.verdicts);
     expect(summary.deferred).toMatchObject({ total: 0, transient: 0 });
+  });
+
+  it('re-check m5: every stage and the online probe share the run\'s one host pacer', async () => {
+    const home = newHome();
+    const w = world(() => null);
+    const paced: string[] = [];
+    const hostPacer = { wait: async (host: string) => void paced.push(host) };
+    const r = await runCoverage({ home, clock: w.clock, fetch: w.fetch, sleep: async () => {}, codeHash: 'outage', yieldCheck: () => null, hostPacer });
+    expect(r.status).toBe('completed');
+    // the verify stage's board reads and the locate stage's pages went through it
+    expect(paced).toContain('boards-api.greenhouse.io');
+    expect(paced).toContain('alpha.test');
   });
 
   it('a sustained outage while DNS still answers: the locator breaker trips, nothing is memoised, the candidates are asked again after it', async () => {

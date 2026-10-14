@@ -69,6 +69,8 @@ export interface SupervisorDeps {
   readonly fullPackHash?: string;
   /** The hosts behind symbolic egress entries (`pack:careers-hosts`); the app derives them from the pack. */
   readonly egressSets?: EgressSets;
+  /** The per-host pacer to use (a caller sharing one across supervisors and its own requests); default: a new one. */
+  readonly hostPacer?: HostPacer;
   /**
    * Fingerprint of the agents' implementation (review I4), in every step key: a code change re-runs every step once.
    * Default 'none' (kernel and demo), which leaves the keys as before.
@@ -113,7 +115,7 @@ export class Supervisor {
 
   constructor(private readonly d: SupervisorDeps) {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-    this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+    this.hostPacer = d.hostPacer ?? createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
     this.browserPacer = createHostPacer(d.policy.minBrowserIntervalMs, d.clock, this.sleep);
     this.pack = d.pack === undefined ? undefined : freezePack(d.pack);
     this.fullPack = d.fullPack === undefined ? undefined : freezePack(d.fullPack);
