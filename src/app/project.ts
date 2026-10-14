@@ -4,6 +4,7 @@ import type { Doc, DocsState, JobUpsert } from './store/app-store.js';
 import type { AppStore } from './store/app-store.js';
 import { citeable } from './pack/rules.js';
 import type { Fact } from './pack/schema.js';
+import { atsRefOf } from './text/ats-id.js';
 import { JOB_TRACKER_KIND, jobKeyOf } from './tracker.js';
 import type { CoverPlan, EligibilityVerdict, Evidence, Posting, QaReport, Rendered, ResumePlan, Scored } from './types.js';
 import type { Envelope, GuardrailVerdict } from '../kernel/envelope.js';
@@ -33,6 +34,8 @@ export interface ProjectResult {
   readonly docs: Record<DocsState, number>;
   /** Quarantines the projector could not tie to a job (an input-side trip with no tracker transition). */
   readonly unresolvedQuarantines: number;
+  /** Task 10: the named notes of ATS-id collisions the store refused to merge (`ats-id-collision …`), sorted, unique. */
+  readonly dedupeNotes: string[];
 }
 
 /** Pipeline order of the types that carry a job; the furthest one reached decides a job's row. */
@@ -110,7 +113,7 @@ const inr = (v: number | null, p: Posting['comp'], fx: FxRates): number | null =
  *
  * The job key is the posting's identity (`jobKey(source, sourceId)`), so a re-emitted posting upserts its row (a newer
  * version) and a Desk row with that source id is the same row; cross-source listings are linked by the store through
- * the dedupe key. A job whose row was last seen after this run's time is skipped (`stale`), so projecting an older run
+ * the dedupe key, or one job seen through two sources by its ATS job id (`atsRefOf`, Task 10). A job whose row was last seen after this run's time is skipped (`stale`), so projecting an older run
  * never overwrites newer data or docs. Docs are replaced on every projected job, so they always mirror the latest run that saw it. Status and
  * note are never written. Projecting a run twice is a no-op.
  */
@@ -204,12 +207,14 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   let jobs = 0;
   let inserted = 0;
   let stale = 0;
+  const dedupeNotes = new Set<string>();
   app.tx(() => {
     for (const key of [...groups.keys()].sort()) {
       const g = groups.get(key) as JobGroup;
       const r = rowOf(key, g, at, opts);
       if (!r) continue;
       const res = app.upsertJob(r.row);
+      for (const n of res.notes ?? []) dedupeNotes.add(n);
       if (res.stale) {
         // An older run than the row's last sighting: it must not overwrite newer data or docs.
         stale += 1;
@@ -221,7 +226,7 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
       docs[r.row.docsState] += 1;
     }
   });
-  return { jobs, inserted, stale, docs, unresolvedQuarantines };
+  return { jobs, inserted, stale, docs, unresolvedQuarantines, dedupeNotes: [...dedupeNotes].sort() };
 }
 
 function inputOf(kernel: Store, stepKey: string): Envelope | undefined {
@@ -378,6 +383,9 @@ function rowOf(key: string, g: JobGroup, at: string, opts: ProjectOptions): { ro
     postedAt: posting.postedAt,
     unplaced: plan?.unplaced ?? [],
     at,
+    // Task 10: the ATS job id that links this posting to the same job seen through another source (store/links.ts)
+    slug: posting.slug,
+    atsJob: atsRefOf(posting),
   };
   return { row, docs, citedFacts: docs.length > 0 && rendered && qa ? citedFactsOf(rendered.plan) : null };
 }

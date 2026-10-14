@@ -5,6 +5,9 @@ import { dirname } from 'node:path';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import type { CompanyVerdict, Platform } from '../coverage/types.js';
+import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
+import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
+import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
 export type JobStatus = (typeof JOB_STATUSES)[number];
@@ -24,8 +27,7 @@ export type Verdict = 'eligible' | 'rejected' | 'review';
 export type Band = 'disclosed' | 'undisclosed' | 'review' | 'below-floor' | 'rejected';
 export const DEFAULT_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review'];
 const BAND_RANK: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 1, review: 2, 'below-floor': 3, rejected: 4 };
-/** Sources that are the employer's own ATS or career site; their listing is preferred over a feed's. */
-export const ATS_SOURCES: ReadonlySet<string> = new Set(['greenhouse', 'lever', 'ashby', 'careers']);
+export { ATS_SOURCES };
 
 export interface Doc {
   readonly kind: 'resume' | 'cover';
@@ -70,6 +72,10 @@ export interface JobUpsert {
   readonly unplaced?: readonly string[];
   /** When this posting was seen: sets last_seen, and first_seen on insert. */
   readonly at: string;
+  /** Task 10: the posting's board or feed (`Posting.slug`), for the same-source rule of the ATS-id match. */
+  readonly slug?: string;
+  /** Task 10: the job's ATS id (`atsRefOf(posting)`); absent or null: none, the v1 dedupe key alone links it. */
+  readonly atsJob?: AtsRef | null;
 }
 
 /** A Desk row: run-owned columns plus the user-owned ones it carries over. Only `migrateDesk` writes these. */
@@ -239,11 +245,25 @@ function assertStatus(s: string): asserts s is JobStatus {
   if (!(JOB_STATUSES as readonly string[]).includes(s)) throw new Error(`invalid job status ${s}; expected one of ${JOB_STATUSES.join(', ')}`);
 }
 
-/** Preferred first: an ATS source over a feed, then the earliest first_seen, then the job key. */
-function preferred(a: Pick<JobRowDb, 'source' | 'first_seen' | 'job_key'>, b: Pick<JobRowDb, 'source' | 'first_seen' | 'job_key'>): number {
-  const rank = (s: string) => (ATS_SOURCES.has(s) ? 0 : 1);
-  return rank(a.source) - rank(b.source) || cmp(a.first_seen, b.first_seen) || cmp(a.job_key, b.job_key);
+/** A company's name as the ATS-id match compares it (the coverage name matcher's), or '' for a generic name (never matched). */
+function companyNormOf(company: string): string {
+  const n = normalCompanyName(company);
+  return GENERIC_LABELS.has(n.replace(/ /gu, '')) ? '' : n;
 }
+
+interface LinkRowDb {
+  job_key: string;
+  source: string;
+  first_seen: string;
+  dedupe_key: string;
+  duplicate_of: string | null;
+  platform: AtsIdPlatform | null;
+  board: string | null;
+  ats_id: string | null;
+  slug: string | null;
+  company_norm: string | null;
+}
+const LINK_COLUMNS = `j.job_key, j.source, j.first_seen, j.dedupe_key, j.duplicate_of, a.platform, a.board, a.ats_id, a.slug, a.company_norm`;
 
 /**
  * The app catalogue, beside the kernel's tables in the same DB file.
@@ -254,6 +274,11 @@ function preferred(a: Pick<JobRowDb, 'source' | 'first_seen' | 'job_key'>, b: Pi
  *   kept; every row whose source differs from the group's preferred row (`preferred`: ATS over feed, then earliest
  *   first_seen, then job key) points at it through `duplicate_of`. Rows from the preferred row's own source stay
  *   separate jobs. `listJobs` hides duplicates by default and gives the preferred row `alsoListedOn`.
+ * - **One job through two sources (Task 10).** Rows of one company with the same ATS job id (`job_ats`, from
+ *   `atsRefOf(posting)`: a company page's `gh_jid` and the Greenhouse board job, a Workday req id) are one job too, the
+ *   earliest first_seen primary; see `linkJobs` (store/links.ts) for the exact rule, which falls back to the dedupe key
+ *   unchanged. Every write re-links the closure of the rows it touches (their dedupe groups and their companies' ATS
+ *   rows), so the result does not depend on the order rows arrive in.
  * - **User-owned columns.** Runs write only run-owned columns (`upsertJob`). Status and note belong to the user and
  *   live on the preferred row: `setStatus` and `setNote` on any row of a group write the whole group (history on the
  *   preferred row), and every row shows the group's status (the furthest, for rows imported with different ones) and
@@ -381,7 +406,7 @@ export class AppStore {
    * than the row's `last_seen` is `stale` and changes nothing: an older run never overwrites newer data, and
    * `last_seen` never moves backwards. The same time again (re-projecting one run) is applied.
    */
-  upsertJob(r: JobUpsert): { jobKey: string; inserted: boolean; stale: boolean } {
+  upsertJob(r: JobUpsert): { jobKey: string; inserted: boolean; stale: boolean; notes?: string[] } {
     return this.tx(() => {
       const cur = this.row(r.jobKey);
       this.assertIdentity(r, cur);
@@ -390,13 +415,30 @@ export class AppStore {
         this.db
           .prepare(`UPDATE jobs SET ${RUN_COLUMNS.map((c) => `${c} = ?`).join(', ')}, last_seen = ? WHERE job_key = ?`)
           .run(...runParams(r), r.at, r.jobKey);
-        if (cur.dedupe_key !== r.dedupeKey) this.relink(cur.dedupe_key);
       } else {
         this.insert(r, undefined);
       }
-      this.relink(r.dedupeKey);
-      return { jobKey: r.jobKey, inserted: !cur, stale: false };
+      const companies = this.putAts(r);
+      const notes = this.relink([r.dedupeKey, ...(cur && cur.dedupe_key !== r.dedupeKey ? [cur.dedupe_key] : [])], companies);
+      return { jobKey: r.jobKey, inserted: !cur, stale: false, ...(notes.length > 0 ? { notes } : {}) };
     });
+  }
+
+  /**
+   * Task 10: records (or clears) the job's ATS id in `job_ats`; returns the companies whose ATS rows must be re-linked
+   * (the new one and, when it changed, the old one).
+   */
+  private putAts(r: JobUpsert): string[] {
+    const old = this.db.prepare(`SELECT company_norm FROM job_ats WHERE job_key = ?`).get(r.jobKey) as { company_norm: string } | undefined;
+    this.db.prepare(`DELETE FROM job_ats WHERE job_key = ?`).run(r.jobKey);
+    const companyNorm = companyNormOf(r.company);
+    const a = r.atsJob;
+    const out = old === undefined ? [] : [old.company_norm];
+    if (a === undefined || a === null || companyNorm === '') return out;
+    this.db
+      .prepare(`INSERT INTO job_ats (job_key, platform, board, ats_id, slug, company_norm) VALUES (?, ?, ?, ?, ?, ?)`)
+      .run(r.jobKey, a.platform, a.board, a.id, r.slug ?? '', companyNorm);
+    return old?.company_norm === companyNorm ? out : [...out, companyNorm];
   }
 
   /**
@@ -426,7 +468,7 @@ export class AppStore {
       }
       // A Desk row is a job the user already knows: it is never announced as new (R-I2).
       if (outcome !== 'present') this.db.prepare(`UPDATE jobs SET notified_at = ? WHERE job_key = ? AND notified_at IS NULL`).run(r.statusAt, r.jobKey);
-      this.relink(r.dedupeKey);
+      this.relink([r.dedupeKey], []);
       return outcome;
     });
   }
@@ -438,19 +480,60 @@ export class AppStore {
     return this.db.prepare(`SELECT 1 FROM status_history WHERE job_key IN (${keys.map(() => '?').join(', ')}) LIMIT 1`).get(...keys) !== undefined;
   }
 
-  /** Recomputes `duplicate_of` for one dedupe group. */
-  private relink(dedupeKey: string): void {
-    const rows = (this.db.prepare(`SELECT job_key, source, first_seen, duplicate_of FROM jobs WHERE dedupe_key = ?`).all(dedupeKey) as Pick<
-      JobRowDb,
-      'job_key' | 'source' | 'first_seen' | 'duplicate_of'
-    >[]).sort(preferred);
-    const top = rows[0];
-    if (!top) return;
+  /**
+   * Recomputes `duplicate_of` over the closure of the given dedupe groups and companies: every row of a dedupe group in
+   * it, every ATS-id row of a company in it, until nothing new joins (so a job linked through either rule is always
+   * re-linked whole). Returns the ATS-id collision notes (`linkJobs`).
+   */
+  private relink(dedupeKeys: readonly string[], companies: readonly string[]): string[] {
+    const rows = new Map<string, LinkRowDb>();
+    const doneDedupe = new Set<string>();
+    const doneCompany = new Set<string>();
+    const dq = [...dedupeKeys];
+    const cq = [...companies];
+    const byDedupe = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM jobs j LEFT JOIN job_ats a ON a.job_key = j.job_key WHERE j.dedupe_key = ?`);
+    const byCompany = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM job_ats a JOIN jobs j ON j.job_key = a.job_key WHERE a.company_norm = ?`);
+    const add = (list: LinkRowDb[]): void => {
+      for (const r of list) {
+        if (rows.has(r.job_key)) continue;
+        rows.set(r.job_key, r);
+        dq.push(r.dedupe_key);
+        if (r.company_norm !== null) cq.push(r.company_norm);
+      }
+    };
+    while (dq.length > 0 || cq.length > 0) {
+      for (const d of dq.splice(0)) if (!doneDedupe.has(d)) (doneDedupe.add(d), add(byDedupe.all(d) as LinkRowDb[]));
+      for (const c of cq.splice(0)) if (!doneCompany.has(c) && c !== '') (doneCompany.add(c), add(byCompany.all(c) as LinkRowDb[]));
+    }
+    if (rows.size === 0) return [];
+    const linkRows: LinkRow[] = [...rows.values()].map((r) => ({
+      jobKey: r.job_key,
+      source: r.source,
+      firstSeen: r.first_seen,
+      dedupeKey: r.dedupe_key,
+      ats: r.platform === null || r.ats_id === null || r.company_norm === null ? null : { platform: r.platform, board: r.board, id: r.ats_id, slug: r.slug ?? '', companyNorm: r.company_norm },
+    }));
+    const { duplicateOf, notes } = linkJobs(linkRows, (companyNorm, platform) => this.registryBoards(companyNorm, platform));
     const set = this.db.prepare(`UPDATE jobs SET duplicate_of = ? WHERE job_key = ?`);
-    for (const r of rows) {
-      const dup = r !== top && r.source !== top.source ? top.job_key : null;
+    // the new primaries first, so no row ever points at a row that is itself a duplicate (the foreign key holds anyway)
+    for (const r of [...rows.values()].sort((a, b) => cmp(a.job_key, b.job_key))) {
+      const dup = duplicateOf.get(r.job_key) ?? null;
       if (dup !== r.duplicate_of) set.run(dup, r.job_key);
     }
+    return notes;
+  }
+
+  /**
+   * Task 10: the boards of `platform` that the verified registry (verified or failing, never rejected) names for the
+   * company (by the name matcher's normalisation): with the company's other rows, how a bare `gh_jid` finds its board.
+   */
+  private registryBoards(companyNorm: string, platform: AtsIdPlatform): string[] {
+    // only a bare gh_jid is board-less (text/ats-id.ts); Greenhouse board tokens are case-insensitive
+    if (platform !== 'greenhouse') return [];
+    const rows = this.db
+      .prepare(`SELECT name, platform_slug FROM companies WHERE platform = ? AND platform_slug IS NOT NULL AND status IN ('verified', 'failing') AND (user_override IS NULL OR user_override <> 'rejected')`)
+      .all(platform) as { name: string; platform_slug: string }[];
+    return rows.filter((r) => companyNormOf(r.name) === companyNorm).map((r) => r.platform_slug.trim().toLowerCase());
   }
 
   private history(jobKey: string, from: JobStatus | null, to: JobStatus, at: string, by: 'user' | 'migration'): void {
@@ -1469,7 +1552,8 @@ function view(r: JobRowDb, top: JobRowDb, dups: readonly JobRowDb[], floorInr?: 
     status: groupStatus(group),
     note: notes.join(' | '),
     appliedAt: group.find((g) => g.applied_at !== null)?.applied_at ?? null,
-    notifiedAt: r.notified_at,
+    // Task 10: a job is announced once: a row whose group was announced (through any of its rows) counts as announced
+    notifiedAt: group.map((g) => g.notified_at).filter((n): n is string => n !== null).sort()[0] ?? null,
     citedFacts: parse<string[]>(r.cited_facts),
     band: bandOf(r, floorInr),
   };

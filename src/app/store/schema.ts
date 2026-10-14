@@ -358,4 +358,17 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   `,
   // Career-sites Task 8 fix round 3: consecutive non-404 4xx refetches that kept a page's posting (a good fetch resets it).
   `ALTER TABLE platform_pages ADD COLUMN errors INTEGER NOT NULL DEFAULT 0;`,
+  // Career-sites Task 10: a job's ATS job id (text/ats-id.ts), beside the jobs table so its rows stay as they were; a
+  // NULL board is a company page's bare gh_jid. Additive; a row only for a job whose posting states an id. A literal.
+  `
+  CREATE TABLE job_ats (
+    job_key TEXT PRIMARY KEY REFERENCES jobs (job_key),
+    platform TEXT NOT NULL,
+    board TEXT,
+    ats_id TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    company_norm TEXT NOT NULL
+  );
+  CREATE INDEX job_ats_by_company ON job_ats (company_norm);
+  `,
 ];

@@ -41,6 +41,8 @@ export const APP_ALLOWED = [
   'src/app/text/sitemap.ts',
   // Task 9: the pure linear XML reader the Teamtailor and Personio feed adapters share.
   'src/app/text/xml-lite.ts',
+  // Career-sites Task 10: the pure ATS job id reader (no imports) the normalizer and the Posting type use.
+  'src/app/text/ats-id.ts',
 ];
 
 /**

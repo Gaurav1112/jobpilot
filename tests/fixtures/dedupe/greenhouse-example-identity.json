@@ -1,0 +1,24 @@
+{
+  "jobs": [
+    {
+      "id": 7001,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/example-identity/jobs/7001",
+      "location": { "name": "Remote, India" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-05T10:00:00Z",
+      "updated_at": "2026-10-05T10:00:00Z",
+      "content": "<p>We build identity services.</p><p>You will design microservices in Java with Spring Boot, Kafka and PostgreSQL on AWS and Kubernetes, with Redis for caching.</p><p>This role is fully remote from India.</p>"
+    },
+    {
+      "id": 7002,
+      "title": "Senior Backend Engineer",
+      "absolute_url": "https://boards.greenhouse.io/example-identity/jobs/7002",
+      "location": { "name": "Remote, India (Pune hub)" },
+      "metadata": [{ "id": 1, "name": "Employment Type", "value": "Full-time", "value_type": "single_select" }],
+      "first_published": "2026-10-05T10:00:00Z",
+      "updated_at": "2026-10-05T10:00:00Z",
+      "content": "<p>We build identity services.</p><p>You will design microservices in Java with Spring Boot, Kafka and PostgreSQL on AWS and Kubernetes, with Redis for caching.</p><p>This role is fully remote from India.</p>"
+    }
+  ]
+}

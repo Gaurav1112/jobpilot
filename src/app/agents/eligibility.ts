@@ -661,7 +661,7 @@ function packOf(pack: unknown): EligibilityPack {
 
 export const eligibilityContract = defineContract({
   id: 'eligibility',
-  version: '1.4.0',
+  version: '1.5.0',
   description: 'Decides whether one posting is open to the candidate',
   skills: ['eligibility-rules'],
   team: 'evaluation',

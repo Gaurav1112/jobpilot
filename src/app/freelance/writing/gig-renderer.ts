@@ -31,7 +31,7 @@ export { GIG_DIR, gigFilesOf, gigPath, gigTexts } from './gig-text.js';
  */
 export const gigRendererContract = defineContract({
   id: 'gig-renderer',
-  version: '1.4.0',
+  version: '1.5.0',
   description: 'Renders one gig plan into paste-ready documents',
   skills: ['gig-document-rendering'],
   team: 'writing',

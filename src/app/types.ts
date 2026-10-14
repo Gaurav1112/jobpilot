@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { definePredicate } from '../kernel/predicates.js';
 import { defineType } from '../kernel/types.js';
+import { ATS_ID_PLATFORMS } from './text/ats-id.js';
 
 /**
  * Where a posting is read from: the watchlist's boards, the feeds, a careers page, or a verified registry company's
@@ -140,6 +141,13 @@ export const Posting = defineType(
        * ("- 15+ years designing systems") is null, the accepted trade-off against company-highlight bullets.
        */
       yearsRequired: z.number().nullable(),
+      /**
+       * Task 10: the job's id on its ATS (`text/ats-id.ts`), when the posting states one that is not its own identity: a
+       * company page carrying `gh_jid=` or a Greenhouse, Lever, Ashby or Workday job URL, or a Workday posting's req id.
+       * Absent otherwise, so every other posting (the watchlist ATS adapters, whose id is their `sourceId`) is
+       * byte-identical to before. `board` is null only for a bare `gh_jid`. Never a guess: two disagreeing ids give none.
+       */
+      atsRef: z.object({ platform: z.enum(ATS_ID_PLATFORMS), board: z.string().nullable(), id: z.string() }).strict().optional(),
     })
     .strict(),
 );

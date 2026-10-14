@@ -1,5 +1,5 @@
 {
-  "hash": "5241a03f00465a7825c5a12f77bee6be3dfd5548496c24dc69f057f743552675",
+  "hash": "7e63037297526c86bb0e63613969c40c38081b055eeb9962ca226da943d519dd",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -378,6 +378,35 @@
                               "gem"
                             ],
                             "type": "string"
+                          },
+                          "atsRef": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "board": {
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "id": {
+                                "type": "string"
+                              },
+                              "platform": {
+                                "enum": [
+                                  "greenhouse",
+                                  "lever",
+                                  "ashby",
+                                  "workday"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "platform",
+                              "board",
+                              "id"
+                            ],
+                            "type": "object"
                           },
                           "comp": {
                             "anyOf": [
@@ -1636,6 +1665,35 @@
                                 ],
                                 "type": "string"
                               },
+                              "atsRef": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "board": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "platform": {
+                                    "enum": [
+                                      "greenhouse",
+                                      "lever",
+                                      "ashby",
+                                      "workday"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "platform",
+                                  "board",
+                                  "id"
+                                ],
+                                "type": "object"
+                              },
                               "comp": {
                                 "anyOf": [
                                   {
@@ -2496,6 +2554,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

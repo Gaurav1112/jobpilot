@@ -1,5 +1,5 @@
 {
-  "hash": "0eb7cd9c1fd5833a6c6eab9ea4949f91657699106cb99a1b73bdcddb6f81881e",
+  "hash": "d529c8291e7a003740257975adf13e77abb19d48b0206f4fc9dc0570f24f673b",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -302,6 +302,35 @@
                                   "gem"
                                 ],
                                 "type": "string"
+                              },
+                              "atsRef": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "board": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "id": {
+                                    "type": "string"
+                                  },
+                                  "platform": {
+                                    "enum": [
+                                      "greenhouse",
+                                      "lever",
+                                      "ashby",
+                                      "workday"
+                                    ],
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "platform",
+                                  "board",
+                                  "id"
+                                ],
+                                "type": "object"
                               },
                               "comp": {
                                 "anyOf": [
@@ -789,6 +818,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

@@ -4,6 +4,7 @@ import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
 import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
 import { countriesIn, dedupeKey, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
+import { atsRefFromUrls, normalAtsRef, type AtsRef } from '../text/ats-id.js';
 import { Posting, RawPosting } from '../types.js';
 
 /**
@@ -62,6 +63,10 @@ import { Posting, RawPosting } from '../types.js';
  *   them (Recruitee, Teamtailor `hybrid`, Pinpoint, Gem); Teamtailor `none` (no remote work) stays a signal only.
  *   Descriptions are the feeds' HTML (Breezy, BambooHR and Rippling publish none in the list); pay is the platform's
  *   own range where it has one (Recruitee, Pinpoint), else read from the text.
+ *
+ * - Task 10, `atsRef` (text/ats-id.ts): a JSON-LD page (careers and the page adapters) records the one ATS job id its
+ *   URL (`gh_jid=`), JobPosting `url` or `sameAs` states (a Greenhouse, Lever, Ashby or Workday job URL), and a Workday
+ *   posting its req id; nothing else sets it, so every other posting is unchanged. Two disagreeing ids give none.
  *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
@@ -329,6 +334,8 @@ interface Mapped {
   descriptionText: string;
   postedAt: string | null;
   comp: Comp | null;
+  /** Task 10: the ATS id the posting states besides its own identity (`text/ats-id.ts`); null or absent: none. */
+  atsRef?: AtsRef | null;
 }
 
 function httpUrl(v: string | null): string | null {
@@ -378,6 +385,8 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
     postedAt: m.postedAt,
     comp: m.comp,
     yearsRequired: yearsRequired(m.descriptionText),
+    // absent (not undefined) without one, so every other posting is byte-identical to before Task 10
+    ...(m.atsRef ? { atsRef: m.atsRef } : {}),
   };
 }
 
@@ -615,6 +624,9 @@ function jsonLdPosting(raw: RawPosting, r: Rec, ats: Posting['ats']): Posting {
     descriptionText,
     postedAt: ld === null ? null : postedAtOf(ld.datePosted),
     comp: compOrText(ld === null ? undefined : baseSalaryComp(ld.baseSalary), descriptionText),
+    // Task 10: an ATS id the page states unambiguously (its URL's gh_jid, or a Greenhouse, Lever, Ashby or Workday job
+    // URL as the JobPosting's url or sameAs); two that disagree give none
+    atsRef: atsRefFromUrls([str(r.url), ...(ld === null ? [] : [ld.url, ...listOf(ld.sameAs)])].filter((x): x is string => typeof x === 'string')),
   });
 }
 
@@ -648,6 +660,8 @@ function workday(raw: RawPosting, r: Rec): Posting {
     descriptionText,
     postedAt: null,
     comp: compFromText(descriptionText),
+    // Task 10: the req id (never the externalPath) on the board's tenant (`<host>/<tenant>/<site>`)
+    atsRef: str(r.reqId) === null ? null : normalAtsRef('workday', raw.slug.split('/')[1] ?? '', str(r.reqId) as string),
   });
 }
 
@@ -960,7 +974,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.4.0',
+  version: '1.5.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

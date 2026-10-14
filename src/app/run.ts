@@ -12,7 +12,7 @@ import { homePaths } from './pack/paths.js';
 import { appPageLedger, appPageState } from './daily-hosts.js';
 import { PAGE_LEDGER_PREFIX } from './agents/sources/platforms/pages.js';
 import { DAILY_PIPELINE, dailySeeds, registryBoards } from './pipeline.js';
-import { namedSkipWarnings, runProblems, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
+import { namedSkipWarnings, runProblems, safeLine, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
 import { citeable, forbiddenTermStrict, redactText } from './pack/rules.js';
 import type { Pack } from './pack/schema.js';
@@ -219,6 +219,8 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const counts = runCounts(app.kernel, runId);
       if (o.refresh !== true && sourcesAllReplayed(counts)) warnings.push(REFRESH_HINT);
       warnings.push(...sourceSkipWarnings(app.kernel, runId, loaded.pack.naming), ...namedSkipWarnings(app.kernel, runId, loaded.pack.naming));
+      // Task 10: an ATS id one source lists twice is never merged; it is named (a source bug, not a hidden job)
+      warnings.push(...projection.dedupeNotes.map((n) => safeLine(n, loaded.pack.naming)));
       const problems = [...runProblems(app.kernel, runId, loaded.pack.naming), ...staleProblems(allJobs(app), loaded.pack.naming)];
       o.afterProject?.();
       const fresh = newMatches(app);

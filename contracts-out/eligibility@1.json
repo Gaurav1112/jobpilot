@@ -1,5 +1,5 @@
 {
-  "hash": "cf216b149df596900c8c241afad6e99be3f8d1149807942999714ff87bd479aa",
+  "hash": "3a56288d6ce081cc049b72e5e682b4bf2fbea7619b723286a3bb50d6ca075803",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -41,6 +41,35 @@
               "gem"
             ],
             "type": "string"
+          },
+          "atsRef": {
+            "additionalProperties": false,
+            "properties": {
+              "board": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "id": {
+                "type": "string"
+              },
+              "platform": {
+                "enum": [
+                  "greenhouse",
+                  "lever",
+                  "ashby",
+                  "workday"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "platform",
+              "board",
+              "id"
+            ],
+            "type": "object"
           },
           "comp": {
             "anyOf": [
@@ -270,6 +299,35 @@
                 ],
                 "type": "string"
               },
+              "atsRef": {
+                "additionalProperties": false,
+                "properties": {
+                  "board": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "id": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "enum": [
+                      "greenhouse",
+                      "lever",
+                      "ashby",
+                      "workday"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "platform",
+                  "board",
+                  "id"
+                ],
+                "type": "object"
+              },
               "comp": {
                 "anyOf": [
                   {
@@ -470,6 +528,6 @@
     },
     "team": "evaluation",
     "timeoutMs": 10000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }
