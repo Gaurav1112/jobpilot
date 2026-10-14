@@ -8,7 +8,9 @@ import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie } from 'hono/cookie';
 import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../../kernel/clock.js';
+import { MIGRATIONS } from '../../kernel/store/migrations.js';
 import { Store } from '../../kernel/store/store.js';
+import { schemaState } from '../upgrade.js';
 import { chainStatus } from '../chain-status.js';
 import { coverNoteShort } from '../agents/writing/grounded.js';
 import { profileFor } from '../ats-profiles.js';
@@ -27,8 +29,7 @@ import { dateText, daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
-import { liveHolder } from '../lock.js';
-import { SharedStore } from './connection.js';
+import { SharedStore, UpgradePending } from './connection.js';
 import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
@@ -86,8 +87,6 @@ export interface DashboardTestHooks {
   readonly beforeRoute?: () => void;
   /** Called each time the dashboard opens its (shared) database connection. */
   readonly onOpen?: () => void;
-  /** Replaces `liveHolder(home)`: the process holding the jobpilot lock. */
-  readonly runHolder?: () => { readonly pid: number; readonly command: string } | undefined;
   /** Replaces `listJobsPage` for `GET /` (the equivalence test runs the pre-fix-2 JS path through the real route). */
   readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }) => JobsPage;
 }
@@ -95,6 +94,9 @@ export interface DashboardTestHooks {
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
 const DOWNLOAD_RECORD_TIMEOUT_MS = 200;
 
+export const UPGRADE_MESSAGE = 'jobpilot is being upgraded; the next run (or jobpilot facts list) applies it';
+/** Idle time after the last request before the dashboard's -wal maintenance runs. */
+const IDLE_MAINTENANCE_MS = 15_000;
 export const BUSY_MESSAGE = "jobpilot is busy finishing today's run — try again in a moment";
 const CSRF_SECRET_KEY = 'dashboard.csrf_secret';
 const isBusy = (e: unknown): boolean =>
@@ -244,7 +246,14 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     c.html(layout({ title, nav, banners, body }).value, status);
 
   // dashboard-perf fix 5: one long-lived connection per dashboard, never holding a transaction (`connection.ts`)
-  const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer, hooks.runHolder ?? (() => liveHolder(deps.home)));
+  const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer);
+  // idle maintenance (review): a TRUNCATE checkpoint of the -wal once no request has come for IDLE_MS; it never waits
+  let idle: ReturnType<typeof setTimeout> | undefined;
+  const scheduleIdle = (): void => {
+    if (idle !== undefined) clearTimeout(idle);
+    idle = setTimeout(() => shared.maintain(), IDLE_MAINTENANCE_MS);
+    idle.unref();
+  };
   const withStore = <T>(fn: (store: AppStore) => T): T => shared.use(fn);
 
   const commonBanners = (ps: PackState, today: string, overrides: Record<string, Fact['status']>): Banner[] => {
@@ -268,6 +277,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const host = (c.req.header('host') ?? '').toLowerCase();
     if (!allowedHosts(portOf()).has(host) || new URL(c.req.url).host.toLowerCase() !== host) return c.text('This dashboard only answers on 127.0.0.1.', 403);
     await next();
+    scheduleIdle();
     const h = c.res.headers;
     if (!h.has('content-security-policy')) h.set('content-security-policy', PAGE_CSP);
     h.set('x-content-type-options', 'nosniff');
@@ -685,6 +695,11 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));
   app.onError((err, c) => {
+    if (err instanceof UpgradePending) {
+      if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(UPGRADE_MESSAGE, 503, { 'retry-after': '30' });
+      c.header('retry-after', '30');
+      return page(c, 'jobs', 'Upgrading', [], html`<h1>One moment</h1><p>jobpilot is being upgraded; the next run (or <code>jobpilot facts list</code>) applies it. This page works again as soon as it has.</p>`, 503);
+    }
     if (isBusy(err)) {
       if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(BUSY_MESSAGE, 503, { 'retry-after': '5' });
       return page(c, 'jobs', 'Busy', [], html`<h1>One moment</h1><p>${BUSY_MESSAGE}</p>`, 503);
@@ -701,20 +716,24 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
 }
 
 /**
- * The CSRF secret kept in app_settings: created once (random), so tokens survive a restart of the dashboard. Read and
- * written through the kernel store alone (app_settings exists from app migration 2 on), so starting the dashboard
- * applies no app migration: those wait for the first request (`SharedStore`), which defers them while a run holds the
- * lock. A home without app tables yet is created through `AppStore.open` (an empty schema: no time).
+ * The CSRF secret kept in app_settings: created once (random), so tokens survive a restart of the dashboard. The
+ * dashboard never creates or migrates the database (review I2): with no database yet, or a kernel schema that is not
+ * this code's, or no app_settings table, the secret is this process's own (tokens then do not survive a restart).
  */
 function keptSecret(db: string, timeoutMs: number): Buffer {
+  const state = schemaState(db);
+  if (state === 'missing' || state === 'newer') return ephemeralSecret();
+  const peek = Store.openReadOnly(db);
+  let usable: boolean;
+  try {
+    usable = (peek.db.pragma('user_version', { simple: true }) as number) === MIGRATIONS.length
+      && peek.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'`).get() !== undefined;
+  } finally {
+    peek.close();
+  }
+  if (!usable) return ephemeralSecret();
   const k = Store.open(db, { timeoutMs });
   try {
-    const hasSettings = k.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'`).get() !== undefined;
-    if (!hasSettings) {
-      k.close();
-      AppStore.open(db, { timeoutMs }).close();
-      return keptSecret(db, timeoutMs);
-    }
     let hex = (k.db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(CSRF_SECRET_KEY) as { value: string } | undefined)?.value;
     if (hex === undefined || !/^[0-9a-f]{64}$/.test(hex)) {
       hex = randomBytes(32).toString('hex');
@@ -722,8 +741,13 @@ function keptSecret(db: string, timeoutMs: number): Buffer {
     }
     return Buffer.from(hex, 'hex');
   } finally {
-    if (k.db.open) k.close();
+    k.close();
   }
+}
+
+function ephemeralSecret(): Buffer {
+  console.error('jobpilot dashboard: no up-to-date database yet; this process keeps its own session secret until a restart');
+  return randomBytes(32);
 }
 
 /** Serves the dashboard on 127.0.0.1 only (never all interfaces); Host must name this port. */

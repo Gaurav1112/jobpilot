@@ -2,7 +2,7 @@ import { statSync } from 'node:fs';
 import { AppStore } from '../store/app-store.js';
 import { APP_MIGRATIONS } from '../store/schema.js';
 import { MIGRATIONS } from '../../kernel/store/migrations.js';
-import { Store } from '../../kernel/store/store.js';
+import { schemaState } from '../upgrade.js';
 
 /**
  * dashboard-perf fix 5: the dashboard's ONE long-lived connection (per process), so SQLite's page cache survives from
@@ -15,14 +15,14 @@ import { Store } from '../../kernel/store/store.js';
  *   take the write lock, and a WAL checkpoint is never held back by the dashboard.
  * - **A schema change is seen as a fresh open would see it.** Before each use the kernel's `user_version` and the app's
  *   `app_schema.version` are read (O(1)); if either differs from this code's migrations, or the DB file is no longer
- *   the same file (a restore), the connection is closed and the next one is opened through `AppStore.open`, exactly
- *   today's per-request path: it applies this code's pending migrations, or refuses a newer schema ("newer than this
- *   jobpilot") with the error page. A newer schema is also reported (`onSchemaNewer`): `jobpilot serve` then exits,
+ *   the same file (a restore), the connection is closed and the next request looks at the schema again:
+ *   current, it reopens; behind, it answers "being upgraded"; newer, it refuses ("newer than this jobpilot") with the
+ *   error page. A newer schema is also reported (`onSchemaNewer`): `jobpilot serve` then exits,
  *   so launchd (KeepAlive) restarts the dashboard on the checkout's code, the newer jobpilot that migrated it.
  * - **A failing statement drops it.** Any error but SQLITE_BUSY closes the connection; the next request opens anew.
- * - Migrations run on it only when it is (re)opened, inside `AppStore.open`'s BEGIN IMMEDIATE (as every opener), never
- *   in the middle of its life, and never while a run holds the jobpilot lock: then the request answers busy (503) and
- *   the upgrade waits for the run to finish (a run applies pending migrations itself when it opens the DB).
+ * - **It never migrates** (review I2; `upgrade.ts`): before opening, the schema is read read-only; behind this code (or
+ *   no database yet) the request answers 503 "being upgraded" (`UpgradePending`) and the next request looks again.
+ *   Runs and the CLI migrate, under the jobpilot lock.
  */
 export class SharedStore {
   private store: AppStore | undefined;
@@ -34,8 +34,6 @@ export class SharedStore {
     private readonly onOpen: () => void = () => {},
     /** Told when the database's schema is newer than this code (a newer jobpilot migrated it); `serve` exits so launchd restarts it on the new code. */
     private readonly onSchemaNewer: () => void = () => {},
-    /** The live holder of the jobpilot lock (a run), if any (`liveHolder`). */
-    private readonly lockHolder: () => { readonly pid: number; readonly command: string } | undefined = () => undefined,
   ) {}
 
   /** `cache_size` of the shared connection, in KiB (negative: KiB, SQLite's convention): 32 MB. */
@@ -68,15 +66,40 @@ export class SharedStore {
     this.drop();
   }
 
+  /** The WAL size the shared connection lets SQLite keep after a checkpoint (`journal_size_limit`): 64 MB. */
+  static readonly JOURNAL_LIMIT_BYTES = 64 * 1024 * 1024;
+
+  /**
+   * Idle maintenance (review): this connection staying open means a run is no longer the last to close the DB, so its
+   * -wal file (as large as its biggest transaction) is no longer removed. When the dashboard is idle, a TRUNCATE
+   * checkpoint copies what is left into the DB and empties the -wal; it never waits (busy_timeout 0: a run writing or
+   * a reader mid-read makes it a no-op, retried at the next idle).
+   */
+  maintain(): void {
+    const s = this.store;
+    if (s === undefined || s.kernel.db.inTransaction) return;
+    const db = s.kernel.db;
+    const before = db.pragma('busy_timeout', { simple: true }) as number;
+    try {
+      db.pragma('busy_timeout = 0');
+      db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch {
+      // busy or anything else: nothing to do now
+    } finally {
+      try {
+        db.pragma(`busy_timeout = ${before}`);
+      } catch {
+        this.drop();
+      }
+    }
+  }
+
   private current(): AppStore {
     if (this.store !== undefined && !this.stillValid(this.store)) this.drop();
     if (this.store === undefined) {
-      // A migration holds the write lock for its whole build (an index on a 4 GB file: seconds), which would stall a
-      // run's writes past their busy timeout: with migrations pending and a run holding the lock, answer busy instead.
-      const holder = this.migrationPending() ? this.lockHolder() : undefined;
-      if (holder !== undefined) {
-        throw Object.assign(new Error(`the database needs an upgrade, which waits until ${holder.command} (pid ${holder.pid}) finishes`), { code: 'SQLITE_BUSY_UPGRADE' });
-      }
+      // the dashboard never migrates (review I2): a schema behind this code waits for a run or the CLI (under the lock)
+      const state = schemaState(this.path);
+      if (state === 'missing' || state === 'behind') throw new UpgradePending();
       const id = fileIdOf(this.path);
       let s: AppStore;
       try {
@@ -86,25 +109,13 @@ export class SharedStore {
         throw e;
       }
       s.kernel.db.pragma(`cache_size = -${SharedStore.CACHE_KIB}`);
+      s.kernel.db.pragma(`journal_size_limit = ${SharedStore.JOURNAL_LIMIT_BYTES}`);
       this.store = s;
       // the file opened is the one stat'ed before, or (raced by a rename) the next check reopens
       this.fileId = id;
       this.onOpen();
     }
     return this.store;
-  }
-
-  /** Whether opening would apply an app migration (the app schema is behind this code). Reads only. */
-  private migrationPending(): boolean {
-    if (fileIdOf(this.path) === undefined) return false; // a new home: creating its tables takes no time
-    const k = Store.open(this.path, { timeoutMs: this.timeoutMs });
-    try {
-      const has = k.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_schema'`).get() !== undefined;
-      const v = has ? (k.db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number } | undefined)?.version : undefined;
-      return v === undefined || v < APP_MIGRATIONS.length;
-    } finally {
-      k.close();
-    }
   }
 
   private stillValid(s: AppStore): boolean {
@@ -141,3 +152,11 @@ function fileIdOf(path: string): string | undefined {
 }
 
 const isBusy = (e: unknown): boolean => typeof (e as { code?: unknown })?.code === 'string' && (e as { code: string }).code.startsWith('SQLITE_BUSY');
+
+/** The database is behind this code (or not there yet): a run or the CLI upgrades it; the dashboard answers 503. */
+export class UpgradePending extends Error {
+  override readonly name = 'UpgradePending';
+  constructor() {
+    super('jobpilot is being upgraded; the next run (or jobpilot facts list) applies it');
+  }
+}

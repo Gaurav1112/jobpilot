@@ -9,6 +9,7 @@ import { PRODUCT_POLICY_V1 } from './kernel/policy.js';
 import { nodeFetch } from './kernel/providers.js';
 import { Registry } from './kernel/registry.js';
 import { fullChainCheck, readCheckpoint } from './app/chain-status.js';
+import { upgradeUnderLock } from './app/upgrade.js';
 import { Store } from './kernel/store/store.js';
 import { failedGates, runEval } from './evals/runner.js';
 import { demoEvalSpecs } from './demo/evals.js';
@@ -138,7 +139,8 @@ audit
   .description('Walk the whole hash-chained event log and fail if any link is broken; a pass records the full-check checkpoint the dashboard\'s Runs page starts from (coverage also runs this weekly)')
   .option('--db <path>', 'SQLite file (default: the jobpilot home\'s, $JOBPILOT_HOME/jobpilot.db)')
   .option('--expect-head <hash:count>', 'fail unless the chain head is exactly this (detects a truncated or rewritten tail)')
-  .action((o: { db?: string; expectHead?: string }) => {
+  .option('--no-record', 'open the file read-only and record nothing (a forensic copy)')
+  .action((o: { db?: string; expectHead?: string; record: boolean }) => {
     // the same home every other command uses; never a jobpilot.db in the current directory
     const db = o.db ?? homePaths(jobpilotHome()).db;
     if (!existsSync(db)) {
@@ -154,16 +156,26 @@ audit
       }
       expected = { hash: (m[1] as string).toLowerCase(), count: Number(m[2]) };
     }
-    const store = Store.open(db);
+    const store = o.record ? Store.open(db) : Store.openReadOnly(db);
     try {
-      // dashboard-perf fix 1: a passing full walk records its checkpoint (a jobpilot home DB), so /runs checks only newer events
-      const r = fullChainCheck(store, systemClock.now(), expected);
+      // dashboard-perf fix 1: a passing full walk records its checkpoint (a failing one, the broken marker) in a jobpilot
+      // home DB, best effort: a record that cannot be written is a warning, the walk's verdict stands
+      let recordFailed = false;
+      const r = fullChainCheck(store, systemClock.now(), {
+        ...(expected !== undefined ? { expectedHead: expected } : {}),
+        record: o.record,
+        onRecordFailed: (m) => {
+          recordFailed = true;
+          console.error(`warning: ${m}`);
+        },
+      });
       if (r.ok) {
         console.log(`audit chain intact: ${r.events} events`);
         const head = store.chainHead();
         if (head) console.log(`head ${head.hash} (${head.count} events)`);
-        const cp = readCheckpoint(store.db);
-        if (cp !== undefined && head !== undefined && cp.seq === head.seq) console.log(`checkpoint recorded through event ${cp.seq}: the dashboard checks only the events after it`);
+        const cp = o.record && !recordFailed ? readCheckpoint(store.db) : undefined;
+        if (!o.record) console.log('not recorded (--no-record)');
+        else if (cp !== undefined && head !== undefined && cp.seq === head.seq) console.log(`checkpoint recorded through event ${cp.seq}: the dashboard checks only the events after it`);
       } else if ('headMismatch' in r) {
         const head = store.chainHead();
         console.log(`audit chain intact (${r.events} events) but chain head mismatch: ${r.reason}`);
@@ -423,10 +435,12 @@ migrate
 const facts = program.command('facts').description('Fact status overrides (the pack files are never edited)');
 facts
   .command('list')
-  .description('List every fact with its effective status')
+  .description('List every fact with its effective status (also applies a pending database upgrade, under the run lock)')
   .action(() =>
-    guarded(() => {
+    guarded(async () => {
       const paths = homePaths(jobpilotHome());
+      // dashboard-perf review I2: the dashboard never migrates; this is the command its "being upgraded" page names
+      if (await upgradeUnderLock(paths.home, 'facts list')) console.error('the database was upgraded to this jobpilot');
       const overrides = overridesAt(paths.db);
       const { pack: p } = todaysPack('daily');
       const w = Math.max(...p.facts.map((f) => f.id.length), 2);

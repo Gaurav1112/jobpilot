@@ -132,6 +132,20 @@ export class Store {
     return new Store(db);
   }
 
+  /**
+   * A read-only connection (`audit verify --no-record`, a forensic copy): no file is created or tightened, no journal
+   * mode is set and no migration runs; a schema newer than this code is refused.
+   */
+  static openReadOnly(path: string): Store {
+    const db = new Database(path, { readonly: true, fileMustExist: true });
+    const version = db.pragma('user_version', { simple: true }) as number;
+    if (version > MIGRATIONS.length) {
+      db.close();
+      throw new Error(`database schema version ${version} is newer than this jobpilot (${MIGRATIONS.length})`);
+    }
+    return new Store(db);
+  }
+
   close(): void {
     this.db.close();
   }

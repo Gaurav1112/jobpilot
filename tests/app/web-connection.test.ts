@@ -1,9 +1,13 @@
-import { cpSync, mkdtempSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AppStore } from '../../src/app/store/app-store.js';
+import { runCoverage } from '../../src/app/coverage/run.js';
+import { liveHolder, withLock } from '../../src/app/lock.js';
+import { offlineProviders } from '../../src/app/offline.js';
+import { upgradeUnderLock } from '../../src/app/upgrade.js';
 import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
 import { SharedStore } from '../../src/app/web/connection.js';
 import { createTestDashboard } from '../../src/app/web/server-testing.js';
@@ -81,19 +85,6 @@ describe('the dashboard keeps one read connection', () => {
     expect(opens).toBeGreaterThanOrEqual(2);
   });
 
-  it('a migration by another process (an index added) is picked up by reopening', async () => {
-    await get('/');
-    const o = other();
-    o.prepare(`UPDATE app_schema SET version = ?`).run(APP_MIGRATIONS.length - 1);
-    o.close();
-    // the dashboard reopens, migrates the last step again (IF NOT EXISTS), and serves
-    expect((await get('/')).body).toContain('First Job');
-    expect(opens).toBe(2);
-    const v = new Database(db, { readonly: true });
-    expect((v.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version).toBe(APP_MIGRATIONS.length);
-    v.close();
-  });
-
   it('a database file replaced on disk (a restore) is read from the new file', async () => {
     await get('/');
     const alt = join(home, 'alt.db');
@@ -125,44 +116,77 @@ describe('the dashboard keeps one read connection', () => {
   });
 });
 
-describe('the dashboard never migrates while a run holds the lock', () => {
-  it('pending migrations + a live lock holder: the busy page, nothing migrated; once the lock is free it migrates and serves', async () => {
+describe('the dashboard never migrates (review I2): only runs and the CLI do, under the lock', () => {
+  const FIX = join(root, 'tests/fixtures/coverage/e2e');
+  const version = (): number => {
+    const v = new Database(db, { readonly: true });
+    try {
+      return (v.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version;
+    } finally {
+      v.close();
+    }
+  };
+  const behind = (): void => {
     const o = other();
     o.prepare(`UPDATE app_schema SET version = ?`).run(APP_MIGRATIONS.length - 1);
     o.close();
-    let holder: { pid: number; command: string } | undefined = { pid: 4242, command: 'run' };
-    const dash = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { runHolder: () => holder });
-    const ask = async (path: string) => {
-      const r = await dash.request(path, { headers: { host: 'localhost', cookie: SID } });
-      return { status: r.status, body: await r.text() };
-    };
-    const busy = await ask('/');
-    expect(busy.status).toBe(503);
-    expect(busy.body).toContain('jobpilot is busy finishing today');
-    const version = (): number => {
-      const v = new Database(db, { readonly: true });
-      try {
-        return (v.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version;
-      } finally {
-        v.close();
-      }
-    };
+  };
+
+  it('a schema behind this code: 503 "being upgraded" on every request, the database untouched', async () => {
+    behind();
+    for (const path of ['/', '/runs', '/facts']) {
+      const r = await get(path);
+      expect(r.status, path).toBe(503);
+      expect(r.body).toContain('jobpilot is being upgraded');
+      expect(r.body).toContain('the next run (or <code>jobpilot facts list</code>) applies it');
+    }
+    const hx = await app.request('/', { headers: { host: 'localhost', cookie: SID, 'hx-request': 'true' } });
+    expect(hx.status).toBe(503);
+    expect(hx.headers.get('retry-after')).toBe('30');
     expect(version()).toBe(APP_MIGRATIONS.length - 1);
-    holder = undefined;
-    expect((await ask('/')).body).toContain('First Job');
-    expect(version()).toBe(APP_MIGRATIONS.length);
+    expect(opens).toBe(0);
   });
 
-  it('an up-to-date database is served while a run holds the lock', async () => {
-    const dash = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { runHolder: () => ({ pid: 4242, command: 'run' }) });
-    const r = await dash.request('/', { headers: { host: 'localhost', cookie: SID } });
-    expect(r.status).toBe(200);
+  it('the dashboard that was serving sees a behind schema as upgrading, never migrates it itself', async () => {
+    expect((await get('/')).status).toBe(200);
+    behind();
+    expect((await get('/')).status).toBe(503);
+    expect(version()).toBe(APP_MIGRATIONS.length - 1);
+  });
+
+  it('a run migrates it under the lock, then the dashboard serves', async () => {
+    behind();
+    expect((await get('/')).status).toBe(503);
+    copyFileSync(join(FIX, 'companies.yaml'), join(home, 'pack', 'companies.yaml'));
+    let checked = false;
+    const r = await runCoverage({
+      home, clock: { now: () => '2026-10-11T14:30:00.000Z' }, fetch: offlineProviders(FIX).fetch, sleep: async () => {}, codeHash: 'conn',
+      onLocked: () => {
+        // the lock is held and the schema is still behind: the migration happens inside the run's lock
+        expect(liveHolder(home)).toMatchObject({ pid: process.pid, command: 'run-coverage' });
+        expect(version()).toBe(APP_MIGRATIONS.length - 1);
+        checked = true;
+      },
+    });
+    expect(checked).toBe(true);
+    expect(r.status).toBe('completed');
+    expect(version()).toBe(APP_MIGRATIONS.length);
+    const page = await get('/');
+    expect(page.status).toBe(200);
+    expect(page.body).toContain('First Job');
+  });
+
+  it('jobpilot facts list (the CLI the page names) upgrades under the lock, and refuses while a run holds it', async () => {
+    behind();
+    await expect(withLock(home, 'run', async () => upgradeUnderLock(home, 'facts list'))).rejects.toThrow(/another jobpilot process|lock/i);
+    expect(version()).toBe(APP_MIGRATIONS.length - 1);
+    await expect(upgradeUnderLock(home, 'facts list')).resolves.toBe(true);
+    expect(version()).toBe(APP_MIGRATIONS.length);
+    await expect(upgradeUnderLock(home, 'facts list')).resolves.toBe(false); // current: nothing to do, no lock taken
   });
 
   it('starting the dashboard (its CSRF secret) applies no migration', () => {
-    const o = other();
-    o.prepare(`UPDATE app_schema SET version = ?`).run(APP_MIGRATIONS.length - 1);
-    o.close();
+    behind();
     createTestDashboard({ home, clock: { now: () => NOW } }, {});
     const v = new Database(db, { readonly: true });
     try {
@@ -171,6 +195,57 @@ describe('the dashboard never migrates while a run holds the lock', () => {
     } finally {
       v.close();
     }
+  });
+
+  it('a home without a database: the dashboard starts, creates nothing, and answers 503 until a run creates it', async () => {
+    const fresh = mkdtempSync(join(tmpdir(), 'jobpilot-conn-fresh-'));
+    try {
+      cpSync(join(root, 'tests/fixtures/pack'), join(fresh, 'pack'), { recursive: true });
+      const d = createTestDashboard({ home: fresh, clock: { now: () => NOW } }, {});
+      const r = await d.request('/', { headers: { host: 'localhost', cookie: SID } });
+      expect(r.status).toBe(503);
+      expect(existsSync(join(fresh, 'jobpilot.db'))).toBe(false);
+    } finally {
+      rmSync(fresh, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('the WAL file stays bounded beside the long-lived connection (review)', () => {
+  it('a run\'s large writes leave no large -wal behind once the dashboard has been idle', () => {
+    const shared = new SharedStore(db, 1000);
+    shared.use((s) => s.getSetting('x'));
+    const walBytes = (): number => (existsSync(`${db}-wal`) ? statSync(`${db}-wal`).size : 0);
+    const sizes: number[] = [];
+    for (let run = 0; run < 3; run++) {
+      // a simulated run: a big transaction from another connection, which then closes (the dashboard's stays open)
+      const w = new Database(db);
+      w.exec('CREATE TABLE IF NOT EXISTS t_run (x BLOB)');
+      const ins = w.prepare('INSERT INTO t_run VALUES (randomblob(4000))');
+      w.transaction(() => {
+        for (let i = 0; i < 5_000; i++) ins.run();
+      })();
+      w.close();
+      expect(walBytes()).toBeGreaterThan(10_000_000); // the dashboard's open connection kept it
+      shared.maintain();
+      sizes.push(walBytes());
+    }
+    for (const s of sizes) expect(s).toBeLessThanOrEqual(SharedStore.JOURNAL_LIMIT_BYTES);
+    expect(sizes).toEqual([0, 0, 0]);
+    shared.close();
+  });
+
+  it('maintenance never waits for a writer: a run holding the write lock makes it a no-op', () => {
+    const shared = new SharedStore(db, 5_000);
+    shared.use((s) => s.getSetting('x'));
+    const w = new Database(db);
+    w.exec('BEGIN IMMEDIATE');
+    const t = performance.now();
+    shared.maintain();
+    expect(performance.now() - t).toBeLessThan(500);
+    w.exec('ROLLBACK');
+    w.close();
+    shared.close();
   });
 });
 

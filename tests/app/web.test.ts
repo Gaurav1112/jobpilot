@@ -738,6 +738,22 @@ describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () =>
     expect(withStore((s) => fullChainCheck(s.kernel, NOW))).toMatchObject({ ok: false, brokenAt: 1 });
   });
 
+  it('a failed full check (audit verify, weekly coverage) turns /runs red until a later full check passes', async () => {
+    append(3);
+    withStore((s) => fullChainCheck(s.kernel, T_FULL));
+    withStore((s) => s.kernel.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 1`).run());
+    expect((await get('/runs')).body).toContain('Audit log intact'); // before the edit is seen by a full check
+    withStore((s) => fullChainCheck(s.kernel, NOW));
+    const red = (await get('/runs')).body;
+    expect(red).toContain('Audit log broken: at event 1: hash does not match the event contents (found by the full check at 2026-10-09T06:30:00.000Z)');
+    expect(red).toMatch(/banner-critical[^>]*>[^<]*The audit log is broken/);
+    expect(red).not.toContain('Audit log intact');
+    withStore((s) => s.kernel.db.prepare(`UPDATE events SET data = '{"i":0}' WHERE seq = 1`).run());
+    expect((await get('/runs')).body).toContain('Audit log broken');
+    withStore((s) => fullChainCheck(s.kernel, NOW));
+    expect((await get('/runs')).body).toContain('Audit log intact');
+  });
+
   it('a checkpoint that does not match the chain falls back to the full check', async () => {
     append(3);
     withStore((s) => {

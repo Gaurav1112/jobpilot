@@ -1,4 +1,4 @@
-import { chmodSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setFlagsFromString } from 'node:v8';
@@ -37,6 +37,11 @@ export const RUNS_AFTER_RUN_MS = 500;
 /** Heap left per request (heapUsed after minus before, after a forced GC): measured 12-33 MB; the old code ~400 MB. */
 export const HEAP_PER_REQUEST_MB = 64;
 const WARM_N = 20;
+/** A fresh-connection time is the best of this many fresh dashboards (one sample is at the mercy of the machine). */
+const FRESH_TRIES = 3;
+/** Temp homes of earlier gate runs that died before cleaning up are swept once older than this. */
+const STALE_TEMP_MS = 60 * 60_000;
+const TEMP_PREFIX = 'jobpilot-perf-';
 
 setFlagsFromString('--expose-gc');
 const gc = runInNewContext('gc') as () => void;
@@ -77,8 +82,25 @@ async function warm(app: App, route: string, p95Budget: number): Promise<void> {
   within(route, 'heap per request', heap, HEAP_PER_REQUEST_MB, 'MB');
 }
 
+/** Removes `jobpilot-perf-*` temp homes older than STALE_TEMP_MS (a killed gate leaves its 1.8 GB behind). */
+function sweepStaleTemps(now = Date.now()): void {
+  for (const name of readdirSync(tmpdir())) {
+    if (!name.startsWith(TEMP_PREFIX)) continue;
+    const p = join(tmpdir(), name);
+    try {
+      if (now - statSync(p).mtimeMs > STALE_TEMP_MS) {
+        rmSync(p, { recursive: true, force: true });
+        console.log(`perf swept a stale temp home: ${p}`);
+      }
+    } catch {
+      // gone meanwhile, or not ours to remove
+    }
+  }
+}
+
 beforeAll(() => {
-  home = mkdtempSync(join(tmpdir(), 'jobpilot-perf-'));
+  sweepStaleTemps();
+  home = mkdtempSync(join(tmpdir(), TEMP_PREFIX));
   chmodSync(home, 0o700);
   cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
   const built = buildSyntheticDb(join(home, 'jobpilot.db'), BUDGET_SPEC);
@@ -90,12 +112,14 @@ describe('performance budget on the large synthetic DB', () => {
   it('GET /: fresh and warm, within budget, a full page of rows', async () => {
     // the process is warm (code loaded and compiled, as a dashboard that has served any page), the connection is not
     await timed(fresh(), '/facts');
-    const app = fresh();
-    const first = await timed(app, '/');
+    // best of 3 fresh dashboards (review: one sample flaked on a busy machine); the structural gate is indexes.test.ts
+    const firsts = [];
+    for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), '/'));
+    const first = firsts.reduce((a, b) => (b.ms < a.ms ? b : a));
     expect((first.body.match(/data-job="/g) ?? []).length).toBe(100);
-    within('/', 'fresh connection', first.ms, ROOT_FRESH_MS);
-    within('/', 'heap per request', first.heapMb, HEAP_PER_REQUEST_MB, 'MB');
-    await warm(app, '/', ROOT_WARM_P95_MS);
+    within('/', 'fresh connection (best of 3)', first.ms, ROOT_FRESH_MS);
+    within('/', 'heap per request', Math.max(...firsts.map((f) => f.heapMb)), HEAP_PER_REQUEST_MB, 'MB');
+    await warm(fresh(), '/', ROOT_WARM_P95_MS);
   });
 
   it('GET /runs: the first view after a run, then a fresh dashboard, then warm', async () => {
@@ -103,10 +127,10 @@ describe('performance budget on the large synthetic DB', () => {
     expect(afterRun.body).toMatch(/Audit log intact: <span class="num">500000<\/span> events/);
     expect(afterRun.body).toMatch(/the <span class="num">50000<\/span> newer events/);
     within('/runs', 'first view after a run', afterRun.ms, RUNS_AFTER_RUN_MS);
-    const app = fresh();
-    const first = await timed(app, '/runs');
-    within('/runs', 'fresh connection', first.ms, RUNS_FRESH_MS);
-    within('/runs', 'heap per request', first.heapMb, HEAP_PER_REQUEST_MB, 'MB');
-    await warm(app, '/runs', RUNS_WARM_P95_MS);
+    const firsts = [];
+    for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), '/runs'));
+    within('/runs', 'fresh connection (best of 3)', Math.min(...firsts.map((f) => f.ms)), RUNS_FRESH_MS);
+    within('/runs', 'heap per request', Math.max(...firsts.map((f) => f.heapMb)), HEAP_PER_REQUEST_MB, 'MB');
+    await warm(fresh(), '/runs', RUNS_WARM_P95_MS);
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { CHAIN_CHECKPOINT_KEY, chainStatus, fullChainCheck, readCheckpoint } from '../../src/app/chain-status.js';
+import { CHAIN_CHECKPOINT_KEY, chainStatus, fullChainCheck, readBroken, readCheckpoint } from '../../src/app/chain-status.js';
 import { AppStore } from '../../src/app/store/app-store.js';
-import { Store } from '../../src/kernel/store/store.js';
+import { eventHash, Store } from '../../src/kernel/store/store.js';
 
 /**
  * dashboard-perf fix 1: `/runs` verifies only the events after the last full verification's checkpoint
@@ -28,20 +28,48 @@ describe('fullChainCheck (jobpilot audit)', () => {
     expect(readCheckpoint(app.kernel.db)).toEqual({ seq: 3, hash: head?.hash, count: 3, verifiedAt: T0, fullSeq: 3, fullCount: 3 });
   });
 
-  it('records nothing when it fails, and keeps the old checkpoint', () => {
+  it('a failed full walk marks the chain broken: /runs is red until a later full walk passes and clears it', () => {
     const app = appWith(3);
     fullChainCheck(app.kernel, T0);
-    const before = readCheckpoint(app.kernel.db);
     app.kernel.appendEvent('r', 't3', 'k', { i: 3 }, 'p');
     tamper(app, 2);
     expect(fullChainCheck(app.kernel, T1)).toMatchObject({ ok: false, brokenAt: 2 });
-    expect(readCheckpoint(app.kernel.db)).toEqual(before);
+    expect(readBroken(app.kernel.db)).toEqual({ seq: 2, reason: 'hash does not match the event contents', at: T1 });
+    // the checkpoint still matches the stored chain and the events after it verify: still red, never "intact"
+    const red = chainStatus(app.kernel, T1);
+    expect(red).toEqual({ ok: false, reason: `at event 2: hash does not match the event contents (found by the full check at ${T1})` });
+    expect(chainStatus(app.kernel, T1)).toEqual(red);
+    // repaired (restored from a backup, say): the next full walk passes and clears it
+    app.kernel.db.prepare(`UPDATE events SET data = '{"i":1}' WHERE seq = 2`).run();
+    expect(chainStatus(app.kernel, T1)).toEqual(red);
+    expect(fullChainCheck(app.kernel, '2026-10-14T03:00:00.000Z')).toEqual({ ok: true, events: 4 });
+    expect(readBroken(app.kernel.db)).toBeUndefined();
+    expect(chainStatus(app.kernel, '2026-10-14T03:00:00.000Z')).toMatchObject({ ok: true, events: 4 });
   });
 
-  it('records nothing for a head that differs from --expect-head', () => {
+  it('a head that differs from --expect-head is a failed full check too: marked, no checkpoint', () => {
     const app = appWith(2);
-    expect(fullChainCheck(app.kernel, T0, { hash: 'bad', count: 2 })).toMatchObject({ ok: false, headMismatch: true });
+    expect(fullChainCheck(app.kernel, T0, { expectedHead: { hash: 'bad', count: 2 } })).toMatchObject({ ok: false, headMismatch: true });
     expect(readCheckpoint(app.kernel.db)).toBeUndefined();
+    expect(readBroken(app.kernel.db)).toEqual({ seq: null, reason: 'chain head differs from the expected head', at: T0 });
+    expect(chainStatus(app.kernel, T1)).toMatchObject({ ok: false, reason: expect.stringMatching(/chain head differs from the expected head/) });
+  });
+
+  it('record: false (--no-record) verifies and writes nothing, pass or fail', () => {
+    const app = appWith(2);
+    expect(fullChainCheck(app.kernel, T0, { record: false })).toEqual({ ok: true, events: 2 });
+    tamper(app, 1);
+    expect(fullChainCheck(app.kernel, T0, { record: false })).toMatchObject({ ok: false });
+    expect([readCheckpoint(app.kernel.db), readBroken(app.kernel.db)]).toEqual([undefined, undefined]);
+  });
+
+  it('a record that cannot be written is reported, never thrown: the walk result stands', () => {
+    const app = appWith(2);
+    app.kernel.db.exec(`CREATE TRIGGER ro_i BEFORE INSERT ON app_settings BEGIN SELECT RAISE(ABORT, 'read-only copy'); END;
+      CREATE TRIGGER ro_u BEFORE UPDATE ON app_settings BEGIN SELECT RAISE(ABORT, 'read-only copy'); END;`);
+    const told: string[] = [];
+    expect(fullChainCheck(app.kernel, T0, { onRecordFailed: (m) => told.push(m) })).toEqual({ ok: true, events: 2 });
+    expect(told).toEqual([expect.stringMatching(/not recorded: read-only copy/)]);
   });
 
   it('on a kernel-only database (no app tables) it verifies and records nothing', () => {
@@ -126,7 +154,7 @@ describe('chainStatus (/runs)', () => {
 
   it('an unreadable checkpoint is treated as missing', () => {
     const ok = { seq: 2, hash: 'a'.repeat(64), count: 2, verifiedAt: T0, fullSeq: 1, fullCount: 1 };
-    const bads = ['not json', '{}', JSON.stringify({ ...ok, seq: 'x' }), JSON.stringify({ ...ok, hash: 'nothex' }), JSON.stringify({ ...ok, fullSeq: 3 }), JSON.stringify({ ...ok, fullCount: 0 }), JSON.stringify({ ...ok, verifiedAt: '' })];
+    const bads = ['not json', '{}', JSON.stringify({ ...ok, seq: 'x' }), JSON.stringify({ ...ok, hash: 'nothex' }), JSON.stringify({ ...ok, fullSeq: 3 }), JSON.stringify({ ...ok, fullCount: 0 }), JSON.stringify({ ...ok, verifiedAt: '' }), JSON.stringify({ ...ok, verifiedAt: 'x' }), JSON.stringify({ ...ok, verifiedAt: '2026-13-45T99:00:00Z' }), JSON.stringify({ ...ok, verifiedAt: 'Tue, 14 Oct 2026' })];
     for (const bad of bads) {
       const app = appWith(2);
       app.kernel.db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(CHAIN_CHECKPOINT_KEY, bad);
@@ -141,3 +169,67 @@ describe('chainStatus (/runs)', () => {
     expect(readCheckpoint(app.kernel.db)).toBeUndefined();
   });
 });
+
+describe('review findings', () => {
+  it('M4: the last event edited and re-hashed, the head not updated: detected', () => {
+    const app = appWith(3);
+    fullChainCheck(app.kernel, T0);
+    for (let i = 3; i < 5; i++) app.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+    const db = app.kernel.db;
+    db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 5`).run();
+    const r = db.prepare(`SELECT * FROM events WHERE seq = 5`).get() as Parameters<typeof eventHash>[1] & { prev_hash: string };
+    db.prepare(`UPDATE events SET hash = ? WHERE seq = 5`).run(eventHash(r.prev_hash, r));
+    expect(chainStatus(app.kernel, T1)).toMatchObject({ ok: false, reason: expect.stringMatching(/chain head/) });
+  });
+
+  it('A5: /runs moving the verified point never overwrites a newer full check (compare-and-set)', () => {
+    const app = appWith(3);
+    fullChainCheck(app.kernel, T0);
+    app.kernel.appendEvent('r', 'x', 'k', {}, 'p');
+    // /runs has read the checkpoint (T0); `audit verify` runs (T1) before /runs writes its moved point
+    const db = app.kernel.db;
+    const prepare = db.prepare.bind(db);
+    let raced = false;
+    db.prepare = ((sql: string) => {
+      if (!raced && /^\s*(INSERT INTO|UPDATE) app_settings/.test(sql)) {
+        raced = true;
+        db.prepare = prepare;
+        fullChainCheck(app.kernel, T1);
+      }
+      return prepare(sql);
+    }) as typeof db.prepare;
+    try {
+      chainStatus(app.kernel, T1);
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(raced).toBe(true);
+    expect(readCheckpoint(db)).toMatchObject({ verifiedAt: T1, fullSeq: 4, fullCount: 4, seq: 4 });
+  });
+
+  it('A5b: a full check that reached further meanwhile is never moved back by /runs', () => {
+    const app = appWith(3);
+    fullChainCheck(app.kernel, T0);
+    app.kernel.appendEvent('r', 'x', 'k', {}, 'p');
+    const db = app.kernel.db;
+    const prepare = db.prepare.bind(db);
+    let raced = false;
+    db.prepare = ((sql: string) => {
+      if (!raced && /^\s*(INSERT INTO|UPDATE) app_settings/.test(sql)) {
+        raced = true;
+        db.prepare = prepare;
+        app.kernel.appendEvent('r', 'y', 'k', {}, 'p'); // a run appends, then audit verify walks to event 5
+        fullChainCheck(app.kernel, T1);
+      }
+      return prepare(sql);
+    }) as typeof db.prepare;
+    try {
+      chainStatus(app.kernel, T1); // walked to event 4 before the race
+    } finally {
+      db.prepare = prepare;
+    }
+    expect(raced).toBe(true);
+    expect(readCheckpoint(db)).toMatchObject({ seq: 5, count: 5, verifiedAt: T1, fullSeq: 5, fullCount: 5 });
+  });
+});
+

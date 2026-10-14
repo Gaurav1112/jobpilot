@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -103,6 +104,31 @@ describe('audit verify', () => {
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
+  }, 60_000);
+
+  it('--no-record verifies a forensic copy without writing to it; a record that fails is a warning, not an error', () => {
+    const copy = join(dir, 'forensic.db');
+    const app = AppStore.open(copy);
+    for (let i = 0; i < 2; i++) app.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+    app.kernel.db.pragma('wal_checkpoint(TRUNCATE)');
+    app.close();
+    const sha = (): string => createHash('sha256').update(readFileSync(copy)).digest('hex');
+    const before = sha();
+    const nr = cli('audit', 'verify', '--db', copy, '--no-record');
+    expect(nr.status).toBe(0);
+    expect(nr.stdout).toContain('audit chain intact: 2 events');
+    expect(nr.stdout).toContain('not recorded (--no-record)');
+    expect(sha()).toBe(before);
+    // app_settings refuses writes: the walk passes, the record fails, exit 0 with a warning
+    const s = AppStore.open(copy);
+    s.kernel.db.exec(`CREATE TRIGGER ro_i BEFORE INSERT ON app_settings BEGIN SELECT RAISE(ABORT, 'read-only copy'); END;
+      CREATE TRIGGER ro_u BEFORE UPDATE ON app_settings BEGIN SELECT RAISE(ABORT, 'read-only copy'); END;`);
+    s.close();
+    const warn = cli('audit', 'verify', '--db', copy);
+    expect(warn.status).toBe(0);
+    expect(warn.stdout).toContain('audit chain intact: 2 events');
+    expect(warn.stderr).toMatch(/warning: the audit check's result was not recorded: read-only copy/);
+    expect(warn.stdout).not.toContain('checkpoint recorded');
   }, 60_000);
 
   it('rejects a malformed --expect-head', () => {

@@ -488,6 +488,18 @@ Migrations are one-way, so the order matters:
 3. Check: `node --run verify` (optional, for the repo; its last step is the speed gate,
    `node --run perf`, which builds a 1.8 GB synthetic database in a temp dir and fails when the
    Jobs or Runs page breaks its time or memory budget), then `node --run jobpilot -- pack check`.
-4. Open the database once with the new version so it migrates: any command does it, for example
-   `node --run jobpilot -- coverage probe`.
+4. Apply the database upgrade: `node --run jobpilot -- facts list` does it under the run lock
+   (or the next scheduled run does). The dashboard never migrates: until this step it answers
+   "jobpilot is being upgraded" (HTTP 503) and works again on the next page load after it.
+   The dashboard-perf upgrade adds three indexes; the envelope one reads the whole database once
+   (about 8 s on a 4 GB home, up to 30 s when the file is not in memory).
 5. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node.
+
+When the branches are merged by hand, merge **career-sites first, then dashboard-perf**: the
+dashboard-perf migrations (16-18) are numbered after career-sites' 15.
+
+**The dashboard under launchd after an upgrade.** A dashboard still running the old code keeps
+serving until a run of the new code migrates the database. From then on its first request finds
+the schema newer than its code: `jobpilot serve` prints why and exits, and launchd (KeepAlive,
+30 s throttle) starts it again on the checkout's new code. Started by hand, it just stops; start
+it again.

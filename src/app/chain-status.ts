@@ -38,6 +38,22 @@ export type ChainStatus = { readonly ok: true; readonly events: number; readonly
 /** How long a best-effort checkpoint write from the dashboard waits for a run's write lock. */
 const DASHBOARD_RECORD_TIMEOUT_MS = 250;
 const HASH = /^[0-9a-f]{64}$/;
+const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+/** A UTC ISO time the dashboard can show (`toISOString` shape, a real date): anything else is not a checkpoint. */
+const isIsoTime = (x: unknown): x is string => typeof x === 'string' && ISO.test(x) && Number.isFinite(Date.parse(x)) && new Date(Date.parse(x)).toISOString().slice(0, 19) === x.slice(0, 19);
+
+/**
+ * The broken marker (review I1): written by every failed full walk (`audit verify`, the weekly coverage check, the
+ * dashboard's own fallback walk), cleared only by a later full walk that passes. While it is there, `/runs` is red
+ * whatever the checkpoint says: a failed check is never followed by "intact".
+ */
+export const CHAIN_BROKEN_KEY = 'audit.chain_broken';
+export interface BrokenMarker {
+  /** The event the walk broke at; null when the chain verified but its head differed from `--expect-head`. */
+  readonly seq: number | null;
+  readonly reason: string;
+  readonly at: string;
+}
 
 const hasSettings = (db: Database.Database): boolean => db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'`).get() !== undefined;
 
@@ -56,8 +72,37 @@ export function readCheckpoint(db: Database.Database): Checkpoint | undefined {
   const { seq, hash, count, verifiedAt, fullSeq, fullCount } = v as Record<string, unknown>;
   const pos = (x: unknown): x is number => Number.isSafeInteger(x) && (x as number) >= 1;
   if (!pos(seq) || !pos(count) || !pos(fullSeq) || !pos(fullCount) || fullSeq > seq || fullCount > count) return undefined;
-  if (typeof hash !== 'string' || !HASH.test(hash) || typeof verifiedAt !== 'string' || verifiedAt === '') return undefined;
+  if (typeof hash !== 'string' || !HASH.test(hash) || !isIsoTime(verifiedAt)) return undefined;
   return { seq, hash, count, verifiedAt, fullSeq, fullCount };
+}
+
+/** The broken marker, or undefined. An unreadable one still counts as broken (never silently intact). */
+export function readBroken(db: Database.Database): BrokenMarker | undefined {
+  if (!hasSettings(db)) return undefined;
+  const row = db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(CHAIN_BROKEN_KEY) as { value: string } | undefined;
+  if (row === undefined) return undefined;
+  try {
+    const v = JSON.parse(row.value) as Record<string, unknown>;
+    const seq = Number.isSafeInteger(v['seq']) ? (v['seq'] as number) : null;
+    return { seq, reason: typeof v['reason'] === 'string' ? v['reason'] : 'unknown', at: typeof v['at'] === 'string' ? v['at'] : 'unknown' };
+  } catch {
+    return { seq: null, reason: 'a full check found the chain broken (its record is unreadable)', at: 'unknown' };
+  }
+}
+
+const putSetting = (db: Database.Database, key: string, value: string): void => {
+  db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value`).run(key, value);
+};
+
+export interface FullCheckOptions {
+  /** `--expect-head`: an out-of-band copy of the head; a differing head fails the check. */
+  readonly expectedHead?: { hash: string; count: number };
+  /** False (`audit verify --no-record`, a forensic copy): write nothing, pass or fail. Default true. */
+  readonly record?: boolean;
+  /** How long the record waits for a run's write lock (SQLite busy_timeout); default the connection's own. */
+  readonly lockWaitMs?: number;
+  /** Told (instead of `console.error`) when the record could not be written; the walk's result stands either way. */
+  readonly onRecordFailed?: (message: string) => void;
 }
 
 function writeCheckpoint(db: Database.Database, cp: Checkpoint): void {
@@ -73,42 +118,68 @@ const isBusy = (e: unknown): boolean => typeof (e as { code?: unknown })?.code =
  * The full walk from genesis (`verifyChain`); when it passes and the database has the app's tables, its end point is
  * recorded as the checkpoint. `bestEffort`: a busy database (a run writing) skips the record instead of waiting.
  */
-export function fullChainCheck(store: Store, at: string, expectedHead?: { hash: string; count: number }, bestEffort = false): AuditResult {
-  const { result, through } = verifyChainThrough(store, expectedHead);
-  if (result.ok && through !== undefined) record(store, { ...through, verifiedAt: at, fullSeq: through.seq, fullCount: through.count }, bestEffort);
+export function fullChainCheck(store: Store, at: string, opts: FullCheckOptions = {}): AuditResult {
+  const { result, through } = verifyChainThrough(store, opts.expectedHead);
+  if (opts.record === false || !hasSettings(store.db)) return result;
+  const db = store.db;
+  record(store, opts, () =>
+    db.transaction(() => {
+      if (result.ok) {
+        if (through !== undefined) writeCheckpoint(db, { ...through, verifiedAt: at, fullSeq: through.seq, fullCount: through.count });
+        db.prepare(`DELETE FROM app_settings WHERE key = ?`).run(CHAIN_BROKEN_KEY);
+      } else {
+        const marker: BrokenMarker = 'headMismatch' in result ? { seq: null, reason: result.reason, at } : { seq: result.brokenAt, reason: result.reason, at };
+        putSetting(db, CHAIN_BROKEN_KEY, JSON.stringify(marker));
+      }
+    })(),
+  );
   return result;
 }
 
-/** Writes the checkpoint when the database has the app's tables. `bestEffort`: a busy database (a run writing) skips it. */
-function record(store: Store, cp: Checkpoint, bestEffort: boolean): void {
-  if (!hasSettings(store.db)) return;
-  if (!bestEffort) return writeCheckpoint(store.db, cp);
-  const before = store.db.pragma('busy_timeout', { simple: true }) as number;
-  store.db.pragma(`busy_timeout = ${DASHBOARD_RECORD_TIMEOUT_MS}`);
+/** Runs a record write: within `lockWaitMs` when given; a failure is reported (`onRecordFailed`), never thrown. */
+function record(store: Store, opts: Pick<FullCheckOptions, 'lockWaitMs' | 'onRecordFailed'>, write: () => void): void {
+  const db = store.db;
+  const before = db.pragma('busy_timeout', { simple: true }) as number;
+  if (opts.lockWaitMs !== undefined) db.pragma(`busy_timeout = ${opts.lockWaitMs}`);
   try {
-    writeCheckpoint(store.db, cp);
+    write();
   } catch (e) {
-    if (!isBusy(e)) throw e;
-    console.error('jobpilot dashboard: the audit checkpoint was not recorded (a run is writing); the next view checks those events again');
+    const why = `${isBusy(e) ? 'a run is writing: ' : ''}${e instanceof Error ? e.message : String(e)}`;
+    (opts.onRecordFailed ?? ((m: string) => console.error(`jobpilot: ${m}`)))(`the audit check's result was not recorded: ${why}`);
   } finally {
-    store.db.pragma(`busy_timeout = ${before}`);
+    if (opts.lockWaitMs !== undefined) db.pragma(`busy_timeout = ${before}`);
   }
 }
 
 const reasonOf = (r: Exclude<AuditResult, { ok: true }>): string => ('headMismatch' in r ? r.reason : `at event ${r.brokenAt}: ${r.reason}`);
 
-/** What `/runs` shows: from the checkpoint when it matches the chain, else (and only then) the full walk. */
+/** What `/runs` shows: red while a full walk's broken marker stands; else from the checkpoint when it matches the chain, else (and only then) the full walk. */
 export function chainStatus(store: Store, at: string): ChainStatus {
+  const broken = readBroken(store.db);
+  if (broken !== undefined) return { ok: false, reason: `${broken.seq !== null ? `at event ${broken.seq}: ` : ''}${broken.reason} (found by the full check at ${broken.at})` };
   const cp = readCheckpoint(store.db);
+  const dashboard = { lockWaitMs: DASHBOARD_RECORD_TIMEOUT_MS };
   if (cp !== undefined) {
     const r = verifyChainSince(store, cp);
     if (r.ok) {
-      if (r.checked > 0) record(store, { ...r.head, verifiedAt: cp.verifiedAt, fullSeq: cp.fullSeq, fullCount: cp.fullCount }, true);
+      // compare-and-set (review): move only seq, hash and count, and only if the checkpoint is still the one read here,
+      // so a full check recorded meanwhile (`audit verify`, coverage) is never overwritten with this older one
+      if (r.checked > 0) {
+        record(store, dashboard, () =>
+          store.db
+            .prepare(
+              `UPDATE app_settings SET value = json_set(value, '$.seq', @seq, '$.hash', @hash, '$.count', @count)
+               WHERE key = @key AND json_extract(value, '$.seq') = @oldSeq AND json_extract(value, '$.hash') = @oldHash AND json_extract(value, '$.count') = @oldCount
+                 AND json_extract(value, '$.verifiedAt') = @oldAt`,
+            )
+            .run({ key: CHAIN_CHECKPOINT_KEY, seq: r.head.seq, hash: r.head.hash, count: r.head.count, oldSeq: cp.seq, oldHash: cp.hash, oldCount: cp.count, oldAt: cp.verifiedAt }),
+        );
+      }
       return { ok: true, events: r.events, check: { kind: 'since', fullAt: cp.verifiedAt, through: cp.fullSeq, newer: r.events - cp.fullCount, checkedNow: r.checked } };
     }
     if (!('mismatch' in r)) return { ok: false, reason: `at event ${r.brokenAt}: ${r.reason}` };
     // the checkpoint is not a point on this chain: only the full walk can tell
   }
-  const full = fullChainCheck(store, at, undefined, true);
+  const full = fullChainCheck(store, at, dashboard);
   return full.ok ? { ok: true, events: full.events, check: { kind: 'full-now' } } : { ok: false, reason: reasonOf(full) };
 }
