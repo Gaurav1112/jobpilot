@@ -462,8 +462,12 @@ node --run jobpilot -- store restore envelopes-20261014T090000Z.jsonl.gz
   `archive/`, checks it reads back exactly, records a `store.compacted` event (segment sha256,
   counts, policy) in the audit chain, and only then removes the rows, together with the step
   rows that made them, so a later run executes those steps again instead of replaying nothing.
-  `store restore` checks the segment's sha256 against that event first, and records a
-  `store.restored` event.
+  `store restore` first verifies the whole audit chain, then checks the segment's sha256 against
+  its `store.compacted` event and its manifest, and puts each archived step back whole, at its
+  original place: a step a later run has made again (its row exists, in any status) is left as it
+  is and reported ("N steps skipped: re-made since"). It records a `store.restored` event.
+  `restore --all` skips (and names) a segment no event records: an interrupted compaction left it,
+  and the next `compact` removes it.
 - **Refusals.** It takes the run lock without waiting (a running jobpilot makes it refuse). With
   any run incomplete, `--apply` refuses; `--include-incomplete` archives stale incomplete runs
   (older than 7 days, never resumed) and still keeps resumable ones. VACUUM needs free disk about

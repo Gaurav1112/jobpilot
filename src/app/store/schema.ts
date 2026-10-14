@@ -3,7 +3,7 @@ import type Database from 'better-sqlite3';
 /**
  * The app catalogue's tables (spec §6). They live in the kernel's DB file but are the app's own: the app keeps its
  * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never change a kernel table
- * (its definition or its rows); migrations 17 and 18 only add read-path indexes on two of them (dashboard-perf).
+ * (its definition or its rows); migrations 17, 18 and 19 only add read-path indexes on two of them (dashboard-perf).
  * Each entry is applied once, in order, in its own transaction, by `AppStore`.
  *
  * A job is one posting: `job_key` is `jobKey(source, sourceId)`, and `job_sources` holds that one pair (kept for
@@ -404,4 +404,7 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   // envelope body. Partial (Rendered@1 rows only), so it is small and costs other envelope writes nothing; building it
   // reads the envelopes table once (see perf-report.md for its time on a large DB). A literal.
   `CREATE INDEX IF NOT EXISTS envelopes_rendered_by_job ON envelopes (json_extract(body, '$.payload.jobKey')) WHERE type = 'Rendered@1';`,
+  // retention review: "newest envelope" by the seq of its step's step_done event, never by rowid (NEWEST_FIRST in
+  // app-store.ts). Partial (step_done events only); an index on a kernel table, no row changed. A literal.
+  `CREATE INDEX IF NOT EXISTS events_step_done ON events (json_extract(data, '$.stepKey'), seq) WHERE kind = 'step_done';`,
 ];

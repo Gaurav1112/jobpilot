@@ -18,6 +18,8 @@ import { jobRow } from '../support/app-fixtures.js';
  * other command refuse a behind schema, so without this the upgrade would never happen.
  */
 const root = join(import.meta.dirname, '../..');
+/** The index the last app migration creates: dropped (with the version set one back) to make a schema that is behind. */
+const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS.at(-1)))?.[1] as string;
 const pdftotext = (() => {
   try {
     return resolvePdftotext();
@@ -42,7 +44,7 @@ function behindHome(): string {
   s.upsertJob(jobRow());
   s.close();
   const d = new Database(join(home, 'jobpilot.db'));
-  d.exec(`DROP INDEX envelopes_rendered_by_job; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
+  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
   d.close();
   return home;
 }

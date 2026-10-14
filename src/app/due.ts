@@ -183,6 +183,9 @@ const attemptsKey = (spec: DueSpec, now: string): string => (spec.weekday !== un
 const read = (spec: DueSpec, home: string, now: string): AttemptsFile => readFile(spec, home, attemptsKey(spec, now));
 
 /** Failed attempts, plus started ones that never finished: crashed, since the caller has ruled out a live holder. */
+/** Whether the attempts file records a completed run since `start` (needs no DB: the fallback when it cannot be read). */
+const doneSince = (f: AttemptsFile, start: number): boolean => f.attempts.some((a) => a.outcome === 'done' && Date.parse(a.at) >= start);
+
 const failuresOf = (f: AttemptsFile): string[] => f.attempts.filter((a) => a.outcome !== 'done' && a.outcome !== 'paused').map((a) => a.at);
 
 /**
@@ -261,7 +264,10 @@ export function due(spec: DueSpec, home: string, now: string, opts: { readonly i
   try {
     app = AppStore.open(db, { schema: 'as-is' });
   } catch (e) {
-    if (e instanceof SchemaBehindError) return early;
+    if (e instanceof SchemaBehindError) {
+      // the run's own record says whether today's run completed: never a second run the same day
+      return { ...decide({ now, completedToday: doneSince(read(spec, home, now), start), failuresToday }, start, wording), window };
+    }
     throw e;
   }
   try {
@@ -305,7 +311,7 @@ function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): D
   try {
     app = AppStore.open(db, { schema: 'as-is' });
   } catch (e) {
-    if (e instanceof SchemaBehindError) return early;
+    if (e instanceof SchemaBehindError) return { ...decide({ now, completedToday: doneSince(read(spec, home, now), start), failuresToday: failures }, start, wording), window };
     throw e;
   }
   try {

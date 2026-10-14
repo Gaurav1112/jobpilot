@@ -4,7 +4,7 @@ import type { Clock } from '../../kernel/clock.js';
 import { withLock } from '../lock.js';
 import { homePaths } from '../pack/paths.js';
 import { AppStore } from './app-store.js';
-import { applyCompaction, formatPlan, listSegments, loadRetentionPolicy, planCompaction, restoreSegment, RetentionRefused } from './retention.js';
+import { applyCompaction, formatPlan, listSegments, loadRetentionPolicy, OrphanSegment, planCompaction, restoreSegment, RetentionRefused } from './retention.js';
 
 /**
  * `jobpilot store compact` and `jobpilot store restore` (retention.ts). Both take the run lock WITHOUT waiting (a held
@@ -51,6 +51,7 @@ export async function storeCompactCommand(o: StoreCommandOptions & { readonly ap
       }
       o.out(`archived ${r.envelopes} envelopes and ${r.steps} step rows (${mb(r.bytes)}) to archive/${r.segment} (sha256 ${r.sha256})`);
       o.out(`recorded in the audit chain (store.compacted); restore with: jobpilot store restore ${r.segment}`);
+      if (r.removedOrphans.length > 0) o.out(`removed what an interrupted compaction left in archive/: ${r.removedOrphans.join(', ')}`);
       o.out(`database: ${mb(r.sizeBefore)} -> ${mb(r.sizeAfter)}; vacuum ${r.vacuum}; ${r.seconds.toFixed(1)} s`);
       if (r.vacuum === 'skipped: not enough free disk') o.err('warning: VACUUM needs about the database\'s size free on disk; the space is reused by later runs instead. Free some disk and run compact again to reclaim it.');
       return 0;
@@ -70,8 +71,23 @@ export async function storeRestoreCommand(o: StoreCommandOptions & { readonly se
     const app = AppStore.open(paths.db);
     try {
       for (const segment of segments) {
-        const r = await restoreSegment(app, { archiveDir: dir, segment, now: o.clock.now() });
-        o.out(`restored ${segment}: ${r.envelopes.inserted} envelopes (${r.envelopes.present} already there${r.envelopes.differ > 0 ? `, ${r.envelopes.differ} of them made again by a later run with other bytes, kept as they are` : ''}), ${r.steps.inserted} step rows (${r.steps.present} already there); recorded (store.restored)`);
+        let r;
+        try {
+          r = await restoreSegment(app, { archiveDir: dir, segment, now: o.clock.now() });
+        } catch (e) {
+          // --all: a segment no chain event records (left by an interrupted compaction) is skipped, never fatal
+          if (o.all && e instanceof OrphanSegment) {
+            o.err(`skipped ${segment}: no store.compacted event in the audit chain (an interrupted compaction left it; the next compact removes it)`);
+            continue;
+          }
+          throw e;
+        }
+        const parts = [
+          `restored ${segment}: ${r.envelopes.inserted} envelopes and ${r.steps.inserted} step rows`,
+          ...(r.stepsSkipped > 0 ? [`${r.stepsSkipped} steps skipped: re-made since (${r.envelopes.present} of their envelopes are there now${r.envelopes.differ > 0 ? `, ${r.envelopes.differ} with other bytes` : ''}; left as they are)`] : []),
+          ...(r.stepsConflicting > 0 ? [`${r.stepsConflicting} steps left out: an envelope id or rowid of theirs is taken by another row`] : []),
+        ];
+        o.out(`${parts.join('; ')}; recorded (store.restored)`);
       }
       return 0;
     } finally {

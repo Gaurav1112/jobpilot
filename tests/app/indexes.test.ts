@@ -11,7 +11,7 @@ import { fillJobs } from '../support/jobs-fixture.js';
  * dashboard-perf fixes 2 and 3: migrations 16-18 only add indexes (the jobs list's covering index, events by run, the
  * job page's Rendered@1 lookup). They change no row and no existing schema object, and the queries they are for use them.
  */
-const NEW_INDEXES = ['jobs_list', 'events_by_run', 'envelopes_rendered_by_job'];
+const NEW_INDEXES = ['jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done'];
 
 /** Every table's rows and every schema object's SQL (except the given new ones), hashed. */
 function dumpHash(db: Database.Database, skipObjects: readonly string[] = []): string {
@@ -48,9 +48,9 @@ function rendered(kernel: Store, jobKey: string, n: number): void {
   kernel.db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, ?, ?, ?)`).run(env.envelopeId, env.stepKey, 0, env.type, canonicalJson(env));
 }
 
-describe('migrations 16-18: indexes only', () => {
-  it('the registry has 18 migrations; 16-18 are literals that create one index each', () => {
-    expect(APP_MIGRATIONS.length).toBe(18);
+describe('migrations 16-19: indexes only', () => {
+  it('the registry has 19 migrations; 16-19 are literals that create one index each', () => {
+    expect(APP_MIGRATIONS.length).toBe(19);
     for (const [i, name] of NEW_INDEXES.entries()) {
       const m = APP_MIGRATIONS[15 + i];
       expect(typeof m).toBe('string');
@@ -71,12 +71,13 @@ describe('migrations 16-18: indexes only', () => {
     ).run();
     const before = dumpHash(db);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(18);
+    expect(s.schemaVersion()).toBe(19);
     expect(dumpHash(db, NEW_INDEXES)).toBe(before);
     const added = (db.prepare(`SELECT name, tbl_name FROM sqlite_master WHERE name IN (${NEW_INDEXES.map(() => '?').join(', ')}) ORDER BY name`).all(...NEW_INDEXES) as { name: string; tbl_name: string }[]);
     expect(added).toEqual([
       { name: 'envelopes_rendered_by_job', tbl_name: 'envelopes' },
       { name: 'events_by_run', tbl_name: 'events' },
+      { name: 'events_step_done', tbl_name: 'events' },
       { name: 'jobs_list', tbl_name: 'jobs' },
     ]);
     expect(db.pragma('integrity_check', { simple: true })).toBe('ok');
@@ -86,7 +87,7 @@ describe('migrations 16-18: indexes only', () => {
   it('an index that already exists (a racing opener built it) is not an error', () => {
     const kernel = v15();
     kernel.db.exec(APP_MIGRATIONS[16] as string);
-    expect(AppStore.on(kernel).schemaVersion()).toBe(18);
+    expect(AppStore.on(kernel).schemaVersion()).toBe(19);
   });
 });
 
@@ -125,6 +126,8 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
     expect(plan(db, `SELECT body FROM envelopes WHERE type = 'Rendered@1' AND json_extract(body, '$.payload.jobKey') = ? ORDER BY envelope_id`, 'k')).toMatch(
       /SEARCH envelopes USING INDEX envelopes_rendered_by_job/,
     );
+    // the "newest envelope" readers (NEWEST_FIRST): the step_done lookup is an index search, not an events scan
+    expect(plan(db, `SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ?`, 'k')).toMatch(/SEARCH v USING (COVERING )?INDEX events_step_done/);
   });
 
   it('renderedPlanOf still finds the plan behind the documents', () => {

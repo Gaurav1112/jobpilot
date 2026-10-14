@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statfsSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statfsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createGunzip, createGzip } from 'node:zlib';
 import { createInterface } from 'node:readline';
@@ -7,7 +7,8 @@ import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { canonicalJson } from '../../kernel/canonical.js';
 import type { Store } from '../../kernel/store/store.js';
-import { BOARD_SEED_DAYS, type AppStore } from './app-store.js';
+import { BOARD_SEED_DAYS, NEWEST_FIRST, type AppStore } from './app-store.js';
+import { verifyChain } from '../../kernel/store/audit.js';
 
 /**
  * Declarative envelope retention (`jobpilot store compact` / `store restore`; perf-research.md (c), (e) and Fix 3).
@@ -194,12 +195,12 @@ export function planCompaction(app: AppStore, opts: { readonly now: string; read
       for (const d of db.prepare(sql).all() as { k: string; path: string; sha256: string }[]) want.set(d.k, `${want.has(d.k) ? `${want.get(d.k) as string}\n` : ''}${d.path}\u0000${d.sha256}`);
       return want;
     };
-    // exactly the envelope each reader returns: renderedPlanOf takes the first match by envelope_id, gigExtras the first by
-    // rowid descending; keeping only that one leaves both readers' answers unchanged
+    // exactly the envelope each reader returns: renderedPlanOf takes the first match by envelope_id, gigExtras the first
+    // by NEWEST_FIRST; keeping only that one leaves both readers' answers unchanged
     const matchRendered = (type: string, keyPath: string, want: Map<string, string>, order: string): void => {
       if (want.size === 0) return;
       const found = new Set<string>();
-      for (const r of db.prepare(`SELECT envelope_id, json_extract(body, '${keyPath}') AS k, json_extract(body, '$.payload.files') AS files FROM envelopes WHERE type = ? ORDER BY ${order}`).iterate(type) as IterableIterator<{ envelope_id: string; k: string | null; files: string | null }>) {
+      for (const r of db.prepare(`SELECT e.envelope_id, json_extract(e.body, '${keyPath}') AS k, json_extract(e.body, '$.payload.files') AS files FROM envelopes e WHERE e.type = ? ORDER BY ${order}`).iterate(type) as IterableIterator<{ envelope_id: string; k: string | null; files: string | null }>) {
         if (r.k === null || found.has(r.k) || !want.has(r.k)) continue;
         const files = (r.files === null ? [] : (JSON.parse(r.files) as { path: string; sha256: string }[])).map((f) => `${f.path}\u0000${f.sha256}`).sort().join('\n');
         if (files !== want.get(r.k)) continue;
@@ -207,19 +208,18 @@ export function planCompaction(app: AppStore, opts: { readonly now: string; read
         pinEnv(r.envelope_id, 'R4 current documents');
       }
     };
-    matchRendered('Rendered@1', '$.payload.jobKey', docsWanted(`SELECT job_key AS k, path, sha256 FROM job_docs ORDER BY job_key, path`), 'envelope_id');
-    matchRendered('GigRendered@1', '$.payload.gigKey', docsWanted(`SELECT gig_key AS k, path, sha256 FROM gig_docs ORDER BY gig_key, path`), 'rowid DESC');
+    matchRendered('Rendered@1', '$.payload.jobKey', docsWanted(`SELECT job_key AS k, path, sha256 FROM job_docs ORDER BY job_key, path`), 'e.envelope_id');
+    matchRendered('GigRendered@1', '$.payload.gigKey', docsWanted(`SELECT gig_key AS k, path, sha256 FROM gig_docs ORDER BY gig_key, path`), NEWEST_FIRST('e'));
     // R5: the newest Posting@1 of each job seen in the boards window, the newest Gig@1 of each gig
     const since = new Date(Date.parse(opts.now) - BOARD_SEED_DAYS * 86_400_000).toISOString();
     const recent = new Set((db.prepare(`SELECT job_key FROM jobs WHERE last_seen >= ?`).all(since) as { job_key: string }[]).map((r) => r.job_key));
+    // the same "newest" as the readers (NEWEST_FIRST: by the step_done event's seq, never rowid)
     const newest = (type: string, keyPath: string, wanted: (k: string) => boolean): void => {
-      const best = new Map<string, { id: string; rowid: number }>();
-      for (const r of db.prepare(`SELECT envelope_id, rowid, json_extract(body, '${keyPath}') AS k FROM envelopes WHERE type = ?`).iterate(type) as IterableIterator<{ envelope_id: string; rowid: number; k: string | null }>) {
-        if (r.k === null || !wanted(r.k)) continue;
-        const b = best.get(r.k);
-        if (b === undefined || r.rowid > b.rowid) best.set(r.k, { id: r.envelope_id, rowid: r.rowid });
+      for (const r of db
+        .prepare(`SELECT id, k FROM (SELECT e.envelope_id AS id, json_extract(e.body, '${keyPath}') AS k, ROW_NUMBER() OVER (PARTITION BY json_extract(e.body, '${keyPath}') ORDER BY ${NEWEST_FIRST('e')}) AS n FROM envelopes e WHERE e.type = ?) WHERE n = 1`)
+        .iterate(type) as IterableIterator<{ id: string; k: string | null }>) {
+        if (r.k !== null && wanted(r.k)) pinEnv(r.id, 'R5 newest postings');
       }
-      for (const b of best.values()) pinEnv(b.id, 'R5 newest postings');
     };
     newest('Posting@1', '$.payload.jobKey', (k) => recent.has(k));
     newest('Gig@1', '$.payload.gigKey', () => true);
@@ -348,7 +348,8 @@ async function writeSegment(app: AppStore, plan: CompactionPlan, tmp: string): P
   };
   let envelopes = 0;
   let steps = 0;
-  const env = db.prepare(`SELECT envelope_id, step_key, idx, type, body FROM envelopes WHERE envelope_id = ?`);
+  // the rowid too: a restore puts each envelope back where it was (readers never depend on it: NEWEST_FIRST)
+  const env = db.prepare(`SELECT rowid AS rowid, envelope_id, step_key, idx, type, body FROM envelopes WHERE envelope_id = ?`);
   for (const id of plan.envelopeIds) {
     const row = env.get(id) as Record<string, unknown> | undefined;
     if (row === undefined) throw new Error(`envelope ${id} disappeared while compacting`);
@@ -393,6 +394,8 @@ export interface CompactResult {
   readonly sizeAfter: number;
   readonly vacuum: 'done' | 'skipped: not enough free disk' | 'skipped: --no-vacuum' | 'skipped: nothing archived';
   readonly seconds: number;
+  /** Files an interrupted compaction left in `archive/` (temp files, segments no chain event records), removed first. */
+  readonly removedOrphans: readonly string[];
 }
 
 const dbBytes = (path: string): number => [path, `${path}-wal`].reduce((n, f) => n + (existsSync(f) ? statSync(f).size : 0), 0);
@@ -413,12 +416,17 @@ export async function applyCompaction(
   const t0 = performance.now();
   const sizeBefore = dbBytes(o.dbPath);
   if (plan.envelopeIds.length === 0) {
-    return { segment: null, sha256: null, envelopes: 0, steps: 0, bytes: 0, sizeBefore, sizeAfter: sizeBefore, vacuum: 'skipped: nothing archived', seconds: (performance.now() - t0) / 1000 };
+    return { segment: null, sha256: null, envelopes: 0, steps: 0, bytes: 0, sizeBefore, sizeAfter: sizeBefore, vacuum: 'skipped: nothing archived', seconds: (performance.now() - t0) / 1000, removedOrphans: [] };
   }
   mkdirSync(o.archiveDir, { recursive: true, mode: 0o700 });
+  // leftovers of an interrupted compaction: temp files, and segments no `store.compacted` event records (their rows were
+  // never removed, so they hold nothing the database lacks)
+  const removedOrphans = removeOrphans(app.kernel, o.archiveDir);
   const stamp = o.now.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  let name = `envelopes-${stamp}.jsonl.gz`;
-  for (let n = 2; existsSync(join(o.archiveDir, name)); n++) name = `envelopes-${stamp}-${n}.jsonl.gz`;
+  // the seq its event will get (we hold the run lock: nothing else appends meanwhile), so two compactions in one second
+  // never share a name
+  let name = `envelopes-${stamp}-s${(app.kernel.chainHead()?.seq ?? 0) + 1}.jsonl.gz`;
+  for (let n = 2; existsSync(join(o.archiveDir, name)); n++) name = `envelopes-${stamp}-s${(app.kernel.chainHead()?.seq ?? 0) + 1}-${n}.jsonl.gz`;
   const final = join(o.archiveDir, name);
   const tmp = `${final}.tmp`;
   const written = await writeSegment(app, plan, tmp);
@@ -475,15 +483,19 @@ export async function applyCompaction(
   }
   return {
     segment: name, sha256: written.sha256, envelopes: written.envelopes, steps: written.steps, bytes: plan.archive.bytes,
-    sizeBefore, sizeAfter: dbBytes(o.dbPath), vacuum, seconds: (performance.now() - t0) / 1000,
+    sizeBefore, sizeAfter: dbBytes(o.dbPath), vacuum, seconds: (performance.now() - t0) / 1000, removedOrphans,
   };
 }
 
 export interface RestoreResult {
   readonly segment: string;
-  /** `present`: already in the DB (a later run made it again); `differ`: of those, how many are not byte-identical (kept as they are). */
+  /** `present`: kept, already in the DB; `differ`: of those, how many are not byte-identical to the archived bytes. */
   readonly envelopes: { readonly inserted: number; readonly present: number; readonly differ: number };
   readonly steps: { readonly inserted: number; readonly present: number };
+  /** Archived steps a later run made again (their step row exists, in any status): left whole as they are. */
+  readonly stepsSkipped: number;
+  /** Archived steps one of whose envelope ids or rowids is taken by another row now: left out whole. */
+  readonly stepsConflicting: number;
 }
 
 /** The `store.compacted` events, by segment name. */
@@ -496,49 +508,111 @@ function compactedEvents(store: Store): Map<string, { sha256: string; envelopes:
   return out;
 }
 
+const SEGMENT = /^envelopes-[0-9TZ]+(?:-s\d+)?(?:-\d+)?\.jsonl\.gz$/;
+
 /** The archived segments, oldest first. */
 export function listSegments(archiveDir: string): string[] {
   if (!existsSync(archiveDir)) return [];
-  return readdirSync(archiveDir).filter((f) => /^envelopes-.*\.jsonl\.gz$/.test(f)).sort();
+  return readdirSync(archiveDir).filter((f) => SEGMENT.test(f)).sort();
 }
 
+/** Removes `*.tmp` files and segments (with their manifests) that no `store.compacted` event records. */
+function removeOrphans(store: Store, archiveDir: string): string[] {
+  const recorded = compactedEvents(store);
+  const removed: string[] = [];
+  for (const f of readdirSync(archiveDir).sort()) {
+    const segment = f.endsWith('.manifest.json') ? f.slice(0, -'.manifest.json'.length) : f;
+    if (f.endsWith('.tmp') || (SEGMENT.test(segment) && !recorded.has(segment))) {
+      unlinkSync(join(archiveDir, f));
+      removed.push(f);
+    }
+  }
+  return removed;
+}
+
+export class OrphanSegment extends RetentionRefused {}
+
 /**
- * Restores one segment: its sha256 must equal both its manifest's and its `store.compacted` event's (the chain is the
- * authority); then, in ONE transaction, every envelope and step row is inserted as it was archived (a row already
- * there, e.g. a step a later run executed again, is left as it is and counted, with how many of those differ from the
- * archived bytes), and a `store.restored` event appended.
+ * Restores one segment, STEP BY STEP (retention review: the step is the unit here too). Refused unless the audit chain
+ * verifies in full (its events are what the segment is checked against), the segment has its manifest, and its sha256
+ * equals both the manifest's and its `store.compacted` event's. Then, in ONE transaction, for each archived step:
+ * - its step row exists now (a later run made it again: done, failed, running, any status): the step is left whole
+ *   as it is, none of its archived envelopes or its row are put back (`stepsSkipped`);
+ * - one of its envelope ids or original rowids is taken by another row: left out whole (`stepsConflicting`);
+ * - else its row and every envelope come back exactly as archived, at their original rowids.
+ * Envelopes with no step row (none when archived) follow the same rules on their own. A `store.restored` event is
+ * appended with the counts.
  */
 export async function restoreSegment(app: AppStore, o: { readonly archiveDir: string; readonly segment: string; readonly now: string }): Promise<RestoreResult> {
   const path = join(o.archiveDir, o.segment);
-  if (!/^envelopes-[0-9TZ-]+\.jsonl\.gz$/.test(o.segment) || !existsSync(path)) throw new RetentionRefused(`no segment ${o.segment} in ${o.archiveDir}`);
+  if (!SEGMENT.test(o.segment) || !existsSync(path)) throw new RetentionRefused(`no segment ${o.segment} in ${o.archiveDir}`);
+  const chain = verifyChain(app.kernel);
+  if (!chain.ok) throw new RetentionRefused(`the audit chain does not verify (${'headMismatch' in chain ? chain.reason : `at event ${chain.brokenAt}: ${chain.reason}`}); refusing to restore against it`);
   const event = compactedEvents(app.kernel).get(o.segment);
-  if (event === undefined) throw new RetentionRefused(`segment ${o.segment} has no ${COMPACTED_EVENT} event in the audit chain; refusing to restore it`);
-  const manifest = JSON.parse(readFileSync(`${path}.manifest.json`, 'utf8')) as SegmentManifest;
+  if (event === undefined) throw new OrphanSegment(`segment ${o.segment} has no ${COMPACTED_EVENT} event in the audit chain; refusing to restore it`);
+  const mpath = `${path}.manifest.json`;
+  if (!existsSync(mpath)) throw new RetentionRefused(`segment ${o.segment} has no manifest (${o.segment}.manifest.json); refusing to restore it`);
+  let manifest: SegmentManifest;
+  try {
+    manifest = JSON.parse(readFileSync(mpath, 'utf8')) as SegmentManifest;
+  } catch {
+    throw new RetentionRefused(`the manifest of ${o.segment} is not readable; refusing to restore it`);
+  }
   const { sha256: actual, lines } = await readSegment(path);
   if (actual !== event.sha256 || manifest.sha256 !== event.sha256) {
     throw new RetentionRefused(`segment ${o.segment}: sha256 ${actual} does not match its chain event (${event.sha256}) and manifest (${manifest.sha256}); refusing to restore it`);
   }
-  const envs = lines.filter((l) => l.t === 'envelope');
-  const steps = lines.filter((l) => l.t === 'step');
+  const envs = lines.filter((l) => l.t === 'envelope').map((l) => l.row);
+  const steps = lines.filter((l) => l.t === 'step').map((l) => l.row);
   if (envs.length !== event.envelopes || steps.length !== event.steps) throw new RetentionRefused(`segment ${o.segment}: its counts do not match its chain event`);
   const db = app.kernel.db;
   return db.transaction((): RestoreResult => {
-    const ie = db.prepare(`INSERT OR IGNORE INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (@envelope_id, @step_key, @idx, @type, @body)`);
-    const cur = db.prepare(`SELECT body FROM envelopes WHERE envelope_id = ?`);
-    let ei = 0;
+    const byStep = new Map<string, Record<string, unknown>[]>();
+    for (const e of envs) (byStep.get(String(e['step_key'])) ?? byStep.set(String(e['step_key']), []).get(String(e['step_key'])) as Record<string, unknown>[]).push(e);
+    const stepRows = new Map(steps.map((r) => [String(r['step_key']), r]));
+    const stepExists = db.prepare(`SELECT 1 FROM steps WHERE step_key = ?`);
+    const idTaken = db.prepare(`SELECT body FROM envelopes WHERE envelope_id = ?`);
+    const rowidTaken = db.prepare(`SELECT envelope_id FROM envelopes WHERE rowid = ?`);
+    const insEnv = db.prepare(`INSERT INTO envelopes (rowid, envelope_id, step_key, idx, type, body) VALUES (@rowid, @envelope_id, @step_key, @idx, @type, @body)`);
+    const cols = Object.keys(steps[0] ?? {});
+    const insStep = cols.length === 0 ? undefined : db.prepare(`INSERT INTO steps (${cols.join(', ')}) VALUES (${cols.map((c) => `@${c}`).join(', ')})`);
+    let inserted = 0;
+    let present = 0;
     let differ = 0;
-    for (const l of envs) {
-      const n = ie.run(l.row).changes;
-      ei += n;
-      if (n === 0 && (cur.get(l.row['envelope_id']) as { body: string } | undefined)?.body !== l.row['body']) differ++;
+    let stepsInserted = 0;
+    let stepsSkipped = 0;
+    let stepsConflicting = 0;
+    for (const key of [...new Set([...byStep.keys(), ...stepRows.keys()])].sort()) {
+      const mine = byStep.get(key) ?? [];
+      if (stepExists.get(key) !== undefined) {
+        stepsSkipped++;
+        for (const e of mine) {
+          const cur = idTaken.get(e['envelope_id']) as { body: string } | undefined;
+          if (cur !== undefined) {
+            present++;
+            if (cur.body !== e['body']) differ++;
+          }
+        }
+        continue;
+      }
+      const clash = mine.some((e) => idTaken.get(e['envelope_id']) !== undefined || rowidTaken.get(e['rowid']) !== undefined);
+      if (clash) {
+        stepsConflicting++;
+        continue;
+      }
+      for (const e of mine) {
+        insEnv.run(e);
+        inserted++;
+      }
+      const row = stepRows.get(key);
+      if (row !== undefined && insStep !== undefined) {
+        insStep.run(row);
+        stepsInserted++;
+      }
     }
-    const cols = Object.keys(steps[0]?.row ?? {});
-    let si = 0;
-    if (steps.length > 0) {
-      const is = db.prepare(`INSERT OR IGNORE INTO steps (${cols.join(', ')}) VALUES (${cols.map((c) => `@${c}`).join(', ')})`);
-      for (const l of steps) si += is.run(l.row).changes;
-    }
-    const result = { segment: o.segment, envelopes: { inserted: ei, present: envs.length - ei, differ }, steps: { inserted: si, present: steps.length - si } };
+    const result: RestoreResult = {
+      segment: o.segment, envelopes: { inserted, present, differ }, steps: { inserted: stepsInserted, present: stepsSkipped }, stepsSkipped, stepsConflicting,
+    };
     app.kernel.appendEvent(`store-restore-${o.now.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z')}`, o.now, RESTORED_EVENT, { ...result, sha256: actual }, manifest.policyHash);
     return result;
   })();

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -15,6 +15,8 @@ import { jobRow } from '../support/app-fixtures.js';
  * database untouched; the due checks of `--if-due` read it as it is, so the scheduled run can start and migrate it.
  */
 const root = join(import.meta.dirname, '../..');
+/** The index the last app migration creates: dropped (with the version set one back) to make a schema that is behind. */
+const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS.at(-1)))?.[1] as string;
 let home: string;
 const db = (): string => join(home, 'jobpilot.db');
 const MESSAGE = 'the database needs an upgrade; run `jobpilot facts list` (it takes the run lock)';
@@ -25,7 +27,7 @@ function makeBehind(): void {
   s.upsertJob(jobRow());
   s.close();
   const d = new Database(db());
-  d.exec(`DROP INDEX envelopes_rendered_by_job; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
+  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
   d.close();
 }
 const state = (): { version: number; index: boolean } => {
@@ -33,7 +35,7 @@ const state = (): { version: number; index: boolean } => {
   try {
     return {
       version: (d.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version,
-      index: d.prepare(`SELECT 1 FROM sqlite_master WHERE name = 'envelopes_rendered_by_job'`).get() !== undefined,
+      index: d.prepare(`SELECT 1 FROM sqlite_master WHERE name = ?`).get(LAST_INDEX) !== undefined,
     };
   } finally {
     d.close();
@@ -95,6 +97,9 @@ describe('a schema behind the code: only locked commands migrate', () => {
       const r = due(DAILY_DUE, k, '2026-10-14T02:00:00.000Z');
       expect(r.due).toBe(true);
       expect(uv()).toBe(0);
+      // today's run already completed (its attempts file says so, no DB needed): never a second daily run
+      writeFileSync(join(k, 'daily-attempts.json'), JSON.stringify({ date: '2026-10-14', attempts: [{ at: '2026-10-14T01:31:00.000Z', outcome: 'done' }] }));
+      expect(due(DAILY_DUE, k, '2026-10-14T02:00:00.000Z')).toMatchObject({ due: false, reason: "today's run completed" });
     } finally {
       rmSync(k, { recursive: true, force: true });
     }

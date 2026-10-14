@@ -322,6 +322,16 @@ function registerListFunctions(db: import('better-sqlite3').Database): void {
   LIST_FUNCTIONS.add(db);
 }
 
+/**
+ * "Newest envelope first", independent of rowid (retention review: a restore or a VACUUM must never change which
+ * envelope a reader calls the newest): by the seq of the latest `step_done` event of the step that wrote it (written
+ * in the same transaction as the envelope; the hash chain is append-only and never compacted), then its index and id.
+ * An envelope with no such event (a seed) comes last. Backed by the `events_step_done` index (migration 19).
+ */
+export const STEP_DONE_SEQ = (alias: string): string =>
+  `(SELECT MAX(v.seq) FROM events v WHERE v.kind = 'step_done' AND json_extract(v.data, '$.stepKey') = ${alias}.step_key)`;
+export const NEWEST_FIRST = (alias: string): string => `${STEP_DONE_SEQ(alias)} DESC NULLS LAST, ${alias}.idx DESC, ${alias}.envelope_id DESC`;
+
 /** Job keys per envelope query in `contractPostings` (well under SQLite's bound-parameter limit). */
 const POSTING_BATCH = 500;
 /** How far back a stored daily contract job is still seeded as a board gig. */
@@ -1210,7 +1220,7 @@ export class AppStore {
    * Posting@1 the daily normalizer emitted for it: the newest stored Posting@1 envelope with that job key (same
    * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
    * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. The envelopes are read in one
-   * pass per batch of at most 500 keys (`IN`, newest rowid per key), never one scan per job. `missing` lists the job
+   * pass per batch of at most 500 keys (`IN`, the newest per key by NEWEST_FIRST), never one scan per job. `missing` lists the job
    * keys with no stored posting (a Desk import): they are not seeded.
    */
   contractPostings(since: string): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
@@ -1229,10 +1239,9 @@ export class AppStore {
       const rows = this.db
         .prepare(
           `SELECT k, body FROM (
-             SELECT json_extract(body, '$.payload.jobKey') AS k, max(rowid) AS r FROM envelopes
-             WHERE type = 'Posting@1' AND json_extract(body, '$.payload.jobKey') IN (${batch.map(() => '?').join(', ')})
-             GROUP BY k
-           ) JOIN envelopes ON envelopes.rowid = r`,
+             SELECT json_extract(e.body, '$.payload.jobKey') AS k, e.body, ROW_NUMBER() OVER (PARTITION BY json_extract(e.body, '$.payload.jobKey') ORDER BY ${NEWEST_FIRST('e')}) AS n
+             FROM envelopes e WHERE e.type = 'Posting@1' AND json_extract(e.body, '$.payload.jobKey') IN (${batch.map(() => '?').join(', ')})
+           ) WHERE n = 1`,
         )
         .all(...batch) as { k: string; body: string }[];
       for (const r of rows) bodies.set(r.k, r.body);
@@ -1376,9 +1385,9 @@ export class AppStore {
       const gigs = this.db
         .prepare(
           `SELECT k, body FROM (
-             SELECT json_extract(body, '$.payload.gigKey') AS k, max(rowid) AS r FROM envelopes
-             WHERE type = 'Gig@1' AND json_extract(body, '$.payload.gigKey') IN (${marks}) GROUP BY k
-           ) JOIN envelopes ON envelopes.rowid = r`,
+             SELECT json_extract(e.body, '$.payload.gigKey') AS k, e.body, ROW_NUMBER() OVER (PARTITION BY json_extract(e.body, '$.payload.gigKey') ORDER BY ${NEWEST_FIRST('e')}) AS n
+             FROM envelopes e WHERE e.type = 'Gig@1' AND json_extract(e.body, '$.payload.gigKey') IN (${marks})
+           ) WHERE n = 1`,
         )
         .all(...batch) as { k: string; body: string }[];
       for (const r of gigs) (out[r.k] as { gig: unknown }).gig = (JSON.parse(r.body) as { payload: unknown }).payload;
@@ -1388,7 +1397,7 @@ export class AppStore {
       const keyed = [...want.keys()];
       if (keyed.length === 0) continue;
       const rendered = this.db
-        .prepare(`SELECT json_extract(body, '$.payload.gigKey') AS k, body FROM envelopes WHERE type = 'GigRendered@1' AND json_extract(body, '$.payload.gigKey') IN (${keyed.map(() => '?').join(', ')}) ORDER BY rowid DESC`)
+        .prepare(`SELECT json_extract(e.body, '$.payload.gigKey') AS k, e.body FROM envelopes e WHERE e.type = 'GigRendered@1' AND json_extract(e.body, '$.payload.gigKey') IN (${keyed.map(() => '?').join(', ')}) ORDER BY ${NEWEST_FIRST('e')}`)
         .all(...keyed) as { k: string; body: string }[];
       for (const r of rendered) {
         const slot = out[r.k] as { rendered: unknown };
