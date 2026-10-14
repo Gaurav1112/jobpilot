@@ -584,7 +584,13 @@ program
           return false;
         }
       };
-      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+      // dashboard-perf: a newer jobpilot migrated the DB under this (older) process: exit after answering, so launchd's
+      // KeepAlive restarts the dashboard on the checkout's code (a hand-started one just stops, and says why)
+      const onSchemaNewer = (): void => {
+        console.error('jobpilot dashboard: the database was upgraded by a newer jobpilot; exiting so it restarts on the new code');
+        setTimeout(() => process.exit(1), 250).unref();
+      };
+      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, onSchemaNewer, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
       server.on('error', (e) => {
         console.error(`error: ${e.message}`);
         process.exit(1);

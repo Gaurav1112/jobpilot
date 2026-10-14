@@ -26,6 +26,7 @@ import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
+import { SharedStore } from './connection.js';
 import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
@@ -37,8 +38,10 @@ import { runsBody } from './views/runs.js';
 
 /**
  * The local dashboard (Task 13, spec §7): Hono on 127.0.0.1, server-rendered HTML that reads fully with JavaScript
- * off, enhanced by the vendored htmx. Every request opens the app DB afresh (a daily run may have written it since)
- * and reads the pack as today's run would (this IST month), so what it shows is what the next run will use.
+ * off, enhanced by the vendored htmx. Every request reads the app DB through one long-lived connection that never
+ * holds a transaction (`connection.ts`: it sees what a daily run committed since, and is reopened when the schema or
+ * the file changes) and reads the pack as today's run would (this IST month), so what it shows is what the next run
+ * will use.
  *
  * Routes: `GET /` jobs, `GET /jobs/:key` one job, `POST /jobs/:key/status`, `POST /jobs/:key/note`,
  * `GET /jobs/:key/files/:name` a current document, `GET /jobs/:key/sent/:day/:name` an applied snapshot file,
@@ -65,6 +68,11 @@ export interface DashboardDeps {
   readonly busyTimeoutMs?: number;
   /** Whether Gmail is connected, for the freelance Sources page (the CLI checks the Keychain). Absent: not connected. */
   readonly gmailConnected?: () => boolean;
+  /**
+   * Called when the database's schema is newer than this code (a newer jobpilot's run migrated it). `jobpilot serve`
+   * exits, so launchd's KeepAlive restarts the dashboard on the checkout's (newer) code. Absent: the error page only.
+   */
+  readonly onSchemaNewer?: () => void;
   /** What the Companies tab's "Resolve now" fetches with (the CLI: the real fetcher). Absent: Resolve now is not offered. */
   readonly resolve?: ResolveDeps;
 }
@@ -74,6 +82,8 @@ export interface DashboardTestHooks {
   readonly beforeSnapshot?: () => void;
   /** Runs before every route; throwing reaches the error page. */
   readonly beforeRoute?: () => void;
+  /** Called each time the dashboard opens its (shared) database connection. */
+  readonly onOpen?: () => void;
   /** Replaces `listJobsPage` for `GET /` (the equivalence test runs the pre-fix-2 JS path through the real route). */
   readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }) => JobsPage;
 }
@@ -229,14 +239,9 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 400 | 403 | 404 | 409 | 500 | 503 = 200) =>
     c.html(layout({ title, nav, banners, body }).value, status);
 
-  const withStore = <T>(fn: (store: AppStore) => T): T => {
-    const store = AppStore.open(paths.db, { timeoutMs });
-    try {
-      return fn(store);
-    } finally {
-      store.close();
-    }
-  };
+  // dashboard-perf fix 5: one long-lived connection per dashboard, never holding a transaction (`connection.ts`)
+  const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer);
+  const withStore = <T>(fn: (store: AppStore) => T): T => shared.use(fn);
 
   const commonBanners = (ps: PackState, today: string, overrides: Record<string, Fact['status']>): Banner[] => {
     const out: Banner[] = [];
