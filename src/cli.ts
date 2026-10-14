@@ -135,10 +135,16 @@ program
 const audit = program.command('audit').description('Audit log tools: check that a database\'s event history has not been altered');
 audit
   .command('verify')
-  .description('Walk the hash-chained event log of a SQLite file and fail if any link is broken (pass --db <home>/jobpilot.db for your own)')
-  .option('--db <path>', 'SQLite file', 'jobpilot.db')
+  .description('Walk the whole hash-chained event log and fail if any link is broken; a pass records the full-check checkpoint the dashboard\'s Runs page starts from (coverage also runs this weekly)')
+  .option('--db <path>', 'SQLite file (default: the jobpilot home\'s, $JOBPILOT_HOME/jobpilot.db)')
   .option('--expect-head <hash:count>', 'fail unless the chain head is exactly this (detects a truncated or rewritten tail)')
-  .action((o: { db: string; expectHead?: string }) => {
+  .action((o: { db?: string; expectHead?: string }) => {
+    // the same home every other command uses; never a jobpilot.db in the current directory
+    const db = o.db ?? homePaths(jobpilotHome()).db;
+    if (!existsSync(db)) {
+      console.error(`error: no database at ${db}`);
+      process.exit(1);
+    }
     let expected: { hash: string; count: number } | undefined;
     if (o.expectHead !== undefined) {
       const m = /^([0-9a-fA-F]+):(\d+)$/.exec(o.expectHead);
@@ -148,7 +154,7 @@ audit
       }
       expected = { hash: (m[1] as string).toLowerCase(), count: Number(m[2]) };
     }
-    const store = Store.open(o.db);
+    const store = Store.open(db);
     try {
       // dashboard-perf fix 1: a passing full walk records its checkpoint (a jobpilot home DB), so /runs checks only newer events
       const r = fullChainCheck(store, systemClock.now(), expected);

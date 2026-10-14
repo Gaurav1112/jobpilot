@@ -13,14 +13,10 @@ export interface RunsPageData {
   readonly runs: readonly RunSummary[];
   readonly chain: ChainStatus;
   readonly istTime: (iso: string) => string;
-  /** The command a full check runs (`jobpilot audit verify --db <the DB>`), suggested when the last one is old. */
-  readonly fullCheckCommand?: string;
-  /** Days since the last full check, when it was checked from a checkpoint. */
-  readonly fullCheckAgeDays?: number;
 }
 
-/** A full check older than this is suggested again. */
-export const FULL_CHECK_STALE_DAYS = 7;
+/** A last full check older than this many days gets a warning (coverage runs one weekly). */
+export const FULL_CHECK_STALE_DAYS = 8;
 
 function chainLine(d: RunsPageData): Html {
   const c = d.chain;
@@ -28,10 +24,7 @@ function chainLine(d: RunsPageData): Html {
   const intact = html`Audit log intact: <span class="num">${c.events}</span> events, every one chained to the last.`;
   if (c.check === undefined) return intact;
   if (c.check.kind === 'full-now') return html`${intact} Full check: just now.`;
-  const stale = d.fullCheckAgeDays !== undefined && d.fullCheckAgeDays > FULL_CHECK_STALE_DAYS && d.fullCheckCommand !== undefined;
-  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span>; the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.${
-    stale ? html` Run <code>${d.fullCheckCommand}</code> for a full check.` : ''
-  }`;
+  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span> (it runs weekly with coverage, or run <code>jobpilot audit verify</code>); the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.`;
 }
 
 const BASE_COLUMNS: readonly (readonly [key: string, label: string])[] = [
@@ -50,7 +43,7 @@ const s = (v: unknown): string => (typeof v === 'string' ? v : '?');
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {
   failed: 'Failed', gone: 'Gone from the source', input_rejected: 'Input rejected', deferred: 'Deferred', quarantined: 'Quarantined', skipped: 'Skipped',
-  'commit-failed': 'Documents not written', 'docs-blocked': 'Documents blocked by QA', 'docs-stale': 'Documents cite a rejected fact',
+  'commit-failed': 'Documents not written', 'audit-broken': 'Audit chain broken', 'docs-blocked': 'Documents blocked by QA', 'docs-stale': 'Documents cite a rejected fact',
 };
 
 /** A coverage run counts host-disabled deferrals apart from input rejections; only its table gets the column. */

@@ -8,6 +8,7 @@ import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { homePaths } from '../pack/paths.js';
+import { fullChainCheck } from '../chain-status.js';
 import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
@@ -94,6 +95,8 @@ export interface CoverageRunOptions {
   readonly onLocked?: () => void;
   /** The longest one invocation runs (wall time, the injected clock) before it pauses; default COVERAGE_SLICE_MS. Checks may lower it (`--slice-minutes`). */
   readonly sliceMs?: number;
+  /** The weekly full audit needs at least this much of the slice left, else it waits for the next invocation; default AUDIT_RESERVE_MS. */
+  readonly auditReserveMs?: number;
   /**
    * Asked before each step: a reason to yield (the daily or freelance run is owed now or within 5 minutes), or null.
    * Default: `otherRunOwed` on this home, asked at most every YIELD_CHECK_EVERY_MS of the clock. `--no-yield` (checks)
@@ -107,6 +110,40 @@ export const COVERAGE_SLICE_MS = 90 * 60_000;
 /** How often (clock time) the default yield check reads the due state. */
 export const YIELD_CHECK_EVERY_MS = 30_000;
 
+/**
+ * The weekly full audit (dashboard-perf): the dashboard's `/runs` checks only the events after its verified point, so
+ * the whole event chain is walked once a week here, when a coverage week completes, outside every pipeline step (no
+ * step key, envelope or golden changes), through the same code as `jobpilot audit verify` (`fullChainCheck`, which
+ * records the full-check checkpoint when it passes). A walk of ~500k events takes a few seconds (5 s cold measured):
+ * with less than AUDIT_RESERVE_MS of the slice left it is owed instead (`AUDIT_PENDING_KEY`) and runs at the start of
+ * the next invocation, before any step. A broken chain is never hidden: an `audit-broken` problem, the first line of
+ * the notification, and exit 1.
+ */
+export const AUDIT_RESERVE_MS = 5 * 60_000;
+/** app_settings: the coverage run whose full audit is owed (deferred for want of slice time). */
+export const AUDIT_PENDING_KEY = 'audit.full_check_pending';
+
+export type CoverageAudit =
+  | { readonly status: 'ok'; readonly events: number }
+  | { readonly status: 'broken'; readonly seq: number; readonly reason: string }
+  | { readonly status: 'deferred' };
+
+function fullAudit(app: AppStore, at: string): CoverageAudit {
+  const r = fullChainCheck(app.kernel, at);
+  if (r.ok) return { status: 'ok', events: r.events };
+  return 'headMismatch' in r ? { status: 'broken', seq: 0, reason: r.reason } : { status: 'broken', seq: r.brokenAt, reason: r.reason };
+}
+
+const brokenLine = (a: Extract<CoverageAudit, { status: 'broken' }>): string => `audit chain broken at seq ${a.seq}: ${a.reason}`;
+
+const auditProblem = (a: Extract<CoverageAudit, { status: 'broken' }>): Problem => ({ kind: 'audit-broken', agent: 'audit', item: `seq ${a.seq}`, reason: brokenLine(a) });
+
+function auditText(a: CoverageAudit): string {
+  if (a.status === 'ok') return `audit: the event chain is intact (${a.events} events, full check)`;
+  if (a.status === 'deferred') return 'audit: the full check of the event chain runs at the start of the next run-coverage (too little of this slice was left)';
+  return `AUDIT CHAIN BROKEN at seq ${a.seq}: ${a.reason}. Keep a copy of the database and run "jobpilot audit verify".`;
+}
+
 /** An invocation that stopped between steps: the run stays incomplete; the next `run-coverage` (or `--if-due` start) resumes it. */
 export interface CoverageSlice {
   readonly status: 'paused';
@@ -119,7 +156,10 @@ export interface CoverageSlice {
   /** The stage it stopped in. */
   readonly stage: StageId;
   readonly warnings: string[];
-  readonly exitCode: 0;
+  /** The owed full audit, when this invocation ran it before its first step. */
+  readonly audit?: CoverageAudit;
+  /** 1 only when that audit found the chain broken. */
+  readonly exitCode: 0 | 1;
 }
 
 export type CoverageResult = CoverageSummary | CoverageSlice;
@@ -149,6 +189,8 @@ export interface CoverageSummary {
   readonly problems: readonly Problem[];
   readonly notification: string;
   readonly notified: boolean;
+  /** The weekly full audit of the event chain: run now, deferred to the next invocation, or broken. */
+  readonly audit: CoverageAudit;
   readonly policyHash: string;
   readonly warnings: string[];
   readonly exitCode: 0 | 1;
@@ -221,6 +263,20 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
           warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
+      // an owed full audit (a completed week that had too little slice left) runs first, before any step
+      let owedAudit: CoverageAudit | undefined;
+      if (app.getSetting(AUDIT_PENDING_KEY) !== undefined) {
+        owedAudit = fullAudit(app, now);
+        app.deleteSetting(AUDIT_PENDING_KEY);
+        if (owedAudit.status === 'broken') {
+          const line = brokenLine(owedAudit);
+          try {
+            await o.notifier?.(line);
+          } catch (e) {
+            warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+          }
+        }
+      }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
       const gate = makeRunGate({ runKey: runId, store: app });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
@@ -253,7 +309,11 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id
         app.kernel.appendEvent(runId, o.clock.now(), PAUSED, { reason: outcome.paused, stage: outcome.stage }, pHash);
-        return { status: 'paused', runId, runDate, week, resumed: resume, reason: outcome.paused, stage: outcome.stage, warnings, exitCode: 0 };
+        return {
+          status: 'paused', runId, runDate, week, resumed: resume, reason: outcome.paused, stage: outcome.stage, warnings,
+          ...(owedAudit !== undefined ? { audit: owedAudit } : {}),
+          exitCode: owedAudit?.status === 'broken' ? 1 : 0,
+        };
       }
       for (const n of outcome.denied) warnings.push(n);
       if (o.limit !== undefined && outcome.selected.length < outcome.merged.length - outcome.denied.length) {
@@ -286,8 +346,17 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const notVerified = details(['verify']);
       const deferrals = [deferralLine(notLocated.length, deferralHosts(notLocated)), deferralLine(notVerified.length, deferralHosts(notVerified), 'verified')];
       const deferral = deferrals.filter((d): d is string => d !== null);
-      const notification = coverageNotification({ ...registry, newVerified: projection.newVerified }, deferral);
-      const problems = STAGES.flatMap((s) => runProblems(app.kernel, outcome.stages[s].runId, loaded.pack.naming));
+      // the week is complete: the weekly full audit, now if the slice allows (an owed one already ran at the start)
+      const auditAt = o.clock.now();
+      const audit: CoverageAudit =
+        owedAudit !== undefined
+          ? owedAudit
+          : sliceEnd - Date.parse(auditAt) < (o.auditReserveMs ?? AUDIT_RESERVE_MS)
+            ? { status: 'deferred' }
+            : fullAudit(app, auditAt);
+      if (audit.status === 'deferred') app.setSetting(AUDIT_PENDING_KEY, runId);
+      const notification = [...(audit.status === 'broken' ? [brokenLine(audit)] : []), coverageNotification({ ...registry, newVerified: projection.newVerified }, deferral)].join(' · ');
+      const problems = [...(audit.status === 'broken' ? [auditProblem(audit)] : []), ...STAGES.flatMap((s) => runProblems(app.kernel, outcome.stages[s].runId, loaded.pack.naming))];
       let notified = false;
       if (o.notifier !== undefined) {
         try {
@@ -320,10 +389,11 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         problems,
         notification,
         notified,
+        audit,
         policyHash: pHash,
         warnings,
       };
-      const exitCode: 0 | 1 = STAGES.some((s) => outcome.stages[s].broken > 0) ? 1 : 0;
+      const exitCode: 0 | 1 = STAGES.some((s) => outcome.stages[s].broken > 0) || audit.status === 'broken' ? 1 : 0;
       app.recordRun({ runId, at: now, counts: coverageCounts(app, outcome), packHash: loaded.companiesHash, policyHash: pHash, warnings: [...warnings, ...deferral], problems });
       app.kernel.appendEvent(runId, now, 'coverage.summary', { picks: summary.picks, companiesHash: loaded.companiesHash, candidates: summary.candidates, mergeNotes: outcome.dropped, located, platforms: summary.platforms, verdicts, deferred: summary.deferred, registry, notification }, pHash);
       app.kernel.finishRun(runId, o.clock.now());
@@ -343,7 +413,11 @@ const kv = (r: Readonly<Record<string, number>>): string =>
 /** The coverage run summary as the CLI prints it (a paused slice: one line, and how it goes on). */
 export function formatCoverageSummary(s: CoverageResult): string {
   if (s.status === 'paused') {
-    return [`run ${s.runId} for ${s.runDate} (coverage week ${s.week})${s.resumed ? ', resumed' : ''}: paused in ${s.stage} (${s.reason}); the next run-coverage continues it`, ...s.warnings.map((w) => `warning: ${w}`)].join('\n');
+    return [
+      `run ${s.runId} for ${s.runDate} (coverage week ${s.week})${s.resumed ? ', resumed' : ''}: paused in ${s.stage} (${s.reason}); the next run-coverage continues it`,
+      ...(s.audit !== undefined ? [auditText(s.audit)] : []),
+      ...s.warnings.map((w) => `warning: ${w}`),
+    ].join('\n');
   }
   const c = s.candidates;
   const lines = [
@@ -364,6 +438,7 @@ export function formatCoverageSummary(s: CoverageResult): string {
     for (const q of s.problems.slice(0, 50)) lines.push(`  ${q.kind.padEnd(14)} ${q.agent}  ${q.item}: ${q.reason}`);
     if (s.problems.length > 50) lines.push(`  … and ${s.problems.length - 50} more (the dashboard's runs view lists them all)`);
   }
+  lines.push(auditText(s.audit));
   lines.push(`notification: ${s.notification}`);
   lines.push(`policy ${s.policyHash.slice(0, 12)}`);
   for (const w of s.warnings) lines.push(`warning: ${w}`);

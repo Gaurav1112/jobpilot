@@ -28,8 +28,9 @@ export interface Problem {
    * `mail-quarantined` (freelance §4.3): an alert email no parser recognised, set aside whole; not a failure.
    * `deferred` (coverage): a step refused with `input_rejected` because a host was disabled in the run
    * (`host-disabled:<why>`): nothing is wrong with its input, it is asked again in a later run. Not a failure.
+   * `audit-broken` (coverage's weekly full audit): the hash-chained event log does not verify (`item`: `seq <n>`).
    */
-  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'deferred' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead' | 'mail-quarantined';
+  readonly kind: 'failed' | 'gone' | 'input_rejected' | 'deferred' | 'quarantined' | 'skipped' | 'commit-failed' | 'docs-blocked' | 'docs-stale' | 'source-dead' | 'mail-quarantined' | 'audit-broken';
   readonly agent: string;
   /** What the step was working on: the board (company and ats:slug), the career link, the posting or the job. */
   readonly item: string;

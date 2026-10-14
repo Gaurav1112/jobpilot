@@ -186,7 +186,7 @@ node --run jobpilot -- schedule status
 node --run jobpilot -- serve                       # the dashboard on http://127.0.0.1:4317
 node --run jobpilot -- networks pack arc           # application pack for one freelance network
 node --run jobpilot -- gmail status
-node --run jobpilot -- audit verify --db ~/.jobpilot/jobpilot.db
+node --run jobpilot -- audit verify                # whole event chain; --db <file> for another database
 ```
 
 - **Coverage** is sliced (at most 90 minutes) and yields to the daily and freelance runs; the next
@@ -195,9 +195,10 @@ node --run jobpilot -- audit verify --db ~/.jobpilot/jobpilot.db
 - **Backups:** `sqlite3 ~/.jobpilot/jobpilot.db ".backup 'backup.db'"`. Migrations are one-way;
   to roll back, restore the backup taken before upgrading (guide, section 9).
 - **Logs:** `~/.jobpilot/logs/`.
-- **Audit:** `audit verify` walks the whole event chain and, when it passes, records a checkpoint.
-  The dashboard's Runs page then checks only the events after it and says when the last full
-  check ran; run `audit verify` now and then (the page suggests it after 7 days).
+- **Audit:** `audit verify` (default: the jobpilot home's database) walks the whole event chain
+  and, when it passes, records a checkpoint. The weekly coverage run does the same when it
+  completes a week. The dashboard's Runs page checks only the events after it, shows the last
+  full check's date, and warns after 8 days without one.
 - **Performance budget:** `node --run perf` (also the last step of `node --run verify`) builds a
   synthetic 1.8 GB database in a temp dir (about 15 s; 20,000 jobs, 300,000 envelopes, 500,000
   events, no personal data) and fails when the Jobs or Runs page breaks its time or memory budget

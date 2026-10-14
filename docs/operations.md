@@ -293,7 +293,10 @@ machine only. With the schedule installed it is already running. Tabs:
 - **Freelance**: gigs, their proposals and source health.
 - **Companies**: see below.
 - **Your facts**: every fact and its status; verify or reject here.
-- **Runs**: what each run did and what went wrong.
+- **Runs**: what each run did and what went wrong, and the audit log's state: it checks only the
+  events after the last full check and shows that check's date. The **weekly coverage run does the
+  full check** when it completes a week (a broken chain is an `audit-broken` problem, the first
+  line of its notification, and exit 1); after 8 days without one the page warns.
 
 ### The Companies tab
 
@@ -422,15 +425,17 @@ ok
 (`.backup` creates a file readable by others, so the `chmod` matters.) Also back up the pack
 folder, which holds your facts: `cp -r ~/.jobpilot/pack ~/jobpilot-pack-backup`.
 
-To check that the event history has not been altered:
+To check that the event history has not been altered (the weekly coverage run does this too;
+without `--db` it checks `$JOBPILOT_HOME/jobpilot.db`, by default `~/.jobpilot/jobpilot.db`):
 
 ```sh
-node --run jobpilot -- audit verify --db ~/.jobpilot/jobpilot.db
+node --run jobpilot -- audit verify
 ```
 
 ```
 audit chain intact: 187 events
 head ef9e83ab0fa34117a1e79a7c465724e1040130371e2a847e31bb1c63ba274dfd (187 events)
+checkpoint recorded through event 187: the dashboard checks only the events after it
 ```
 
 ### Migrations are one-way
@@ -480,7 +485,9 @@ Migrations are one-way, so the order matters:
 
 1. Back up the database (section 9).
 2. Update the code (`git pull`, then `pnpm install`).
-3. Check: `node --run verify` (optional, for the repo), then `node --run jobpilot -- pack check`.
+3. Check: `node --run verify` (optional, for the repo; its last step is the speed gate,
+   `node --run perf`, which builds a 1.8 GB synthetic database in a temp dir and fails when the
+   Jobs or Runs page breaks its time or memory budget), then `node --run jobpilot -- pack check`.
 4. Open the database once with the new version so it migrates: any command does it, for example
    `node --run jobpilot -- coverage probe`.
 5. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node.

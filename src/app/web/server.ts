@@ -23,7 +23,7 @@ import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
-import { daysBetween, istTimeText } from './format.js';
+import { dateText, daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
@@ -36,7 +36,7 @@ import { factRow, factsBody, type FactRow } from './views/facts.js';
 import { jobBody, noteSection, sentSection, statusSection, type Recommended, type SentData } from './views/job.js';
 import { jobsBody, type ListedJob } from './views/jobs.js';
 import { layout, type Banner, type Nav } from './views/layout.js';
-import { runsBody } from './views/runs.js';
+import { FULL_CHECK_STALE_DAYS, runsBody } from './views/runs.js';
 
 /**
  * The local dashboard (Task 13, spec §7): Hono on 127.0.0.1, server-rendered HTML that reads fully with JavaScript
@@ -661,10 +661,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const { runs, chain, overrides } = withStore((s) => ({ runs: s.listRuns(14), chain: chainStatus(s.kernel, at), overrides: s.factOverrides() }));
     const banners = commonBanners(ps, istDate(at), overrides);
     if (!chain.ok) banners.unshift({ tone: 'critical', text: r.text(`The audit log is broken (${chain.reason}). Something changed the recorded history; run "jobpilot audit verify --db ${paths.db}" and keep a copy of the database before anything else.`) });
-    const age = chain.ok && chain.check?.kind === 'since' ? daysBetween(istDate(chain.check.fullAt), istDate(at)) : undefined;
-    return page(c, 'runs', 'Runs', banners, runsBody({
-      runs: r.deep(runs), chain, istTime: istTimeText, fullCheckCommand: `jobpilot audit verify --db ${paths.db}`, ...(age !== undefined ? { fullCheckAgeDays: age } : {}),
-    }));
+    if (chain.ok && chain.check.kind === 'since') {
+      const age = daysBetween(istDate(chain.check.fullAt), istDate(at));
+      if (age > FULL_CHECK_STALE_DAYS) {
+        banners.push({ tone: 'warn', text: `The audit log's last full check was ${age} days ago (${dateText(istDate(chain.check.fullAt))}). Coverage runs it weekly; run "jobpilot audit verify" now.` });
+      }
+    }
+    return page(c, 'runs', 'Runs', banners, runsBody({ runs: r.deep(runs), chain, istTime: istTimeText }));
   });
 
   // --- freelance (Task 10): same middleware, same helpers ----------------------------------------------------------------

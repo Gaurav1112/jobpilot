@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -74,6 +74,35 @@ describe('audit verify', () => {
     expect(bad.status).toBe(1);
     expect(bad.stdout).toContain('BROKEN at event 2');
     expect(bad.stdout).not.toContain('checkpoint recorded');
+  }, 60_000);
+
+  it('without --db it verifies the jobpilot home\'s database ($JOBPILOT_HOME/jobpilot.db), never ./jobpilot.db', () => {
+    const home = mkdtempSync(join(tmpdir(), 'jobpilot-cli-home-'));
+    try {
+      chmodSync(home, 0o700);
+      const app = AppStore.open(join(home, 'jobpilot.db'));
+      for (let i = 0; i < 2; i++) app.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+      app.close();
+      const r = spawnSync(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'audit', 'verify'], {
+        cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: home },
+      });
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('audit chain intact: 2 events');
+      expect(r.stdout).toContain('checkpoint recorded through event 2');
+      expect(existsSync(join(import.meta.dirname, '..', 'jobpilot.db'))).toBe(false);
+      // a home without a database is named, not created
+      const empty = mkdtempSync(join(tmpdir(), 'jobpilot-cli-home-'));
+      chmodSync(empty, 0o700);
+      const none = spawnSync(process.execPath, ['--import', 'tsx', 'src/bin.ts', 'audit', 'verify'], {
+        cwd: join(import.meta.dirname, '..'), encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: empty },
+      });
+      expect(none.status).toBe(1);
+      expect(none.stderr).toContain(`no database at ${join(empty, 'jobpilot.db')}`);
+      expect(existsSync(join(empty, 'jobpilot.db'))).toBe(false);
+      rmSync(empty, { recursive: true, force: true });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
   }, 60_000);
 
   it('rejects a malformed --expect-head', () => {

@@ -706,7 +706,7 @@ describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () =>
     append(2);
     const next = (await get('/runs')).body;
     expect(next).toContain('Audit log intact: <span class="num">5</span> events');
-    expect(next).toContain('Last full check: 9 Oct 2026, 12:00 IST, through event <span class="num">3</span>; the <span class="num">2</span> newer events were checked against it.');
+    expect(next).toContain('Last full check: 9 Oct 2026, 12:00 IST, through event <span class="num">3</span> (it runs weekly with coverage, or run <code>jobpilot audit verify</code>); the <span class="num">2</span> newer events were checked against it.');
     expect(next).not.toContain('Full check: just now');
   });
 
@@ -749,11 +749,15 @@ describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () =>
     expect(body).toContain('Audit log broken: at event 2: hash does not match the event contents');
   });
 
-  it('suggests a full check when the last one is more than 7 days old', async () => {
+  it('warns when the last full check is more than 8 days old', async () => {
     append(1);
-    withStore((s) => fullChainCheck(s.kernel, '2026-09-30T03:30:00.000Z'));
+    withStore((s) => fullChainCheck(s.kernel, '2026-10-01T03:30:00.000Z')); // 8 days before 9 Oct: no warning yet
+    const fresh = (await get('/runs')).body;
+    expect(fresh).not.toContain('last full check was');
+    withStore((s) => fullChainCheck(s.kernel, '2026-09-30T03:30:00.000Z')); // 9 days
     const { body } = await get('/runs');
-    expect(body).toContain('Run <code>jobpilot audit verify --db');
+    expect(body).toMatch(/class="banner banner-warn"[^>]*>The audit log&#39;s last full check was 9 days ago \(30 Sept? 2026\)\. Coverage runs it weekly; run &quot;jobpilot audit verify&quot; now\./);
+    expect(body).toContain('Last full check: 30 Sep 2026');
   });
 });
 
