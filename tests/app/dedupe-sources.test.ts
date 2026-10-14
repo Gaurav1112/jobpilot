@@ -308,6 +308,75 @@ describe('cross-source dedupe in the store', () => {
     expect(s.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null)).toEqual([]);
   });
 
+  const fresh = (st: AppStore) => st.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null).map((j) => j.jobKey);
+
+  it('a row its id proves to be another job leaves unannounced, is announced on its own, and its board job joins it once', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.markNotified([GH], AT);
+    // an id-less page with the same dedupe key: a v1 listing of 7001
+    s.upsertJob(page({ docsState: 'ready', atsJob: null, dedupeKey: '1111111111111111' }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBe(GH);
+    expect(fresh(s)).toEqual([]);
+    // the page now states gh_jid=7002: another job; it leaves without 7001's announcement
+    s.upsertJob(page({ docsState: 'ready', id: '7002', dedupeKey: '1111111111111111', at: LATER }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
+    expect(s.getJob(PAGE)?.notifiedAt).toBeNull();
+    expect(fresh(s)).toEqual([PAGE]);
+    s.markNotified([PAGE], LATER);
+    // the board's 7002 arrives: it joins the page's job, which was announced once
+    s.upsertJob(intern({ docsState: 'ready', id: '7002', slug: 'example-identity', atsJob: { platform: 'greenhouse', board: 'example-identity', id: '7002' }, at: LATER }));
+    expect(s.getJob(GH2)?.duplicateOf).toBe(PAGE);
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('a row leaving with the group\'s own key (a same-source collision splits the job) stays announced', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.upsertJob(page({ docsState: 'ready' }));
+    s.markNotified([GH], AT);
+    s.upsertJob(page({ jobKey: PAGE2, sourceId: 'p2', docsState: 'ready', dedupeKey: '7777777777777777', at: LATER }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
+    expect(s.getJob(PAGE)?.notifiedAt).toBe(AT);
+    expect(fresh(s)).toEqual([PAGE2]);
+  });
+
+  it('a departing row with no ATS id stays announced', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.upsertJob(page({ docsState: 'ready' }));
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', company: CO, docsState: 'ready', dedupeKey: '2222222222222222' }));
+    expect(s.getJob(HM)?.duplicateOf).toBe(GH);
+    s.markNotified([GH], AT);
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', company: CO, docsState: 'ready', dedupeKey: 'eeeeeeeeeeeeeeee', at: LATER }));
+    expect(s.getJob(HM)?.duplicateOf).toBeNull();
+    expect(s.getJob(HM)?.notifiedAt).toBe(AT);
+  });
+
+  it('an id on another platform is no proof of another job: the departing row stays announced', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.upsertJob(page({ docsState: 'ready', atsJob: null, dedupeKey: '1111111111111111' }));
+    s.markNotified([GH], AT);
+    s.upsertJob(page({ docsState: 'ready', dedupeKey: 'eeeeeeeeeeeeeeee', atsJob: { platform: 'lever', board: 'example', id: '0d3a2b1c-1111-2222-3333-444455556666' }, at: LATER }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
+    expect(s.getJob(PAGE)?.notifiedAt).toBe(AT);
+  });
+
+  it('a departing row with the group\'s own key carries the earliest announcement of the group', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    // three listings of job 7001: the board row, a careers page and a sitemap page (same key)
+    s.upsertJob(gh({ docsState: 'ready', at: AT }));
+    s.upsertJob(page({ docsState: 'ready', at: AT }));
+    s.upsertJob(page2({ docsState: 'ready', at: AT, dedupeKey: '9999999999999999', atsJob: { platform: 'greenhouse', board: 'example-identity', id: '7001' } }));
+    s.markNotified([PAGE], LATER);
+    s.markNotified([GH], AT);
+    // the sitemap page loses its company name match (a rename): it leaves the job, already announced, at the earliest time
+    s.upsertJob(page2({ docsState: 'ready', at: LATER, company: 'Renamed Example Co', dedupeKey: '9999999999999999', atsJob: { platform: 'greenhouse', board: 'example-identity', id: '7001' } }));
+    expect(s.getJob(PAGE2)?.duplicateOf).toBeNull();
+    expect(s.getJob(PAGE2)?.notifiedAt).toBe(AT);
+  });
+
   it('a row that leaves an announced group stays announced', () => {
     const s = AppStore.on(Store.open(':memory:'));
     s.upsertJob(page({ docsState: 'ready', at: AT }));

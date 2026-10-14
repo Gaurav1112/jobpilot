@@ -53,7 +53,7 @@ interface Comp {
  * 3. **Primary.** The earliest first_seen (then job key) among the job's rows, an ATS source, or a row an ATS id joined,
  *    ahead of a feed: with no ATS id this is the v1 preferred row exactly.
  */
-export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[]): { duplicateOf: Map<string, string | null>; notes: string[] } {
+export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[]): { duplicateOf: Map<string, string | null>; notes: string[]; slots: Map<string, { slot: string; id: string }> } {
   const sorted = [...rows].sort((a, b) => cmp(a.jobKey, b.jobKey));
   const byKey = new Map(sorted.map((r) => [r.jobKey, r]));
   const notes: string[] = [];
@@ -178,5 +178,8 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
     const primary = members.sort((a, b) => rank(a) - rank(b) || cmp(a.firstSeen, b.firstSeen) || cmp(a.jobKey, b.jobKey))[0] as LinkRow;
     for (const m of members) duplicateOf.set(m.jobKey, m === primary ? null : primary.jobKey);
   }
-  return { duplicateOf, notes };
+  // each row's resolved ATS id (`<company>\0<platform>:<board>` and the id): the store tells a departing row that is
+  // another job from one that is the same job by it
+  const slots = new Map([...slotOf].map(([k, v]) => [k, { slot: v.slot, id: v.id }]));
+  return { duplicateOf, notes, slots };
 }

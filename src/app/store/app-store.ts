@@ -516,23 +516,27 @@ export class AppStore {
       dedupeKey: r.dedupe_key,
       ats: r.platform === null || r.ats_id === null || r.company_norm === null ? null : { platform: r.platform, board: r.board, id: r.ats_id, slug: r.slug ?? '', companyNorm: r.company_norm },
     }));
-    const { duplicateOf, notes } = linkJobs(linkRows, (companyNorm, platform) => this.registryBoards(companyNorm, platform));
+    const { duplicateOf, notes, slots } = linkJobs(linkRows, (companyNorm, platform) => this.registryBoards(companyNorm, platform));
     const set = this.db.prepare(`UPDATE jobs SET duplicate_of = ? WHERE job_key = ?`);
-    // Fix round 1 (I2b): announced never regresses. A row whose group changes carries its old group's first
-    // announcement, so a job announced once is never announced again because of a re-link.
-    const announced = new Map<string, string>();
+    // Fix rounds 1-2 (I2b): announced never regresses for the same job. A row whose group changes carries its old
+    // group's earliest announcement, unless its ATS id proves it another job (another id on a board a row of the old
+    // group lists): that one is announced on its own.
+    const oldGroups = new Map<string, LinkRowDb[]>();
     for (const r of rows.values()) {
       const root = r.duplicate_of ?? r.job_key;
-      const was = announced.get(root);
-      if (r.notified_at !== null && (was === undefined || r.notified_at < was)) announced.set(root, r.notified_at);
+      oldGroups.set(root, [...(oldGroups.get(root) ?? []), r]);
     }
     const stamp = this.db.prepare(`UPDATE jobs SET notified_at = ? WHERE job_key = ? AND notified_at IS NULL`);
     for (const r of [...rows.values()].sort((a, b) => cmp(a.job_key, b.job_key))) {
       const dup = duplicateOf.get(r.job_key) ?? null;
       if (dup === r.duplicate_of) continue;
       set.run(dup, r.job_key);
-      const was = announced.get(r.duplicate_of ?? r.job_key);
-      if (was !== undefined && r.notified_at === null) stamp.run(was, r.job_key);
+      // the row itself may stay in: its own id never contradicts itself, and its own time is NULL here (else no stamp)
+      const others = oldGroups.get(r.duplicate_of ?? r.job_key) ?? [];
+      const mine = slots.get(r.job_key);
+      const another = mine !== undefined && others.some((m) => slots.get(m.job_key)?.slot === mine.slot && slots.get(m.job_key)?.id !== mine.id);
+      const was = others.map((m) => m.notified_at).filter((n): n is string => n !== null).sort()[0];
+      if (was !== undefined && !another) stamp.run(was, r.job_key);
     }
     return notes;
   }
