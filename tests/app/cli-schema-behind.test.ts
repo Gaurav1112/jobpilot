@@ -112,6 +112,8 @@ describe('a schema behind the code: only locked commands migrate', () => {
     ['coverage', 'probe'],
     ['networks', 'list'],
     ['migrate', 'desk', join(root, 'tests/fixtures/desk')],
+    ['store', 'compact'],
+    ['store', 'compact', '--apply'],
   ]) {
     it(`jobpilot ${args.join(' ')}: says so, exits 2, leaves the database untouched`, () => {
       const r = cli(...args);

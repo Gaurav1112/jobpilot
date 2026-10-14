@@ -10,6 +10,7 @@ import { nodeFetch } from './kernel/providers.js';
 import { Registry } from './kernel/registry.js';
 import { fullChainCheck, readCheckpoint } from './app/chain-status.js';
 import { upgradeUnderLock } from './app/upgrade.js';
+import { storeCompactCommand, storeRestoreCommand } from './app/store/compact-command.js';
 import { Store } from './kernel/store/store.js';
 import { failedGates, runEval } from './evals/runner.js';
 import { demoEvalSpecs } from './demo/evals.js';
@@ -523,6 +524,36 @@ sources
       process.exitCode = await probeCommand({
         home: jobpilotHome(), repoRoot: root, json: o.json === true, ...(o.record !== undefined ? { record: o.record } : {}), force: o.force === true,
         clock: systemClock, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out: (l) => console.log(l),
+      });
+    }),
+  );
+
+const storeCmd = program.command('store').description('Database maintenance: archive old envelopes (never part of a run or the schedule)');
+storeCmd
+  .command('compact')
+  .description('Archive the envelopes no reader needs (pack/retention.yaml, default: keep the last 3 daily runs plus pins) to $JOBPILOT_HOME/archive/, recorded in the audit chain, then VACUUM. A dry run unless --apply. Takes the run lock without waiting')
+  .option('--apply', 'archive for real (default: a dry run that writes nothing)')
+  .option('--dry-run', 'print what would be archived and write nothing (the default)')
+  .option('--include-incomplete', 'archive stale incomplete runs too (resumable ones are always kept); without it --apply refuses while any run is incomplete')
+  .option('--no-vacuum', 'skip the VACUUM that gives the space back')
+  .action((o: { apply?: boolean; dryRun?: boolean; includeIncomplete?: boolean; vacuum: boolean }) =>
+    guarded(async () => {
+      if (o.apply === true && o.dryRun === true) throw new Error('pass --apply or --dry-run, not both');
+      process.exitCode = await storeCompactCommand({
+        home: jobpilotHome(), clock: systemClock, out: (l) => console.log(l), err: (l) => console.error(l),
+        apply: o.apply === true, includeIncomplete: o.includeIncomplete === true, vacuum: o.vacuum,
+      });
+    }),
+  );
+storeCmd
+  .command('restore [segment]')
+  .description('Bring an archived segment back (or --all), byte for byte, after checking its sha256 against its audit-chain event. Takes the run lock without waiting')
+  .option('--all', 'every segment in $JOBPILOT_HOME/archive/')
+  .action((segment: string | undefined, o: { all?: boolean }) =>
+    guarded(async () => {
+      if (o.all === true && segment !== undefined) throw new Error('name a segment or pass --all, not both');
+      process.exitCode = await storeRestoreCommand({
+        home: jobpilotHome(), clock: systemClock, out: (l) => console.log(l), err: (l) => console.error(l), all: o.all === true, ...(segment !== undefined ? { segment } : {}),
       });
     }),
   );

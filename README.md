@@ -187,6 +187,7 @@ node --run jobpilot -- serve                       # the dashboard on http://127
 node --run jobpilot -- networks pack arc           # application pack for one freelance network
 node --run jobpilot -- gmail status
 node --run jobpilot -- audit verify                # whole event chain; --db <file> for another database
+node --run jobpilot -- store compact               # dry run of the monthly archive; --apply after a backup (guide, section 9)
 ```
 
 - **Coverage** is sliced (at most 90 minutes) and yields to the daily and freelance runs; the next

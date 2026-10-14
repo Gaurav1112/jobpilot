@@ -438,6 +438,39 @@ head ef9e83ab0fa34117a1e79a7c465724e1040130371e2a847e31bb1c63ba274dfd (187 event
 checkpoint recorded through event 187: the dashboard checks only the events after it
 ```
 
+### Compacting the database (monthly, by hand)
+
+Every daily run stores its intermediate results (envelopes), about 450 MB per run on a real
+home, and nothing removes them. `store compact` moves the ones nothing needs any more into
+`~/.jobpilot/archive/` and gives the space back. **Run it by hand about once a month, right
+after a backup** (above). It is never scheduled and never runs inside a run.
+
+```sh
+node --run jobpilot -- store compact            # a dry run: what would be archived, by agent and type
+node --run jobpilot -- store compact --apply    # archive, record it in the audit chain, VACUUM
+node --run jobpilot -- store restore --all      # bring every archived envelope back, byte for byte
+node --run jobpilot -- store restore envelopes-20261014T090000Z.jsonl.gz
+```
+
+- **What is kept** is set by `pack/retention.yaml` (optional; without it the default is
+  `version: 1`, `keep: { daily: 3, freelance: 1, coverage: 1, rebuild: 1 }`): every envelope of
+  those last completed runs, plus pins: the latest daily run's inputs (`docs rebuild`), the plan
+  behind each job's and gig's current documents (the job page, the freelance tab), the newest
+  posting of each job seen in the last 14 days and of each gig, any incomplete run, and the
+  whole lineage of all of these.
+- **Archive, never delete.** Each `--apply` writes one gzip segment and its manifest under
+  `archive/`, checks it reads back exactly, records a `store.compacted` event (segment sha256,
+  counts, policy) in the audit chain, and only then removes the rows, together with the step
+  rows that made them, so a later run executes those steps again instead of replaying nothing.
+  `store restore` checks the segment's sha256 against that event first, and records a
+  `store.restored` event.
+- **Refusals.** It takes the run lock without waiting (a running jobpilot makes it refuse). With
+  any run incomplete, `--apply` refuses; `--include-incomplete` archives stale incomplete runs
+  (older than 7 days, never resumed) and still keeps resumable ones. VACUUM needs free disk about
+  the size of the database: without it, compaction still archives and says VACUUM was skipped
+  (`--no-vacuum` skips it on purpose).
+- After it, `node --run jobpilot -- audit verify` still passes: the events are never touched.
+
 ### Migrations are one-way
 
 Opening the database with a newer jobpilot upgrades its tables in place, and a newer database

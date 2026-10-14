@@ -26,6 +26,12 @@ export interface SynthSpec {
   /** How many daily runs the rows are spread over. `jobpilot audit` ran before the last one: /runs has its events to check. */
   readonly runs: number;
   readonly seed: number;
+  /**
+   * Also write the kernel's `runs`, `steps` and `queue` rows (each envelope one done step whose input is the run's
+   * previous envelope, queued in its run), as the retention rehearsal needs. Off for the perf gate (its numbers were
+   * measured without them); no extra randomness, so the rest of the DB is the same either way.
+   */
+  readonly withRuns?: boolean;
 }
 
 export const BUDGET_SPEC: SynthSpec = { jobs: 20_000, envelopes: 300_000, events: 500_000, envelopeBytes: 3_000, runs: 10, seed: 20261014 };
@@ -80,6 +86,13 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
   );
   const insEnv = db.prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, 0, ?, ?)`);
   const insEvent = db.prepare(`INSERT INTO events (seq, run_id, at, kind, data, policy_hash, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  const insKernelRun = db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES (?, 'jobpilot-daily@1.0.0', ?, ?, ?, 'completed')`);
+  const insStep = db.prepare(`INSERT INTO steps (step_key, agent_id, contract_version, contract_hash, input_envelope_id, status, attempts) VALUES (?, ?, '1.0.0', 'h', ?, 'done', 1)`);
+  const insQueue = db.prepare(`INSERT OR IGNORE INTO queue (run_id, stage, agent_id, envelope_id, status) VALUES (?, ?, ?, ?, 'done')`);
+  const AGENT: Readonly<Record<string, string>> = {
+    'RawPosting@1': 'src-greenhouse', 'Posting@1': 'normalizer', 'EligibilityVerdict@1': 'eligibility', 'Scored@1': 'scorer-lexicon', 'Rendered@1': 'renderer',
+    'CoverPlan@1': 'cover-writer', 'ResumePlan@1': 'resume-planner', 'Evidence@1': 'evidence-matcher', 'QaReport@1': 'qa-gate', 'GigPosting@1': 'gig-normalizer',
+  };
   const insRun = db.prepare(`INSERT INTO runs_summary (run_id, at, counts, pack_hash, policy_hash, warnings, problems) VALUES (?, ?, ?, ?, ?, '[]', ?)`);
   const policy = 'a'.repeat(64);
 
@@ -122,6 +135,9 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
         if (dup === null) primaries.push({ key, source });
       }
       // this run's envelopes
+      if (spec.withRuns === true) insKernelRun.run(runId, policy, at, iso(DAY0 + r * 86_400_000 + 1_800_000));
+      let previous = '';
+      let seedOfRun = '';
       for (let i = 0; i < per(spec.envelopes, r); i++) {
         let x = rnd();
         let type = 'Posting@1';
@@ -134,6 +150,16 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
         const jobKey = pick(keys);
         const body = canonicalJson({ envelopeId: `e${envN}`, index: 0, parents: [], producer: { agentId: 'synthetic', contractHash: 'h', version: '1.0.0' }, stepKey: `s${envN}`, type, payload: { jobKey, text: text(Math.floor(spec.envelopeBytes * (0.5 + rnd()))) } });
         insEnv.run(`e${envN}`, `s${envN}`, type, body);
+        if (spec.withRuns === true) {
+          // short lineage chains, as a real job's (seed -> raw -> posting -> verdict -> score -> plans -> render -> qa):
+          // every 8th envelope starts a new chain from the run's seed
+          const input = i === 0 ? '' : i % 8 === 1 ? seedOfRun : previous;
+          const agent = input === '' ? 'supervisor' : (AGENT[type] ?? 'synthetic');
+          insStep.run(`s${envN}`, agent, input);
+          if (input !== '') insQueue.run(runId, 1, agent, input);
+          if (i === 0) seedOfRun = `e${envN}`;
+          previous = `e${envN}`;
+        }
         envN++;
       }
       // this run's events, hash-chained
