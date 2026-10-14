@@ -106,6 +106,8 @@ const PAY = new RegExp(
 );
 /** "up to" / "upto" just before a figure: a stated ceiling (freelance-boost), kept as `max` with `bound: 'ceiling'`. */
 const UP_TO = /\bup\s?to\s*$/i;
+/** "from" just before a figure: a lower bound, unless the figure is itself a closed range ("from $80–$100/hr"). */
+const FROM = /\bfrom\s*$/i;
 /** Words just before a figure that make it a bound or one end of a range, not the rate. */
 const QUALIFIED =
   /\b(?:up\s?to|from|starting(?:\s+at)?|at\s+least|min(?:imum)?|max(?:imum)?|over|under|below|above|less\s+than|more\s+than|estimated|approx(?:imately|\.)?|about|around|roughly|potential(?:\s+of)?|\d\s*(?:to|-|–))\s*$/i;
@@ -139,7 +141,9 @@ function payOf(text: string): Budget {
     const before = text.slice(Math.max(0, at - 40), at);
     // An hourly "up to $X" is a stated ceiling; any other qualified figure (a monthly ceiling too) is no rate.
     const ceiling = type === 'hourly' && UP_TO.test(before);
-    if (!ceiling && QUALIFIED.test(before)) return UNKNOWN_BUDGET;
+    // "(ranges) from $80–$100 per hour" names both ends: a closed range, not a lower bound.
+    const closedRange = g.hi !== undefined && FROM.test(before);
+    if (!ceiling && !closedRange && QUALIFIED.test(before)) return UNKNOWN_BUDGET;
     const k = (s: string | undefined): number => (s === undefined ? 1 : 1000);
     if (g.hi !== undefined && (g.klo === undefined) !== (g.khi === undefined)) return UNKNOWN_BUDGET;
     const lo = Number((g.lo ?? '').replace(/,/g, '')) * k(g.klo);
@@ -154,6 +158,12 @@ function payOf(text: string): Budget {
     const currency = [...currencies][0] ?? 'USD';
     if (ceiling) seen.set(`${type}|${currency}|ceiling|${hi}`, { type, min: null, max: hi, currency, usdPerUnit: null, bound: 'ceiling' });
     else seen.set(`${type}|${currency}|${lo}|${hi}`, { type, min: lo, max: hi, currency, usdPerUnit: null });
+  }
+  // A ceiling that only repeats the top of a stated range ("Upto $130/hr" in a title, "$80–$130/hour" in the text) adds
+  // nothing: the range is kept. A ceiling with any other top stays a conflict (unknown).
+  const plain = [...seen.values()].filter((b) => b.bound === undefined);
+  for (const [key, b] of seen) {
+    if (b.bound === 'ceiling' && plain.length === 1 && plain.some((p) => p.type === b.type && p.currency === b.currency && p.max === b.max)) seen.delete(key);
   }
   return seen.size === 1 ? ([...seen.values()][0] ?? UNKNOWN_BUDGET) : UNKNOWN_BUDGET;
 }

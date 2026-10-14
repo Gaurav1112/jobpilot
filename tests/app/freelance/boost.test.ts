@@ -32,6 +32,14 @@ describe('hours ranges (research A7.1): en dash, em dash and "to" are ranges', (
     expect(normalizeGig(hn(`Example Labs | Python engineer | REMOTE | Contract\n${text}`)).hoursPerWeek).toEqual({ min, max, source: 'text' });
   });
 
+  it('"ranges from $80–$100 USD per hour" is a stated range (a "from" before a closed range is not a lower bound)', () => {
+    const g = normalizeGig(boards({ descriptionText: '- Compensation ranges from $80–$100 USD per hour.\n- Expected workload is 10–39 hours per week, depending on project needs.' }));
+    expect(g.budget).toEqual({ type: 'hourly', min: 80, max: 100, currency: 'USD', usdPerUnit: null, from: 'description' });
+    expect(g.hoursPerWeek).toEqual({ min: 10, max: 39, source: 'text' });
+    expect(decide(g).verdict).not.toBe('rejected');
+    expect(normalizeGig(boards({ descriptionText: 'Pay from $80/hr.' })).budget.type).toBe('unknown');
+  });
+
   it('a 10–39 h/week contract is not rejected as over the cap (its minimum is 10)', () => {
     const g = normalizeGig(hn('Example Labs | Senior Python Developer | REMOTE (worldwide) | Contract\nWe pay $80-100/hr. Expected workload is 10–39 hours per week.'));
     const d = decide(g);
@@ -126,6 +134,11 @@ describe('"up to $X/hr" is a stated ceiling (research A7.2): it can fail the flo
     for (const text of ['Pay from $90/hr.', 'Pay about $90/hr.', 'Starting at $90/hr.']) {
       expect(normalizeGig(boards({ descriptionText: text })).budget.type).toBe('unknown');
     }
+  });
+
+  it('a ceiling in the title and a stated range with the same top in the text: the range wins (it says more)', () => {
+    const g = normalizeGig(boards({ title: 'Full Stack Engineer - Fully Remote | Upto $130/hr', descriptionText: 'Type: Contract\nCompensation: $80–$130/hour\nLocation: Remote' }));
+    expect(g.budget).toEqual({ type: 'hourly', min: 80, max: 130, currency: 'USD', usdPerUnit: null, from: 'description' });
   });
 
   it('a ceiling and a different plain rate in one text are ambiguous: unknown', () => {
