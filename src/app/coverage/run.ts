@@ -7,14 +7,14 @@ import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
-import { dnsOnline } from '../net.js';
+import { httpsOnline } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
 import { AppStore } from '../store/app-store.js';
 import { makeRunGate } from './gate.js';
-import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, type CoverageStagesOutcome, type StageId } from './pipeline.js';
+import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, storedVerdicts, type CoverageStagesOutcome, type StageId } from './pipeline.js';
 import { coverageNotification, deferralHosts, deferralLine, projectCoverage, registryCounts, type CoverageProjection, type RegistryCounts } from './project.js';
 import { registryPickItems, seedItemsFromJobs } from './seed.js';
 import type { CandidateSource, CareersSite } from './types.js';
@@ -48,8 +48,10 @@ const realSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r
  * run row stays `running`, its only other state being completed), and one line each, `Coverage last week did not
  * finish: N of M candidates finished (k deferred or failed)` (M: the candidates its locate stage had, or its merged
  * seed candidates if it never reached the locator; N: those whose locate step finished; k: of those, the ones whose
- * step failed or was deferred). Nothing of it was projected (a
- * run projects only when it completes), so the registry keeps last known verdicts. Closed once; never resumed.
+ * step failed or was deferred). Before it is closed, what it finished is projected (re-review minor: a catch-up run
+ * started on a Friday or Saturday may roll over unfinished, and its work is kept): its verdicts and located-nothing
+ * sites, failures counted unless another run of that week projected already (a `coverage.projected` event with
+ * `partial: true`). Closed once; never resumed.
  */
 function closeEarlierWeeks(app: AppStore, week: string, now: string): string[] {
   const rows = app.kernel.db.prepare(`SELECT run_id, policy_hash FROM runs WHERE pipeline = ? AND status <> 'completed' ORDER BY run_id`).all(PIPELINE) as { run_id: string; policy_hash: string }[];
@@ -62,6 +64,15 @@ function closeEarlierWeeks(app: AppStore, week: string, now: string): string[] {
     const finished = items.filter((q) => q.status !== 'pending').length;
     const unfinished = items.filter((q) => q.status === 'failed' || q.status === 'skipped' || q.status === 'quarantined').length;
     const total = items.length > 0 ? items.length : storedCandidates(app.kernel, r.run_id).length;
+    if (!app.kernel.events(r.run_id).some((e) => e.kind === PROJECTED)) {
+      const partial = storedVerdicts(app.kernel, r.run_id);
+      const runWeek = coverageWeek(`${date}T12:00:00.000Z`);
+      app.tx(() => {
+        const countFailures = !weekAlreadyProjected(app, runWeek, r.run_id);
+        const p = projectCoverage(app, { ...partial, at: now, countFailures });
+        app.kernel.appendEvent(r.run_id, now, PROJECTED, { week: runWeek, partial: true, countFailures, verdicts: partial.verdicts.length, newVerified: p.newVerified, unlocated: p.unlocated }, r.policy_hash);
+      });
+    }
     app.kernel.appendEvent(r.run_id, now, CLOSED, { status: 'incomplete', finished, deferredOrFailed: unfinished, total }, r.policy_hash);
     lines.push(`Coverage last week did not finish: ${finished} of ${total} candidates finished (${unfinished} deferred or failed)`);
   }
@@ -103,8 +114,8 @@ export interface CoverageRunOptions {
   readonly yieldCheck?: (now: string) => string | null;
   /**
    * Is the machine online? The run gate asks it before a name DNS does not know becomes `no-such-host`, and after
-   * OFFLINE_AFTER_NETWORK_ERRORS network errors in a row: offline pauses the slice (`offline`, C1-d). Default
-   * `dnsOnline` (the daily run's check); an offline-fixtures run passes `async () => true`.
+   * OFFLINE_AFTER_NETWORK_ERRORS transport errors in a row: offline pauses the slice (`offline`, C1-d). Default
+   * `httpsOnline` through this run's `fetch` (R1: HTTPS must work, not only DNS); an offline-fixtures run passes `async () => true`.
    */
   readonly online?: () => Promise<boolean>;
 }
@@ -241,7 +252,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         }
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
-      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => dnsOnline()) });
+      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => httpsOnline(o.fetch)) });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
       const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
       // the slice limit applies once this invocation has done a step, so every slice makes progress

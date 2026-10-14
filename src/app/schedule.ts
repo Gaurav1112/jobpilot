@@ -6,7 +6,7 @@ import { isAbsolute, join } from 'node:path';
 import { COVERAGE_START_FILE, coverageNotBefore, DAILY_HOUR_IST } from './due.js';
 import { checkHome, fileWarning, warnOnce } from './home.js';
 import { homePaths } from './pack/paths.js';
-import { AppStore } from './store/app-store.js';
+import Database from 'better-sqlite3';
 
 export const DAILY_LABEL = 'com.jobpilot.daily';
 export const FREELANCE_LABEL = 'com.jobpilot.freelance';
@@ -144,15 +144,22 @@ export function firstCoverageFrom(now: Date): string {
 
 const istText = (ms: number): string => new Date(ms + IST_MS).toISOString().slice(0, 16).replace('T', ' ') + ' IST';
 
-/** Whether this home has ever recorded a coverage run (its DB has a `jobpilot-coverage` run row). */
+/**
+ * Whether this home has ever recorded a coverage run (its DB has a `jobpilot-coverage` run row). The DB is opened
+ * read-only and as it is, never migrated, so install never contends with a running run; a DB that cannot be read
+ * that way (no `runs` table yet, busy) counts as "never ran".
+ */
 function coverageRanOn(home: string): boolean {
-  const db = homePaths(home).db;
-  if (!existsSync(db)) return false;
-  const app = AppStore.open(db);
+  const file = homePaths(home).db;
+  if (!existsSync(file)) return false;
+  let db: Database.Database | undefined;
   try {
-    return app.kernel.db.prepare(`SELECT 1 FROM runs WHERE pipeline = 'jobpilot-coverage' LIMIT 1`).get() !== undefined;
+    db = new Database(file, { readonly: true, fileMustExist: true, timeout: 2_000 });
+    return db.prepare(`SELECT 1 FROM runs WHERE pipeline = 'jobpilot-coverage' LIMIT 1`).get() !== undefined;
+  } catch {
+    return false;
   } finally {
-    app.close();
+    db?.close();
   }
 }
 

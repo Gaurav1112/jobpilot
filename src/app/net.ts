@@ -1,5 +1,7 @@
 import { lookup } from 'node:dns/promises';
+import { HTTP_HEADERS } from '../kernel/broker.js';
 import type { KernelError } from '../kernel/errors.js';
+import type { FetchLike } from '../kernel/providers.js';
 
 /**
  * The machine's network, as the runs see it: is it online at all, and is a failed request an outage (transient: ask
@@ -13,6 +15,25 @@ export const PROBE_HOSTS: readonly string[] = ['boards-api.greenhouse.io', 'api.
 export async function dnsOnline(hosts: readonly string[] = PROBE_HOSTS): Promise<boolean> {
   const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
   return (await Promise.all(hosts.map(one))).some(Boolean);
+}
+
+/**
+ * Does HTTPS work from here (final re-review R1)? A certificate-checked GET of a probe host's robots.txt, through
+ * `fetch` (the run's own provider), each probe given `timeoutMs`: online as soon as one probe host answers with a
+ * status below 500. DNS alone is not enough: behind a captive portal or a TLS-intercepting proxy names resolve but
+ * every HTTPS request fails (a certificate error, a refusal) or the portal answers itself (511, 5xx). Probe hosts are
+ * asked in order and only until one answers, so a healthy network costs one request.
+ */
+export async function httpsOnline(fetch: FetchLike, hosts: readonly string[] = PROBE_HOSTS, timeoutMs = 5_000): Promise<boolean> {
+  for (const h of hosts) {
+    try {
+      const r = await fetch(`https://${h}/robots.txt`, { signal: AbortSignal.timeout(timeoutMs), redirect: 'manual', headers: HTTP_HEADERS });
+      if (r.status < 500) return true;
+    } catch {
+      // this probe host failed: try the next
+    }
+  }
+  return false;
 }
 
 /** The KernelError codes of a transport failure: an outage, a slow or overloaded host. Asked again later, never a verdict. */

@@ -242,7 +242,7 @@ describe('run --if-due (the half-hourly launchd start)', () => {
     const out: string[] = [];
     const code = await runCommand({ notify: true, ifDue: true }, { ...deps(home, '2026-10-09T03:59:00.000Z', posted, out), online: async () => false });
     expect(code).toBe(0);
-    expect(out).toEqual(['not due: the network is down (no source host resolves); the next start tries again']);
+    expect(out).toEqual(['not due: the network is down (no source host answers over HTTPS); the next start tries again']);
     expect(posted).toEqual([]);
     expect(existsSync(join(home, 'daily-attempts.json'))).toBe(false);
   });

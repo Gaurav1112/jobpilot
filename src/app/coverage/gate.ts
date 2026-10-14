@@ -116,10 +116,22 @@ export interface RunGate {
   disabledWhy(host: string, now: string): string | undefined;
   /** Whether this gate found the machine offline (OFFLINE_AFTER_NETWORK_ERRORS network errors in a row, then the check). */
   offline(): boolean;
-  /** One request's transport outcome: an answer resets the count of network errors in a row; an error adds one. */
+  /**
+   * One request's transport outcome: a real HTTP answer resets the count of transport errors in a row and confirms
+   * every disable made since; an error of any kind (a refused connection and a bad certificate included, R1) adds one.
+   */
   noteTransport(outcome: 'answer' | 'network-error', now: string): Promise<void>;
-  /** The offline check (`online`), its answer reused for ONLINE_CHECK_TTL_MS. */
+  /** The offline check (`online`): a positive answer is reused for ONLINE_CHECK_TTL_MS while fewer than OFFLINE_AFTER_NETWORK_ERRORS errors follow it. */
   isOnline(now: string): Promise<boolean>;
+  /** The number of transport events so far (requests that answered or failed): a position to compare against. */
+  seq(): number;
+  /** A run-long disable caused by a transport error (no answer, R1): undone if the machine turns out to be offline. */
+  markProvisional(host: string): void;
+  /**
+   * Was the network proven to work at or after transport event `since` (a real answer, or a positive online check)?
+   * If not, asks the online check now; offline undoes the provisional disables.
+   */
+  settled(since: number, now: string): Promise<boolean>;
 }
 
 /**
@@ -145,13 +157,36 @@ export function makeRunGate(opts: {
   for (const [h, at] of store.coverageHostTimes(runKey)) state.since.set(h, at);
   let errorsInARow = 0;
   let offline = false;
-  let checked: { readonly at: number; readonly online: boolean } | undefined;
-  const isOnline = async (now: string): Promise<boolean> => {
-    const t = Date.parse(now);
-    if (checked !== undefined && t - checked.at < ONLINE_CHECK_TTL_MS && t >= checked.at) return checked.online;
+  let events = 0;
+  let lastAnswer = 0;
+  let checked: { readonly at: number; readonly seq: number; readonly online: boolean } | undefined;
+  /** Run-long disables caused by transport errors since the last real answer (R1). */
+  const provisional = new Set<string>();
+  const goOffline = (): void => {
+    offline = true;
+    // every miss since the last real answer was the outage's, not the hosts': nothing of it is kept for the run
+    for (const h of provisional) {
+      store.enableCoverageHost(runKey, h);
+      state.disabled.delete(h);
+      state.since.delete(h);
+      state.robots.delete(h);
+    }
+    provisional.clear();
+  };
+  const check = async (now: string): Promise<boolean> => {
     const on = await online();
-    checked = { at: t, online: on };
+    checked = { at: Date.parse(now), seq: events, online: on };
+    if (on) errorsInARow = 0;
+    else goOffline();
     return on;
+  };
+  const isOnline = async (now: string): Promise<boolean> => {
+    if (offline) return false;
+    const t = Date.parse(now);
+    const fresh = checked !== undefined && t >= checked.at && t - checked.at < ONLINE_CHECK_TTL_MS;
+    if (fresh && checked?.online === false) return false;
+    if (fresh && checked?.online === true && errorsInARow < OFFLINE_AFTER_NETWORK_ERRORS) return true;
+    return check(now);
   };
   return {
     runKey,
@@ -174,14 +209,27 @@ export function makeRunGate(opts: {
     },
     offline: () => offline,
     async noteTransport(outcome, now) {
+      events++;
       if (outcome === 'answer') {
         errorsInARow = 0;
+        lastAnswer = events;
+        provisional.clear();
         return;
       }
       errorsInARow++;
-      if (errorsInARow >= OFFLINE_AFTER_NETWORK_ERRORS && !offline && !(await isOnline(now))) offline = true;
+      if (errorsInARow >= OFFLINE_AFTER_NETWORK_ERRORS && !offline) await check(now);
     },
     isOnline,
+    seq: () => events,
+    markProvisional(host) {
+      if (lastAnswer < events) provisional.add(host);
+    },
+    async settled(since, now) {
+      if (offline) return false;
+      if (lastAnswer > since) return true;
+      if (checked?.online === true && checked.seq >= since) return true;
+      return check(now);
+    },
   };
 }
 
@@ -255,7 +303,13 @@ export type Fetched =
   | { readonly kind: 'ok'; readonly status: number; readonly body: string; readonly url: string }
   | { readonly kind: 'moved'; readonly url: string }
   /** `transient`: the miss is an outage, a timeout or an overloaded host (its code), not a fact about the page. */
-  | { readonly kind: 'miss'; readonly reason: string; readonly transient?: TransientCode }
+  | {
+      readonly kind: 'miss';
+      readonly reason: string;
+      readonly transient?: TransientCode;
+      /** A definitive transport error (no such host, a refused connection, a bad certificate): no HTTP answer (R1). */
+      readonly transport?: true;
+    }
   | { readonly kind: 'challenge'; readonly reason: string };
 
 /** The transport code when `r` is transient (a transient miss, or a 5xx answer); else null. */
@@ -278,6 +332,12 @@ export function failTransient(codes: readonly TransientCode[], reasons: readonly
 export interface StepFetcher {
   /** One request with up to MAX_HOPS manual redirects. `checkRobots` is off only for robots.txt itself. */
   fetchUrl(start: string, checkRobots: boolean): Promise<Fetched>;
+  /**
+   * R1: before a step finishes on its misses, `network` when one of them was a transport error (a refused connection,
+   * a bad certificate, no such host) that nothing has proven to be the host's own since (no real answer, no positive
+   * online check after it) and the online check now says offline; else null.
+   */
+  settle(): Promise<TransientCode | null>;
   /** The host's robots.txt for the run: fetched once, whoever asks first. Only settled verdicts are cached. */
   robotsFor(host: string): Promise<RobotsVerdict>;
 }
@@ -317,6 +377,10 @@ export function stepFetcher(o: {
   if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
   const http = ctx.http;
   let requests = 0;
+  /** The gate's transport position at this step's last definitive transport miss (R1), or null. */
+  let lastTransportMiss: number | null = null;
+  /** Hosts whose robots.txt verdict came from a transport error, not an answer (R1: provisional until proven). */
+  const transportVerdicts = new Set<string>();
 
   async function fetchUrl(start: string, checkRobots: boolean): Promise<Fetched> {
     let url = start;
@@ -387,17 +451,21 @@ export function stepFetcher(o: {
     }
     if (e.code === 'overloaded') return { kind: 'miss', reason: `overloaded: ${where}`, transient: 'overloaded' };
     if (e.code !== 'network') return { kind: 'miss', reason: `${e.code}: ${where}` };
-    const kind = networkKind(e);
-    if (kind === 'no-such-host' && (await gate.isOnline(now))) {
-      await gate.noteTransport('answer', now); // DNS answered: the network is up
-      return { kind: 'miss', reason: `${NO_SUCH_HOST}: ${u.hostname}` };
-    }
-    if (kind === 'definitive') {
-      await gate.noteTransport('answer', now);
-      return { kind: 'miss', reason: `network: ${where} (${e.sysCode ?? 'error'})` };
-    }
+    // R1: every transport error counts towards the offline check, a refused connection and a bad certificate too
+    // (behind a captive portal or a TLS-intercepting proxy every host looks like that); only a real answer resets it
     await gate.noteTransport('network-error', now);
-    return { kind: 'miss', reason: `network: ${where}${e.sysCode !== undefined ? ` (${e.sysCode})` : ''}`, transient: 'network' };
+    const kind = networkKind(e);
+    const sys = e.sysCode !== undefined ? ` (${e.sysCode})` : '';
+    if (kind === 'transient') return { kind: 'miss', reason: `network: ${where}${sys}`, transient: 'network' };
+    if (kind === 'no-such-host' && !(await gate.isOnline(now))) return { kind: 'miss', reason: `network: ${where}${sys}`, transient: 'network' };
+    // a fact about this host, provided the network is proven to work around it (`settle`, `markProvisional`)
+    lastTransportMiss = gate.seq();
+    return kind === 'no-such-host' ? { kind: 'miss', reason: `${NO_SUCH_HOST}: ${u.hostname}`, transport: true } : { kind: 'miss', reason: `network: ${where}${sys}`, transport: true };
+  }
+
+  async function settle(): Promise<TransientCode | null> {
+    if (lastTransportMiss === null) return null;
+    return (await gate.settled(lastTransportMiss, ctx.clock.now())) ? null : 'network';
   }
 
   function robotsFor(host: string): Promise<RobotsVerdict> {
@@ -424,7 +492,10 @@ export function stepFetcher(o: {
         if (own.has(host)) ownTransient.set(host, verdict.transient ?? 'network');
         return verdict;
       }
-      if (verdict.kind === 'disallow-all') disable(host, verdict.reason, ctx.clock.now());
+      if (verdict.kind === 'disallow-all') {
+        disable(host, verdict.reason, ctx.clock.now());
+        if (transportVerdicts.has(host)) gate.markProvisional(host);
+      }
       return verdict;
     })();
     state.robots.set(host, p);
@@ -435,6 +506,7 @@ export function stepFetcher(o: {
     const r = await fetchUrl(`https://${host}/robots.txt`, false);
     if (r.kind === 'challenge') return { kind: 'allow-all', why: r.reason }; // the host is disabled; the caller sees that
     if (r.kind === 'miss' && r.transient !== undefined) return { kind: 'disallow-all', reason: 'robots-transient', why: r.reason, transient: r.transient };
+    if (r.kind === 'miss' && r.transport === true) transportVerdicts.add(host);
     if (r.kind === 'miss' && r.reason.startsWith(`${NO_SUCH_HOST}:`)) return { kind: 'disallow-all', reason: NO_SUCH_HOST, why: r.reason };
     if (r.kind === 'miss' || r.kind === 'moved') return { kind: 'disallow-all', reason: 'robots-unavailable', why: r.kind === 'miss' ? r.reason : 'robots.txt moved off the planned hosts' };
     const verdict = robotsVerdictOf(r.status, r.body);
@@ -446,5 +518,5 @@ export function stepFetcher(o: {
     return verdict;
   }
 
-  return { fetchUrl, robotsFor };
+  return { fetchUrl, robotsFor, settle };
 }

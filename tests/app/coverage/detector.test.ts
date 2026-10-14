@@ -695,3 +695,16 @@ describe('C1: a detection resting on a transient failure fails (never a memoised
     await expect(makePlatformDetector(fresh()).run(s, ctxFor(fetch, [s]))).rejects.toMatchObject({ code: 'network' });
   });
 });
+
+describe('R1: a detection resting on an unconfirmed transport error asks the online check', () => {
+  it('the careers page fails with a certificate error and nothing answers after it; offline: the step fails network', async () => {
+    const { makeRunGate, memoryHostStateStore } = await import('../../../src/app/coverage/gate.js');
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => false });
+    const s = site('acme.test', 'https://www.acme.test/careers');
+    const cert: FetchLike = async (url) => {
+      if (url.endsWith('/robots.txt')) return { status: 404, headers: { get: () => null }, text: async () => '' };
+      throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('cert'), { code: 'CERT_HAS_EXPIRED' }) });
+    };
+    await expect(makePlatformDetector({ gate }).run(s, ctxFor(cert, [s]))).rejects.toMatchObject({ code: 'network' });
+  });
+});

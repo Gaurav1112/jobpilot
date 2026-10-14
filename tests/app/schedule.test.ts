@@ -204,6 +204,21 @@ describe('install / uninstall / status', () => {
     expect(existsSync(join(o.home, COVERAGE_START_FILE))).toBe(false);
   });
 
+  it('re-review minor: install reads the DB read-only and as it is, never migrating it', async () => {
+    const Database = (await import('better-sqlite3')).default;
+    const o = opts();
+    mkdirSync(o.home, { recursive: true, mode: 0o700 });
+    const file = join(o.home, 'jobpilot.db');
+    const db = new Database(file);
+    db.exec(`CREATE TABLE runs (run_id TEXT PRIMARY KEY, pipeline TEXT, policy_hash TEXT, started_at TEXT, finished_at TEXT, status TEXT)`);
+    db.prepare(`INSERT INTO runs VALUES ('coverage-2026-10-04', 'jobpilot-coverage', 'h', 'x', NULL, 'completed')`).run();
+    db.close();
+    expect(installSchedule(o, fake().run).coverageFrom).toBeNull(); // it saw the coverage run
+    const after = new Database(file, { readonly: true });
+    expect(after.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name`).all()).toEqual([{ name: 'runs' }]);
+    after.close();
+  });
+
   it('never chmods an existing home (one warning), tightens an existing logs dir and log files', () => {
     const warnings: string[] = [];
     setWarningSink((m) => warnings.push(m));

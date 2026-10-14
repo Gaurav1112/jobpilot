@@ -7,7 +7,7 @@ import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, type Company } from '../store/app-store.js';
-import { dnsOnline } from '../net.js';
+import { httpsOnline } from '../net.js';
 import { makeRunGate, type RunGate } from './gate.js';
 import { coveragePolicy, coveragePolicyHash, runCoverageStages, STAGES } from './pipeline.js';
 import { deferralHosts, projectCoverage } from './project.js';
@@ -55,7 +55,7 @@ export interface ResolveOptions {
   readonly probe?: ProcessProbe;
   /** Tests: sees the gate and run key built for this request. */
   readonly onGate?: (gate: RunGate, runId: string) => void;
-  /** Is the machine online (the run gate's check before a name DNS does not know is `no-such-host`)? Default `dnsOnline`. */
+  /** Is the machine online (the run gate's offline check)? Default `httpsOnline` through `fetch` (R1). */
   readonly online?: () => Promise<boolean>;
 }
 
@@ -103,7 +103,7 @@ async function resolveLocked(o: ResolveOptions): Promise<ResolveResult> {
     const policy = coveragePolicy(pack);
     const runDate = istDate(start);
     const runId = freshRunId(app, runDate, company.companyKey);
-    const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => dnsOnline()) });
+    const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => httpsOnline(o.fetch)) });
     o.onGate?.(gate, runId);
     const deadline = Date.parse(start) + (o.timeLimitMs ?? RESOLVE_TIME_LIMIT_MS);
     const item = { name: company.name, website: company.website, ...(company.careersUrl !== null ? { careersUrl: company.careersUrl } : {}) };

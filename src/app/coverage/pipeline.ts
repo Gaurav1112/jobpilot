@@ -223,6 +223,18 @@ export function storedCandidates(store: Store, runId: string): CompanyCandidate[
   return mergeCandidates(seed.outputs.map((x) => CompanyCandidate.schema.parse(x)));
 }
 
+/**
+ * What a run's stages have finished so far, read from the store (re-review minor: a week that rolls over unfinished
+ * keeps it): the verifier's verdicts, a Proposed verdict per detected site with no platform, and the located-nothing
+ * sites. Deferred and transient steps are not in it, as in a completed run.
+ */
+export function storedVerdicts(store: Store, runId: string): { readonly verdicts: CompanyVerdict[]; readonly unlocated: CareersSite[] } {
+  const verify = stageResult(store, 'verify', `${runId}.verify`).outputs.map((x) => CompanyVerdict.schema.parse(x));
+  const guesses = stageResult(store, 'detect', `${runId}.detect`).outputs.map((x) => PlatformGuess.schema.parse(x));
+  const sites = stageResult(store, 'locate', `${runId}.locate`).outputs.map((x) => CareersSite.schema.parse(x));
+  return { verdicts: [...verify, ...guesses.filter((g) => g.platform === null).map(noPlatformVerdict)], unlocated: sites.filter((s) => s.careersUrl === null) };
+}
+
 /** Done outputs (in queue order) and deferred inputs of one stage run, read from the store. */
 function stageResult(store: Store, stage: StageId, runId: string): StageResult {
   const stepOf = new Map<string, string>();

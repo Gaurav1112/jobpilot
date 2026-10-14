@@ -198,9 +198,12 @@ itself over the next starts.
   most 3 times. While one waits, the slice pauses with `retry wait`. What is still failing after
   that is counted as `left failed for a transient reason (asked again next run)`: never a failed
   week for a registry company.
-- After 5 network errors in a row, jobpilot checks whether the Mac is offline (the same DNS check
-  the scheduled starts use). If it is, the slice pauses with `offline`, and the next half-hourly
-  start (which waits for the network) continues it. A paused slice is never a failed attempt.
+- After 5 failed requests in a row (refused connections and certificate errors included), jobpilot
+  checks whether the Mac is really online: one HTTPS request to a job-board API's robots.txt, the
+  same check the scheduled starts make. Behind a captive portal or a TLS-intercepting proxy that
+  check fails too, so it counts as offline: the slice pauses with `offline`, nothing seen since the
+  last real answer is kept as a host's verdict, and the next half-hourly start (which waits for the
+  network) continues it. A paused slice is never a failed attempt.
 
 To check this by hand, the variable `JOBPILOT_CHECK_OUTAGE=<from>/<seconds>` simulates an outage
 for a `run-coverage` you start yourself: from `<from>` (`+S`, S seconds after the first request,

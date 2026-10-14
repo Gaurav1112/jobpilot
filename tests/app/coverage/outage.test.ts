@@ -138,6 +138,34 @@ describe('C1: a network outage mid-run', () => {
     expect(summary.verdicts).toEqual(BASELINE.verdicts);
   });
 
+  it('R1: a captive portal (DNS answers, every HTTPS request fails with a certificate error for 40 s): the slice pauses offline, no host is disabled for the run, the affected candidates are asked again', async () => {
+    const home = newHome();
+    let start: number | undefined;
+    const w = world((t, url) => {
+      if (SEED_HOSTS.has(new URL(url).hostname)) return null;
+      start ??= t;
+      return t - start < 40_000 ? 'CERT_HAS_EXPIRED' : null;
+    });
+    // no `online` given: the run's own HTTPS check, through the same (portal) fetch
+    const first = await runCoverage({ home, clock: w.clock, fetch: w.fetch, sleep: async () => {}, codeHash: 'outage', yieldCheck: () => null });
+    expect(first).toMatchObject({ status: 'paused', reason: 'offline' });
+    expect([...db(home, (a) => a.coverageHostState('coverage-2026-10-11')).values()].filter((why) => why !== 'robots-transient')).toEqual([]);
+    expect(locateEvents(home, 'step_done').length).toBe(0); // nothing finished as "not located" on the portal's errors
+    w.jump(TRANSIENT_DISABLE_MS + 60_000);
+    const results: CoverageResult[] = [];
+    for (let i = 0; i < 8; i++) {
+      const r = await runCoverage({ home, clock: w.clock, fetch: w.fetch, sleep: async () => {}, codeHash: 'outage', yieldCheck: () => null });
+      results.push(r);
+      if (r.status === 'completed') break;
+      w.jump(TRANSIENT_DISABLE_MS + 60_000);
+    }
+    const summary = results.at(-1) as CoverageSummary;
+    expect(summary.status).toBe('completed');
+    expect(summary.located).toEqual(BASELINE.located);
+    expect(summary.verdicts).toEqual(BASELINE.verdicts);
+    expect(summary.deferred).toMatchObject({ total: 0, transient: 0 });
+  });
+
   it('a sustained outage while DNS still answers: the locator breaker trips, nothing is memoised, the candidates are asked again after it', async () => {
     const home = newHome();
     let over = false;

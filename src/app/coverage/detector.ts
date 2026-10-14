@@ -440,7 +440,7 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limit
   const web = asHttps(site.candidate.website);
   const key = web === null ? null : registrableDomain(web.hostname);
   const acceptMoved = (u: URL): boolean => (key !== null && registrableDomain(u.hostname) === key) || platformForHost(u.hostname) !== null;
-  const { fetchUrl } = stepFetcher({ ctx, gate, planned: new Set(detectorHosts(site)), acceptMoved, ...limits });
+  const { fetchUrl, settle } = stepFetcher({ ctx, gate, planned: new Set(detectorHosts(site)), acceptMoved, ...limits });
 
   const c: Collected = { signals: [], phenom: false, jsonld: null };
   const notes: string[] = [];
@@ -476,8 +476,11 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limit
     }
     return r;
   };
-  const finish = (g: PlatformGuess): PlatformGuess => {
+  const finish = async (g: PlatformGuess): Promise<PlatformGuess> => {
     refuseSiblingDependent(reasons, null);
+    // R1: a transport error no real answer has confirmed is checked against the network before it becomes a verdict
+    const unproven = await settle();
+    if (unproven !== null) transient.push(unproven);
     failTransient(transient, reasons);
     return g;
   };

@@ -185,6 +185,42 @@ describe('week rollover: a run still paused when the next coverage week starts',
   });
 });
 
+describe('re-review minor: a week that rolls over unfinished keeps what it verified', () => {
+  it('the verdicts its stages finished are projected before it is closed (partial), once', async () => {
+    const home = newHome();
+    const verifyDone = (): number => {
+      const app = AppStore.open(join(home, 'jobpilot.db'));
+      try {
+        return app.kernel.queueItems('coverage-2026-10-11.verify').filter((q) => q.status === 'done').length;
+      } finally {
+        app.close();
+      }
+    };
+    let first: CoverageResult | undefined;
+    for (let i = 0; i < 60 && !(first?.status === 'paused' && first.stage === 'verify' && verifyDone() > 0); i++) {
+      first = await runCoverage({ home, clock: ticking(SUN_2000, 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', sliceMs: 2_000, yieldCheck: () => null });
+    }
+    expect(first).toMatchObject({ status: 'paused', stage: 'verify' });
+    const done = verifyDone();
+    expect(done).toBeGreaterThan(0);
+    // the next week's first start yields at once: whatever the registry holds now came from last week's partial run
+    const r = await runCoverage({ home, clock: ticking('2026-10-18T14:30:00.000Z', 1000), fetch: net().fetch, sleep: async () => {}, codeHash: 'slice', yieldCheck: () => 'yielded to daily' });
+    expect(r.status).toBe('paused');
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      const projected = app.kernel.events('coverage-2026-10-11').filter((e) => e.kind === 'coverage.projected').map((e) => JSON.parse(e.data) as Record<string, unknown>);
+      expect(projected).toHaveLength(1);
+      expect(projected[0]).toMatchObject({ week: '2026-10-11', partial: true, countFailures: true });
+      expect(projected[0]?.['verdicts']).toBeGreaterThanOrEqual(done);
+      expect(app.listCompanies().some((c) => c.status === 'verified' || c.status === 'proposed' || c.status === 'failed')).toBe(true);
+      const kinds = app.kernel.events('coverage-2026-10-11').map((e) => e.kind);
+      expect(kinds.indexOf('coverage.projected')).toBeLessThan(kinds.indexOf('coverage.closed'));
+    } finally {
+      app.close();
+    }
+  });
+});
+
 describe('week rollover counts deferred or failed locate steps apart (review minor)', () => {
   it('"N of M candidates finished (k deferred or failed)"', async () => {
     const home = newHome();

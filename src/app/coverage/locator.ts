@@ -1,7 +1,7 @@
 import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import type { EgressSets } from '../../kernel/broker.js';
-import { asHttps, BudgetExhausted, budgetReason, failTransient, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, transientOf, type Fetched, type GateSource, type RunGate, type StepLimits, type TransientCode } from './gate.js';
+import { asHttps, BudgetExhausted, budgetReason, failTransient, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, transientOf, type Fetched, type GateSource, type RunGate, type StepFetcher, type StepLimits, type TransientCode } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
 import { sitemapLocs } from '../text/sitemap.js';
@@ -148,28 +148,41 @@ export function makeCareersLocator(opts: GateSource & Partial<StepLimits>) {
 async function locate(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits): Promise<CareersSite> {
   const reasons: string[] = [];
   const transient: TransientCode[] = [];
+  const gated = stepFetcher({ ctx, gate, planned: new Set(locatorHosts(c)), acceptMoved: onCompanyDomainOf(c), ...limits });
+  const settle = gated.settle;
   let site: CareersSite;
   try {
-    site = await probe(c, ctx, gate, limits, reasons, transient);
+    site = await probe(c, gated, gate, reasons, transient);
   } catch (e) {
     if (!(e instanceof BudgetExhausted)) throw e;
     reasons.push(budgetReason(e));
     site = { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
   }
   refuseSiblingDependent(site.reasons ?? [], site.careersUrl);
-  // C1: "not located" resting on a failure that may pass is not an answer; a site found anyway is
-  if (site.careersUrl === null) failTransient(transient, site.reasons ?? []);
+  if (site.careersUrl === null) {
+    // R1: a "none" resting on transport errors no real answer has confirmed is checked against the network first
+    const unproven = await settle();
+    if (unproven !== null) transient.push(unproven);
+    // C1: "not located" resting on a failure that may pass is not an answer; a site found anyway is
+    failTransient(transient, site.reasons ?? []);
+  }
   return site;
 }
 
-async function probe(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits, reasons: string[], transient: TransientCode[]): Promise<CareersSite> {
+/** The redirect targets the locator accepts unfetched for `c`: its registrable domain, or a known platform host. */
+function onCompanyDomainOf(c: CompanyCandidate): (u: URL) => boolean {
+  const web = asHttps(c.website);
+  const siteKey = web === null ? null : registrableDomain(web.hostname);
+  return (u) => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
+}
+
+async function probe(c: CompanyCandidate, gated: StepFetcher, gate: RunGate, reasons: string[], transient: TransientCode[]): Promise<CareersSite> {
   const state = gate.state;
   const planned = new Set(locatorHosts(c));
 
   const web = asHttps(c.website);
   const siteKey = web === null ? null : registrableDomain(web.hostname);
-  const onCompanyDomain = (u: URL): boolean => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
-  const gated = stepFetcher({ ctx, gate, planned, acceptMoved: onCompanyDomain, ...limits });
+  const onCompanyDomain = onCompanyDomainOf(c);
   const fetchUrl = async (url: string, checkRobots: boolean): Promise<Fetched> => {
     const r = await gated.fetchUrl(url, checkRobots);
     const code = transientOf(r);
