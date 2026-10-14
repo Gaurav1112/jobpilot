@@ -358,6 +358,9 @@ export const NOTE_YOU_SET_HOURS = 'hours not stated; you set them';
  * Freelancer.com bills hourly projects by the hours the freelancer logs, so the freelancer sets the weekly limit: an
  * hourly Freelancer contract whose stated USD rate (after FX) reaches the floor needs no stated hours (user decision
  * 2026-10-14). Only that: every other source, and any rate that is not `stated`, keeps the review.
+ *
+ * "Reaches the floor" means the TOP of the stated range (`maxUsdH >= rateFloorUsdHour`), so "$25–50/h" qualifies
+ * (controller decision 2026-10-15): the same test the pay rule (9) and the notification's "K at ≥$X/h" use.
  */
 export function youSetHours(r: RatedGig, floor: number): boolean {
   const { gig, rate } = r;

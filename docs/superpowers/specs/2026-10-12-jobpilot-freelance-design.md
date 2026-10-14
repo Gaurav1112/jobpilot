@@ -369,7 +369,8 @@ Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/fr
   ceiling repeating the top of the one stated range yields to the range; "ranges from $A–$B" is a closed range.
 - **D3 (user, 2026-10-14), the one rule change.** A Freelancer.com hourly contract whose stated rate after FX reaches
   `rateFloorUsdHour` and whose text states no per-week hours (and no full-time wording tied to it) goes to Contracts
-  with the note "hours not stated; you set them". Kept as they were (user): presets under the budget floor stay in
+  with the note "hours not stated; you set them". "Reaches the floor" is the top of the stated range (`maxUsdH`), so
+  "$25–50/h" qualifies (controller, 2026-10-15): the same test as the pay rule and the notification. Kept as they were (user): presets under the budget floor stay in
   review; boards postings with no pay stay in review.
 - **Source 7b, `src-himalayas-gigs`.** Himalayas' public JSON API, one search per freelance keyword,
   `employment_type=Contractor,Part Time&country=India`, page 1 only (its robots.txt body disallows `/jobs*&page=`),
