@@ -466,6 +466,35 @@ describe('companies: links to their jobs', () => {
   });
 });
 
+describe('fix round 2: undo of a reject restores coverage', () => {
+  it('verified, rejected by mistake, undone: verified and read daily again; the notice says so', async () => {
+    await post('/companies/acme.example/reject', { _csrf: token });
+    const r = await post('/companies/acme.example/undo', { _csrf: token });
+    expect(company('acme.example')).toMatchObject({ status: 'verified', userOverride: null });
+    expect(withStore((s) => s.verifiedCompanies().map((c) => c.companyKey))).toContain('acme.example');
+    const page = (await get(r.headers.get('location') as string)).body;
+    expect(page).toContain('Undone: your choice on Acme Robotics is cleared; it is verified as coverage decided. Read daily.');
+  });
+
+  it('verified, rejected, a new verified verdict, undone: verified', async () => {
+    await post('/companies/acme.example/reject', { _csrf: token });
+    withStore((s) => s.upsertCompanyVerdict(verdict('acme.example', 'Acme Robotics', 'verified', { platform: 'workday', boardUrl: WD_BOARD }), NOW));
+    expect(company('acme.example')).toMatchObject({ status: 'rejected', coverageStatus: 'verified' });
+    await post('/companies/acme.example/undo', { _csrf: token });
+    expect(company('acme.example')).toMatchObject({ status: 'verified' });
+  });
+
+  it('verified, rejected, coverage then only proposes it, undone: proposed; the notice says so', async () => {
+    await post('/companies/acme.example/reject', { _csrf: token });
+    withStore((s) => s.upsertCompanyVerdict(verdict('acme.example', 'Acme Robotics', 'proposed', { platform: 'workday', boardUrl: WD_BOARD, reasons: ['board name changed'] }), NOW));
+    // nothing but the coverage status moves while it is rejected
+    expect(company('acme.example')).toMatchObject({ status: 'rejected', coverageStatus: 'proposed', reasons: [] });
+    const r = await post('/companies/acme.example/undo', { _csrf: token });
+    expect(company('acme.example')).toMatchObject({ status: 'proposed', userOverride: null });
+    expect((await get(r.headers.get('location') as string)).body).toContain('it is proposed as coverage decided. Not read until you approve it.');
+  });
+});
+
 describe('fix round 1: undo', () => {
   it('reject then undo: back to proposed, not read daily; Approve and Reject stay explicit; both logged', async () => {
     await post('/companies/bank.example/reject', { _csrf: token });
@@ -567,13 +596,22 @@ describe('fix round 1: resolve guards', () => {
     expect(withStore((s) => s.userActions().at(-1)?.data)).toMatchObject({ result: 'stopped', reason: 'yielded to daily' });
   });
 
-  it('M6: a failed resolve never adds a fail week', async () => {
+  it('M6: a failed resolve never adds a fail week (a real failed verdict: detected, then the board answers 404)', async () => {
     const before = company('globodyne.example');
-    app = makeApp({ resolve: { fetch: (async (url) => (calls.push(url), { status: 404, text: async () => 'Not Found' })) as FetchLike, sleep: async () => {}, codeHash: 'web-companies' } });
+    const careers = readFileSync(join(FIX, 'alpha-careers.html'), 'utf8');
+    app = makeApp({ resolve: { fetch: (async (url) => {
+      calls.push(url);
+      // the careers page shows a Greenhouse board; the board itself is gone
+      if (url === 'https://globodyne.example/careers') return { status: 200, text: async () => careers };
+      return { status: 404, text: async () => 'Not Found' };
+    }) as FetchLike, sleep: async () => {}, codeHash: 'web-companies' } });
     const r = await post('/companies/globodyne.example/resolve', { _csrf: token });
     expect(r.headers.get('location')).toBe('/companies?done=resolved&key=globodyne.example#co-globodyne-example');
-    expect(calls.length).toBeGreaterThan(0);
-    expect(company('globodyne.example')).toMatchObject({ status: 'failing', failWeeks: before?.failWeeks, failingSince: before?.failingSince });
+    expect(calls.some((u) => u.startsWith('https://boards-api.greenhouse.io/'))).toBe(true);
+    const after = company('globodyne.example');
+    // the failed verdict was written (its reasons), but the fail week was not counted
+    expect(after?.reasons.join(' ')).toMatch(/404/);
+    expect(after).toMatchObject({ status: 'failing', failWeeks: before?.failWeeks, failingSince: before?.failingSince });
   });
 
   it('M9: a host that refuses during resolve defers it; no verdict is written', async () => {

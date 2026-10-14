@@ -1221,7 +1221,7 @@ export class AppStore {
 
   /**
    * Records one coverage verdict for a company (the weekly run). The user's override always wins: a rejected company
-   * stays `rejected` (only `updated_at` moves), an approved one is `verified` whatever the verdict says short of a
+   * stays `rejected` (only `coverage_status` and `updated_at` move), an approved one is `verified` whatever the verdict says short of a
    * failure. A failed verdict keeps the last known platform and board; a verified company that fails 3 weeks running
    * becomes `failing` (shown, never silently removed), and a verified verdict resets the count.
    * `countFailure: false` (a second coverage run in the same coverage week): a failed verdict on a known company
@@ -1233,7 +1233,11 @@ export class AppStore {
     this.tx(() => {
       const prev = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(cand.companyKey) as CompanyRowDb | undefined;
       if (prev?.user_override === 'rejected') {
-        this.db.prepare(`UPDATE companies SET updated_at = ? WHERE company_key = ?`).run(at, cand.companyKey);
+        // rejected stays rejected; only what coverage alone decides is kept, so an Undo restores it (a failure keeps a
+        // live coverage status, fail weeks are not counted while the user has it rejected)
+        const live = prev.coverage_status === 'verified' || prev.coverage_status === 'failing';
+        const natural: CompanyStatus = v.status === 'failed' ? (live ? (prev.coverage_status as CompanyStatus) : 'failed') : v.status;
+        this.db.prepare(`UPDATE companies SET coverage_status = ?, updated_at = ? WHERE company_key = ?`).run(natural, at, cand.companyKey);
         return;
       }
       const failed = v.status === 'failed';
@@ -1284,9 +1288,9 @@ export class AppStore {
 
   /**
    * The user's approve or reject of a company (null clears it, the dashboard's Undo). Rejecting sets the status
-   * `rejected`; approving promotes a proposed or rejected company that has a platform to `verified`; clearing a
-   * rejection returns it to `proposed` until the next verdict; clearing an approval restores what the coverage verdicts
-   * alone last decided (`coverage_status`; `proposed` when coverage has decided nothing yet). False when there is no
+   * `rejected`; approving promotes a proposed or rejected company that has a platform to `verified`; clearing either
+   * restores what the coverage verdicts alone last decided (`coverage_status`, kept up to date while it is rejected;
+   * `proposed` when coverage has decided nothing yet). False when there is no
    * such company.
    */
   setCompanyOverride(companyKey: string, override: CompanyOverride | null, at: string): boolean {
@@ -1297,7 +1301,7 @@ export class AppStore {
       let status = prev.status;
       if (override === 'rejected') status = 'rejected';
       else if (override === 'approved' && (prev.status === 'proposed' || prev.status === 'rejected')) status = prev.platform !== null ? 'verified' : 'proposed';
-      else if (override === null && prev.status === 'rejected') status = 'proposed';
+      else if (override === null && prev.status === 'rejected') status = prev.coverage_status ?? 'proposed';
       else if (override === null && prev.user_override === 'approved') status = prev.coverage_status ?? 'proposed';
       this.db.prepare(`UPDATE companies SET user_override = ?, status = ?, updated_at = ? WHERE company_key = ?`).run(override, status, at, companyKey);
       return true;
