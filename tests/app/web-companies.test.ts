@@ -425,6 +425,18 @@ describe('companies: resolve now', () => {
     expect(calls).toEqual([]);
   });
 
+  it('C1: a network outage while resolving is "deferred", never a verdict; nothing written', async () => {
+    await add();
+    // robots.txt answers (404: allow all), every page fails in transport: no host is disabled, the step fails network
+    const reset = (async (url: string) => {
+      if (url.endsWith('/robots.txt')) return { status: 404, text: async () => 'Not Found' };
+      throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+    }) as FetchLike;
+    const res = await resolveCompany({ home, clock: { now: () => NOW }, fetch: reset, companyKey: 'alpha.test', sleep: async () => {}, codeHash: 'x', yieldCheck: () => null, online: async () => true });
+    expect(res).toMatchObject({ kind: 'deferred' });
+    expect(company('alpha.test')).toMatchObject({ status: 'proposed', reasons: [ADDED_PICK_REASON] });
+  });
+
   it('stops between steps at its time limit, writing nothing', async () => {
     await add();
     let t = Date.parse(NOW);

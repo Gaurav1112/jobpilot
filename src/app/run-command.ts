@@ -10,6 +10,7 @@ import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
+import { checkOutage } from './check-outage.js';
 import { dnsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
@@ -230,10 +231,15 @@ export async function runCoverageCommand(
   }
   return runWithDue(COVERAGE_DUE, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+    // the live re-check's outage simulation (check-only; inert unless JOBPILOT_CHECK_OUTAGE is set)
+    const outage = checkOutage();
+    if (outage !== null) d.err(`warning: ${outage.describe}`);
+    const online = offline !== undefined ? async () => true : (d.online ?? (() => dnsOnline(PROBE_HOSTS_OF.coverage)));
     const summary = await runCoverage({
       home: d.home,
       clock: d.clock,
-      fetch: offline?.fetch ?? nodeFetch,
+      fetch: outage === null ? (offline?.fetch ?? nodeFetch) : outage.fetch(offline?.fetch ?? nodeFetch),
+      online: outage === null ? online : outage.online(online),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),

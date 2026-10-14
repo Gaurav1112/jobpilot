@@ -177,7 +177,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     };
     const s = await run(home, W1, fetch);
     expect(s.exitCode).toBe(0);
-    expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1 });
+    expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1, transient: 0 });
     expect(calls.filter((u) => u.startsWith('https://boards-api.greenhouse.io/v1/'))).toHaveLength(1);
     expect(s.notification).toBe('Coverage: 1 verified (+1 new) · 0 proposed · 0 failing · not verified this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
     expect(s.problems.map((p) => p.kind)).toEqual(['deferred', 'deferred']);

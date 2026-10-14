@@ -7,6 +7,7 @@ import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
+import { dnsOnline } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
@@ -100,6 +101,12 @@ export interface CoverageRunOptions {
    * and tests pass `() => null`.
    */
   readonly yieldCheck?: (now: string) => string | null;
+  /**
+   * Is the machine online? The run gate asks it before a name DNS does not know becomes `no-such-host`, and after
+   * OFFLINE_AFTER_NETWORK_ERRORS network errors in a row: offline pauses the slice (`offline`, C1-d). Default
+   * `dnsOnline` (the daily run's check); an offline-fixtures run passes `async () => true`.
+   */
+  readonly online?: () => Promise<boolean>;
 }
 
 /** One invocation's time slice: then it pauses between steps and the next `run-coverage` continues the same run. */
@@ -114,7 +121,10 @@ export interface CoverageSlice {
   readonly runDate: string;
   readonly week: string;
   readonly resumed: boolean;
-  /** `yielded to daily`, `yielded to freelance` or `slice limit`. */
+  /**
+   * `yielded to daily`, `yielded to freelance`, `slice limit`, `offline` (the machine went offline mid-run, C1-d) or
+   * `retry wait` (a stage waits to ask a transient failure again, C1-c).
+   */
   readonly reason: string;
   /** The stage it stopped in. */
   readonly stage: StageId;
@@ -142,8 +152,17 @@ export interface CoverageSummary {
   /** Detected platforms (`none`: no platform), over the located sites. */
   readonly platforms: Readonly<Record<string, number>>;
   readonly verdicts: { readonly verified: number; readonly proposed: number; readonly failed: number };
-  /** Steps deferred by a disabled host, per stage; the hosts that deferred them; how many hosts the run disabled in all. */
-  readonly deferred: { readonly byStage: Readonly<Record<StageId, number>>; readonly total: number; readonly hosts: readonly (readonly [string, string])[]; readonly disabledHosts: number };
+  /**
+   * Steps deferred by a disabled host, per stage; the hosts that deferred them; how many hosts the run disabled in all;
+   * and `transient`: steps left failed for a transient reason after MAX_REQUEUES re-queues (C1-c), asked again next run.
+   */
+  readonly deferred: {
+    readonly byStage: Readonly<Record<StageId, number>>;
+    readonly total: number;
+    readonly hosts: readonly (readonly [string, string])[];
+    readonly disabledHosts: number;
+    readonly transient: number;
+  };
   readonly projection: CoverageProjection;
   readonly registry: RegistryCounts;
   readonly problems: readonly Problem[];
@@ -222,7 +241,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         }
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
-      const gate = makeRunGate({ runKey: runId, store: app });
+      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => dnsOnline()) });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
       const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
       // the slice limit applies once this invocation has done a step, so every slice makes progress
@@ -233,6 +252,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       };
       const pauseBefore = (): string | null => {
         const at = o.clock.now();
+        if (gate.offline()) return 'offline';
         return yieldCheck(at) ?? (stepsThisSlice > 0 && Date.parse(at) >= sliceEnd ? 'slice limit' : null);
       };
       const outcome = await runCoverageStages({
@@ -249,6 +269,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
         afterStep,
         pauseBefore,
+        retry: true,
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id
@@ -282,8 +303,10 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const hosts = deferralHosts(STAGES.flatMap((st) => outcome.stages[st].deferred.map((d) => d.detail)));
       const disabledHosts = app.coverageHostState(runId).size;
       const details = (stages: readonly StageId[]) => stages.flatMap((st) => outcome.stages[st].deferred.map((d) => d.detail));
-      const notLocated = details(['seed', 'locate', 'detect']);
-      const notVerified = details(['verify']);
+      const transientOf = (stages: readonly StageId[]) => stages.flatMap((st) => outcome.stages[st].transient.map((d) => d.detail));
+      const notLocated = [...details(['seed', 'locate', 'detect']), ...transientOf(['seed', 'locate', 'detect'])];
+      const notVerified = [...details(['verify']), ...transientOf(['verify'])];
+      const transient = STAGES.reduce((n, st) => n + outcome.stages[st].transient.length, 0);
       const deferrals = [deferralLine(notLocated.length, deferralHosts(notLocated)), deferralLine(notVerified.length, deferralHosts(notVerified), 'verified')];
       const deferral = deferrals.filter((d): d is string => d !== null);
       const notification = coverageNotification({ ...registry, newVerified: projection.newVerified }, deferral);
@@ -314,7 +337,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         located,
         platforms: Object.fromEntries(Object.entries(platforms).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))),
         verdicts,
-        deferred: { byStage, total: totalDeferred, hosts, disabledHosts },
+        deferred: { byStage, total: totalDeferred, hosts, disabledHosts, transient },
         projection,
         registry,
         problems,
@@ -357,6 +380,7 @@ export function formatCoverageSummary(s: CoverageResult): string {
     `verdicts: verified ${s.verdicts.verified}, proposed ${s.verdicts.proposed}, failed ${s.verdicts.failed}`,
     `not located: ${s.projection.unlocated.counted} (seed lists, counted only); picks not located (proposed): ${s.projection.unlocated.proposed}; live companies not located (a failed week): ${s.projection.unlocated.failed}`,
     `deferred by a disabled host: ${s.deferred.total} (${kv(s.deferred.byStage)}), behind ${s.deferred.hosts.length} host(s); hosts disabled in the run: ${s.deferred.disabledHosts}`,
+    `left failed for a transient reason (asked again next run): ${s.deferred.transient}`,
     `registry: verified ${s.registry.verified}, proposed ${s.registry.proposed}, failing ${s.registry.failing}, failed ${s.registry.failed}, rejected ${s.registry.rejected}`,
   ];
   if (s.problems.length > 0) {
