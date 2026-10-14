@@ -17,10 +17,13 @@ const root = join(import.meta.dirname, '../..');
 const offers = join(homedir(), '.jobpilot', 'pack', 'offers.yaml');
 const NOT_SCANNED = /^(?:tests|evals)\//;
 
-/** Every spelling of `n` a document might use: plain, 3-digit groups, Indian groups, and lakh (`30 LPA`, `30L`). */
+/**
+ * Every spelling of `n` a document might use: plain, 3-digit groups, Indian groups, in rupees and in paise (x100), and
+ * lakh (`30 LPA`, `30L`).
+ */
 function spellings(n: number): RegExp[] {
   const esc = (s: string): string => s.replace(/[.,]/g, (c) => `\\${c}`);
-  const plain = [String(n), n.toLocaleString('en-US'), n.toLocaleString('en-IN')].map((v) => new RegExp(`(?<![0-9,.])${esc(v)}(?![0-9])`));
+  const plain = [n, n * 100].flatMap((x) => [String(x), x.toLocaleString('en-US'), x.toLocaleString('en-IN')]).map((v) => new RegExp(`(?<![0-9,.])${esc(v)}(?![0-9])`));
   const lakh = new RegExp(`(?<![0-9.])${esc(String(n / 1e5))}\\s*(?:L\\b|LPA|lakh|lac)`, 'i');
   return [...plain, lakh];
 }
