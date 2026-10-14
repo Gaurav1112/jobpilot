@@ -102,6 +102,38 @@ const small = (platform: string) => {
     egress: f.spec.egress,
   };
 };
+/**
+ * Task 11b: a board of one of the watchlist's API adapters (src-greenhouse, src-lever, src-ashby) as coverage stores it,
+ * its documented board API URL (signatures.ts): the ref is the board slug, exactly the watchlist's `slug`. Greenhouse and
+ * Lever slugs are lower-cased (their APIs are); an Ashby board name keeps its case (it may hold spaces). Any other URL,
+ * host, scheme or port: no board.
+ */
+function apiBoardRef(host: string, path: RegExp, lower: boolean): (url: string) => string | null {
+  return (url) => {
+    let u: URL;
+    try {
+      u = new URL(url);
+    } catch {
+      return null;
+    }
+    if (u.protocol !== 'https:' || u.port !== '' || u.hostname !== host) return null;
+    const m = path.exec(u.pathname);
+    if (m === null) return null;
+    let slug: string;
+    try {
+      slug = decodeURIComponent(m[1] as string).trim();
+    } catch {
+      return null;
+    }
+    if (slug === '' || /[/|\u0000-\u001f]/u.test(slug)) return null;
+    return lower ? slug.toLowerCase() : slug;
+  };
+}
+/** The watchlist adapters a registry board is seeded into (their egress is their one documented API host). */
+export const API_BOARD_PLATFORMS: ReadonlySet<string> = new Set(['greenhouse', 'lever', 'ashby']);
+/** One board per platform and slug, case aside: how a watchlist entry and a registry board are told to be the same. */
+const apiBoardKey = (platform: string, slug: string): string => `${platform}\u0000${slug.toLowerCase()}`;
+
 const REGISTRY_PLATFORMS = {
   workday: { ref: (url: string) => mapNull(workdayBoardOfUrl(url), workdayRef), hosts: (ref: string) => one(parseWorkdayRef(ref)?.host), egress: WORKDAY_EGRESS },
   eightfold: { ref: eightfoldRegistryRef, hosts: (ref: string) => one(parseEightfoldRef(ref)?.host), egress: EIGHTFOLD_EGRESS },
@@ -122,6 +154,10 @@ const REGISTRY_PLATFORMS = {
   pinpoint: small('pinpoint'),
   rippling: small('rippling'),
   gem: small('gem'),
+  // Task 11b: the watchlist's own API adapters, unchanged; no symbolic egress (each contract names its one API host)
+  greenhouse: { ref: apiBoardRef('boards-api.greenhouse.io', /^\/v1\/boards\/([^/]+)\/jobs\/?$/u, true), hosts: (): string[] => [], egress: null },
+  lever: { ref: apiBoardRef('api.lever.co', /^\/v0\/postings\/([^/]+)\/?$/u, true), hosts: (): string[] => [], egress: null },
+  ashby: { ref: apiBoardRef('api.ashbyhq.com', /^\/posting-api\/job-board\/([^/]+)\/?$/u, false), hosts: (): string[] => [], egress: null },
 } as const;
 
 /** A jsonld-sitemap board's ref: the stored board URL's host, with the slug's path prefix when the slug names that host. */
@@ -181,8 +217,9 @@ export function readsDaily(c: RegistryCompany & { readonly status: string; reado
 /**
  * The boards of the verified registry companies (`verifiedCompanies()`: verified or failing, never rejected) whose
  * platform has a daily adapter in this build (Task 6: Workday; Task 7: Eightfold, Oracle; Task 8: iCIMS,
- * SuccessFactors, SmartRecruiters, jsonld-sitemap), sorted by platform then
- * ref; one per platform and ref (the first name wins). A row whose stored board URL is not a board of its platform is
+ * SuccessFactors, SmartRecruiters, jsonld-sitemap; Task 9: the small platforms; Task 11b: Greenhouse, Lever and Ashby, read
+ * by the watchlist's own adapters), sorted by platform then
+ * ref; one per platform and ref (Greenhouse, Lever and Ashby: ref case aside) (the first name wins). A row whose stored board URL is not a board of its platform is
  * left out.
  */
 export function registryBoards(companies: readonly RegistryCompany[]): RegistryBoard[] {
@@ -190,7 +227,7 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
   for (const c of companies) {
     const board = registryBoardOf(c);
     if (board === null) continue;
-    const key = `${board.platform} ${board.ref}`;
+    const key = API_BOARD_PLATFORMS.has(board.platform) ? apiBoardKey(board.platform, board.ref) : `${board.platform} ${board.ref}`;
     if (!out.has(key)) out.set(key, board);
   }
   // by platform, then the board itself (an Eightfold API variant prefix does not move a board)
@@ -245,7 +282,7 @@ export function registryEgressSets(boards: readonly RegistryBoard[]): EgressSets
   const sets: Record<string, string[]> = {};
   for (const [platform, p] of Object.entries(REGISTRY_PLATFORMS)) {
     const hosts = [...new Set(boards.filter((b) => b.platform === platform).flatMap((b) => p.hosts(b.ref)))].sort();
-    if (hosts.length > 0) sets[p.egress] = hosts;
+    if (p.egress !== null && hosts.length > 0) sets[p.egress] = hosts;
   }
   return sets;
 }
@@ -333,12 +370,12 @@ const HTTP_BUDGETS: readonly {
   readonly applies: (w: readonly WatchLike[], f: readonly string[], boards: readonly RegistryBoard[]) => boolean;
 }[] = [
   // the cap pages plus the confirming request and its one re-request
-  { agent: srcLever.contract.id, perRequestMs: LEVER_TIMEOUT_MS / (LEVER_MAX_PAGES + 2), applies: (w) => w.some((e) => e.ats === 'lever') },
+  { agent: srcLever.contract.id, perRequestMs: LEVER_TIMEOUT_MS / (LEVER_MAX_PAGES + 2), applies: (w, _f, b) => w.some((e) => e.ats === 'lever') || b.some((x) => x.platform === 'lever') },
   { agent: srcJobicy.contract.id, perRequestMs: JOBICY_TIMEOUT_MS / JOBICY_MAX_REQUESTS, applies: (_w, f) => f.includes(JOBICY_FEED) },
   { agent: srcHimalayas.contract.id, perRequestMs: HIMALAYAS_TIMEOUT_MS / HIMALAYAS_MAX_PAGES, applies: (_w, f) => f.includes(HIMALAYAS_FEED) },
   // one request per board, but boards on one host queue behind each other's interval
-  { agent: srcGreenhouse.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w) => w.some((e) => e.ats === 'greenhouse') },
-  { agent: srcAshby.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w) => w.some((e) => e.ats === 'ashby') },
+  { agent: srcGreenhouse.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w, _f, b) => w.some((e) => e.ats === 'greenhouse') || b.some((x) => x.platform === 'greenhouse') },
+  { agent: srcAshby.contract.id, perRequestMs: SOURCE_TIMEOUT_MS, applies: (w, _f, b) => w.some((e) => e.ats === 'ashby') || b.some((x) => x.platform === 'ashby') },
   // robots.txt, the list pages (with a scoped re-read) and the detail budget, each at least 2 s apart
   { agent: 'src-workday', perRequestMs: Math.floor(WORKDAY_TIMEOUT_MS / WORKDAY_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'workday') },
   // robots.txt, the careers page, discovery, the list pages and the details, at the variant's spacing (v2 2 s, PCSX 10 s): the tighter v2 budget
@@ -411,6 +448,17 @@ export function dailySeeds(
     if (!Object.hasOwn(FEED_SOURCES, feed)) throw new Error(`feeds.yaml: unknown feed ${feed} (known: ${knownFeeds().join(', ')})`);
     add({ ats: 'feed', slug: feed, company: feed, runDate });
   }
-  for (const b of boards) add({ ats: b.platform, slug: b.ref, company: b.company, runDate });
+  // Task 11b: a registry Greenhouse, Lever or Ashby board the watchlist already reads (same slug, case aside) is not sent
+  // again: the watchlist's request stays exactly as it is (its company name, its step key). The watchlist is the user's
+  // own pick, so it is read even when the registry has the company rejected (a rejected row is never a board here).
+  const watched = new Set(pack.watchlist.filter((w) => API_BOARD_PLATFORMS.has(w.ats)).map((w) => apiBoardKey(w.ats, w.slug)));
+  for (const b of boards) {
+    if (API_BOARD_PLATFORMS.has(b.platform)) {
+      const k = apiBoardKey(b.platform, b.ref);
+      if (watched.has(k)) continue;
+      watched.add(k);
+    }
+    add({ ats: b.platform, slug: b.ref, company: b.company, runDate });
+  }
   return seeds;
 }

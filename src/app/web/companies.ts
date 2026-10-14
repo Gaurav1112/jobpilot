@@ -110,8 +110,8 @@ function effectOf(c: Company): { readonly readDaily: boolean; readonly text: str
   if (rejected) return { readDaily: false, text: 'Not read: you rejected it, and the weekly run never verifies it again.' };
   const live = c.status === 'verified' || c.status === 'failing';
   if (readsDaily(c)) return { readDaily: true, text: c.status === 'failing' ? 'Still read daily, so it can recover.' : 'Read daily.' };
-  if (live && (c.platform === null || c.boardUrl === null)) return { readDaily: false, text: 'Not read daily: no board is known for it yet (the next coverage run, or Resolve now, looks again).' };
-  if (live) return { readDaily: false, text: `Not read daily: its ${companyPlatformName(c.platform as string)} board is not one the daily run reads in this build.` };
+  // every platform has a daily reader (Task 11b): a live company not read has no readable board on record
+  if (live) return { readDaily: false, text: 'Not read daily: no board is known for it yet (the next coverage run, or Resolve now, looks again).' };
   if (c.status === 'proposed' && c.userOverride === 'approved') return { readDaily: false, text: 'Approved; nothing is read until a board is found (the next coverage run, or Resolve now).' };
   if (c.status === 'proposed') return { readDaily: false, text: 'Not read until you approve it.' };
   return { readDaily: false, text: 'Not read: its board did not pass the check.' };

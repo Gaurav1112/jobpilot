@@ -664,7 +664,11 @@ describe('fix round 1: rendering', () => {
       const li = body.slice(body.indexOf(`data-company="${c.companyKey}"`), body.indexOf('</li>', body.indexOf(`data-company="${c.companyKey}"`)));
       expect(/Read daily\.|Still read daily/.test(li), c.companyKey).toBe(daily.has(c.companyKey));
     }
-    expect(daily.has('ghco.example')).toBe(false);
+    // Task 11b: a verified Greenhouse company with its board is read daily, by the existing src-greenhouse
+    expect(daily.has('ghco.example')).toBe(true);
+    const gh = body.slice(body.indexOf('data-company="ghco.example"'), body.indexOf('</li>', body.indexOf('data-company="ghco.example"')));
+    expect(gh).toContain('Read daily.');
+    expect(body).not.toContain('not one the daily run reads in this build');
     expect(daily.has('noboard.example')).toBe(false);
     expect(daily.has('acme.example')).toBe(true);
   });

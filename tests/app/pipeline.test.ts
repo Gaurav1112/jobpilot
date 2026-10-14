@@ -108,6 +108,8 @@ describe('the daily pipeline wiring', () => {
     expect(boards).toEqual([
       { platform: 'workday', company: 'NVIDIA', ref: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite' },
       { platform: 'workday', company: 'Salesforce', ref: 'salesforce.wd12.myworkdayjobs.com/salesforce/External_Career_Site' },
+      // Task 11b: a registry Greenhouse board is read daily too, by the watchlist's own src-greenhouse
+      { platform: 'greenhouse', company: 'Acme', ref: 'acme' },
     ]);
     const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: ['himalayas'] } }, '2026-10-14', undefined, boards);
     expect(seeds.map((s) => `${s.ats} ${s.slug}`)).toEqual([
@@ -115,6 +117,7 @@ describe('the daily pipeline wiring', () => {
       'feed himalayas',
       'workday nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite',
       'workday salesforce.wd12.myworkdayjobs.com/salesforce/External_Career_Site',
+      'greenhouse acme',
     ]);
     expect(seeds[2]).toEqual({ ats: 'workday', slug: 'nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite', company: 'NVIDIA', runDate: '2026-10-14' });
     expect(dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', 2, boards)[0]).toMatchObject({ attempt: 2 });
