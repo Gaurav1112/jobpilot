@@ -94,7 +94,7 @@ describe('the operator guide', () => {
   it('every option the guide uses is in that command\'s --help', () => {
     const uses = [
       ['run', '--if-due'], ['run', '--refresh'], ['run', '--no-notify'], ['run', '--offline-fixtures'], ['run-coverage', '--if-due'], ['run-coverage', '--slice-minutes'],
-      ['coverage', 'probe', '--days'], ['coverage', 'probe', '--json'], ['serve', '--port'], ['pack', 'import', '--dry-run'], ['pack', 'import', '--forbid'], ['schedule', 'run-now', '--freelance'], ['schedule', 'run-now', '--coverage'],
+      ['coverage', 'probe', '--days'], ['coverage', 'probe', '--json'], ['serve', '--port'], ['pack', 'import', '--dry-run'], ['pack', 'import', '--forbid'], ['schedule', 'run-now', '--freelance'], ['schedule', 'run-now', '--coverage'], ['schedule', 'install', '--coverage-now'],
       ['audit', 'verify', '--db'], ['quarantined', '--db'], ['resume', '--db'],
     ] as const;
     for (const u of uses) {
@@ -104,6 +104,14 @@ describe('the operator guide', () => {
       expect(help(path).out, `${path.join(' ')} ${opt}`).toContain(opt);
     }
   }, 120_000);
+
+  it('final review M-B7: a bad --limit or --slice-minutes is a usage error (commander\'s), not a crash', () => {
+    for (const [opt, v] of [['--limit', 'abc'], ['--slice-minutes', '0']] as const) {
+      const r = spawnSync(process.execPath, ['--import', 'tsx', join(root, 'src/bin.ts'), 'run-coverage', opt, v], { cwd: root, encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: '/nonexistent-jobpilot-home' } });
+      expect(r.stderr, opt).toMatch(new RegExp(`^error: option '${opt} <n>' argument '${v}' is invalid\\. ${opt} must be`, 'u'));
+      expect(r.status, opt).toBe(1);
+    }
+  }, 60_000);
 
   it('does not point at the build tooling or mention the user\'s employer or client', () => {
     expect(guide).not.toMatch(/\.superpowers|\bskills?\b|CLAUDE\.md|AGENTS\.md|subagent/iu);

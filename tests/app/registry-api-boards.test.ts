@@ -39,6 +39,19 @@ describe('registryBoardOf / readsDaily: Greenhouse, Lever, Ashby', () => {
     expect(registryBoardOf(row('ashby', 'http://api.ashbyhq.com/posting-api/job-board/acmeco', 'acmeco'))).toBeNull();
   });
 
+  it('final review #55 (Task 11b N2, N3, N8): a port, a slash, a pipe or a control character is no board; the Lever path is anchored', () => {
+    // N2: an explicit port is refused (the default https port is normalised away by URL itself)
+    expect(registryBoardOf(row('greenhouse', 'https://boards-api.greenhouse.io:8443/v1/boards/acmeco/jobs', 'acmeco'))).toBeNull();
+    expect(registryBoardOf(row('lever', 'https://api.lever.co:444/v0/postings/acmeco', 'acmeco'))).toBeNull();
+    // N3: the decoded slug may not hold a slash, a pipe or a control character, and may not be blank
+    for (const bad of ['acme%2Fco', 'acme%7Cco', 'acme%0Aco', '%20%20']) expect(registryBoardOf(row('ashby', `${AB}/${bad}`, 'x')), bad).toBeNull();
+    expect(registryBoardOf(row('ashby', `${AB}/%E0%A4%A`, 'x'))).toBeNull(); // malformed escape
+    // N8: the Lever path is anchored at both ends: no prefix, no extra segment
+    expect(registryBoardOf(row('lever', 'https://api.lever.co/x/v0/postings/acmeco', 'acmeco'))).toBeNull();
+    expect(registryBoardOf(row('lever', `${LV}/acmeco/extra`, 'acmeco'))).toBeNull();
+    expect(registryBoardOf(row('lever', `${LV}/acmeco/`, 'acmeco'))).toEqual({ platform: 'lever', company: 'Reg Co', ref: 'acmeco' });
+  });
+
   it('read daily: verified, approved or failing; never rejected', () => {
     const b = `${AB}/acmeco`;
     expect(readsDaily(row('ashby', b, 'acmeco'))).toBe(true);

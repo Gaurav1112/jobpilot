@@ -286,12 +286,12 @@ program
   .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
   .option('--limit <n>', 'for checks only: locate every pick plus the first <n> other candidates (companyKey order); the scheduled run never sets it', (v: string) => {
     const n = Number(v);
-    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--limit must be a whole number, not ${v}`);
+    if (!Number.isSafeInteger(n) || n < 0) throw new InvalidArgumentError(`--limit must be a whole number, not ${v}`);
     return n;
   })
   .option('--slice-minutes <n>', 'for checks only: pause after <n> minutes instead of the 90-minute slice (the next run-coverage continues the run)', (v: string) => {
     const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) throw new Error(`--slice-minutes must be a positive number, not ${v}`);
+    if (!Number.isFinite(n) || n <= 0) throw new InvalidArgumentError(`--slice-minutes must be a positive number, not ${v}`);
     return n;
   })
   .option('--no-yield', 'for checks only: never pause for an owed daily or freelance run (the slice limit still applies)')

@@ -433,7 +433,8 @@ export function registryPickItems(app: AppStore, packPicks: readonly { readonly 
 
 export const companySeedContract = defineContract({
   id: 'company-seed',
-  version: '1.0.0',
+  // 1.1.0: a 429 is no longer retried (final review N1: a refusal is never retried around)
+  version: '1.1.0',
   description: 'Builds the candidate companies for a coverage run from one source',
   skills: ['company-seed'],
   team: 'coverage-seed',
@@ -445,7 +446,7 @@ export const companySeedContract = defineContract({
   dataClasses: { in: ['P0'], out: ['P0'] },
   budget: { usdPerCall: 0, usdPerRun: 0 },
   timeoutMs: 60_000,
-  retry: { max: 2, on: ['rate_limit', 'overloaded', 'network', 'timeout'], backoffMs: [2000, 8000] },
+  retry: { max: 2, on: ['overloaded', 'network', 'timeout'], backoffMs: [2000, 8000] },
 });
 
 function http(ctx: AgentContext): NonNullable<AgentContext['http']> {
