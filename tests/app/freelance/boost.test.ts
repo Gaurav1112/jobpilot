@@ -145,3 +145,51 @@ describe('the dashboard says where pay came from and that a ceiling is a ceiling
     expect(rateLabel(r({ maxUsdH: 130, method: 'stated-ceiling' }), basis('description'))).toBe('up to $130/h (stated ceiling only) in the posting text');
   });
 });
+
+const fl = (o: { min: number; max: number; currency?: string; rate?: number; text?: string; id?: string }): RawGig => ({
+  platform: 'freelancer',
+  sourceId: o.id ?? '7001',
+  raw: {
+    title: 'Backend API in Go', description: o.text ?? 'Build and maintain a REST API in Go with PostgreSQL.', preview_description: null, type: 'hourly',
+    budget: { minimum: o.min, maximum: o.max }, currency: { code: o.currency ?? 'USD', exchange_rate: o.rate ?? 1 }, time_submitted: 1791700000,
+    seo_url: `go/backend-api-${o.id ?? '7001'}`, jobs: [{ name: 'Golang' }, { name: 'PostgreSQL' }], local: false, bid_stats: { bid_count: 4 }, owner_id: null, hourly_project_info: null,
+  },
+});
+
+describe('approved rule change (2026-10-14): Freelancer hourly at or above the floor with no stated hours goes to Contracts', () => {
+  it('eligible, with the note "hours not stated; you set them"', () => {
+    const d = decide(normalizeGig(fl({ min: FLOOR + 5, max: FLOOR + 20 })));
+    expect(d).toEqual({ verdict: 'eligible', reasons: [], notes: ['hours not stated; you set them'] });
+  });
+
+  it('decided on the converted USD rate, never the raw figure: INR 4,000/h at the fixture table is about $48/h, INR 1,250/h about $15/h', () => {
+    expect(decide(normalizeGig(fl({ min: 3000, max: 4000, currency: 'INR', rate: 0.012 }))).verdict).toBe('eligible');
+    expect(decide(normalizeGig(fl({ min: 750, max: 1250, currency: 'INR', rate: 0.012 })))).toMatchObject({ verdict: 'rejected' });
+  });
+
+  it('below the floor the hours stay unknown: a negotiable low rate is review on pay AND hours', () => {
+    const d = decide(normalizeGig(fl({ min: FLOOR - 20, max: FLOOR - 5, text: 'Build a REST API in Go. The rate is negotiable.' })));
+    expect(d.verdict).toBe('review');
+    expect(d.reasons).toEqual(['hours-unclear', 'rate-unclear']);
+    expect(d.notes).not.toContain('hours not stated; you set them');
+  });
+
+  it('below the floor it is still rejected on pay', () => {
+    expect(decide(normalizeGig(fl({ min: FLOOR - 20, max: FLOOR - 5 })))).toMatchObject({ verdict: 'rejected', reasons: [`rate-below-floor:${FLOOR - 5}`] });
+  });
+
+  it('stated full-time work still rejects; a hedged full-time mention stays in review', () => {
+    expect(decide(normalizeGig(fl({ min: 60, max: 80, text: 'We need a full-time developer for this API.' })))).toMatchObject({ verdict: 'rejected', reasons: ['hours-over-cap'] });
+    expect(decide(normalizeGig(fl({ min: 60, max: 80, text: 'Looking for a full-time or part-time developer for this API.' }))).verdict).toBe('review');
+  });
+
+  it('ambiguous per-week figures are stated hours, not "not stated": they stay in review', () => {
+    const d = decide(normalizeGig(fl({ min: 60, max: 80, text: 'About 5-10 hours per week now, maybe 30 hours per week later.' })));
+    expect(d).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
+  });
+
+  it('nothing else changes: a non-Freelancer contract with a stated rate and no hours stays in review', () => {
+    const g = normalizeGig(boards({ descriptionText: 'Pay: $150/hr. Remote contract.' }));
+    expect(decide(g)).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
+  });
+});

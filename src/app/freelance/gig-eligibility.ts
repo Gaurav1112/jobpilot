@@ -42,6 +42,10 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *      in its clause. "We're a full-time remote team", "our full-time engineers", "hiring full-time employees" fit
  *      no shape and count for nothing; anything else is `hours not stated - verify`;
  *    - "dedicated" alone never rejects.
+ *    - freelance-boost (the one approved rule change, user 2026-10-14): a Freelancer.com hourly contract with a
+ *      `stated` rate whose `maxUsdH` (after FX) is at or above `rateFloorUsdHour`, with no per-week hours figure
+ *      anywhere in its text (not even an ambiguous one) and no full-time wording tied to it, passes the hours rule with the note `hours not stated; you set them` (Freelancer
+ *      bills the hours the freelancer logs). Stated full-time still rejects; a hedged full-time mention stays review.
  * 6. overlap-outside-ist-window: only a CLOSED requirement sentence on the candidate (see "closed requirement sentences"
  *    below): "You must be online 9am-5pm PST", "Must be available ...", "We need you to be online ...", "Working hours
  *    ... are required". Fixed offsets (EST -5, EDT -4, ET -4, CST -6, PST -8, PDT -7, PT -7, CET +1, CEST +2, GMT/UTC 0,
@@ -347,7 +351,20 @@ function fullTime(text: string): 'yes' | 'unclear' | 'no' | 'softened' {
   return result;
 }
 
-export function hoursOutcome(g: Gig, cap: number): Outcome {
+/** freelance-boost, the one approved rule change (user, 2026-10-14). */
+export const NOTE_YOU_SET_HOURS = 'hours not stated; you set them';
+
+/**
+ * Freelancer.com bills hourly projects by the hours the freelancer logs, so the freelancer sets the weekly limit: an
+ * hourly Freelancer contract whose stated USD rate (after FX) reaches the floor needs no stated hours (user decision
+ * 2026-10-14). Only that: every other source, and any rate that is not `stated`, keeps the review.
+ */
+export function youSetHours(r: RatedGig, floor: number): boolean {
+  const { gig, rate } = r;
+  return gig.platform === 'freelancer' && gig.kind === 'contract' && gig.budget.type === 'hourly' && rate.method === 'stated' && rate.maxUsdH !== null && rate.maxUsdH >= floor;
+}
+
+export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
   if (g.kind !== 'contract') return PASS;
   const text = `${g.title}\n${g.description}`;
   let min = g.hoursPerWeek.min;
@@ -369,7 +386,13 @@ export function hoursOutcome(g: Gig, cap: number): Outcome {
     return ft === 'yes' ? reviewOf('hours-unclear', NOTE_HOURS_CONFLICT) : PASS;
   }
   if (ft === 'softened') return softened();
-  return ft === 'yes' ? rejectOf('hours-over-cap') : reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
+  if (ft === 'yes') return rejectOf('hours-over-cap');
+  // No figure and no full-time wording at all ('unclear', a hedged full-time mention, stays review).
+  // Only when the text states no per-week figure at all: ambiguous figures ("5-10 h/week now, maybe 40 later") are
+  // stated hours, not "not stated", and stay review.
+  const anyFigure = [...text.matchAll(HOURS_PER_WEEK)].length > 0 || [...text.matchAll(PLUS_HOURS)].length > 0;
+  if (ft === 'no' && setByYou && !anyFigure) return noteOf(NOTE_YOU_SET_HOURS);
+  return reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
 }
 
 /* ------------------------------------------------------------------ 6. IST overlap */
@@ -614,7 +637,7 @@ export function decideGig(r: RatedGig, pack: GigPack): GigDecision {
   const outcomes = [
     roleOutcome,
     locationOutcome(g),
-    hoursOutcome(g, pack.freelance.maxHoursPerWeek),
+    hoursOutcome(g, pack.freelance.maxHoursPerWeek, youSetHours(r, pack.freelance.rateFloorUsdHour)),
     overlapOutcome(g, pack.freelance.istWindow),
     exclusiveOutcome(g),
     licensedOutcome(g),

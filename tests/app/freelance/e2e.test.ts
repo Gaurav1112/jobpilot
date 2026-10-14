@@ -179,7 +179,9 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
  * Freelancer gigs); the top is the contract (a stated rate ranks before an unknown one), its title cut to 40 characters.
  */
 // 2, not 3, since Task 10 fix round 1: "Cross-Platform Multi-Purpose App Build" backs no term with a fact (covered 0/3) and goes to review.
-const EXPECTED_NOTIFICATION = '2 new gigs, 1 at ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
+// 3, not 2, since freelance-boost (the approved rule, user 2026-10-14): the recorded Freelancer hourly "Java & Python
+// Data Pipelines" ($50/h max, no hours stated) now goes to Contracts with "hours not stated; you set them".
+const EXPECTED_NOTIFICATION = '3 new gigs, 2 at ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
 
 describe('run-freelance --if-due', () => {
   const deps = (home: string, at: string, out: string[]) => ({
