@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { liveHolder } from './lock.js';
 import { homePaths } from './pack/paths.js';
 import { istDate } from './run.js';
-import { AppStore } from './store/app-store.js';
+import { AppStore, SchemaBehindError } from './store/app-store.js';
 
 /**
  * When the daily run is owed (`jobpilot run --if-due`). launchd starts the daily job at load and every half hour, and
@@ -255,8 +255,15 @@ export function due(spec: DueSpec, home: string, now: string, opts: { readonly i
   if (!early.due) return early;
   const db = homePaths(home).db;
   if (!existsSync(db)) return early;
-  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock
-  const app = AppStore.open(db, { schema: 'as-is' });
+  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock; one it
+  // cannot read without migrating (a kernel schema behind) counts as not yet run: the run starts and migrates it
+  let app: AppStore;
+  try {
+    app = AppStore.open(db, { schema: 'as-is' });
+  } catch (e) {
+    if (e instanceof SchemaBehindError) return early;
+    throw e;
+  }
   try {
     const r = runsIn(app, `${spec.runPrefix}${keyOf(now, w.id)}`);
     return { ...decide({ now, completedToday: r.completed, startedToday: r.started, failuresToday }, start, wording), window };
@@ -292,8 +299,15 @@ function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): D
   if (!early.due) return early;
   const db = homePaths(home).db;
   if (!existsSync(db)) return early;
-  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock
-  const app = AppStore.open(db, { schema: 'as-is' });
+  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock; one it
+  // cannot read without migrating (a kernel schema behind) counts as not yet run: the run starts and migrates it
+  let app: AppStore;
+  try {
+    app = AppStore.open(db, { schema: 'as-is' });
+  } catch (e) {
+    if (e instanceof SchemaBehindError) return early;
+    throw e;
+  }
   try {
     let completed = false;
     let started = false;

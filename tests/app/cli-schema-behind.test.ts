@@ -72,6 +72,34 @@ describe('a schema behind the code: only locked commands migrate', () => {
     }
   });
 
+  it('a KERNEL schema behind the code is refused in every mode but migrate (as-is too); the due check then says owed', () => {
+    const k = mkdtempSync(join(tmpdir(), 'jobpilot-behind-kernel-'));
+    try {
+      chmodSync(k, 0o700);
+      const path = join(k, 'jobpilot.db');
+      AppStore.open(path).close();
+      const d = new Database(path);
+      d.pragma('user_version = 0');
+      d.close();
+      const uv = (): number => {
+        const v = new Database(path, { readonly: true });
+        try {
+          return v.pragma('user_version', { simple: true }) as number;
+        } finally {
+          v.close();
+        }
+      };
+      expect(() => AppStore.open(path, { schema: 'as-is' })).toThrow(SchemaBehindError);
+      expect(() => AppStore.open(path)).toThrow(SchemaBehindError);
+      expect(uv()).toBe(0);
+      const r = due(DAILY_DUE, k, '2026-10-14T02:00:00.000Z');
+      expect(r.due).toBe(true);
+      expect(uv()).toBe(0);
+    } finally {
+      rmSync(k, { recursive: true, force: true });
+    }
+  });
+
   it('the due check of a scheduled run reads it without migrating', () => {
     expect(() => due(DAILY_DUE, home, '2026-10-14T02:00:00.000Z')).not.toThrow();
     expect(state()).toEqual(BEHIND);

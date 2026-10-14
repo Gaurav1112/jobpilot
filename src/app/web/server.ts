@@ -95,6 +95,7 @@ export interface DashboardTestHooks {
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
 const DOWNLOAD_RECORD_TIMEOUT_MS = 200;
 
+export const NO_DATABASE_MESSAGE = 'no database yet; the first run creates it';
 export const UPGRADE_MESSAGE = 'jobpilot is being upgraded; the next run (or jobpilot facts list) applies it';
 /** Idle time after the last request before the dashboard's -wal maintenance runs. */
 const IDLE_MAINTENANCE_MS = 15_000;
@@ -697,9 +698,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));
   app.onError((err, c) => {
     if (err instanceof UpgradePending || err instanceof SchemaBehindError) {
-      if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(UPGRADE_MESSAGE, 503, { 'retry-after': '30' });
+      const missing = err instanceof UpgradePending && err.why === 'missing';
+      if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(missing ? NO_DATABASE_MESSAGE : UPGRADE_MESSAGE, 503, { 'retry-after': '30' });
       c.header('retry-after', '30');
-      return page(c, 'jobs', 'Upgrading', [], html`<h1>One moment</h1><p>jobpilot is being upgraded; the next run (or <code>jobpilot facts list</code>) applies it. This page works again as soon as it has.</p>`, 503);
+      return missing
+        ? page(c, 'jobs', 'No database yet', [], html`<h1>Nothing to show yet</h1><p>There is no database yet; the first run creates it (<code>jobpilot run</code>, or wait for the scheduled one).</p>`, 503)
+        : page(c, 'jobs', 'Upgrading', [], html`<h1>One moment</h1><p>jobpilot is being upgraded; the next run (or <code>jobpilot facts list</code>) applies it. This page works again as soon as it has.</p>`, 503);
     }
     if (isBusy(err)) {
       if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(BUSY_MESSAGE, 503, { 'retry-after': '5' });

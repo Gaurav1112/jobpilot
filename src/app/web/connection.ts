@@ -108,7 +108,8 @@ export class SharedStore {
     if (this.store === undefined) {
       // the dashboard never migrates (review I2): a schema behind this code waits for a run or the CLI (under the lock)
       const state = schemaState(this.path);
-      if (state === 'missing' || state === 'empty' || state === 'behind') throw new UpgradePending();
+      if (state === 'missing' || state === 'empty') throw new UpgradePending('missing');
+      if (state === 'behind') throw new UpgradePending('behind');
       const id = fileIdOf(this.path);
       let s: AppStore;
       try {
@@ -165,7 +166,8 @@ const isBusy = (e: unknown): boolean => typeof (e as { code?: unknown })?.code =
 /** The database is behind this code (or not there yet): a run or the CLI upgrades it; the dashboard answers 503. */
 export class UpgradePending extends Error {
   override readonly name = 'UpgradePending';
-  constructor() {
-    super('jobpilot is being upgraded; the next run (or jobpilot facts list) applies it');
+  /** `missing`: no database (or an empty one) yet; `behind`: a schema behind this code. */
+  constructor(readonly why: 'missing' | 'behind') {
+    super(why === 'missing' ? 'no database yet; the first run creates it' : 'jobpilot is being upgraded; the next run (or jobpilot facts list) applies it');
   }
 }

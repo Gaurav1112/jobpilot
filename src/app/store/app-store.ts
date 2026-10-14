@@ -50,6 +50,15 @@ export class SchemaBehindError extends Error {
   }
 }
 
+function kernelVersion(dbPath: string): number {
+  const k = Store.openReadOnly(dbPath);
+  try {
+    return k.db.pragma('user_version', { simple: true }) as number;
+  } finally {
+    k.close();
+  }
+}
+
 /** missing: no file; empty: no tables yet; current, behind or newer than this code's kernel and app migrations. */
 export type SchemaState = 'missing' | 'empty' | 'current' | 'behind' | 'newer';
 
@@ -403,6 +412,8 @@ export class AppStore {
     // re-review: only runs (inside their lock) and `facts list` (`upgradeUnderLock`) migrate an existing database
     const state = onDisk ? schemaState(path) : 'missing';
     if (state === 'behind' && mode === 'current') throw new SchemaBehindError();
+    // as-is reads an older APP schema, but never lets Store.open apply a KERNEL migration (only lock-holders migrate)
+    if (state === 'behind' && mode === 'as-is' && kernelVersion(path) < MIGRATIONS.length) throw new SchemaBehindError();
     const kernel = Store.open(path, {
       ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       onLooseFile: (f, why) => warnOnce(why === 'link' ? fileWarning(f) : homeWarning(dirname(path))),

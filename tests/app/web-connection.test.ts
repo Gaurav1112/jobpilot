@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AppStore } from '../../src/app/store/app-store.js';
+import { AppStore, SchemaBehindError } from '../../src/app/store/app-store.js';
 import { runCoverage } from '../../src/app/coverage/run.js';
 import { liveHolder, withLock } from '../../src/app/lock.js';
 import { offlineProviders } from '../../src/app/offline.js';
@@ -197,6 +197,13 @@ describe('the dashboard never migrates (review I2): only runs and the CLI do, un
     }
   });
 
+  it('P11: a SchemaBehindError from any route (e.g. Resolve now opening the DB) is the 503 upgrade page, not a 500', async () => {
+    const d = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { beforeRoute: () => { throw new SchemaBehindError(); } });
+    const r = await d.request('/companies', { headers: { host: 'localhost', cookie: SID } });
+    expect(r.status).toBe(503);
+    expect(await r.text()).toContain('jobpilot is being upgraded');
+  });
+
   it('a home without a database: the dashboard starts, creates nothing, and answers 503 until a run creates it', async () => {
     const fresh = mkdtempSync(join(tmpdir(), 'jobpilot-conn-fresh-'));
     try {
@@ -204,6 +211,9 @@ describe('the dashboard never migrates (review I2): only runs and the CLI do, un
       const d = createTestDashboard({ home: fresh, clock: { now: () => NOW } }, {});
       const r = await d.request('/', { headers: { host: 'localhost', cookie: SID } });
       expect(r.status).toBe(503);
+      const body = await r.text();
+      expect(body).toContain('no database yet; the first run creates it');
+      expect(body).not.toContain('being upgraded');
       expect(existsSync(join(fresh, 'jobpilot.db'))).toBe(false);
     } finally {
       rmSync(fresh, { recursive: true, force: true });

@@ -317,6 +317,22 @@ describe('re-review: the marker is compare-and-set, and fails closed', () => {
     });
   });
 
+  it('P6: a pass on an older snapshot never moves the full-check checkpoint backwards', () => {
+    twoConnections((walker, other) => {
+      const restore = midWalk(walker, () => {
+        // meanwhile: a run appends and another full check (audit verify) reaches further and records it
+        for (let i = 6; i < 8; i++) other.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+        expect(fullChainCheck(other.kernel, T1)).toMatchObject({ ok: true, events: 8 });
+      });
+      try {
+        expect(fullChainCheck(walker.kernel, T2)).toMatchObject({ ok: true, events: 6 });
+      } finally {
+        restore();
+      }
+      expect(readCheckpoint(walker.kernel.db)).toMatchObject({ seq: 8, fullSeq: 8, fullCount: 8, verifiedAt: T1 });
+    });
+  });
+
   it('N9: an unreadable or garbage marker value counts as broken (fail closed)', () => {
     for (const bad of ['not json', 'null', '42', '"x"', '[]', '{}', '{"seq":"x"}']) {
       const app = appWith(2);
