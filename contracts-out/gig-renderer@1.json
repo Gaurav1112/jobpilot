@@ -1,5 +1,5 @@
 {
-  "hash": "aad1df9212416e41dde1f3a742e7f2ccc95fb54ac382a925d99e51f98f10af57",
+  "hash": "cf28a699f6be72c196a3200a367cca37add55f32263d169833723c91ec77d487",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -187,7 +187,11 @@
                   "careers",
                   "workday",
                   "eightfold",
-                  "oracle"
+                  "oracle",
+                  "icims",
+                  "successfactors",
+                  "smartrecruiters",
+                  "jsonld-sitemap"
                 ],
                 "type": "string"
               },
@@ -349,7 +353,11 @@
                               "careers",
                               "workday",
                               "eightfold",
-                              "oracle"
+                              "oracle",
+                              "icims",
+                              "successfactors",
+                              "smartrecruiters",
+                              "jsonld-sitemap"
                             ],
                             "type": "string"
                           },
@@ -1418,7 +1426,11 @@
                       "careers",
                       "workday",
                       "eightfold",
-                      "oracle"
+                      "oracle",
+                      "icims",
+                      "successfactors",
+                      "smartrecruiters",
+                      "jsonld-sitemap"
                     ],
                     "type": "string"
                   },
@@ -1580,7 +1592,11 @@
                                   "careers",
                                   "workday",
                                   "eightfold",
-                                  "oracle"
+                                  "oracle",
+                                  "icims",
+                                  "successfactors",
+                                  "smartrecruiters",
+                                  "jsonld-sitemap"
                                 ],
                                 "type": "string"
                               },
@@ -2444,6 +2460,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.2.0"
+    "version": "1.3.0"
   }
 }

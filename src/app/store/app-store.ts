@@ -631,6 +631,29 @@ export class AppStore {
     this.db.prepare(`DELETE FROM app_settings WHERE substr(key, 1, ?) = ? AND substr(key, 1, ?) <> ?`).run(prefix.length, prefix, keep.length, keep);
   }
 
+  /** A page adapter board's page records (Task 8, `platform_pages`), by URL. */
+  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null }[] {
+    return (this.db.prepare(`SELECT url, fetched_on, hash, raw FROM platform_pages WHERE board = ? ORDER BY url`).all(board) as { url: string; fetched_on: string; hash: string; raw: string | null }[]).map((r) => ({ url: r.url, fetchedOn: r.fetched_on, hash: r.hash, raw: r.raw }));
+  }
+
+  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null): void {
+    this.db
+      .prepare(`INSERT INTO platform_pages (board, url, fetched_on, hash, raw) VALUES (?, ?, ?, ?, ?) ON CONFLICT (board, url) DO UPDATE SET fetched_on = excluded.fetched_on, hash = excluded.hash, raw = excluded.raw`)
+      .run(board, url, fetchedOn, hash, raw);
+  }
+
+  forgetPageRecord(board: string, url: string): void {
+    this.db.prepare(`DELETE FROM platform_pages WHERE board = ? AND url = ?`).run(board, url);
+  }
+
+  /** Drops the board's records of URLs not in `urls`. */
+  retainPageRecords(board: string, urls: ReadonlySet<string>): void {
+    this.tx(() => {
+      const del = this.db.prepare(`DELETE FROM platform_pages WHERE board = ? AND url = ?`);
+      for (const r of this.db.prepare(`SELECT url FROM platform_pages WHERE board = ?`).all(board) as { url: string }[]) if (!urls.has(r.url)) del.run(board, r.url);
+    });
+  }
+
   /** Records (or re-records, for a re-projected run) one run's summary. */
   recordRun(s: RunSummary): void {
     this.db

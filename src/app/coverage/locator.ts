@@ -4,7 +4,10 @@ import type { EgressSets } from '../../kernel/broker.js';
 import { asHttps, BudgetExhausted, budgetReason, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate, type StepLimits } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
+import { sitemapLocs } from '../text/sitemap.js';
 import { CareersSite, CompanyCandidate } from './types.js';
+
+export { sitemapLocs } from '../text/sitemap.js';
 
 /**
  * The careers locator (spec §3): for one candidate company, find its careers URL by fixed probes, first hit wins:
@@ -93,38 +96,6 @@ export function findCareersLink(html: string, base: string, accept: (u: URL) => 
     return { url: u.href, text: text.slice(0, 60) };
   }
   return null;
-}
-
-/**
- * The `<loc>` values of a sitemap, in document order: trimmed, an optional CDATA wrapper removed, entities decoded;
- * empty values and values holding `<` or `]` are skipped. Linear: each `<loc>` and `</loc>` is found by a forward
- * literal search, a found `</loc>` is reused until passed, and a missing one ends the scan.
- */
-export function sitemapLocs(xml: string): string[] {
-  const out: string[] = [];
-  const open = /<loc>/gi;
-  const close = /<\/loc>/gi;
-  let end = -1; // where the next </loc> starts (reused until an opening passes it)
-  let o = open.exec(xml);
-  while (o !== null) {
-    const from = open.lastIndex;
-    if (end < from) {
-      close.lastIndex = from;
-      const c = close.exec(xml);
-      if (c === null) break; // no </loc> after here: no later <loc> can close either
-      end = c.index;
-    }
-    const n = open.exec(xml);
-    if (n === null || n.index > end) {
-      let v = xml.slice(from, end).trim();
-      if (v.startsWith('<![CDATA[')) v = v.slice('<![CDATA['.length);
-      if (v.endsWith(']]>')) v = v.slice(0, -']]>'.length);
-      v = v.trim();
-      if (v !== '' && !v.includes('<') && !v.includes(']')) out.push(decodeEntities(v));
-    }
-    o = n; // a <loc> opening before this one closed leaves this one without a value
-  }
-  return out;
 }
 
 export const careersLocatorContract = defineContract({

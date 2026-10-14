@@ -28,6 +28,8 @@ export interface PlatformHosts<S = unknown> {
   disable(host: string, why: string): void;
   /** Per-board discovery (facet scopes, an API flavour), cached for this run only (absent: discovered on every read). */
   readonly scopes?: Map<string, S>;
+  /** The `Sitemap:` URLs of the host's robots.txt (Task 8, the generic adapter), in file order; absent or empty: none known. */
+  sitemaps?(host: string, http: HttpTool): Promise<readonly string[]>;
 }
 
 /** robots.txt refuses the board's host or path. */
@@ -261,4 +263,8 @@ export function memoryPageLedger(): PageLedger {
 }
 
 /** The note prefixes of the named skips every platform adapter may record (problems.ts prints them as they are). */
-export const PLATFORM_NOTE_PREFIXES = ['robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list '] as const;
+export const PLATFORM_NOTE_PREFIXES = [
+  'robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list ',
+  // Task 8, the page adapters (pages.ts)
+  'page-budget ', 'title-prefilter ', 'no-jobposting ', 'page-moved ', 'page-error ', 'not-india ', 'malformed-entries ',
+] as const;

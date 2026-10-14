@@ -13,9 +13,21 @@ import type { MessageType } from './types.js';
  * `pack:careers-hosts` is the watchlist's careers hosts; `coverage:candidate-hosts` is the hosts of the weekly coverage
  * run's candidate companies (the careers locator's plan); `registry:workday-hosts` is the hosts of the verified
  * Workday companies in the company registry (the daily Workday adapter's); `registry:eightfold-hosts` and
- * `registry:oracle-hosts` likewise for the verified Eightfold and Oracle Recruiting Cloud companies (Task 7).
+ * `registry:oracle-hosts` likewise for the verified Eightfold and Oracle Recruiting Cloud companies (Task 7), and
+ * `registry:icims-hosts`, `registry:successfactors-hosts`, `registry:smartrecruiters-hosts`, `registry:jsonld-hosts` for
+ * the page adapters' companies (Task 8).
  */
-export const SYMBOLIC_EGRESS = ['pack:careers-hosts', 'coverage:candidate-hosts', 'registry:workday-hosts', 'registry:eightfold-hosts', 'registry:oracle-hosts'] as const;
+export const SYMBOLIC_EGRESS = [
+  'pack:careers-hosts',
+  'coverage:candidate-hosts',
+  'registry:workday-hosts',
+  'registry:eightfold-hosts',
+  'registry:oracle-hosts',
+  'registry:icims-hosts',
+  'registry:successfactors-hosts',
+  'registry:smartrecruiters-hosts',
+  'registry:jsonld-hosts',
+] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);
 
@@ -30,6 +42,12 @@ export interface Capabilities {
    * (the Gmail source, every board API) can never send a POST.
    */
   readonly httpPost?: true;
+  /**
+   * `ctx.http.getStream` with a byte cap above the policy's `maxResponseBytes` (at most STREAM_MAX_BYTES): one feed too
+   * large to hold whole (SuccessFactors' `sitemal.xml`), handed to the agent chunk by chunk. Needs `http`. Without it a
+   * stream is capped at `maxResponseBytes`, like every other response.
+   */
+  readonly httpStream?: true;
   readonly llm?: { readonly model: string; readonly maxTokens: number };
   /**
    * Read-only access to the user's pack as `ctx.pack` (deep-frozen). `true` is the public pack;
@@ -114,6 +132,7 @@ const Meta = z
       .object({
         http: z.literal(true).optional(),
         httpPost: z.literal(true).optional(),
+        httpStream: z.literal(true).optional(),
         llm: z.object({ model: z.string().min(1), maxTokens: z.number().int().positive() }).strict().optional(),
         pack: z.union([z.literal(true), z.literal('full')]).optional(),
         browser: z.object({ maxPages: z.number().int().positive().max(500) }).strict().optional(),
@@ -193,6 +212,7 @@ function snapshot<I, O>(c: Contract<I, O>): Contract<I, O> {
     capabilities: {
       ...(capabilities.http ? { http: capabilities.http } : {}),
       ...(capabilities.httpPost ? { httpPost: capabilities.httpPost } : {}),
+      ...(capabilities.httpStream ? { httpStream: capabilities.httpStream } : {}),
       ...(capabilities.llm ? { llm: { ...capabilities.llm } } : {}),
       ...(capabilities.pack ? { pack: capabilities.pack } : {}),
       ...(capabilities.browser ? { browser: { maxPages: capabilities.browser.maxPages } } : {}),
@@ -217,6 +237,7 @@ function checkKindCapabilities(c: AnyContract): void {
   if (c.capabilities.http && !httpKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.http`);
   if (c.capabilities.http && c.egress.length === 0) problems.push('capabilities.http requires at least one egress host');
   if (c.capabilities.httpPost && !c.capabilities.http) problems.push('capabilities.httpPost requires capabilities.http');
+  if (c.capabilities.httpStream && !c.capabilities.http) problems.push('capabilities.httpStream requires capabilities.http');
   const browserKinds: readonly AgentKind[] = ['io', 'io-session'];
   if (c.capabilities.browser && !browserKinds.includes(c.kind)) problems.push(`kind ${c.kind} may not request capabilities.browser`);
   if (c.capabilities.browser && c.egress.length === 0) problems.push('capabilities.browser requires at least one egress host');

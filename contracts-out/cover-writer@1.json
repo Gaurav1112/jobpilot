@@ -1,5 +1,5 @@
 {
-  "hash": "8cb4fd52a81cf53196ed67d3bd8cafd366cdefd2512bc7ddead8bb13bc5cfaba",
+  "hash": "5a04305e9b8a8d3342a83b41be34b7a3703c8279af0ac5a12ccf2e0b1d517f72",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -25,7 +25,11 @@
               "careers",
               "workday",
               "eightfold",
-              "oracle"
+              "oracle",
+              "icims",
+              "successfactors",
+              "smartrecruiters",
+              "jsonld-sitemap"
             ],
             "type": "string"
           },
@@ -187,7 +191,11 @@
                           "careers",
                           "workday",
                           "eightfold",
-                          "oracle"
+                          "oracle",
+                          "icims",
+                          "successfactors",
+                          "smartrecruiters",
+                          "jsonld-sitemap"
                         ],
                         "type": "string"
                       },
@@ -578,7 +586,11 @@
                   "careers",
                   "workday",
                   "eightfold",
-                  "oracle"
+                  "oracle",
+                  "icims",
+                  "successfactors",
+                  "smartrecruiters",
+                  "jsonld-sitemap"
                 ],
                 "type": "string"
               },
@@ -740,7 +752,11 @@
                               "careers",
                               "workday",
                               "eightfold",
-                              "oracle"
+                              "oracle",
+                              "icims",
+                              "successfactors",
+                              "smartrecruiters",
+                              "jsonld-sitemap"
                             ],
                             "type": "string"
                           },
@@ -1084,6 +1100,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

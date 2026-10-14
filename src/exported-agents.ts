@@ -8,11 +8,20 @@ const WITH_CAREERS = [{ ats: 'careers', listUrl: 'https://careers.example.com/jo
 /** Any verified Workday company includes `src-workday`; its contract names the symbolic egress, so the export is exact. */
 const WITH_WORKDAY = [{ platform: 'workday', company: 'Example', ref: 'example.wd1.myworkdayjobs.com/example/External' }] as const;
 /** Likewise one verified Eightfold and one Oracle company include `src-eightfold` and `src-oracle` (Task 7). */
-const WITH_PLATFORMS = [...WITH_WORKDAY, { platform: 'eightfold', company: 'Example', ref: 'example.eightfold.ai/example.com' }, { platform: 'oracle', company: 'Example', ref: 'example.fa.oraclecloud.com/CX_1' }] as const;
+const WITH_PLATFORMS = [
+  ...WITH_WORKDAY,
+  { platform: 'eightfold', company: 'Example', ref: 'example.eightfold.ai/example.com' },
+  { platform: 'oracle', company: 'Example', ref: 'example.fa.oraclecloud.com/CX_1' },
+  // Task 8, the page adapters
+  { platform: 'icims', company: 'Example', ref: 'careers-example.icims.com' },
+  { platform: 'successfactors', company: 'Example', ref: 'careers.example.com' },
+  { platform: 'smartrecruiters', company: 'Example', ref: 'Example' },
+  { platform: 'jsonld-sitemap', company: 'Example', ref: 'www.example.com' },
+] as const;
 
 /**
  * Every agent whose contract is exported to `contracts-out/` (`contracts export`) and drift-checked (`contracts
- * check`, part of `node --run verify`): the demo agents, every agent of the daily pipeline (sources, src-workday, src-eightfold, src-oracle, normalizer,
+ * check`, part of `node --run verify`): the demo agents, every agent of the daily pipeline (sources, src-workday, src-eightfold, src-oracle, the Task 8 page adapters, normalizer,
  * eligibility, scorer and the writing team) and every agent of the freelance pipeline (`freelanceAgents`: the gig
  * sources, gig normalizer, rate normalizer, gig eligibility, gig risk, gig scorer and the gig writing team) and every
  * agent of the weekly coverage pipeline (company-seed, careers-locator, platform-detector, board-verifier).

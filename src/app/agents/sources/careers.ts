@@ -6,7 +6,10 @@ import { isMoreLabel } from '../../browser/labels.js';
 import { compileSafePattern } from '../../pack/regex.js';
 import { CareerLink, DiscoveryRequest, knownAts, RawPosting } from '../../types.js';
 import { isRecord } from './common.js';
+import { findJobPosting, hasType, jsonLdNodes as nodes } from './jsonld.js';
 import { sha256Hex } from './sha256.js';
+
+export { findJobPosting } from './jsonld.js';
 
 /**
  * The career-site source, for employers without a public job API, read with a real browser so JavaScript-built
@@ -100,7 +103,7 @@ export function makeSrcCareersList(opts: { readonly maxListingPages?: number; re
   const maxLinks = opts.maxLinks ?? CAREERS_MAX_LINKS;
   const contract = defineContract({
     id: 'src-careers-list',
-    version: '1.2.0',
+    version: '1.3.0',
     description: 'Collects the job links of one career site',
     skills: ['job-sourcing'],
     team: 'sourcing',
@@ -347,25 +350,7 @@ function pageTitleOf(rawHtml: string): string | undefined {
 }
 
 // ---- JSON-LD ----
-
-const hasType = (o: Record<string, unknown>, t: string): boolean =>
-  o['@type'] === t || (Array.isArray(o['@type']) && o['@type'].includes(t));
-
-/** Every JSON-LD node, depth first in document order: arrays, `@graph` and nested objects are walked. */
-function* nodes(v: unknown, depth = 0): Generator<Record<string, unknown>> {
-  if (depth > 20) return;
-  if (Array.isArray(v)) {
-    for (const x of v) yield* nodes(x, depth + 1);
-  } else if (isRecord(v)) {
-    yield v;
-    for (const x of Object.values(v)) if (typeof x === 'object' && x !== null) yield* nodes(x, depth + 1);
-  }
-}
-
-export function findJobPosting(jsonLd: readonly unknown[]): Record<string, unknown> | null {
-  for (const n of nodes(jsonLd)) if (hasType(n, 'JobPosting')) return n;
-  return null;
-}
+// The node walk and the JobPosting finder live in `jsonld.ts` (Task 8: shared with the platform page adapters).
 
 function itemListUrls(jsonLd: readonly unknown[]): string[] {
   const urls: string[] = [];

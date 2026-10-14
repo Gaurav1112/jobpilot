@@ -1,6 +1,7 @@
 import { KernelError } from '../kernel/errors.js';
 import { EIGHTFOLD_V2_MIN_INTERVAL_MS, type EightfoldHosts } from './agents/sources/platforms/eightfold.js';
 import { ORACLE_MIN_INTERVAL_MS, type OracleHosts } from './agents/sources/platforms/oracle.js';
+import { PAGE_MIN_INTERVAL_MS, type PageRecord, type PageState } from './agents/sources/platforms/pages.js';
 import type { HttpTool, PageLedger, PlatformHosts } from './agents/sources/platforms/shared.js';
 import { WORKDAY_MIN_INTERVAL_MS, type WorkdayHosts } from './agents/sources/platforms/workday.js';
 import { isChallenge } from './coverage/gate.js';
@@ -43,16 +44,25 @@ export function dailyPlatformHosts<S>(o: { readonly minIntervalMs: number; reado
     return robotsVerdictOf(r.status, r.body);
   }
 
+  function cached(host: string, http: HttpTool): Promise<RobotsVerdict> {
+    let p = robots.get(host);
+    if (p === undefined) {
+      p = verdictOf(host, http);
+      robots.set(host, p);
+      // only a settled verdict is kept: a robots.txt that never arrived is asked again by the next step
+      p.catch(() => robots.delete(host));
+    }
+    return p;
+  }
+
   return {
     async robots(host, path, http) {
-      let p = robots.get(host);
-      if (p === undefined) {
-        p = verdictOf(host, http);
-        robots.set(host, p);
-        // only a settled verdict is kept: a robots.txt that never arrived is asked again by the next step
-        p.catch(() => robots.delete(host));
-      }
-      return robotsDenial(await p, new URL(`https://${host}${path}`));
+      return robotsDenial(await cached(host, http), new URL(`https://${host}${path}`));
+    },
+    // Task 8: the generic adapter may read the sitemaps robots.txt names (the same cached fetch)
+    async sitemaps(host, http) {
+      const v = await cached(host, http);
+      return v.kind === 'rules' ? v.robots.sitemaps : [];
     },
     scopes,
     disabledWhy: (host) => disabled.get(host),
@@ -78,6 +88,42 @@ export function dailyEightfoldHosts(): EightfoldHosts {
 /** The Oracle Recruiting Cloud adapter's host state (Task 7): a 401/403 robots.txt is unreadable, read at the minimal 5 s rate. */
 export function dailyOracleHosts(): OracleHosts {
   return dailyPlatformHosts({ minIntervalMs: ORACLE_MIN_INTERVAL_MS, unreadableRobots: 'allow' });
+}
+
+/**
+ * A page adapter's host state (Task 8: iCIMS, SuccessFactors, SmartRecruiters, jsonld-sitemap): the strict page rule,
+ * robots.txt at the 2 s page spacing, a 401/403 robots.txt refuses (never `unreadableRobots`), the sitemaps robots.txt
+ * names readable by the generic adapter.
+ */
+export function dailyPageHosts(): PlatformHosts<never> {
+  return dailyPlatformHosts({ minIntervalMs: PAGE_MIN_INTERVAL_MS });
+}
+
+/** What `appPageState` needs of the app store (its `platform_pages` table, migration 11). */
+export interface PageStore {
+  pageRecords(board: string): { url: string; fetchedOn: string; hash: string; raw: string | null }[];
+  putPageRecord(board: string, url: string, fetchedOn: string, hash: string, raw: string | null): void;
+  forgetPageRecord(board: string, url: string): void;
+  retainPageRecords(board: string, urls: ReadonlySet<string>): void;
+}
+
+/**
+ * The page adapters' state across daily runs (Task 8), in the app DB (`platform_pages`, migration 11): per board
+ * (`<platform> <ref>`) and job URL, the IST day of the last fetch, a content hash and the raw posting (JSON) or null.
+ * Read once per board per step. Trusted wiring code: the adapters see only `PageState`. Rows exist only for boards a
+ * page adapter read, so with an empty registry the table stays empty; it never enters a step key or a pack hash.
+ */
+export function appPageState(store: PageStore): PageState {
+  return {
+    records(board) {
+      const m = new Map<string, PageRecord>();
+      for (const r of store.pageRecords(board)) m.set(r.url, { fetchedOn: r.fetchedOn, hash: r.hash, raw: r.raw === null ? null : (JSON.parse(r.raw) as unknown) });
+      return m;
+    },
+    put: (board, url, rec) => store.putPageRecord(board, url, rec.fetchedOn, rec.hash, rec.raw === null ? null : JSON.stringify(rec.raw)),
+    forget: (board, url) => store.forgetPageRecord(board, url),
+    retain: (board, urls) => store.retainPageRecords(board, urls),
+  };
 }
 
 /**

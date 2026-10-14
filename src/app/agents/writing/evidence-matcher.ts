@@ -10,7 +10,7 @@ import { buildEvidence, failLoud, writingPackOf } from './grounded.js';
  */
 export const evidenceMatcherContract = defineContract({
   id: 'evidence-matcher',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Ranks citeable facts against one scored posting',
   skills: ['evidence-matching'],
   team: 'writing',

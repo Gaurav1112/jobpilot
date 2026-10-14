@@ -8,6 +8,11 @@ import { GREENHOUSE_HOST, greenhouseParse, greenhouseUrl } from '../greenhouse.j
 import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
 import * as ef from './eightfold.js';
 import * as orc from './oracle.js';
+import { fetchIcimsListing, icimsBoardOfUrl, icimsSitemapUrl, parseIcimsRef } from './icims.js';
+import { fetchJsonLdListing, jsonLdBoardOfUrl, jsonLdRef, parseJsonLdRef } from './jsonld-sitemap.js';
+import { hiringOrganizationOf, readOneJobPage, type PageListing } from './pages.js';
+import { fetchSrListing, parseSmartRecruitersRef, smartRecruitersBoardOfUrl, srListingUrl } from './smartrecruiters.js';
+import { parseSuccessFactorsRef, readSitemal, sitemalUrl, successFactorsBoardOfUrl } from './successfactors.js';
 import { HostRefused, type PlatformHosts } from './shared.js';
 import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workdayListUrl, workdayRef, WORKDAY_PAGE_SIZE, type WorkdayHosts } from './workday.js';
 
@@ -52,6 +57,15 @@ import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workda
  *   "unknown", read at the minimal rate (`robotsUnreadable: 'allow'`, a controller decision; the coverage page crawler
  *   keeps refusing a 401/403 robots.txt for pages). No company-name field: the host's first label (`jpmc`) is
  *   compared, so a tenant label that is not the company's name is proposed "board name not available, please confirm".
+ *
+ * The page adapters (Task 8) read PAGES, so robots.txt governs them under the strict page rule (a 401/403 robots.txt
+ * refuses): `readBoard` reads the listing once (iCIMS: the portal sitemap; SmartRecruiters: the jobs.smartrecruiters.com
+ * listing; jsonld-sitemap: the site's sitemaps), requires at least one job URL (none: 0 jobs, proposed, no page
+ * fetched), then fetches ONE job page (the first listed) and requires a valid JobPosting (else `invalid_output`, a
+ * failed verdict). The board name is that JobPosting's `hiringOrganization.name`, matched by the existing name rules;
+ * without one, proposed. SuccessFactors is read the way its daily adapter reads it: `sitemal.xml` streamed only up to
+ * its first item (the daily postings come from the feed itself, not job pages), the board name its `g:employer`. A
+ * 401/403 is `BoardRefused`, a 429 `rate_limit`, a challenge `challenged`: the verifier defers all three.
  *
  * Agent code (containment): it imports only kernel definitions, so the platform is a plain string here; the coverage
  * types' `Platform` enum is a superset of these keys.
@@ -300,6 +314,87 @@ const CLIENTS: Readonly<Record<string, PlatformClient>> = {
   },
 };
 
+/** A page platform's read: the listing, then one job page for the board name (see the header). */
+async function pageRead(platform: string, ref: string, http: HttpTool, opts: ReadOptions | undefined, url: string, listing: (hosts: PlatformHosts) => Promise<PageListing>, follow: (u: URL) => boolean): Promise<BoardRead> {
+  const hosts = hostsOf(opts, platform);
+  return refused(async () => {
+    const l = await listing(hosts);
+    const jobs: RawPosting[] = l.jobs.map((j) => ({ source: platform, sourceId: j.sourceId, company: ref, slug: ref, raw: { url: j.url, title: j.title } }));
+    const first = l.jobs[0];
+    if (first === undefined) return { boardName: null, boardNames: [], jobs, complete: true, url, nameKey: null };
+    const ld = await readOneJobPage(http, hosts, first, follow, `${platform} ${ref}`, opts?.timeoutMs);
+    const name = hiringOrganizationOf(ld);
+    return { boardName: name, boardNames: name === null ? [] : [name], jobs, complete: true, url, nameKey: null };
+  });
+}
+
+const sameHostAs = (host: string) => (u: URL): boolean => u.hostname.toLowerCase() === host;
+
+const PAGE_CLIENTS: Readonly<Record<string, PlatformClient>> = {
+  icims: {
+    platform: 'icims',
+    host: null,
+    robots: true,
+    refOf: (slug, boardUrl) => (boardUrl === null ? null : icimsBoardOfUrl(boardUrl)) ?? parseIcimsRef(slug),
+    hostOf: (ref) => parseIcimsRef(ref),
+    boardUrl: (ref) => icimsSitemapUrl(boardOf(ref, parseIcimsRef, 'icims', '<portal host>')),
+    readBoard(ref, http, opts) {
+      const host = boardOf(ref, parseIcimsRef, 'icims', '<portal host>');
+      return pageRead('icims', ref, http, opts, icimsSitemapUrl(host), (hosts) => fetchIcimsListing(http, hosts, host, opts?.timeoutMs), sameHostAs(host));
+    },
+  },
+  smartrecruiters: {
+    platform: 'smartrecruiters',
+    host: 'jobs.smartrecruiters.com',
+    robots: true,
+    refOf: (slug, boardUrl) => (boardUrl === null ? null : smartRecruitersBoardOfUrl(boardUrl)) ?? parseSmartRecruitersRef(slug),
+    hostOf: (ref) => (parseSmartRecruitersRef(ref) === null ? null : 'jobs.smartrecruiters.com'),
+    boardUrl: (ref) => srListingUrl(boardOf(ref, parseSmartRecruitersRef, 'smartrecruiters', '<company id>')),
+    readBoard(ref, http, opts) {
+      const co = boardOf(ref, parseSmartRecruitersRef, 'smartrecruiters', '<company id>');
+      return pageRead('smartrecruiters', ref, http, opts, srListingUrl(co), (hosts) => fetchSrListing(http, hosts, co, opts?.timeoutMs), sameHostAs('jobs.smartrecruiters.com'));
+    },
+  },
+  'jsonld-sitemap': {
+    platform: 'jsonld-sitemap',
+    host: null,
+    robots: true,
+    refOf: (slug, boardUrl) => {
+      const s = parseJsonLdRef(slug);
+      const h = boardUrl === null ? null : jsonLdBoardOfUrl(boardUrl);
+      if (h === null) return s === null ? null : jsonLdRef(s);
+      return s !== null && s.host === h ? jsonLdRef(s) : h;
+    },
+    hostOf: (ref) => parseJsonLdRef(ref)?.host ?? null,
+    boardUrl: (ref) => `https://${boardOf(ref, parseJsonLdRef, 'jsonld-sitemap', '<host>[/<path prefix>]').host}/sitemap.xml`,
+    readBoard(ref, http, opts) {
+      const b = boardOf(ref, parseJsonLdRef, 'jsonld-sitemap', '<host>[/<path prefix>]');
+      return pageRead('jsonld-sitemap', ref, http, opts, `https://${b.host}/sitemap.xml`, (hosts) => fetchJsonLdListing(http, hosts, b, b.host, opts?.timeoutMs), sameHostAs(b.host));
+    },
+  },
+  successfactors: {
+    platform: 'successfactors',
+    host: null,
+    robots: true,
+    refOf: (slug, boardUrl) => (boardUrl === null ? null : successFactorsBoardOfUrl(boardUrl)) ?? (boardUrl === null ? parseSuccessFactorsRef(slug) : null),
+    hostOf: (ref) => parseSuccessFactorsRef(ref),
+    boardUrl: (ref) => sitemalUrl(boardOf(ref, parseSuccessFactorsRef, 'successfactors', '<site host>')),
+    async readBoard(ref, http, opts) {
+      const host = boardOf(ref, parseSuccessFactorsRef, 'successfactors', '<site host>');
+      const hosts = hostsOf(opts, 'successfactors');
+      // up to the first item only, within the policy's response cap (no httpStream capability needed)
+      const feed = await refused(() => readSitemal(http, hosts, host, host, { maxBytes: VERIFY_STREAM_BYTES, stopAfter: 1, ...(opts?.timeoutMs === undefined ? {} : { timeoutMs: opts.timeoutMs }) }));
+      const first = feed.items[0];
+      const jobs: RawPosting[] = first === undefined ? [] : [{ source: 'successfactors', sourceId: first.id, company: host, slug: ref, raw: { url: first.link, title: first.title } }];
+      const name = first?.employer ?? null;
+      return { boardName: name, boardNames: name === null ? [] : [name], jobs, complete: false, url: sitemalUrl(host), nameKey: null };
+    },
+  },
+};
+
+/** The verifier's SuccessFactors read stops at the first item: well within the policy's response cap. */
+const VERIFY_STREAM_BYTES = 8 * 1024 * 1024;
+
 /** The board of a ref, or `invalid_output` naming the platform's ref shape. */
 function boardOf<B>(ref: string, parse: (r: string) => B | null, platform: string, shape: string): B {
   const b = parse(ref);
@@ -325,8 +420,9 @@ async function refused<T>(read: () => Promise<T>): Promise<T> {
 
 /** The platform's read client, or null when this build has no adapter for it yet (Tasks 6-8 add them). */
 export function platformClient(platform: string): PlatformClient | null {
-  return Object.hasOwn(CLIENTS, platform) ? (CLIENTS[platform] as PlatformClient) : null;
+  if (Object.hasOwn(CLIENTS, platform)) return CLIENTS[platform] as PlatformClient;
+  return Object.hasOwn(PAGE_CLIENTS, platform) ? (PAGE_CLIENTS[platform] as PlatformClient) : null;
 }
 
 /** The platforms this build can read (and so verify), sorted. */
-export const BUILT_PLATFORMS: readonly string[] = Object.keys(CLIENTS).sort();
+export const BUILT_PLATFORMS: readonly string[] = [...Object.keys(CLIENTS), ...Object.keys(PAGE_CLIENTS)].sort();

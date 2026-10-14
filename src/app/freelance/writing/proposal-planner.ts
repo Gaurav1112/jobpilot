@@ -423,7 +423,7 @@ export function planGigDocs(scored: ScoredGig, rawPack: unknown): GigDocsPlan | 
 
 export const proposalPlannerContract = defineContract({
   id: 'proposal-planner',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Plans the grounded screening documents of one gig',
   skills: ['proposal-planning'],
   team: 'writing',

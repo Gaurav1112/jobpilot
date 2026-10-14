@@ -1,0 +1,11 @@
+{
+ "https://careers-acme.icims.com/robots.txt": "robots-icims.txt",
+ "https://careers-acme.icims.com/sitemap.xml": "sitemap-icims.xml",
+ "https://careers-acme.icims.com/jobs/101/senior-backend-engineer/job?in_iframe=1": "icims-101.html",
+ "https://careers-acme.icims.com/jobs/102/staff-software-engineer/job?in_iframe=1": "icims-102.html",
+ "https://www.betaco.test/robots.txt": {
+  "status": 404
+ },
+ "https://www.betaco.test/sitemap.xml": "sitemap-beta.xml",
+ "https://www.betaco.test/careers/lead-platform-engineer-4401/": "beta-4401.html"
+}

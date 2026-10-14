@@ -1,5 +1,5 @@
 {
-  "hash": "2653f90bb70a3bdad7576d9386e6ab3627c1a68975e11909752b20af9ccd192c",
+  "hash": "cc849803bffce81fe14972446771d0eed06196800eff6469a9deafc9397865b6",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -25,7 +25,11 @@
               "careers",
               "workday",
               "eightfold",
-              "oracle"
+              "oracle",
+              "icims",
+              "successfactors",
+              "smartrecruiters",
+              "jsonld-sitemap"
             ],
             "type": "string"
           },
@@ -126,6 +130,6 @@
     },
     "team": "sourcing",
     "timeoutMs": 180000,
-    "version": "1.2.0"
+    "version": "1.3.0"
   }
 }

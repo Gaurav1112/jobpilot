@@ -344,4 +344,16 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
     PRIMARY KEY (run_key, host)
   );
   `,
+  // Career-sites Task 8: the page adapters' state across daily runs (board = '<platform> <ref>', a job URL, the IST day
+  // of its last fetch, a content hash, the raw posting JSON or NULL). Additive; empty unless a page adapter ran.
+  `
+  CREATE TABLE platform_pages (
+    board TEXT NOT NULL,
+    url TEXT NOT NULL,
+    fetched_on TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    raw TEXT,
+    PRIMARY KEY (board, url)
+  );
+  `,
 ];

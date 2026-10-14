@@ -589,7 +589,7 @@ describe('the coverage-detector golden set', () => {
     }
   });
 
-  it('privacy: no e-mail address, phone number, mailto:/tel: link, JSON-LD Person, social or people profile URL, cookie or session token in any fixture (detector pages, recorded Workday responses)', () => {
+  it('privacy: no e-mail address, phone number, mailto:/tel: link, JSON-LD Person, social or people profile URL, cookie or session token in any fixture (detector pages, recorded platform responses and pages)', () => {
     const PRIVATE: readonly [string, RegExp][] = [
       ['email', /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g],
       ['mailto-tel', /\b(?:mailto|tel):/gi],
@@ -607,7 +607,21 @@ describe('the coverage-detector golden set', () => {
       ...readdirSync(dir).map((f) => `${dir}/${f}`),
       ...readdirSync(sources).filter((f) => /^(?:workday|eightfold|oracle)-/u.test(f)).map((f) => `${sources}/${f}`),
       `${root}tests/fixtures/coverage/e2e/epsilon-cxs.json`,
+      // Task 8: the recorded page-adapter fixtures (Atlassian iCIMS, HCLTech SuccessFactors, Bosch SmartRecruiters, Okta)
+      ...readdirSync(`${root}tests/fixtures/pages`).map((f) => `${root}tests/fixtures/pages/${f}`),
     ];
+    expect(files.filter((f) => f.includes('/fixtures/pages/')).map((f) => f.slice(`${root}tests/fixtures/pages/`.length)).sort()).toEqual([
+      'icims-atlassian-job-25565.html',
+      'icims-atlassian-robots.txt',
+      'icims-atlassian-sitemap.xml',
+      'jsonld-okta-job.html',
+      'jsonld-okta-robots.txt',
+      'jsonld-okta-sitemap.xml',
+      'smartrecruiters-bosch-job.html',
+      'successfactors-hcltech-job.html',
+      'successfactors-hcltech-robots.txt',
+      'successfactors-hcltech-sitemal.xml',
+    ]);
     expect(files.filter((f) => f.includes('/workday-')).length).toBe(3);
     // Task 7: the recorded Eightfold (Microsoft, Netflix) and Oracle (JPMorgan) responses
     expect(files.filter((f) => /\/(?:eightfold|oracle)-/u.test(f)).map((f) => f.slice(sources.length + 1)).sort()).toEqual(['eightfold-microsoft.json', 'eightfold-netflix.json', 'oracle-jpmorgan.json']);

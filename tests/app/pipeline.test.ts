@@ -180,7 +180,9 @@ describe('the daily pipeline wiring', () => {
       { name: 'NVIDIA', platform: 'workday', boardUrl: 'https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/jobs' },
       { name: 'Broken', platform: 'oracle', boardUrl: 'https://evil.test/hcmRestApi/resources/latest/recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1' },
       { name: 'Wrong platform', platform: 'eightfold', boardUrl: 'https://jpmc.fa.oraclecloud.com/hcmRestApi/resources/latest/recruitingCEJobRequisitions?finder=findReqs;siteNumber=CX_1' },
+      // Task 8 made iCIMS a registry platform; a platform with no adapter in this build is still left out
       { name: 'iCIMS', platform: 'icims', boardUrl: 'https://careers-acme.icims.com/sitemap.xml' },
+      { name: 'Workable', platform: 'workable', boardUrl: 'https://apply.workable.com/api/v1/widget/accounts/acme' },
     ];
     const boards = registryBoards(rows);
     expect(boards).toEqual([
@@ -188,8 +190,9 @@ describe('the daily pipeline wiring', () => {
       { platform: 'eightfold', company: 'Microsoft', ref: 'apply.careers.microsoft.com/microsoft.com' },
       { platform: 'eightfold', company: 'Netflix', ref: 'explore.jobs.netflix.net/netflix.com' },
       { platform: 'oracle', company: 'JPMorgan Chase', ref: 'jpmc.fa.oraclecloud.com/CX_1001' },
+      { platform: 'icims', company: 'iCIMS', ref: 'careers-acme.icims.com' },
     ]);
-    const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-14', undefined, boards);
+    const seeds = dailySeeds({ watchlist: [ghEntry], feeds: { enabled: [] } }, '2026-10-14', undefined, boards.slice(0, 4));
     expect(seeds.map((x) => `${x.ats} ${x.slug}`)).toEqual([
       'greenhouse example-gh',
       'workday nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite',
@@ -224,6 +227,62 @@ describe('the daily pipeline wiring', () => {
       'minHostIntervalMs 7000 ms breaks the src-eightfold timeout arithmetic (at most 2222 ms per request); lower it in policy.user.yaml',
     ]);
     expect(pacingProblems(mergePolicy(PRODUCT_POLICY_V1, { minHostIntervalMs: 7_000 }), pack, oc)).toEqual([]);
+  });
+
+  it('Task 8: verified iCIMS, SuccessFactors, SmartRecruiters and jsonld-sitemap companies add their page adapters, each in its own team, with its own registry egress', () => {
+    const rows = [
+      { name: 'Okta', platform: 'jsonld-sitemap', platformSlug: 'www.okta.com', boardUrl: 'https://www.okta.com/sitemap.xml' },
+      { name: 'Bosch', platform: 'smartrecruiters', platformSlug: 'BoschGroup', boardUrl: 'https://jobs.smartrecruiters.com/BoschGroup' },
+      { name: 'HCLTech', platform: 'successfactors', platformSlug: 'careers.hcltech.com', boardUrl: 'https://careers.hcltech.com/sitemal.xml' },
+      { name: 'Atlassian', platform: 'icims', platformSlug: 'careers-apac-atlassian.icims.com', boardUrl: 'https://careers-apac-atlassian.icims.com/sitemap.xml' },
+      // a stored path prefix on the same host narrows the generic adapter; a legacy SuccessFactors board has no reader
+      { name: 'Acme', platform: 'jsonld-sitemap', platformSlug: 'jobs.acme.test/careers/', boardUrl: 'https://jobs.acme.test/sitemap.xml' },
+      { name: 'Legacy', platform: 'successfactors', platformSlug: 'career5.successfactors.eu/AcmeP', boardUrl: 'https://career5.successfactors.eu/career?company=AcmeP' },
+    ];
+    const boards = registryBoards(rows);
+    expect(boards).toEqual([
+      { platform: 'icims', company: 'Atlassian', ref: 'careers-apac-atlassian.icims.com' },
+      { platform: 'successfactors', company: 'HCLTech', ref: 'careers.hcltech.com' },
+      { platform: 'smartrecruiters', company: 'Bosch', ref: 'BoschGroup' },
+      { platform: 'jsonld-sitemap', company: 'Acme', ref: 'jobs.acme.test/careers/' },
+      { platform: 'jsonld-sitemap', company: 'Okta', ref: 'www.okta.com' },
+    ]);
+    const agents = dailyAgents([ghEntry], boards);
+    const p = dailyPipeline(agents);
+    expect(p.edges.filter((e) => e.type === 'DiscoveryRequest@1').map((e) => e.to).slice(5)).toEqual(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap']);
+    const teams = Object.fromEntries(p.teams.map((t) => [t.id, [...t.members].sort()]));
+    expect([teams['sourcing-icims'], teams['sourcing-successfactors'], teams['sourcing-smartrecruiters'], teams['sourcing-jsonld']]).toEqual([['src-icims'], ['src-successfactors'], ['src-smartrecruiters'], ['src-jsonld-sitemap']]);
+    // GET only; only SuccessFactors may stream past the response cap
+    expect(agents.find((a) => a.contract.id === 'src-icims')?.contract.capabilities).toEqual({ http: true, pack: true });
+    expect(agents.find((a) => a.contract.id === 'src-successfactors')?.contract.capabilities).toEqual({ http: true, httpStream: true, pack: true });
+    expect(registryEgressSets(boards)).toEqual({
+      'registry:icims-hosts': ['careers-apac-atlassian.icims.com'],
+      'registry:successfactors-hosts': ['careers.hcltech.com'],
+      // both public SmartRecruiters hosts, never the API host
+      'registry:smartrecruiters-hosts': ['careers.smartrecruiters.com', 'jobs.smartrecruiters.com'],
+      'registry:jsonld-hosts': ['jobs.acme.test', 'www.okta.com'],
+    });
+    expect(() => compileDaily(agents, appGuardrails())).not.toThrow();
+    expect(capabilityProblems(agents.map((a) => a.contract))).toEqual([]);
+    expect(pacingProblems(PRODUCT_POLICY_V1, { watchlist: [], feeds: { enabled: [] } }, boards)).toEqual([]);
+    const seeds = dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', undefined, boards);
+    expect(seeds.map((x) => `${x.ats} ${x.slug}`)).toEqual(['icims careers-apac-atlassian.icims.com', 'successfactors careers.hcltech.com', 'smartrecruiters BoschGroup', 'jsonld-sitemap jobs.acme.test/careers/', 'jsonld-sitemap www.okta.com']);
+    // only one page platform present: only its adapter
+    expect(ids(dailyAgents([], [boards[0] as RegistryBoard])).filter((id) => /^src-(?:icims|successfactors|smartrecruiters|jsonld-sitemap)$/u.test(id))).toEqual(['src-icims']);
+  });
+
+  it('Task 8 allow-list: the page adapters\' registry egress one agent each; httpStream only src-successfactors', () => {
+    const agents = dailyAgents([], [
+      { platform: 'icims', company: 'A', ref: 'careers-a.icims.com' },
+      { platform: 'successfactors', company: 'B', ref: 'careers.b.test' },
+    ]);
+    const ic = agents.find((a) => a.contract.id === 'src-icims')?.contract;
+    const sf = agents.find((a) => a.contract.id === 'src-successfactors')?.contract;
+    if (ic === undefined || sf === undefined) throw new Error('no page adapters');
+    expect(capabilityProblems([defineContract({ ...ic, id: 'src-sneaky' }), defineContract({ ...sf, id: 'src-sly', egress: ['api.example.com'] })])).toEqual([
+      'src-sly declares capabilities.httpStream; only src-successfactors may stream past the response cap',
+      "src-sneaky declares egress registry:icims-hosts; only src-icims may contact the registry's iCIMS hosts",
+    ]);
   });
 
   it('Task 7 allow-list: only src-eightfold and src-oracle may use their registry egress', () => {

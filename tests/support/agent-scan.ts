@@ -37,6 +37,8 @@ export const APP_ALLOWED = [
   'src/app/ats-profiles.ts',
   // Task 7 fix round 2: the pure bot-wall detector the coverage gate and the Eightfold adapter share (no imports).
   'src/app/challenge.ts',
+  // Task 8: the pure sitemap reader (moved from the coverage locator) the daily page adapters share.
+  'src/app/text/sitemap.ts',
 ];
 
 /**

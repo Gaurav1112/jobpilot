@@ -18,7 +18,12 @@ import { eightfoldBoardOfUrl, eightfoldMaxRequests, eightfoldRef, EIGHTFOLD_EGRE
 import { makeSrcOracle, oracleBoardOfUrl, oracleRef, ORACLE_EGRESS, ORACLE_MAX_REQUESTS, ORACLE_TIMEOUT_MS, parseOracleRef } from './agents/sources/platforms/oracle.js';
 import { makeSrcWorkday, parseWorkdayRef, workdayBoardOfUrl, workdayRef, WORKDAY_EGRESS, WORKDAY_MAX_REQUESTS, WORKDAY_TIMEOUT_MS } from './agents/sources/platforms/workday.js';
 import type { PageLedger } from './agents/sources/platforms/shared.js';
-import { dailyEightfoldHosts, dailyOracleHosts, dailyWorkdayHosts } from './daily-hosts.js';
+import { icimsBoardOfUrl, ICIMS_EGRESS, ICIMS_MAX_REQUESTS, ICIMS_TIMEOUT_MS, makeSrcIcims, parseIcimsRef } from './agents/sources/platforms/icims.js';
+import { jsonLdBoardOfUrl, jsonLdRef, JSONLD_EGRESS, JSONLD_MAX_REQUESTS, JSONLD_TIMEOUT_MS, makeSrcJsonLd, parseJsonLdRef } from './agents/sources/platforms/jsonld-sitemap.js';
+import type { PageState } from './agents/sources/platforms/pages.js';
+import { makeSrcSmartRecruiters, parseSmartRecruitersRef, smartRecruitersBoardOfUrl, SR_EGRESS, SR_HOSTS, SR_MAX_REQUESTS, SR_TIMEOUT_MS } from './agents/sources/platforms/smartrecruiters.js';
+import { makeSrcSuccessFactors, parseSuccessFactorsRef, successFactorsBoardOfUrl, SF_EGRESS, SF_MAX_REQUESTS, SF_TIMEOUT_MS } from './agents/sources/platforms/successfactors.js';
+import { dailyEightfoldHosts, dailyOracleHosts, dailyPageHosts, dailyWorkdayHosts } from './daily-hosts.js';
 import { writingAgents } from './agents/writing/index.js';
 import { coverWriter } from './agents/writing/cover-writer.js';
 import { qaGate } from './agents/writing/qa-gate.js';
@@ -37,6 +42,8 @@ import { FEED_SOURCES, knownFeeds } from './feeds.js';
  *                      ─► src-workday ─► RawPosting@1   (verified Workday registry companies only; team sourcing-workday)
  *                      ─► src-eightfold ─► RawPosting@1   (verified Eightfold registry companies only; team sourcing-eightfold)
  *                      ─► src-oracle ─► RawPosting@1   (verified Oracle Recruiting Cloud companies only; team sourcing-oracle)
+ *                      ─► src-icims | src-successfactors | src-smartrecruiters | src-jsonld-sitemap ─► RawPosting@1
+ *                         (verified companies on those platforms only, Task 8; each its own team)
  *   RawPosting@1 ─► normalizer ─► Posting@1 ─► eligibility ─► EligibilityVerdict@1 ─► scorer-lexicon ─► Scored@1
  *   ─► evidence-matcher ─► Evidence@1 ─► resume-planner ─► ResumePlan@1 ─► cover-writer ─► CoverPlan@1
  *   ─► renderer ─► Rendered@1 ─► qa-gate ─► QaReport@1
@@ -51,7 +58,19 @@ export { FEED_SOURCES } from './feeds.js';
 
 const API_SOURCES: readonly AnyAgent[] = [srcAshby, srcGreenhouse, srcHimalayas, srcJobicy, srcLever];
 /** Each platform adapter has its own team (spec §6): a dead tenant opens no breaker elsewhere. */
-const TEAM_ORDER = ['sourcing', 'sourcing-workday', 'sourcing-eightfold', 'sourcing-oracle', 'understanding', 'evaluation', 'writing'] as const;
+const TEAM_ORDER = [
+  'sourcing',
+  'sourcing-workday',
+  'sourcing-eightfold',
+  'sourcing-oracle',
+  'sourcing-icims',
+  'sourcing-successfactors',
+  'sourcing-smartrecruiters',
+  'sourcing-jsonld',
+  'understanding',
+  'evaluation',
+  'writing',
+] as const;
 
 type WatchLike = Pick<WatchEntry, 'ats'> & { readonly listUrl?: string | undefined };
 
@@ -59,16 +78,35 @@ type WatchLike = Pick<WatchEntry, 'ats'> & { readonly listUrl?: string | undefin
 export interface RegistryBoard {
   readonly platform: RegistryPlatform;
   readonly company: string;
-  /** The adapter's DiscoveryRequest slug (Workday `<host>/<tenant>/<site>`, Eightfold `<host>/<domain>`, Oracle `<host>/<siteNumber>`). */
+  /**
+   * The adapter's DiscoveryRequest slug (Workday `<host>/<tenant>/<site>`, Eightfold `<host>/<domain>`, Oracle
+   * `<host>/<siteNumber>`, iCIMS and SuccessFactors the host, SmartRecruiters the company id, jsonld-sitemap
+   * `<host>[<path prefix>]`).
+   */
   readonly ref: string;
 }
 
 /** The registry platforms with a daily adapter in this build: each one's stored-board-URL reader, ref parser and egress. */
+const one = (h: string | null | undefined): string[] => (h === null || h === undefined ? [] : [h]);
 const REGISTRY_PLATFORMS = {
-  workday: { ref: (url: string) => mapNull(workdayBoardOfUrl(url), workdayRef), host: (ref: string) => parseWorkdayRef(ref)?.host ?? null, egress: WORKDAY_EGRESS },
-  eightfold: { ref: eightfoldRegistryRef, host: (ref: string) => parseEightfoldRef(ref)?.host ?? null, egress: EIGHTFOLD_EGRESS },
-  oracle: { ref: (url: string) => mapNull(oracleBoardOfUrl(url), oracleRef), host: (ref: string) => parseOracleRef(ref)?.host ?? null, egress: ORACLE_EGRESS },
+  workday: { ref: (url: string) => mapNull(workdayBoardOfUrl(url), workdayRef), hosts: (ref: string) => one(parseWorkdayRef(ref)?.host), egress: WORKDAY_EGRESS },
+  eightfold: { ref: eightfoldRegistryRef, hosts: (ref: string) => one(parseEightfoldRef(ref)?.host), egress: EIGHTFOLD_EGRESS },
+  oracle: { ref: (url: string) => mapNull(oracleBoardOfUrl(url), oracleRef), hosts: (ref: string) => one(parseOracleRef(ref)?.host), egress: ORACLE_EGRESS },
+  // Task 8, the page adapters
+  icims: { ref: (url: string) => icimsBoardOfUrl(url), hosts: (ref: string) => one(parseIcimsRef(ref)), egress: ICIMS_EGRESS },
+  successfactors: { ref: (url: string) => successFactorsBoardOfUrl(url), hosts: (ref: string) => one(parseSuccessFactorsRef(ref)), egress: SF_EGRESS },
+  // both public SmartRecruiters hosts: the listing may move from jobs. to careers. (its robots.txt is then asked)
+  smartrecruiters: { ref: (url: string) => smartRecruitersBoardOfUrl(url), hosts: (ref: string) => (parseSmartRecruitersRef(ref) === null ? [] : [...SR_HOSTS]), egress: SR_EGRESS },
+  'jsonld-sitemap': { ref: jsonLdRegistryRef, hosts: (ref: string) => one(parseJsonLdRef(ref)?.host), egress: JSONLD_EGRESS },
 } as const;
+
+/** A jsonld-sitemap board's ref: the stored board URL's host, with the slug's path prefix when the slug names that host. */
+function jsonLdRegistryRef(url: string, slug: string | null | undefined): string | null {
+  const host = jsonLdBoardOfUrl(url);
+  if (host === null) return null;
+  const s = slug === null || slug === undefined ? null : parseJsonLdRef(slug);
+  return s !== null && s.host === host ? jsonLdRef(s) : host;
+}
 export type RegistryPlatform = keyof typeof REGISTRY_PLATFORMS;
 
 /**
@@ -99,7 +137,8 @@ export interface RegistryCompany {
 
 /**
  * The boards of the verified registry companies (`verifiedCompanies()`: verified or failing, never rejected) whose
- * platform has a daily adapter in this build (Task 6: Workday; Task 7: Eightfold, Oracle), sorted by platform then
+ * platform has a daily adapter in this build (Task 6: Workday; Task 7: Eightfold, Oracle; Task 8: iCIMS,
+ * SuccessFactors, SmartRecruiters, jsonld-sitemap), sorted by platform then
  * ref; one per platform and ref (the first name wins). A row whose stored board URL is not a board of its platform is
  * left out.
  */
@@ -125,14 +164,20 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
  * call, on a fresh `dailyWorkdayHosts()` (robots.txt once per host per run). With no boards the agents, the wiring
  * and so every step key are exactly as before the registry existed.
  */
-export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = [], o: { readonly pageLedger?: PageLedger } = {}): AnyAgent[] {
+export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = [], o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState } = {}): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   // one adapter per platform with a verified company, each on its own fresh host state (robots.txt, disabled hosts)
   const has = (p: RegistryPlatform): boolean => boards.some((b) => b.platform === p);
+  // the page adapters share the run's page state (the app DB in a daily run); each has its own host state
+  const pages = (): { hosts: ReturnType<typeof dailyPageHosts>; state?: PageState } => ({ hosts: dailyPageHosts(), ...(o.pageState === undefined ? {} : { state: o.pageState }) });
   const platforms: AnyAgent[] = [
     ...(has('workday') ? [makeSrcWorkday({ hosts: dailyWorkdayHosts() })] : []),
     ...(has('eightfold') ? [makeSrcEightfold({ hosts: dailyEightfoldHosts() })] : []),
     ...(has('oracle') ? [makeSrcOracle({ hosts: dailyOracleHosts(), ...(o.pageLedger === undefined ? {} : { ledger: o.pageLedger }) })] : []),
+    ...(has('icims') ? [makeSrcIcims(pages())] : []),
+    ...(has('successfactors') ? [makeSrcSuccessFactors(pages())] : []),
+    ...(has('smartrecruiters') ? [makeSrcSmartRecruiters(pages())] : []),
+    ...(has('jsonld-sitemap') ? [makeSrcJsonLd(pages())] : []),
   ];
   return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }
@@ -146,7 +191,7 @@ export function careersEgressSets(watchlist: readonly WatchLike[]): EgressSets {
 export function registryEgressSets(boards: readonly RegistryBoard[]): EgressSets {
   const sets: Record<string, string[]> = {};
   for (const [platform, p] of Object.entries(REGISTRY_PLATFORMS)) {
-    const hosts = [...new Set(boards.filter((b) => b.platform === platform).flatMap((b) => p.host(b.ref) ?? []))].sort();
+    const hosts = [...new Set(boards.filter((b) => b.platform === platform).flatMap((b) => p.hosts(b.ref)))].sort();
     if (hosts.length > 0) sets[p.egress] = hosts;
   }
   return sets;
@@ -175,6 +220,7 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
     ...(has('src-workday') ? [{ type: 'DiscoveryRequest@1', to: 'src-workday' }] : []),
     ...(has('src-eightfold') ? [{ type: 'DiscoveryRequest@1', to: 'src-eightfold' }] : []),
     ...(has('src-oracle') ? [{ type: 'DiscoveryRequest@1', to: 'src-oracle' }] : []),
+    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap'] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
     { type: 'RawPosting@1', to: 'normalizer' },
     { type: 'Posting@1', to: 'eligibility' },
     { type: 'EligibilityVerdict@1', to: 'scorer-lexicon' },
@@ -246,6 +292,12 @@ const HTTP_BUDGETS: readonly {
   { agent: 'src-eightfold', perRequestMs: Math.floor(EIGHTFOLD_TIMEOUT_MS / Math.max(eightfoldMaxRequests('v2'), eightfoldMaxRequests('pcsx'))), applies: (_w, _f, b) => b.some((x) => x.platform === 'eightfold') },
   // robots.txt, at most 10 list pages and the details, each at least 5 s apart
   { agent: 'src-oracle', perRequestMs: Math.floor(ORACLE_TIMEOUT_MS / ORACLE_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'oracle') },
+  // Task 8: robots.txt, the listing requests and at most 40 job pages with their redirects, each at least 2 s apart
+  // (SuccessFactors' feed is one streamed request with its own timeout, inside the step's)
+  { agent: 'src-icims', perRequestMs: Math.floor(ICIMS_TIMEOUT_MS / ICIMS_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'icims') },
+  { agent: 'src-successfactors', perRequestMs: Math.floor(SF_TIMEOUT_MS / SF_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'successfactors') },
+  { agent: 'src-smartrecruiters', perRequestMs: Math.floor(SR_TIMEOUT_MS / SR_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'smartrecruiters') },
+  { agent: 'src-jsonld-sitemap', perRequestMs: Math.floor(JSONLD_TIMEOUT_MS / JSONLD_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'jsonld-sitemap') },
 ];
 
 /**

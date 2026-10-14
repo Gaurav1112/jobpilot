@@ -46,6 +46,12 @@ import { Posting, RawPosting } from '../types.js';
  *   null). The description is the detail's (description, responsibilities, qualifications), else the list's short
  *   description; `employmentType` the detail's `JobSchedule` ("Full time").
  *
+ * - icims, smartrecruiters, jsonld-sitemap (Task 8, platforms/icims.ts, smartrecruiters.ts, jsonld-sitemap.ts):
+ *   `{url, title, jsonLd}`, the kept JobPosting of a job page: mapped exactly as careers (location from `jobLocation`,
+ *   remote from `jobLocationType: TELECOMMUTE`, the remote scope from `applicantLocationRequirements`);
+ * - successfactors (platforms/successfactors.ts): `{title, url, id, location, employer, description, jsonLd}`; with
+ *   `jsonLd`, as careers; without, the `sitemal.xml` item (see `successfactors` below).
+ *
  * A raw posting with no title or no http(s) URL cannot be a Posting: that one posting fails with `invalid_output`
  * (its own step only); nothing is emitted for it.
  */
@@ -565,6 +571,15 @@ function baseSalaryComp(v: unknown): Comp | null | undefined {
 }
 
 function careers(raw: RawPosting, r: Rec): Posting {
+  return jsonLdPosting(raw, r, 'careers');
+}
+
+/**
+ * The careers mapping of a `{url, jsonLd, title, text}` raw, under `ats`: the careers source, and the platform page
+ * adapters that read JobPosting JSON-LD (Task 8: icims, smartrecruiters, jsonld-sitemap, and successfactors' page
+ * postings), so their location, remote and scope fields map exactly as the careers source's do.
+ */
+function jsonLdPosting(raw: RawPosting, r: Rec, ats: Posting['ats']): Posting {
   const ld = isRec(r.jsonLd) ? r.jsonLd : null;
   const ldDescription = ld === null ? null : str(ld.description);
   const descriptionText = ldDescription !== null ? htmlish(ldDescription) : (typeof r.text === 'string' ? r.text : '').trim();
@@ -578,7 +593,7 @@ function careers(raw: RawPosting, r: Rec): Posting {
   const countries = telecommute
     ? places(applicants)
     : [...places(applicants), ...places(officeCountries.filter((x): x is string => x !== null)), ...countriesIn(locationText)];
-  return assemble(raw, 'careers', {
+  return assemble(raw, ats, {
     title: str(r.title),
     url: str(r.url),
     locationText,
@@ -695,7 +710,45 @@ function oracle(raw: RawPosting, r: Rec): Posting {
   });
 }
 
-const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = { greenhouse, lever, ashby, himalayas, jobicy, careers, workday, eightfold, oracle };
+/**
+ * SuccessFactors (Task 8): a page posting (`jsonLd` set) maps as the careers source; a feed posting from `sitemal.xml`
+ * keeps its `g:location` as the location text (a country code such as `IN`, or a place), its country from that (an
+ * ISO-2 code alone or as the last of three or more parts, or a named place), and the item's description HTML. The feed
+ * states no arrangement, employment type or date: `structured`, `employmentType` and `postedAt` are null.
+ */
+function successfactors(raw: RawPosting, r: Rec): Posting {
+  if (isRec(r.jsonLd)) return jsonLdPosting(raw, r, 'successfactors');
+  const locationText = str(r.location)?.trim() ?? '';
+  const descriptionText = htmlish(str(r.description) ?? '');
+  return assemble(raw, 'successfactors', {
+    title: str(r.title),
+    url: str(r.url),
+    locationText,
+    structured: null,
+    countries: [...countriesIn(locationText), ...places(isoTail(locationText))],
+    signals: [],
+    employmentType: null,
+    descriptionText,
+    postedAt: null,
+    comp: compFromText(descriptionText),
+  });
+}
+
+const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = {
+  greenhouse,
+  lever,
+  ashby,
+  himalayas,
+  jobicy,
+  careers,
+  workday,
+  eightfold,
+  oracle,
+  icims: (raw, r) => jsonLdPosting(raw, r, 'icims'),
+  smartrecruiters: (raw, r) => jsonLdPosting(raw, r, 'smartrecruiters'),
+  'jsonld-sitemap': (raw, r) => jsonLdPosting(raw, r, 'jsonld-sitemap'),
+  successfactors,
+};
 
 /** Maps one raw posting; throws `invalid_output` for an unknown source, a raw that is not an object, no title or no URL. */
 export function normalize(raw: RawPosting): Posting {
@@ -707,7 +760,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

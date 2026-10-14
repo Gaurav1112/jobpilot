@@ -21,7 +21,11 @@ import type { AnyContract } from '../kernel/contract.js';
  *   resolved per daily run): only `src-workday`; likewise `registry:eightfold-hosts` only `src-eightfold` and
  *   `registry:oracle-hosts` only `src-oracle` (Task 7);
  * - `capabilities.httpPost` (the broker's `postJson`): only the two Workday readers, `src-workday` and the
- *   `board-verifier`, whose CXS job list is a POST; every other agent reads by GET only (the Gmail source above all).
+ *   `board-verifier`, whose CXS job list is a POST; every other agent reads by GET only (the Gmail source above all);
+ * - Task 8: `registry:icims-hosts` only `src-icims`, `registry:successfactors-hosts` only `src-successfactors`,
+ *   `registry:smartrecruiters-hosts` only `src-smartrecruiters`, `registry:jsonld-hosts` only `src-jsonld-sitemap`;
+ *   `capabilities.httpStream` (the broker's `getStream` over the policy's response cap) only `src-successfactors`, for
+ *   its `sitemal.xml` (50 MB cap).
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -39,6 +43,13 @@ export const CAPABILITY_ALLOW_LIST = {
   oracleEgress: ['src-oracle'],
   /** The agents that may POST (Workday's CXS list search). */
   httpPost: ['src-workday', 'board-verifier'],
+  /** Task 8: the symbolic egress of the page adapters' registry hosts, one agent each. */
+  icimsEgress: ['src-icims'],
+  successfactorsEgress: ['src-successfactors'],
+  smartrecruitersEgress: ['src-smartrecruiters'],
+  jsonldEgress: ['src-jsonld-sitemap'],
+  /** The agents that may stream a response over the policy's response cap (SuccessFactors' sitemal.xml). */
+  httpStream: ['src-successfactors'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -66,6 +77,19 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
     }
     if (c.egress.includes('registry:oracle-hosts') && !allowed(CAPABILITY_ALLOW_LIST.oracleEgress, c.id)) {
       problems.push(`${c.id} declares egress registry:oracle-hosts; only ${CAPABILITY_ALLOW_LIST.oracleEgress.join(', ')} may contact the registry's Oracle hosts`);
+    }
+    for (const [egress, key, what] of [
+      ['registry:icims-hosts', 'icimsEgress', 'iCIMS'],
+      ['registry:successfactors-hosts', 'successfactorsEgress', 'SuccessFactors'],
+      ['registry:smartrecruiters-hosts', 'smartrecruitersEgress', 'SmartRecruiters'],
+      ['registry:jsonld-hosts', 'jsonldEgress', 'jsonld-sitemap'],
+    ] as const) {
+      if (c.egress.includes(egress) && !allowed(CAPABILITY_ALLOW_LIST[key], c.id)) {
+        problems.push(`${c.id} declares egress ${egress}; only ${CAPABILITY_ALLOW_LIST[key].join(', ')} may contact the registry's ${what} hosts`);
+      }
+    }
+    if (c.capabilities.httpStream && !allowed(CAPABILITY_ALLOW_LIST.httpStream, c.id)) {
+      problems.push(`${c.id} declares capabilities.httpStream; only ${CAPABILITY_ALLOW_LIST.httpStream.join(', ')} may stream past the response cap`);
     }
     if (c.capabilities.httpPost && !allowed(CAPABILITY_ALLOW_LIST.httpPost, c.id)) {
       problems.push(`${c.id} declares capabilities.httpPost; only ${CAPABILITY_ALLOW_LIST.httpPost.join(', ')} may send a POST`);

@@ -84,7 +84,8 @@ async function verify(g: PlatformGuess, fetch: FetchLike, agent = makeBoardVerif
 
 describe('platformClient', () => {
   it('reads Greenhouse, Lever, Ashby, Workday, Eightfold and Oracle with the daily adapters\' own URLs; every other platform is not built', () => {
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'eightfold', 'greenhouse', 'lever', 'oracle', 'workday']);
+    // Task 8 added the page platforms (their clients are tested in sources-pagesites.test.ts)
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'eightfold', 'greenhouse', 'icims', 'jsonld-sitemap', 'lever', 'oracle', 'smartrecruiters', 'successfactors', 'workday']);
     // Task 7: Eightfold and Oracle read each tenant's own host; robots.txt governs both, Oracle's 403 is "unknown"
     const ef = platformClient('eightfold');
     expect(ef?.refOf('explore.jobs.netflix.net/netflix.com', 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com')).toBe('explore.jobs.netflix.net/netflix.com');
@@ -284,11 +285,12 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
     const n = serve({});
-    const v = await verify(guess(cand('atlassian.com', 'Atlassian'), 'icims', 'careers-atlassian.icims.com'), n.fetch);
+    // Task 8 built iCIMS; Workable still has no adapter
+    const v = await verify(guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'huggingface'), n.fetch);
     expect(v).toMatchObject({ status: 'proposed', boardName: null, jobsSeen: null });
-    expect(v.reasons[0]).toBe('adapter not built yet: icims');
+    expect(v.reasons[0]).toBe('adapter not built yet: workable');
     expect(n.calls).toEqual([]);
-    expect(verifierHosts(guess(cand('atlassian.com', 'Atlassian'), 'icims', 'x'))).toEqual([]);
+    expect(verifierHosts(guess(cand('huggingface.co', 'Hugging Face'), 'workable', 'x'))).toEqual([]);
   });
 
   it('no platform: proposed, the detector\'s reasons carried, nothing fetched (carry 9)', async () => {
@@ -459,5 +461,63 @@ describe('board-verifier: Oracle Recruiting Cloud (a 403 robots.txt is unknown; 
     expect(n.calls).toEqual([`https://${JPM}/robots.txt`]);
     const r = serve({ [`https://${JPM}/robots.txt`]: { status: 403, body: '' }, [page1]: { status: 403, body: '' } });
     await expect(makeBoardVerifier(fresh()).run(jpmGuess(), ctxFor(r.fetch, [jpmGuess()]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-403 on jpmc\.fa\.oraclecloud\.com/) });
+  });
+});
+
+describe('board-verifier: the page platforms (Task 8: strict robots, a JobPosting on one job page, refusals deferred)', () => {
+  const page = (name: string): string => readFileSync(new URL(`../../fixtures/pages/${name}`, import.meta.url), 'utf8');
+  const IC = 'careers-apac-atlassian.icims.com';
+  const JOB = `https://${IC}/jobs/25565/senior-backend-software-engineer/job?in_iframe=1`;
+  const icGuess = () => guess(cand('atlassian.com', 'Atlassian'), 'icims', IC, { boardUrl: `https://${IC}/sitemap.xml` });
+  const routes = (over: Record<string, Route> = {}): Record<string, Route> => ({
+    [`https://${IC}/robots.txt`]: { body: page('icims-atlassian-robots.txt') },
+    [`https://${IC}/sitemap.xml`]: { body: page('icims-atlassian-sitemap.xml') },
+    [JOB]: { body: page('icims-atlassian-job-25565.html') },
+    ...over,
+  });
+
+  it('Atlassian (recorded): verified by the JobPosting\'s hiringOrganization, 65 jobs, 3 requests', async () => {
+    const n = serve(routes());
+    expect(verifierHosts(icGuess())).toEqual([IC]);
+    const v = await verify(icGuess(), n.fetch);
+    expect(v).toMatchObject({ status: 'verified', boardName: 'Atlassian', jobsSeen: 65 });
+    expect(n.calls).toEqual([`https://${IC}/robots.txt`, `https://${IC}/sitemap.xml`, JOB]);
+  });
+
+  it('the strict robots rule: a 403 robots.txt refuses the host, the step is deferred, nothing else fetched', async () => {
+    const n = serve(routes({ [`https://${IC}/robots.txt`]: { status: 403, body: 'denied' } }));
+    await expect(makeBoardVerifier(fresh()).run(icGuess(), ctxFor(n.fetch, [icGuess()]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:robots-forbidden on careers-apac-atlassian\.icims\.com/) });
+    expect(n.calls).toEqual([`https://${IC}/robots.txt`]);
+  });
+
+  it('a 429 or a challenge on the job page is a deferral (host-disabled), never a failed verdict', async () => {
+    for (const [answer, why] of [[{ status: 429, body: 'slow down' }, 'http-429'], [{ status: 503, body: '<title>Just a moment...</title>' }, 'challenge']] as const) {
+      const n = serve(routes({ [JOB]: answer }));
+      await expect(makeBoardVerifier(fresh()).run(icGuess(), ctxFor(n.fetch, [icGuess()])), why).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`^host-disabled:${why} on careers-apac-atlassian\\.icims\\.com`)) });
+    }
+  });
+
+  it('a job page without a valid JobPosting is a failed verdict; an empty sitemap is proposed (0 jobs)', async () => {
+    const bad = await verify(icGuess(), serve(routes({ [JOB]: { body: '<html>no ld</html>' } })).fetch);
+    expect(bad.status).toBe('failed');
+    expect(bad.reasons.join('\n')).toMatch(/no valid JobPosting/);
+    const none = await verify(icGuess(), serve(routes({ [`https://${IC}/sitemap.xml`]: { body: '<urlset></urlset>' } })).fetch);
+    expect(none).toMatchObject({ status: 'proposed', jobsSeen: 0 });
+  });
+
+  it('SmartRecruiters (Bosch, the live shape): the listing moves to careers.smartrecruiters.com, whose robots.txt is unavailable to the gate: deferred, never read', async () => {
+    const g = guess(cand('bosch.com', 'Bosch'), 'smartrecruiters', 'BoschGroup', { boardUrl: 'https://jobs.smartrecruiters.com/BoschGroup' });
+    const n = serve({ 'https://jobs.smartrecruiters.com/robots.txt': { status: 404, body: 'nf' }, 'https://jobs.smartrecruiters.com/BoschGroup': { status: 301, location: 'https://careers.smartrecruiters.com/BoschGroup' } });
+    await expect(makeBoardVerifier(fresh()).run(g, ctxFor(n.fetch, [g]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:robots-unavailable on careers\.smartrecruiters\.com/) });
+    expect(n.calls).toEqual(['https://jobs.smartrecruiters.com/robots.txt', 'https://jobs.smartrecruiters.com/BoschGroup']);
+  });
+
+  it('SuccessFactors (HCLTech, recorded): the feed up to its first item; g:employer is not the candidate\'s name, so proposed', async () => {
+    const HCL = 'careers.hcltech.com';
+    const g = guess(cand('hcltech.com', 'HCLTech'), 'successfactors', HCL, { boardUrl: `https://${HCL}/sitemal.xml` });
+    const n = serve({ [`https://${HCL}/robots.txt`]: { body: page('successfactors-hcltech-robots.txt') }, [`https://${HCL}/sitemal.xml`]: { body: page('successfactors-hcltech-sitemal.xml') } });
+    const v = await verify(g, n.fetch);
+    expect(v).toMatchObject({ status: 'proposed', boardName: 'HCL Technologies Limited', jobsSeen: 1 });
+    expect(v.reasons[0]).toMatch(/^board name 'HCL Technologies Limited' ≈ 'HCLTech', please confirm$/);
   });
 });

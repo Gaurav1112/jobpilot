@@ -735,6 +735,11 @@ describe('capability allow-list', () => {
       eightfoldEgress: ['src-eightfold'],
       oracleEgress: ['src-oracle'],
       httpPost: ['src-workday', 'board-verifier'],
+      icimsEgress: ['src-icims'],
+      successfactorsEgress: ['src-successfactors'],
+      smartrecruitersEgress: ['src-smartrecruiters'],
+      jsonldEgress: ['src-jsonld-sitemap'],
+      httpStream: ['src-successfactors'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;

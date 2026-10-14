@@ -1,5 +1,5 @@
 {
-  "hash": "b1076cb03e79e35e4e63c1a8b37ce9d91de320c5c689704e5d15a5afa94e5a3c",
+  "hash": "1131b539aa153841c175d5b8bae7644b84467187b8c21d637a92eafa14b03df0",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -82,7 +82,11 @@
                   "careers",
                   "workday",
                   "eightfold",
-                  "oracle"
+                  "oracle",
+                  "icims",
+                  "successfactors",
+                  "smartrecruiters",
+                  "jsonld-sitemap"
                 ],
                 "type": "string"
               },
@@ -413,7 +417,11 @@
                       "careers",
                       "workday",
                       "eightfold",
-                      "oracle"
+                      "oracle",
+                      "icims",
+                      "successfactors",
+                      "smartrecruiters",
+                      "jsonld-sitemap"
                     ],
                     "type": "string"
                   },
@@ -624,6 +632,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.2.0"
+    "version": "1.3.0"
   }
 }

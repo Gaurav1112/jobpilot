@@ -479,7 +479,7 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
 export const srcWorkdayContract = defineContract({
   id: 'src-workday',
   // 1.1.0: the reads are scoped to the board's India and remote facets (Fix round 1); 1.2.0: DiscoveryRequest/Posting.ats gained eightfold, oracle (Task 7)
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Reads one verified Workday company\'s India-located or remote job lists, with job details for the titles the pre-filter passes, within a per-company request budget, honouring robots.txt per host',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead Workday tenant never opens a breaker for another platform or the ATS sources.

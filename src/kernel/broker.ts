@@ -34,7 +34,41 @@ export interface HttpTool {
    * policy denial.
    */
   postJson(url: string, body: unknown, opts?: RequestOptions): Promise<{ status: number; json: unknown }>;
+  /**
+   * One GET whose 2xx body is handed to `onText` chunk by chunk as it arrives (UTF-8 decoded in streaming mode, so a
+   * character split across chunks is whole), never held whole: for a feed larger than the policy's response cap
+   * (SuccessFactors' `sitemal.xml`). The caller names its byte cap (`maxBytes`): past it the stream is cancelled and the
+   * result says `capped: true` (a `content-length` over the cap is refused before any byte is read), so a caller can
+   * fail loudly instead of truncating. `onText` returning `false` stops the read (`stopped: true`). A cap above the
+   * policy's `maxResponseBytes` needs `capabilities.httpStream`, and is never above STREAM_MAX_BYTES. A non-2xx answer
+   * is not streamed: it comes back with `location` and at most STREAM_ERROR_BODY_BYTES of its body (for a bot-wall
+   * check), like getPage. Same egress, https-only, pacing, timeout and honest headers as getPage.
+   */
+  getStream(url: string, onText: (text: string) => boolean | void, opts: StreamOptions): Promise<StreamResult>;
 }
+
+/** getStream's options: getPage's, plus the byte cap. */
+export interface StreamOptions extends RequestOptions {
+  readonly maxBytes: number;
+}
+
+export interface StreamResult {
+  readonly status: number;
+  readonly location: string | null;
+  /** The bytes of a 2xx body read (0 for a refused content-length). */
+  readonly bytes: number;
+  /** The cap was reached: the stream was cancelled, the text handed over is incomplete. */
+  readonly capped: boolean;
+  /** `onText` asked to stop. */
+  readonly stopped: boolean;
+  /** A non-2xx answer's body, at most STREAM_ERROR_BODY_BYTES; absent for a 2xx. */
+  readonly body?: string;
+}
+
+/** The largest cap getStream accepts, whatever the contract declares. */
+export const STREAM_MAX_BYTES = 64 * 1024 * 1024;
+/** How much of a non-2xx streamed answer is kept, for a bot-wall check. */
+export const STREAM_ERROR_BODY_BYTES = 64 * 1024;
 
 /**
  * Per-request options (getPage and getJson). `timeoutMs`: the request, body included, is aborted after that long and
@@ -116,6 +150,72 @@ async function readCappedBytes(res: FetchResponse, maxBytes: number): Promise<Ui
 
 async function readCapped(res: FetchResponse, maxBytes: number): Promise<string> {
   return new TextDecoder().decode(await readCappedBytes(res, maxBytes));
+}
+
+/** The first `maxBytes` of a body (an error page), the rest cancelled unread. */
+async function readPrefix(res: FetchResponse, maxBytes: number): Promise<string> {
+  if (!res.body) return (await res.text()).slice(0, maxBytes);
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value.subarray(0, Math.max(0, maxBytes - total)));
+    total += value.byteLength;
+    if (total >= maxBytes) {
+      await reader.cancel().catch(() => undefined);
+      break;
+    }
+  }
+  const all = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return new TextDecoder().decode(all);
+}
+
+/** Streams a 2xx body to `onText` under the byte cap (see HttpTool.getStream). */
+async function streamBody(res: FetchResponse, maxBytes: number, onText: (text: string) => boolean | void): Promise<Pick<StreamResult, 'bytes' | 'capped' | 'stopped'>> {
+  const declared = Number(res.headers?.get('content-length') ?? Number.NaN);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await res.body?.cancel().catch(() => undefined);
+    return { bytes: 0, capped: true, stopped: false };
+  }
+  const decoder = new TextDecoder();
+  if (!res.body) {
+    const text = await res.text();
+    const bytes = new TextEncoder().encode(text);
+    if (bytes.byteLength > maxBytes) {
+      onText(decoder.decode(bytes.subarray(0, maxBytes)));
+      return { bytes: maxBytes, capped: true, stopped: false };
+    }
+    const go = onText(text);
+    return { bytes: bytes.byteLength, capped: false, stopped: go === false };
+  }
+  const reader = res.body.getReader();
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const room = maxBytes - total;
+    if (value.byteLength > room) {
+      if (room > 0) onText(decoder.decode(value.subarray(0, room), { stream: true }));
+      total += Math.max(0, room);
+      await reader.cancel().catch(() => undefined);
+      return { bytes: total, capped: true, stopped: false };
+    }
+    total += value.byteLength;
+    if (onText(decoder.decode(value, { stream: true })) === false) {
+      await reader.cancel().catch(() => undefined);
+      return { bytes: total, capped: false, stopped: true };
+    }
+  }
+  const tail = decoder.decode();
+  if (tail !== '' && onText(tail) === false) return { bytes: total, capped: false, stopped: true };
+  return { bytes: total, capped: false, stopped: false };
 }
 
 /** Read-only page rendering. The agent names the URL and whether it is a listing; the broker fixes everything else. */
@@ -387,6 +487,30 @@ export function issueContext(a: IssueArgs): AgentContext {
         rq.done();
       }
     };
+    const getStream = async (url: string, onText: (text: string) => boolean | void, opts: StreamOptions): Promise<StreamResult> => {
+      const max = opts.maxBytes;
+      if (!Number.isSafeInteger(max) || max <= 0) throw deny('G-EGRESS: getStream needs a positive integer maxBytes');
+      if (max > STREAM_MAX_BYTES) throw deny(`G-EGRESS: getStream maxBytes ${max} exceeds ${STREAM_MAX_BYTES}`);
+      if (max > a.policy.maxResponseBytes && a.contract.capabilities.httpStream !== true) {
+        throw deny(`G-EGRESS: ${a.contract.id} may not stream more than ${a.policy.maxResponseBytes} bytes (no capabilities.httpStream)`);
+      }
+      const u = checkUrl(url);
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      await (opts.minIntervalMs === undefined ? a.hostPacer?.wait(u.hostname) : a.hostPacer?.wait(u.hostname, opts.minIntervalMs));
+      if (a.signal.aborted) throw new KernelError('timeout', 'step timed out; no new requests');
+      const rq = requestSignal(opts.timeoutMs);
+      try {
+        const res = await a.providers.fetch(u.href, { signal: rq.signal, redirect: 'manual', headers: HTTP_HEADERS });
+        const location = res.headers?.get('location') ?? null;
+        if (res.status < 200 || res.status >= 300) return { status: res.status, location, bytes: 0, capped: false, stopped: false, body: await readPrefix(res, STREAM_ERROR_BODY_BYTES) };
+        return { status: res.status, location, ...(await streamBody(res, max, onText)) };
+      } catch (e) {
+        if (rq.timedOut()) throw timedOutError(u.hostname, opts.timeoutMs);
+        throw mapProviderError(e);
+      } finally {
+        rq.done();
+      }
+    };
     const getText = (url: string, opts?: RequestOptions): Promise<{ status: number; body: string }> => fetchBody(url, readCapped, opts);
     const parseJson = (url: string, status: number, body: string): { status: number; json: unknown } => {
       if (status >= 400) return { status, json: null };
@@ -399,6 +523,7 @@ export function issueContext(a: IssueArgs): AgentContext {
     ctx.http = {
       getText: (url) => getText(url),
       getPage,
+      getStream,
       async getBytes(url) {
         const { status, body } = await fetchBody(url, readCappedBytes);
         return { status, bytes: body };
