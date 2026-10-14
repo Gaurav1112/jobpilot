@@ -84,6 +84,24 @@ export const FREELANCE_DUE: DueSpec = {
   runPrefix: 'freelance-',
 };
 
+/**
+ * Written by `schedule install` on a home that never ran coverage (final review I1): `{ "notBefore": <ISO> }`, the next
+ * Sunday 06:00 IST. Before it the weekly coverage run is not owed, so installing on a weekday does not start a
+ * 7-hour run at once. `schedule install --coverage-now` removes it; a file that cannot be read never blocks the run.
+ */
+export const COVERAGE_START_FILE = 'coverage-start.json';
+
+/** The `notBefore` of the home's COVERAGE_START_FILE (ms), if the file is there and readable. */
+export function coverageNotBefore(home: string): number | undefined {
+  try {
+    const v = (JSON.parse(readFileSync(join(home, COVERAGE_START_FILE), 'utf8')) as { notBefore?: unknown }).notBefore;
+    const t = typeof v === 'string' ? Date.parse(v) : NaN;
+    return Number.isNaN(t) ? undefined : t;
+  } catch {
+    return undefined;
+  }
+}
+
 /** The weekly career-site coverage: owed from Sunday 06:00 IST, with catch-up through Saturday 23:59 IST. */
 export const COVERAGE_DUE: DueSpec = {
   pipeline: 'coverage',
@@ -300,6 +318,11 @@ function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): D
   // The week is keyed by its start date, so before `start` on that day `now` is still in the previous week's keying
   // but nothing is owed: the previous week ended with its last day.
   if (Date.parse(now) < start) return { due: false, window, reason: `before ${wording.from} IST` };
+  const notBefore = spec.pipeline === 'coverage' ? coverageNotBefore(home) : undefined;
+  if (notBefore !== undefined && Date.parse(now) < notBefore) {
+    const when = new Date(notBefore).toISOString();
+    return { due: false, window, reason: `the first coverage run is owed from ${DAY_NAMES[new Date(notBefore + IST_OFFSET_MS).getUTCDay()]} ${istDate(when)} ${istClock(notBefore)} IST (schedule install; run-coverage by hand, or schedule install --coverage-now, to start sooner)` };
+  }
   const failures = failuresOf(read(spec, home, now));
   const early = { ...decide({ now, completedToday: false, failuresToday: failures }, start, wording), window };
   if (!early.due) return early;

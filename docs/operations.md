@@ -43,8 +43,9 @@ Two ways to start:
    ```sh
    node --run jobpilot -- pack import --career-ops ~/career-ops --resume-text ~/resume-experience.txt \
      --desk ~/desk-export --forbid "Example Client Ltd" --name "Your Name" --email you@example.com \
-     --phone "+91 00000 00000" --city "Pune" --as-of 2026-10 --available-from "1 November 2026" \
-     --notice-period "30 days" --floor-inr 1200000 --dry-run
+     --phone "+91 00000 00000" --city "Pune" --link https://www.linkedin.com/in/your-profile \
+     --as-of 2026-10 --available-from "1 November 2026" \
+     --notice-period "30 days" --floor-inr 1234567 --dry-run
    ```
 
    `--dry-run` checks every input and prints the summary without writing anything. Drop it to
@@ -182,9 +183,34 @@ run coverage-2026-10-14 for 2026-10-14 (coverage week 2026-10-11), resumed: comp
 ```
 
 (That pause came from `--slice-minutes 0.0001`, a checking option; a real pause says
-`yielded to daily` or `yielded to freelance` where this says `slice limit`.) Because the
-schedule starts it every half hour, a paused run finishes by itself over the next starts. Once a
-coverage week's run is complete:
+`yielded to daily` or `yielded to freelance` where this says `slice limit`, or one of the two
+network reasons below.) Because the schedule starts it every half hour, a paused run finishes by
+itself over the next starts.
+
+**When the network fails.** A failure that may pass is never kept as the week's answer:
+
+- A host whose robots.txt fails with a network error, a timeout or a 5xx is off for one hour
+  only (`robots-transient`), then asked again. A host that does not exist (DNS has no such name
+  while the Mac is online) is `no-such-host` for the run. A refusal (401/403, a challenge, a
+  refusing robots.txt) still lasts the run, and a 429 a day.
+- A company whose answer rests on such a failure is not saved as "not located": its step fails
+  and is asked again later in the run (10 minutes after, or once the host's hour is over), at
+  most 3 times. While one waits, the slice pauses with `retry wait`. What is still failing after
+  that is counted as `left failed for a transient reason (asked again next run)`: never a failed
+  week for a registry company.
+- After 5 failed requests in a row (refused connections and certificate errors included), jobpilot
+  checks whether the Mac is really online: one HTTPS request to a job-board API's robots.txt, the
+  same check the scheduled starts make. Behind a captive portal or a TLS-intercepting proxy that
+  check fails too, so it counts as offline: the slice pauses with `offline`, nothing seen since the
+  last real answer is kept as a host's verdict, and the next half-hourly start (which waits for the
+  network) continues it. A paused slice is never a failed attempt.
+
+To check this by hand, the variable `JOBPILOT_CHECK_OUTAGE=<from>/<seconds>` simulates an outage
+for a `run-coverage` you start yourself: from `<from>` (`+S`, S seconds after the first request,
+or an ISO time) every request fails as it would offline. It is a check-only hook: nothing sets
+it, and without it nothing changes. Use it only on a test home (`JOBPILOT_HOME`).
+
+Once a coverage week's run is complete:
 
 ```sh
 node --run jobpilot -- run-coverage --if-due
@@ -245,9 +271,17 @@ node --run jobpilot -- schedule run-now
 node --run jobpilot -- schedule uninstall
 ```
 
-`install` writes four launchd jobs to `~/Library/LaunchAgents/` and loads them; repeating it is
-safe. Each run job is started at login and every half hour and uses `--if-due`, so a Mac that was
-asleep at 07:00 runs soon after it wakes.
+`install` writes four launchd jobs to `~/Library/LaunchAgents/` and loads them. Repeat it only
+when no run holds the lock (`schedule status`, or no `~/.jobpilot/jobpilot.lock`): reloading a job
+stops a run in progress (it resumes at the next start, but the slice is lost). Each run job is
+started at login and every half hour and uses `--if-due`, so a Mac that was asleep at 07:00 runs
+soon after it wakes.
+
+**The first coverage run.** On a home that has never run coverage, `install` makes the weekly
+coverage run owed from the **next Sunday 06:00 IST** (it writes `~/.jobpilot/coverage-start.json`),
+so installing on a weekday does not start a 7-hour run at once; `install` prints the date. Until
+then the daily run reads exactly what it read before. To start coverage now instead, run
+`schedule install --coverage-now`, or `run-coverage` by hand. Repeating `install` keeps the date.
 
 | Job | What | When |
 |---|---|---|
@@ -270,10 +304,10 @@ coverage run, week of 2026-10-11: this coverage week's run completed
 ```
 
 `schedule run-now` starts the daily job through launchd (a manual test of the scheduled command);
-add `--freelance` or `--coverage` for the others. It runs only if that run is owed. If your Mac
-is set to another time zone, `install` converts the IST times to your clock and prints them; run
-`install` again after changing zone or Node versions (the jobs use the Node that was running at
-install).
+add `--freelance` or `--coverage` for the others. It runs only if that run is owed. The jobs run
+in India time whatever your Mac's time zone (each plist sets `TZ=Asia/Kolkata`), and the times
+above are IST. Run `install` again after changing Node versions (the jobs use the Node that was
+running at install).
 
 ## 5. The dashboard
 
@@ -489,6 +523,12 @@ chmod 600 ~/.jobpilot/jobpilot.db
 git checkout <the older version>
 ```
 
+Run `schedule uninstall` with the NEWER version, before the checkout: an older version does not
+know every job the newer one installed (an older one may not know `com.jobpilot.coverage`), and a
+job left loaded fails every half hour against the restored database. If it was missed, unload a
+job by hand: `launchctl bootout gui/$(id -u)/com.jobpilot.coverage` (likewise `.daily`,
+`.freelance`, `.dashboard`), then delete its plist from `~/Library/LaunchAgents/`.
+
 Then reinstall the schedule from that version. Anything stored after the backup (new jobs,
 status changes) is lost, which is why the backup comes first.
 
@@ -503,8 +543,9 @@ tail -f ~/.jobpilot/logs/daily.log
 
 - `schedule status` shows whether each job is loaded and its last exit code. "not loaded" means
   run `schedule install`.
-- A command that says another jobpilot process holds the lock: wait, or, if nothing is running,
-  delete the `jobpilot.lock` file it names.
+- A command that says another jobpilot process holds the lock: wait for that process to finish.
+  A lock left by a process that is gone is taken over automatically; delete the `jobpilot.lock`
+  file it names only if that fails and `ps` shows no jobpilot process.
 - `quarantined` lists steps a guardrail held back; `release <stepKey>` lets the next run execute
   one again. Both take `--db <path>` (default `jobpilot.db` in the current folder), so pass
   `--db ~/.jobpilot/jobpilot.db`.
@@ -520,27 +561,29 @@ tail -f ~/.jobpilot/logs/daily.log
 
 Migrations are one-way, so the order matters:
 
-1. Back up the database (section 9).
-2. Update the code (`git pull`, then `pnpm install`).
-3. Check: `node --run verify` (optional, for the repo; its last step is the speed gate,
-   `node --run perf`, which builds a 1.8 GB synthetic database in a temp dir and fails when the
-   Jobs or Runs page breaks its time or memory budget), then `node --run jobpilot -- pack check`.
-4. Apply the database upgrade: `node --run jobpilot -- facts list` does it under the run lock
+1. Stop the schedule first, the always-on dashboard above all: `node --run jobpilot -- schedule
+   uninstall` (or `launchctl bootout gui/$(id -u)/com.jobpilot.dashboard` for the dashboard
+   alone), so no old-code process holds the database while it changes.
+2. Back up the database (section 9).
+3. Update the code (`git pull` or the merge, then `pnpm install`).
+4. Check: `node --run verify` (optional, for the repo; its last step is the speed gate,
+   `node --run perf`, which builds a 1.8 GB synthetic database in a temp dir and fails when a page
+   breaks its time or memory budget), then `node --run jobpilot -- pack check`.
+5. Apply the database upgrade: `node --run jobpilot -- facts list` does it under the run lock
    (or the next scheduled run does). The dashboard never migrates: until this step it answers
-   "jobpilot is being upgraded" (HTTP 503) and works again on the next page load after it.
-   Every other command (`pack check`, the probes, `facts verify`, ...) refuses with "the database
-   needs an upgrade; run `jobpilot facts list` (it takes the run lock)" and exit code 2.
-   The dashboard-perf upgrade adds three indexes; the envelope one reads the whole database once
-   (about 8 s on a 4 GB home, up to 30 s when the file is not in memory).
-5. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node.
+   "jobpilot is being upgraded" (HTTP 503). Every other command (`pack check`, the probes,
+   `facts verify`, ...) refuses with "the database needs an upgrade; run `jobpilot facts list`
+   (it takes the run lock)" and exit code 2.
+6. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node, and
+   the dashboard starts again on it. (On a home that never ran coverage, the first coverage run
+   is owed from the next Sunday 06:00 IST; see section 4.)
 
-**Release note (dashboard-perf).** The first run after upgrading builds new indexes (app
-migrations 16-22) inside the run lock: about 20 s on a large (4 GB) database, up to a minute or
-more when the file is not in memory. Until it finishes, the dashboard shows "jobpilot is being
-upgraded" (HTTP 503) and works again on the next page load after it.
+**Release note (dashboard-perf).** The first upgrade builds new indexes (app migrations 16-22)
+inside the run lock: about 20 s on a large (4 GB) database, up to a minute or more when the file
+is not in memory.
 
 When the branches are merged by hand, merge **career-sites first, then dashboard-perf**: the
-dashboard-perf migrations (16-18) are numbered after career-sites' 15.
+dashboard-perf migrations (16-22) are numbered after career-sites' 15.
 
 **The dashboard under launchd after an upgrade.** A dashboard still running the old code keeps
 serving until a run of the new code migrates the database. From then on its first request finds

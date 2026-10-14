@@ -58,7 +58,7 @@ data; tests use `tests/fixtures/pack/` (a fictional candidate).
 | `targets.yaml` | P0 | title patterns (`titles`: search and scoring only), seniority words and points, `minFit: 60`, `maxYearsRequired: 14`, and `claimableTitles` (titles the user can truthfully claim, used verbatim in documents; default: the distinct `roles.yaml` titles) |
 | `filters.yaml` | P0 | role-title deny patterns, company deny list (services and staffing), employment-type deny words |
 | `naming.yaml` | P0 | `employerDisplay` map (source employer string → display name) and `forbiddenTerms[]`; G-NAMING fails any output that contains a forbidden term |
-| `offers.yaml` | P2 | `floor: {amount: 1200000, currency: INR, period: year, basis: base}`. Equity is never counted |
+| `offers.yaml` | P2 | `floor: {amount: 1234567, currency: INR, period: year, basis: base}`. Equity is never counted |
 | `fx.yaml` | P0 | pinned rates to INR with an `asOf` date; the dashboard warns when `asOf` is more than 30 days old |
 | `answers.yaml` | P1/P2 | screening answers (notice, work mode, relocation, CTC). Shown on job pages. Of all answers only `notice_period` may appear in a document, and only in cover-letter p4, filled by the renderer (Task 10; `available_from` never does since cover letter v2); G-FILL and G-GROUND re-check the filled text against `answers.yaml`, and G-NAMING runs on the rendered text |
 | `watchlist.yaml` | P0 | `{company, ats: greenhouse, lever or ashby, slug, hiresInIndia: bool}` |

@@ -218,12 +218,21 @@ describe('requests: one feed request, the honest user agent, the platform\'s Acc
     expect(h.skipped).toEqual([`robots-disallow ${row.host}: Acme not read today (robots-disallow ${path})`]);
   });
 
-  it.each(STRICT.map((r) => [r.fb.spec.platform, r] as const))('%s: a 401/403 robots.txt refuses (named skip), a 5xx one is robots-unavailable, a 404 allows all', async (_n, row) => {
-    for (const [status, ok] of [[403, false], [401, false], [500, false], [503, false], [404, true]] as const) {
+  it.each(STRICT.map((r) => [r.fb.spec.platform, r] as const))('%s: a 401/403 robots.txt refuses (named skip), a 404 allows all, a 5xx fails the step uncached (C1)', async (_n, row) => {
+    for (const [status, ok] of [[403, false], [401, false], [404, true]] as const) {
       const h = harness(row, { [`https://${row.host}/robots.txt`]: { status, body: 'nope' }, [row.url]: { status: 200, body: fx(row.file) } });
       const out = await run(row.fb.make({ hosts: dailyFeedHosts(false) }), req(row), h.ctx);
       expect(out.length > 0, `${row.fb.spec.platform} ${status}`).toBe(ok);
-      if (!ok) expect(h.skipped[0], `${row.fb.spec.platform} ${status}`).toMatch(/^robots-disallow .*not read today \(robots-(?:forbidden|unavailable)\)$/u);
+      if (!ok) expect(h.skipped[0], `${row.fb.spec.platform} ${status}`).toMatch(/^robots-disallow .*not read today \(robots-forbidden\)$/u);
+    }
+    for (const status of [500, 503]) {
+      const hosts = dailyFeedHosts(false);
+      const h = harness(row, { [`https://${row.host}/robots.txt`]: { status, body: 'busy' }, [row.url]: { status: 200, body: fx(row.file) } });
+      await expect(run(row.fb.make({ hosts }), req(row), h.ctx), `${row.fb.spec.platform} ${status}`).rejects.toMatchObject({ code: 'overloaded' });
+      expect(h.skipped).toEqual([]);
+      // not kept for the run: the next company on the host asks robots.txt again
+      await run(row.fb.make({ hosts }), req(row), h.ctx).catch(() => undefined);
+      expect(h.calls.filter((u) => u === `https://${row.host}/robots.txt`), `${row.fb.spec.platform} ${status}`).toHaveLength(2);
     }
   });
 

@@ -436,13 +436,11 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
     expect(calls).toEqual([]);
   });
 
-  it('the strict robots rule: a 401/403 robots.txt refuses (robots-forbidden), a 5xx or other 4xx too (robots-unavailable), a 404 allows all', async () => {
+  it('the strict robots rule: a 401/403 robots.txt refuses (robots-forbidden), another 4xx too (robots-unavailable), a 404 allows all; a 5xx or no answer fails, uncached (C1)', async () => {
     // through dailyPageHosts itself, the daily wiring's host state (mutant M13: a lenient one fails here)
     for (const [status, reason] of [
       [403, 'robots-forbidden'],
       [401, 'robots-forbidden'],
-      [500, 'robots-unavailable'],
-      [503, 'robots-unavailable'],
       [418, 'robots-unavailable'],
       [302, 'robots-unavailable'],
     ] as const) {
@@ -452,11 +450,48 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
       await expect(answer).rejects.toMatchObject({ reason: reason });
       expect(h.calls).toEqual([ROBOTS]);
     }
-    // fix round 2: an unreachable robots.txt is robots-unavailable (a named skip), not a network failure of the step
+    // C1 (final review): a 5xx or an unreachable robots.txt is a transport failure of the step, never kept for the day
+    for (const status of [500, 503]) {
+      const h = harness(routes({ [ROBOTS]: () => resp(status, 'busy') }));
+      await expect(getRuledPage(h.ctx.http!, h.hosts as PlatformHosts, job('a').url, { follow: () => true })).rejects.toMatchObject({ code: 'overloaded' });
+      await getRuledPage(h.ctx.http!, h.hosts as PlatformHosts, job('a').url, { follow: () => true }).catch(() => undefined);
+      expect(h.calls).toEqual([ROBOTS, ROBOTS]);
+    }
     const unreachable = harness({ [ROBOTS]: () => { throw new TypeError('fetch failed'); } });
-    await expect(getRuledPage(unreachable.ctx.http!, unreachable.hosts as PlatformHosts, job('a').url, { follow: () => true })).rejects.toMatchObject({ reason: 'robots-unavailable' });
+    await expect(getRuledPage(unreachable.ctx.http!, unreachable.hosts as PlatformHosts, job('a').url, { follow: () => true })).rejects.toMatchObject({ code: 'network' });
     const ok = harness(routes({ [ROBOTS]: () => resp(404, 'nf') }));
     await expect(getRuledPage(ok.ctx.http!, ok.hosts as PlatformHosts, job('a').url, { follow: () => true })).resolves.toMatchObject({ kind: 'ok' });
+  });
+});
+
+describe('C1 (final review): one blip on a shared page host fails one company, never the host for the day', () => {
+  const ROBOTS = 'https://jobs.acme.test/robots.txt';
+  const routes = (extra: Record<string, () => ReturnType<typeof resp>> = {}) => ({
+    [job('a').url]: () => resp(200, page({ ...T, title: 'A' })),
+    [job('b').url]: () => resp(200, page({ ...T, title: 'B' })),
+    ...extra,
+  });
+  it('a robots.txt that fails once in transport: that read fails (network); the next read on the host asks again and is read', async () => {
+    let fail = true;
+    const h = harness(
+      routes({
+        [ROBOTS]: () => {
+          if (fail) {
+            fail = false;
+            throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+          }
+          return resp(404, 'nf');
+        },
+      }),
+    );
+    await expect(getRuledPage(h.ctx.http!, h.hosts as PlatformHosts, job('a').url, { follow: () => true })).rejects.toMatchObject({ code: 'network' });
+    await expect(getRuledPage(h.ctx.http!, h.hosts as PlatformHosts, job('b').url, { follow: () => true })).resolves.toMatchObject({ kind: 'ok' });
+  });
+
+  it('the page and feed adapters retry a network or overloaded failure once in the run, after 8 s', async () => {
+    const { srcIcimsContract: icimsContract } = await import('../../src/app/agents/sources/platforms/icims.js');
+    const { srcSmartRecruitersContract: smartRecruitersContract } = await import('../../src/app/agents/sources/platforms/smartrecruiters.js');
+    for (const c of [icimsContract, smartRecruitersContract]) expect(c.retry).toEqual({ max: 1, on: ['overloaded', 'network'], backoffMs: [8000] });
   });
 });
 

@@ -1,7 +1,7 @@
 import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import type { EgressSets } from '../../kernel/broker.js';
-import { asHttps, BudgetExhausted, budgetReason, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, type Fetched, type GateSource, type RunGate, type StepLimits } from './gate.js';
+import { asHttps, BudgetExhausted, budgetReason, failTransient, gateOf, limitsOf, refuseSiblingDependent, stepFetcher, transientOf, type Fetched, type GateSource, type RunGate, type StepFetcher, type StepLimits, type TransientCode } from './gate.js';
 import { platformForHost } from './platform-hosts.js';
 import { registrableDomain } from './seed.js';
 import { sitemapLocs } from '../text/sitemap.js';
@@ -21,13 +21,16 @@ export { sitemapLocs } from '../text/sitemap.js';
  *
  * Politeness (the shared run gate, `gate.ts`): the host state is per RUN (shared by every candidate of a run): each host's robots.txt is
  * fetched once, and every probe honours it. robots.txt: 404/410 allows all; 401/403 disallows the host
- * (`robots-forbidden`); any other 4xx, a 5xx or an unreachable host disallows it (`robots-unavailable`, RFC 9309's
- * conservative choice); 429 disables the host. A host that answers a probe with a challenge page, 401, 403 or 429 is
+ * (`robots-forbidden`); any other 3xx/4xx disallows it (`robots-unavailable`, RFC 9309's conservative choice); a name
+ * DNS does not know (online) is `no-such-host`; a network error, a timeout or a 5xx is `robots-transient` (C1: off for
+ * an hour, then asked again); 429 disables the host. A host that answers a probe with a challenge page, 401, 403 or 429 is
  * DISABLED for the rest of the run (no retry, no more probes by any candidate; later candidates get the reason
  * `host-disabled:<why>`). Candidates must be processed in a fixed order for the run to be deterministic. The honest
  * user agent and the 2 s per-host spacing are the broker's (HTTP_HEADERS, the supervisor's host pacer). A 4xx on the
  * homepage ends the search. Each candidate has a request budget (`maxRequests`); beyond it the answer is `none` with
- * the reason `budget-exhausted`.
+ * the reason `budget-exhausted`. A `none` that rests on a transient miss (a network error, a timeout, a 5xx, a
+ * `robots-transient` host of this step) is not an answer: the step FAILS with that transport code (C1), so it is
+ * never memoised as "not located", the breaker sees an outage, and the coverage run asks again later.
  *
  * Redirects are followed by hand, at most 5 hops, and only by fetching hosts this module planned for (see
  * `locatorHosts`, which the app turns into the egress set); a redirect to any other host of the company's registrable
@@ -133,7 +136,8 @@ export const careersLocatorContract = defineContract({
  *   request was refused returns an ordinary result (its disable is already persisted).
  * - robots.txt verdicts are not persisted: after a crash each host's robots.txt is fetched once more on resume.
  * - The shared robots.txt fetch runs under the abort signal of whichever candidate asks first; if that candidate's
- *   step times out mid-fetch, the host becomes robots-unavailable for the run (conservative, intended).
+ *   step times out mid-fetch, the host is `robots-transient` (C1, final review N5): off for TRANSIENT_DISABLE_MS, then
+ *   asked again; that candidate's step fails `timeout` and is re-queued.
  */
 export function makeCareersLocator(opts: GateSource & Partial<StepLimits>) {
   const gate = gateOf(opts);
@@ -143,26 +147,53 @@ export function makeCareersLocator(opts: GateSource & Partial<StepLimits>) {
 
 async function locate(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits): Promise<CareersSite> {
   const reasons: string[] = [];
+  const transient: TransientCode[] = [];
+  const gated = stepFetcher({ ctx, gate, planned: new Set(locatorHosts(c)), acceptMoved: onCompanyDomainOf(c), ...limits });
+  const settle = gated.settle;
   let site: CareersSite;
   try {
-    site = await probe(c, ctx, gate, limits, reasons);
+    site = await probe(c, gated, gate, reasons, transient);
   } catch (e) {
     if (!(e instanceof BudgetExhausted)) throw e;
     reasons.push(budgetReason(e));
     site = { candidate: c, careersUrl: null, method: 'none', evidence: null, reasons };
   }
   refuseSiblingDependent(site.reasons ?? [], site.careersUrl);
+  if (site.careersUrl === null) {
+    // R1: a "none" resting on transport errors no real answer has confirmed is checked against the network first
+    const unproven = await settle();
+    if (unproven !== null) transient.push(unproven);
+    // C1: "not located" resting on a failure that may pass is not an answer; a site found anyway is
+    failTransient(transient, site.reasons ?? []);
+  }
   return site;
 }
 
-async function probe(c: CompanyCandidate, ctx: AgentContext, gate: RunGate, limits: StepLimits, reasons: string[]): Promise<CareersSite> {
+/** The redirect targets the locator accepts unfetched for `c`: its registrable domain, or a known platform host. */
+function onCompanyDomainOf(c: CompanyCandidate): (u: URL) => boolean {
+  const web = asHttps(c.website);
+  const siteKey = web === null ? null : registrableDomain(web.hostname);
+  return (u) => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
+}
+
+async function probe(c: CompanyCandidate, gated: StepFetcher, gate: RunGate, reasons: string[], transient: TransientCode[]): Promise<CareersSite> {
   const state = gate.state;
   const planned = new Set(locatorHosts(c));
 
   const web = asHttps(c.website);
   const siteKey = web === null ? null : registrableDomain(web.hostname);
-  const onCompanyDomain = (u: URL): boolean => (siteKey !== null && registrableDomain(u.hostname) === siteKey) || platformForHost(u.hostname) !== null;
-  const { fetchUrl, robotsFor } = stepFetcher({ ctx, gate, planned, acceptMoved: onCompanyDomain, ...limits });
+  const onCompanyDomain = onCompanyDomainOf(c);
+  const fetchUrl = async (url: string, checkRobots: boolean): Promise<Fetched> => {
+    const r = await gated.fetchUrl(url, checkRobots);
+    const code = transientOf(r);
+    if (code !== null) transient.push(code);
+    return r;
+  };
+  const robotsFor = async (host: string) => {
+    const v = await gated.robotsFor(host);
+    if (v.kind === 'disallow-all' && v.transient !== undefined) transient.push(v.transient);
+    return v;
+  };
 
   const found = (method: CareersSite['method'], careersUrl: string, evidence: string): CareersSite => ({ candidate: c, careersUrl, method, evidence, ...(reasons.length > 0 ? { reasons } : {}) });
   const none = (): CareersSite => ({ candidate: c, careersUrl: null, method: 'none', evidence: null, reasons: reasons.length > 0 ? reasons : ['no probe applied'] });

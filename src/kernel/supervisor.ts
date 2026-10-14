@@ -53,6 +53,12 @@ export interface SupervisorDeps {
    * The coverage run uses it to yield to the daily and freelance runs and to cap its time slice.
    */
   readonly pauseBefore?: () => string | null;
+  /**
+   * Asked each time the queue is empty, before the run is finished. It may put failed or skipped items back
+   * (`Store.requeue`): the drain then goes on with fresh breakers (a `run_requeued` event). Or it may return a reason:
+   * the run pauses there (a `run_paused` event; incomplete, `resume` continues it). Default: finish.
+   */
+  readonly beforeFinish?: () => string | null | Promise<string | null>;
   /** The user's public pack; given to contracts with `capabilities.pack: true` and to guardrails. */
   readonly pack?: unknown;
   /** Hash of `pack`, part of the step key of pack agents only. Default 'none'. */
@@ -63,6 +69,8 @@ export interface SupervisorDeps {
   readonly fullPackHash?: string;
   /** The hosts behind symbolic egress entries (`pack:careers-hosts`); the app derives them from the pack. */
   readonly egressSets?: EgressSets;
+  /** The per-host pacer to use (a caller sharing one across supervisors and its own requests); default: a new one. */
+  readonly hostPacer?: HostPacer;
   /**
    * Fingerprint of the agents' implementation (review I4), in every step key: a code change re-runs every step once.
    * Default 'none' (kernel and demo), which leaves the keys as before.
@@ -107,7 +115,7 @@ export class Supervisor {
 
   constructor(private readonly d: SupervisorDeps) {
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
-    this.hostPacer = createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
+    this.hostPacer = d.hostPacer ?? createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
     this.browserPacer = createHostPacer(d.policy.minBrowserIntervalMs, d.clock, this.sleep);
     this.pack = d.pack === undefined ? undefined : freezePack(d.pack);
     this.fullPack = d.fullPack === undefined ? undefined : freezePack(d.fullPack);
@@ -239,15 +247,38 @@ export class Supervisor {
   }
 
   private async drain(runId: string): Promise<RunReport> {
+    const { store } = this.d;
+    const steps = { count: 0 };
+    for (;;) {
+      const paused = await this.drainQueue(runId, steps);
+      if (paused) return this.report(runId, 'paused');
+      const hold = (await this.d.beforeFinish?.()) ?? null;
+      if (hold !== null) {
+        this.event(runId, 'run_paused', { reason: hold, pending: store.queueCounts(runId).pending });
+        return this.report(runId, 'paused');
+      }
+      const pending = store.queueCounts(runId).pending;
+      if (pending === 0) break;
+      // re-queued items: a breaker opened before they were put back says nothing about the retry
+      this.breakersByRun.set(runId, new Breakers());
+      this.event(runId, 'run_requeued', { pending });
+    }
+    store.finishRun(runId, this.d.clock.now());
+    const report = this.report(runId, 'completed');
+    this.event(runId, 'run_finished', report);
+    return report;
+  }
+
+  /** Runs queued steps until the queue is empty (false) or `pauseBefore` stops it (true, after a `run_paused` event). */
+  private async drainQueue(runId: string, steps: { count: number }): Promise<boolean> {
     const { store, registry, compiled } = this.d;
     const breakers = this.breakers(runId);
-    let count = 0;
     for (let item = store.nextQueued(runId); item; item = store.nextQueued(runId)) {
       const pause = this.d.pauseBefore?.() ?? null;
       if (pause !== null) {
         const queue = store.queueCounts(runId);
         this.event(runId, 'run_paused', { reason: pause, pending: queue.pending });
-        return this.report(runId, 'paused');
+        return true;
       }
       const agent = registry.get(item.agent_id);
       const team = compiled.teamOf.get(item.agent_id);
@@ -264,8 +295,8 @@ export class Supervisor {
         continue;
       }
       const executed: StepOutcome = await executeStep(this.exec, runId, agent, input);
-      count += 1;
-      this.d.afterStep?.(count);
+      steps.count += 1;
+      this.d.afterStep?.(steps.count);
       const trip = executed.kind === 'done' ? this.trackerTrip(executed.outputs) : undefined;
       const outcome: StepOutcome = trip ? { kind: 'quarantined', stepKey: executed.stepKey, verdicts: [trip] } : executed;
 
@@ -302,10 +333,7 @@ export class Supervisor {
         if (teamKey !== undefined) breakers.success(teamKey);
       }
     }
-    store.finishRun(runId, this.d.clock.now());
-    const report = this.report(runId, 'completed');
-    this.event(runId, 'run_finished', report);
-    return report;
+    return false;
   }
 
   private report(runId: string, status: RunReport['status']): RunReport {

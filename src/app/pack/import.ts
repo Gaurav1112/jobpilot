@@ -384,7 +384,7 @@ function build(o: ImportOptions): Built {
     else if (slugOf(display) === '') problems.push(`--employer-display entry ${i + 1} maps to a name with no letters or digits`);
   });
   if (!YEAR_MONTH.test(o.asOf)) problems.push('--as-of must be a month, YYYY-MM');
-  if (!Number.isSafeInteger(o.floorInr) || o.floorInr <= 0) problems.push('--floor-inr must be a positive whole number of rupees a year (e.g. 1200000)');
+  if (!Number.isSafeInteger(o.floorInr) || o.floorInr <= 0) problems.push('--floor-inr must be a positive whole number of rupees a year (e.g. 1234567)');
   if (problems.length > 0) throw new ImportError(problems);
   /** The display name of a raw employer: its mapping, else the raw name; undefined when that holds a term. */
   const display = (raw: string): string | undefined => {

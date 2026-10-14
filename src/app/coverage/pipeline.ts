@@ -1,17 +1,18 @@
 import type { AnyAgent } from '../../kernel/agent.js';
-import type { EgressSets } from '../../kernel/broker.js';
+import type { EgressSets, HostPacer } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
 import type { Envelope } from '../../kernel/envelope.js';
 import type { GuardrailRegistry } from '../../kernel/guardrails/index.js';
 import { hostDenied, mergePolicy, policyHash, PRODUCT_POLICY_V1, type Policy } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
-import type { Store } from '../../kernel/store/store.js';
+import type { QueueRow, Store } from '../../kernel/store/store.js';
 import { Supervisor } from '../../kernel/supervisor.js';
 import type { CompiledPipeline, Pipeline } from '../../kernel/wiring.js';
 import { appGuardrails } from '../guardrails.js';
 import type { Pack } from '../pack/schema.js';
 import { compileDaily } from '../pipeline.js';
 import { detectorEgressSets, makePlatformDetector } from './detector.js';
+import { TRANSIENT_CODES } from '../net.js';
 import { asHttps } from './gate.js';
 import { makeRunGate, memoryHostStateStore, type RunGate } from './gate.js';
 import { locatorEgressSets, makeCareersLocator } from './locator.js';
@@ -49,6 +50,13 @@ import { makeBoardVerifier, noPlatformVerdict, verifierEgressSets } from './veri
  *   function of the earlier stages' stored outputs, so a resumed run seeds exactly what the first attempt seeded.
  * - Only located sites go to the detector, and only guesses with a platform go to the verifier; a guess with no
  *   platform becomes a Proposed verdict here (`noPlatformVerdict`), with the detector's reasons.
+ * - Asked again (C1-c, `retry`): a step that failed for a transient reason (`network`, `timeout`, `overloaded`) or
+ *   was skipped by an open breaker is re-queued TRANSIENT_RETRY_AFTER_MS after it, and a step deferred behind a
+ *   disabled host once that disable has expired (a robots-transient hour, a 429 day: carried minor #31). This is done
+ *   each time a stage's queue empties, so also as soon as an invocation resumes a waiting stage. While such a step still waits (its delay,
+ *   or a robots-transient host within its hour), the stage does not finish: the slice pauses (`retry wait`) and the
+ *   next `--if-due` start goes on. A step is re-queued at most MAX_REQUEUES times; what is left is a transient
+ *   deferral (`StageResult.transient`): never "not located", never a failed week, never exit 1.
  */
 export const COVERAGE_PIPELINE = { id: 'jobpilot-coverage', version: '1.0.0' } as const;
 /** The coverage run's floor for the spacing of two requests to one host (the constraints' 2 s). */
@@ -134,6 +142,15 @@ export function deniedWebsites(candidates: readonly CompanyCandidate[], policy: 
   return { kept, notes };
 }
 
+/** Wait after a transient failure (or a breaker skip) before the step is re-queued (C1-c). */
+export const TRANSIENT_RETRY_AFTER_MS = 10 * 60_000;
+/** The most times one step is re-queued in a run (C1-c); after that it is a transient deferral. */
+export const MAX_REQUEUES = 3;
+/** The event of a re-queued step, in its stage run. */
+export const REQUEUED = 'coverage.requeued';
+/** The pause reason of a stage that waits for a step to be asked again. */
+export const RETRY_WAIT = 'retry wait';
+
 /** A step of a stage that did not finish because a host was disabled in the run: asked again next run. */
 export interface Deferred {
   readonly stage: StageId;
@@ -146,7 +163,9 @@ export interface StageResult {
   readonly runId: string;
   readonly outputs: readonly unknown[];
   readonly deferred: readonly Deferred[];
-  /** Failed steps other than gone, input-rejected and deferred, plus quarantined ones: they make the run exit 1. */
+  /** Steps that failed for a transient reason (or a breaker skip) and were not re-queued again: asked again next run. */
+  readonly transient: readonly Deferred[];
+  /** Failed steps other than gone, input-rejected, deferred and transient, plus quarantined ones: they make the run exit 1. */
   readonly broken: number;
   readonly executed: number;
   readonly replayed: number;
@@ -167,6 +186,13 @@ export interface CoverageStagesOptions {
   readonly afterStep?: (count: number) => void;
   /** Asked before each step and each stage: a reason stops the run there, between steps (`CoveragePaused`). */
   readonly pauseBefore?: () => string | null;
+  /**
+   * Re-queue transient failures and expired deferrals within the run (C1-c), pausing while some still wait. The weekly
+   * run sets it; a one-off run (resolve now) does not: there is no later invocation to wait for.
+   */
+  readonly retry?: boolean;
+  /** One per-host pacer for every stage and the run's own online probe (re-check m5); default: one per stage. */
+  readonly hostPacer?: HostPacer;
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -199,6 +225,18 @@ export function storedCandidates(store: Store, runId: string): CompanyCandidate[
   return mergeCandidates(seed.outputs.map((x) => CompanyCandidate.schema.parse(x)));
 }
 
+/**
+ * What a run's stages have finished so far, read from the store (re-review minor: a week that rolls over unfinished
+ * keeps it): the verifier's verdicts, a Proposed verdict per detected site with no platform, and the located-nothing
+ * sites. Deferred and transient steps are not in it, as in a completed run.
+ */
+export function storedVerdicts(store: Store, runId: string): { readonly verdicts: CompanyVerdict[]; readonly unlocated: CareersSite[] } {
+  const verify = stageResult(store, 'verify', `${runId}.verify`).outputs.map((x) => CompanyVerdict.schema.parse(x));
+  const guesses = stageResult(store, 'detect', `${runId}.detect`).outputs.map((x) => PlatformGuess.schema.parse(x));
+  const sites = stageResult(store, 'locate', `${runId}.locate`).outputs.map((x) => CareersSite.schema.parse(x));
+  return { verdicts: [...verify, ...guesses.filter((g) => g.platform === null).map(noPlatformVerdict)], unlocated: sites.filter((s) => s.careersUrl === null) };
+}
+
 /** Done outputs (in queue order) and deferred inputs of one stage run, read from the store. */
 function stageResult(store: Store, stage: StageId, runId: string): StageResult {
   const stepOf = new Map<string, string>();
@@ -217,7 +255,9 @@ function stageResult(store: Store, stage: StageId, runId: string): StageResult {
   }
   const outputs: unknown[] = [];
   const deferred: Deferred[] = [];
+  const transient: Deferred[] = [];
   let broken = 0;
+  const inputOf = (q: QueueRow): unknown => (store.getEnvelope(q.envelope_id) as Envelope).payload;
   for (const q of store.queueItems(runId)) {
     const key = `${q.agent_id}\u0000${q.envelope_id}`;
     if (q.status === 'done') {
@@ -225,11 +265,72 @@ function stageResult(store: Store, stage: StageId, runId: string): StageResult {
       if (stepKey !== undefined) for (const env of store.envelopesOfStep(stepKey)) outputs.push(env.payload);
     } else if (q.status === 'failed') {
       const f = failure.get(key);
-      if (f?.error === 'input_rejected' && f.detail.includes(HOST_DISABLED_DETAIL)) deferred.push({ stage, input: (store.getEnvelope(q.envelope_id) as Envelope).payload, detail: f.detail });
+      if (f?.error === 'input_rejected' && f.detail.includes(HOST_DISABLED_DETAIL)) deferred.push({ stage, input: inputOf(q), detail: f.detail });
+      else if (f !== undefined && TRANSIENT_CODES.has(f.error)) transient.push({ stage, input: inputOf(q), detail: `transient ${f.error}: ${f.detail}` });
       else if (f?.error !== 'gone' && f?.error !== 'input_rejected') broken++;
-    } else if (q.status === 'quarantined') broken++;
+    } else if (q.status === 'skipped') transient.push({ stage, input: inputOf(q), detail: 'transient: skipped by an open breaker' });
+    else if (q.status === 'quarantined') broken++;
   }
-  return { stage, runId, outputs, deferred, broken, executed, replayed };
+  return { stage, runId, outputs, deferred, transient, broken, executed, replayed };
+}
+
+/** What a stage run's failed and skipped steps are, for re-queueing (C1-c). */
+export interface RetryPlan {
+  /** Steps to re-queue now. */
+  readonly now: readonly { readonly item: QueueRow; readonly why: string }[];
+  /** Steps that will be due later (their delay, or a robots-transient host within its hour): the stage must wait. */
+  readonly waiting: number;
+}
+
+const DEFERRAL_HOSTS = /host-disabled:([a-z0-9-]+) on ([a-z0-9.-]+)/gi;
+
+/**
+ * The re-queue plan of one stage run at `now` (C1-c): a step failed with a transient code, or skipped by an open
+ * breaker, is due TRANSIENT_RETRY_AFTER_MS after it; a step deferred behind disabled hosts is due once none of them is
+ * disabled any more (`gate.disabledWhy` lifts an expired one), and waits while each still disabled one is only
+ * `robots-transient`. A step already re-queued MAX_REQUEUES times is left as it is.
+ */
+export function retryPlan(store: Store, runId: string, gate: RunGate, now: string): RetryPlan {
+  const last = new Map<string, { at: string; kind: string; error: string; detail: string }>();
+  const requeued = new Map<string, number>();
+  for (const e of store.events(runId)) {
+    if (e.kind !== 'step_failed' && e.kind !== 'step_skipped' && e.kind !== REQUEUED) continue;
+    const d = JSON.parse(e.data) as Record<string, unknown>;
+    const key = `${String(d['agent'])}\u0000${String(d['envelopeId'])}`;
+    if (e.kind === REQUEUED) requeued.set(key, (requeued.get(key) ?? 0) + 1);
+    else last.set(key, { at: e.at, kind: e.kind, error: String(d['error'] ?? d['reason'] ?? ''), detail: String(d['detail'] ?? '') });
+  }
+  const t = Date.parse(now);
+  const due: { item: QueueRow; why: string }[] = [];
+  let waiting = 0;
+  for (const item of store.queueItems(runId)) {
+    if (item.status !== 'failed' && item.status !== 'skipped') continue;
+    const key = `${item.agent_id}\u0000${item.envelope_id}`;
+    const f = last.get(key);
+    if (f === undefined || (requeued.get(key) ?? 0) >= MAX_REQUEUES) continue;
+    if ((f.kind === 'step_skipped' && f.error === 'breaker_open') || (f.kind === 'step_failed' && TRANSIENT_CODES.has(f.error))) {
+      if (t - Date.parse(f.at) >= TRANSIENT_RETRY_AFTER_MS) due.push({ item, why: f.kind === 'step_skipped' ? 'breaker_open' : f.error });
+      else waiting++;
+      continue;
+    }
+    if (f.kind !== 'step_failed' || f.error !== 'input_rejected') continue;
+    const still = [...f.detail.matchAll(DEFERRAL_HOSTS)].map((m) => gate.disabledWhy((m[2] as string).toLowerCase(), now)).filter((w): w is string => w !== undefined);
+    if ([...f.detail.matchAll(DEFERRAL_HOSTS)].length === 0) continue;
+    if (still.length === 0) due.push({ item, why: 'host re-enabled' });
+    else if (still.every((w) => w === 'robots-transient')) waiting++;
+  }
+  return { now: due, waiting };
+}
+
+/** Re-queues the due steps of `plan` (a `coverage.requeued` event each); returns how many. */
+function requeue(store: Store, runId: string, plan: RetryPlan, now: string, policyHash: string): number {
+  let n = 0;
+  for (const { item, why } of plan.now) {
+    if (!store.requeue(runId, item.agent_id, item.envelope_id)) continue;
+    store.appendEvent(runId, now, REQUEUED, { agent: item.agent_id, envelopeId: item.envelope_id, why }, policyHash);
+    n++;
+  }
+  return n;
 }
 
 /**
@@ -256,6 +357,17 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
       // a fresh pacer per stage: the gap keeps any host's last request of the stage before at least one interval away
       if (!first) await o.sleep(o.policy.minHostIntervalMs);
       first = false;
+      // C1-c: asked each time the stage's queue empties (a resumed stage with nothing pending at once): put back what
+      // is due to be asked again, or hold the stage while something still waits
+      const beforeFinish = (): string | null => {
+        if (o.retry !== true) return null;
+        const stop = pauseBefore();
+        if (stop !== null) return stop;
+        const now = o.clock.now();
+        const plan = retryPlan(o.store, id, o.gate, now);
+        if (requeue(o.store, id, plan, now, o.policyHash) > 0) return null;
+        return plan.waiting > 0 ? (reason = RETRY_WAIT) : null;
+      };
       const supervisor = new Supervisor({
         store: o.store,
         registry,
@@ -268,8 +380,10 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         sleep: o.sleep,
         egressSets,
         codeHash: o.codeHash,
+        ...(o.hostPacer !== undefined ? { hostPacer: o.hostPacer } : {}),
         ...(o.afterStep ? { afterStep: o.afterStep } : {}),
         pauseBefore,
+        beforeFinish,
       });
       const report = existing === undefined ? await supervisor.start(id, seeds) : await supervisor.resume(id);
       if (report.status === 'paused') throw new Paused(stage);

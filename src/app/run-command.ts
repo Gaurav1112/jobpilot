@@ -4,13 +4,14 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
-import { lookup } from 'node:dns/promises';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
+import { checkOutage } from './check-outage.js';
+import { httpsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
@@ -37,7 +38,7 @@ export interface RunCommandDeps {
   readonly err: (line: string) => void;
   readonly pdftotext?: string;
   readonly sleep?: (ms: number) => Promise<void>;
-  /** `--if-due` asks this before a live run; default `dnsOnline`. */
+  /** `--if-due` asks this before a live run (and the coverage run when a slice meets errors); default `httpsOnline` (R1: HTTPS must work, not only DNS). */
   readonly online?: () => Promise<boolean>;
   /**
    * The freelance run's Gmail access (`gmailRunAccess` over the Keychain in the CLI), asked only when a live run
@@ -49,12 +50,7 @@ export interface RunCommandDeps {
 /** An offline run never reads Gmail (the fixtures have no mailbox). */
 const GMAIL_OFFLINE: GmailRunAccess = { ...GMAIL_OFF, reason: 'Gmail is not read in an offline run' };
 
-/** Hosts every pack's sources depend on; one resolving means the network is up (Wi-Fi is often still down at wake). */
-const PROBE_HOSTS = ['boards-api.greenhouse.io', 'api.lever.co', 'api.ashbyhq.com'];
-export async function dnsOnline(hosts: readonly string[] = PROBE_HOSTS): Promise<boolean> {
-  const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
-  return (await Promise.all(hosts.map(one))).some(Boolean);
-}
+export { dnsOnline } from './net.js';
 
 /**
  * The pack's forbidden terms, if naming.yaml can be read at all (for the failure notification and the stderr
@@ -124,8 +120,8 @@ export async function runWithDue(
       }
       // A run with every fetch failing would complete, count as the window's and block it (rereview of 8b49294):
       // wait for the network instead, quietly; the next half-hourly start tries again.
-      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => dnsOnline(PROBE_HOSTS_OF[spec.pipeline])))())) {
-        d.out('not due: the network is down (no source host resolves); the next start tries again');
+      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF[spec.pipeline])))())) {
+        d.out('not due: the network is down (no source host answers over HTTPS); the next start tries again');
         return 0;
       }
     }
@@ -235,10 +231,17 @@ export async function runCoverageCommand(
   }
   return runWithDue(COVERAGE_DUE, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
+    // the live re-check's outage simulation (check-only; inert unless JOBPILOT_CHECK_OUTAGE is set)
+    const outage = checkOutage();
+    if (outage !== null) d.err(`warning: ${outage.describe}`);
+    const fetch = outage === null ? (offline?.fetch ?? nodeFetch) : outage.fetch(offline?.fetch ?? nodeFetch);
+    // the run's own online check goes through its per-host pacer (re-check m5): only a fixtures run or a caller's check is passed in
+    const online = offline !== undefined ? async () => true : d.online;
     const summary = await runCoverage({
       home: d.home,
       clock: d.clock,
-      fetch: offline?.fetch ?? nodeFetch,
+      fetch,
+      ...(online !== undefined ? { online: outage === null ? online : outage.online(online) } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),

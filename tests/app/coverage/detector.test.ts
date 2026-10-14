@@ -669,3 +669,42 @@ describe('the coverage-detector golden set', () => {
     expect(report.n).toBeGreaterThanOrEqual(40);
   });
 });
+
+describe('C1: a detection resting on a transient failure fails (never a memoised "no platform")', () => {
+  const reset: FetchLike = async () => {
+    throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+  };
+  it('the careers page fails with a network error: the step fails network', async () => {
+    const s = site('acme.test', 'https://www.acme.test/careers');
+    await expect(makePlatformDetector(fresh()).run(s, ctxFor(reset, [s]))).rejects.toMatchObject({ code: 'network' });
+  });
+
+  it('the careers page answers 503: the step fails overloaded; a 404 stays a finished "unavailable"', async () => {
+    const s = site('acme.test', 'https://www.acme.test/careers');
+    const busy = serve({ 'https://www.acme.test/careers': { status: 503, body: 'busy' } });
+    await expect(makePlatformDetector(fresh()).run(s, ctxFor(busy.fetch, [s]))).rejects.toMatchObject({ code: 'overloaded' });
+    const gone = serve({});
+    expect(verdict(await detect(s, gone.fetch))).toBe('unavailable');
+  });
+
+  it('the second page (the jobs link) times out or fails: the step fails', async () => {
+    const s = site('acme.test', 'https://www.acme.test/careers');
+    const routes = { 'https://www.acme.test/careers': page('<a href="/open-positions">Open positions</a>') };
+    const served = serve(routes);
+    const fetch: FetchLike = async (url, init) => (url === 'https://www.acme.test/open-positions' ? reset(url, init) : served.fetch(url, init));
+    await expect(makePlatformDetector(fresh()).run(s, ctxFor(fetch, [s]))).rejects.toMatchObject({ code: 'network' });
+  });
+});
+
+describe('R1: a detection resting on an unconfirmed transport error asks the online check', () => {
+  it('the careers page fails with a certificate error and nothing answers after it; offline: the step fails network', async () => {
+    const { makeRunGate, memoryHostStateStore } = await import('../../../src/app/coverage/gate.js');
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => false });
+    const s = site('acme.test', 'https://www.acme.test/careers');
+    const cert: FetchLike = async (url) => {
+      if (url.endsWith('/robots.txt')) return { status: 404, headers: { get: () => null }, text: async () => '' };
+      throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('cert'), { code: 'CERT_HAS_EXPIRED' }) });
+    };
+    await expect(makePlatformDetector({ gate }).run(s, ctxFor(cert, [s]))).rejects.toMatchObject({ code: 'network' });
+  });
+});

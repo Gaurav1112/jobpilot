@@ -36,7 +36,7 @@ node --run jobpilot -- pack import \
   --link https://www.linkedin.com/in/your-profile \
   --as-of 2026-10 \
   --available-from "1 November 2026" --notice-period "30 days" \
-  --floor-inr 1200000
+  --floor-inr 1234567
 ```
 
 

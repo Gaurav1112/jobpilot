@@ -32,6 +32,11 @@ export class KernelError extends Error {
   constructor(
     readonly code: ErrorCode,
     message: string,
+    /**
+     * For a `network` failure: the system error code of its cause when the provider gave one (`ENOTFOUND`,
+     * `ECONNRESET`, `CERT_HAS_EXPIRED`, ...), so a caller can tell a host that does not exist from an outage.
+     */
+    readonly sysCode?: string,
   ) {
     super(message);
     this.name = 'KernelError';

@@ -338,7 +338,20 @@ function mapProviderError(e: unknown): unknown {
     if (o.status >= 500) return new KernelError('overloaded', `provider returned ${o.status}`);
   }
   if (o.name === 'AbortError') return new KernelError('unknown', 'request aborted');
-  return new KernelError('network', typeof o.message === 'string' ? o.message : 'provider call failed');
+  const message = typeof o.message === 'string' ? o.message : 'provider call failed';
+  const sys = causeCode(e);
+  return sys === undefined ? new KernelError('network', message) : new KernelError('network', `${message} (${sys})`, sys);
+}
+
+/** The system error code behind a failed fetch: undici puts it on `cause` (an AggregateError's own, or its first error's). */
+function causeCode(e: unknown): string | undefined {
+  const code = (v: unknown): string | undefined => {
+    const c = typeof v === 'object' && v !== null ? (v as { code?: unknown }).code : undefined;
+    return typeof c === 'string' && /^[A-Z0-9_]{2,64}$/.test(c) ? c : undefined;
+  };
+  const cause = typeof e === 'object' && e !== null ? (e as { cause?: unknown }).cause : undefined;
+  const first = cause instanceof AggregateError ? cause.errors[0] : undefined;
+  return code(cause) ?? code(first) ?? code(e);
 }
 
 /** Sums of decimal dollar amounts drift (0.1 + 0.2 > 0.3); a cap is only exceeded beyond that noise. */

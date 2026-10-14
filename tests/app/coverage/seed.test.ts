@@ -393,3 +393,10 @@ describe('company-seed agent', () => {
     expect(await codeOf(seed({ source: 'remoteintech' }, s))).toMatch(/^invalid_output/);
   });
 });
+
+describe('final review N1: the seed never retries around a 429', () => {
+  it('retries a network failure, an overloaded server or a timeout, never a rate limit (Retry-After is never read either)', () => {
+    expect(companySeed.contract.retry.on).toEqual(['overloaded', 'network', 'timeout']);
+    expect(companySeed.contract.version).toBe('1.1.0');
+  });
+});

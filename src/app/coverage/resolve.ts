@@ -7,6 +7,7 @@ import { loadPack } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, type Company } from '../store/app-store.js';
+import { httpsOnline } from '../net.js';
 import { makeRunGate, type RunGate } from './gate.js';
 import { coveragePolicy, coveragePolicyHash, runCoverageStages, STAGES } from './pipeline.js';
 import { deferralHosts, projectCoverage } from './project.js';
@@ -54,6 +55,8 @@ export interface ResolveOptions {
   readonly probe?: ProcessProbe;
   /** Tests: sees the gate and run key built for this request. */
   readonly onGate?: (gate: RunGate, runId: string) => void;
+  /** Is the machine online (the run gate's offline check)? Default `httpsOnline` through `fetch` (R1). */
+  readonly online?: () => Promise<boolean>;
 }
 
 export type ResolveResult =
@@ -100,7 +103,7 @@ async function resolveLocked(o: ResolveOptions): Promise<ResolveResult> {
     const policy = coveragePolicy(pack);
     const runDate = istDate(start);
     const runId = freshRunId(app, runDate, company.companyKey);
-    const gate = makeRunGate({ runKey: runId, store: app });
+    const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? (() => httpsOnline(o.fetch)) });
     o.onGate?.(gate, runId);
     const deadline = Date.parse(start) + (o.timeLimitMs ?? RESOLVE_TIME_LIMIT_MS);
     const item = { name: company.name, website: company.website, ...(company.careersUrl !== null ? { careersUrl: company.careersUrl } : {}) };
@@ -127,7 +130,8 @@ async function resolveLocked(o: ResolveOptions): Promise<ResolveResult> {
     }
     // a host that refused (disabled in this run's gate: 401/403/429, a challenge, robots) or a step it deferred: like the
     // weekly run's deferrals, nothing is known this time, so no verdict is written
-    const deferred = STAGES.flatMap((s) => outcome.stages[s].deferred);
+    // C1: a step that failed for a transient reason knows nothing either: deferred like a refusal, never "not located"
+    const deferred = STAGES.flatMap((s) => [...outcome.stages[s].deferred, ...outcome.stages[s].transient]);
     const disabled = app.coverageHostState(runId);
     if (deferred.length > 0 || disabled.size > 0) {
       const named = deferralHosts(deferred.map((d) => d.detail));

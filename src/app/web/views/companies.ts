@@ -95,6 +95,8 @@ export function deferWhy(why: string): string {
   if (/challenge/.test(why)) return 'answered with a bot challenge';
   if (/robots-forbidden/.test(why)) return 'robots.txt refused';
   if (/robots-unavailable/.test(why)) return 'robots.txt could not be read';
+  if (/robots-transient/.test(why)) return 'robots.txt failed for now (asked again within the hour)';
+  if (/no-such-host/.test(why)) return 'no such host';
   if (/robots/.test(why)) return 'robots.txt disallows it';
   if (/401|403/.test(why)) return 'refused access';
   return why;

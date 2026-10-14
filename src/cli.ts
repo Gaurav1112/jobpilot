@@ -314,12 +314,12 @@ program
   .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
   .option('--limit <n>', 'for checks only: locate every pick plus the first <n> other candidates (companyKey order); the scheduled run never sets it', (v: string) => {
     const n = Number(v);
-    if (!Number.isSafeInteger(n) || n < 0) throw new Error(`--limit must be a whole number, not ${v}`);
+    if (!Number.isSafeInteger(n) || n < 0) throw new InvalidArgumentError(`--limit must be a whole number, not ${v}`);
     return n;
   })
   .option('--slice-minutes <n>', 'for checks only: pause after <n> minutes instead of the 90-minute slice (the next run-coverage continues the run)', (v: string) => {
     const n = Number(v);
-    if (!Number.isFinite(n) || n <= 0) throw new Error(`--slice-minutes must be a positive number, not ${v}`);
+    if (!Number.isFinite(n) || n <= 0) throw new InvalidArgumentError(`--slice-minutes must be a positive number, not ${v}`);
     return n;
   })
   .option('--no-yield', 'for checks only: never pause for an owed daily or freelance run (the slice limit still applies)')
@@ -373,7 +373,7 @@ pack
   .requiredOption('--as-of <YYYY-MM>', 'the experience month written to experience.yaml (the daily run uses the current month)')
   .requiredOption('--available-from <text>', 'answers available_from, e.g. "1 November 2026"')
   .requiredOption('--notice-period <text>', 'answers notice_period, e.g. "30 days"')
-  .requiredOption('--floor-inr <amount>', 'the base salary floor in INR a year, e.g. 1200000 (equity never counts)')
+  .requiredOption('--floor-inr <amount>', 'the base salary floor in INR a year, e.g. 1234567 (equity never counts)')
   .option('--education-text <file>', 'one "qualification | institution | YYYY-MM..YYYY-MM" per line (status user-stated)')
   .option('--claimable-title <title>', 'a title the candidate can truthfully claim, added to the ongoing roles\' titles; repeatable', collect, [])
   .option('--extra-watchlist <yaml>', 'extra watchlist entries ({watchlist: [...]}); they replace Desk entries for the same board')
@@ -672,17 +672,22 @@ const scheduleOpts = () => {
 };
 schedule
   .command('install')
-  .description('Write the four launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
-  .action(() =>
+  .description('Write the four launchd plists to ~/Library/LaunchAgents and load them (safe to repeat). On a home that never ran coverage, the weekly coverage run is first owed from the next Sunday 06:00 IST')
+  .option('--coverage-now', 'owe the weekly coverage run at once instead of from the next Sunday 06:00 IST')
+  .action((opts: { coverageNow?: boolean }) =>
     guarded(() => {
-      const r = installSchedule(scheduleOpts());
+      const r = installSchedule({ ...scheduleOpts(), coverageNow: opts.coverageNow === true });
       for (const p of r.plists) console.log(`wrote ${p}`);
       const owed = dueOrError(new Date().toISOString());
       console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
       const fOwed = dueOrError(new Date().toISOString(), FREELANCE_DUE);
       console.log(`freelance run: from 07:30 and 19:30 IST, checked at login and every half hour; ${fOwed.includes('owed:') ? `a window is owed now (${fOwed})` : `now: ${fOwed}`}`);
       const cOwed = dueOrError(new Date().toISOString(), COVERAGE_DUE);
-      console.log(`coverage run: weekly, owed from Sunday 06:00 IST through Saturday, checked at login and every half hour; ${cOwed.includes('owed:') ? `owed now (${cOwed})` : `now: ${cOwed}`}`);
+      console.log(
+        `coverage run: weekly, owed from Sunday 06:00 IST through Saturday, checked at login and every half hour; ${
+          r.coverageFrom !== null ? `the first run is owed from ${r.coverageFrom} (schedule install --coverage-now starts it now)` : cOwed.includes('owed:') ? `owed now (${cOwed})` : `now: ${cOwed}`
+        }`,
+      );
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { alerted, ATTEMPTS_FILE, attemptsFor, COVERAGE_DUE, coverageWeek, DAILY_DUE, dailyDue, due, FREELANCE_DUE, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, markAlerted, startAttempt } from '../../src/app/due.js';
+import { alerted, ATTEMPTS_FILE, attemptsFor, COVERAGE_DUE, COVERAGE_START_FILE, coverageWeek, DAILY_DUE, dailyDue, due, FREELANCE_DUE, finishAttempt, isDue, MAX_FAILED_ATTEMPTS, markAlerted, startAttempt } from '../../src/app/due.js';
 import { withLock } from '../../src/app/lock.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 
@@ -230,6 +230,16 @@ describe('due (weekly coverage)', () => {
     } finally {
       rmSync(h2, { recursive: true, force: true });
     }
+  });
+
+  it('I1: after `schedule install` (coverage-start.json) nothing is owed before its first Sunday 06:00 IST', () => {
+    writeFileSync(join(home, COVERAGE_START_FILE), JSON.stringify({ notBefore: '2026-10-18T00:30:00.000Z' }));
+    expect(due(COVERAGE_DUE, home, at('10:00', '2026-10-13'))).toEqual({ due: false, window: '', reason: 'the first coverage run is owed from Sunday 2026-10-18 06:00 IST (schedule install; run-coverage by hand, or schedule install --coverage-now, to start sooner)' });
+    expect(due(COVERAGE_DUE, home, at('05:59', '2026-10-18')).due).toBe(false);
+    expect(due(COVERAGE_DUE, home, at('06:00', '2026-10-18'))).toMatchObject({ due: true });
+    // a file that cannot be read never blocks the run
+    writeFileSync(join(home, COVERAGE_START_FILE), '{not json');
+    expect(due(COVERAGE_DUE, home, at('10:00', '2026-10-13')).due).toBe(true);
   });
 
   it('Tuesday with no run this coverage week is due (catch-up after a sleeping Sunday)', () => {

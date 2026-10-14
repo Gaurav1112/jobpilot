@@ -302,14 +302,13 @@ describe('src-workday robots.txt and refusals', () => {
     expect(skips).toEqual(['robots-disallow acme.wd5.myworkdayjobs.com: Acme not read today (robots-disallow /wday/cxs/acme/External/jobs)']);
   });
 
-  it('a forbidden (401/403) or unavailable (5xx) robots.txt is a skip too; a 404 robots.txt allows all', async () => {
-    for (const [status, why] of [[403, 'robots-forbidden'], [500, 'robots-unavailable']] as const) {
-      const { out, skips } = await runOn([board({ jobs: jobs(1), robots: { status, body: '' } })]);
-      expect(out).toEqual([]);
-      expect(skips[0]).toContain(`(${why})`);
-    }
-    const { out } = await runOn([board({ jobs: jobs(1, () => 'Account Executive'), robots: { status: 404, body: '' } })]);
-    expect(out).toHaveLength(1);
+  it('a forbidden (401/403) robots.txt is a skip too; a 5xx fails the step uncached (C1); a 404 robots.txt allows all', async () => {
+    const { out, skips } = await runOn([board({ jobs: jobs(1), robots: { status: 403, body: '' } })]);
+    expect(out).toEqual([]);
+    expect(skips[0]).toContain('(robots-forbidden)');
+    await expect(runOn([board({ jobs: jobs(1), robots: { status: 500, body: '' } })])).rejects.toMatchObject({ code: 'overloaded' });
+    const allowed = await runOn([board({ jobs: jobs(1, () => 'Account Executive'), robots: { status: 404, body: '' } })]);
+    expect(allowed.out).toHaveLength(1);
   });
 
   it('robots.txt is fetched once per host per run, shared by the companies on that host', async () => {

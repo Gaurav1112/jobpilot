@@ -260,13 +260,35 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
     expect(html.status).toBe('failed');
   });
 
-  it('a board read past the request timeout is failed with the reason, never a step error, never a disable', async () => {
+  it('a board read past the request timeout FAILS the step with timeout (C1: never a failed verdict, never a disable)', async () => {
     const hang: FetchLike = (_u, init) => new Promise((_r, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted'))));
     const store = memoryHostStateStore();
-    const v = await verify(guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme'), hang, makeBoardVerifier({ runKey: 'r', store, requestTimeoutMs: 20 }));
-    expect(v.status).toBe('failed');
-    expect(v.reasons.join('\n')).toMatch(/timed out after 20 ms/);
+    const g = guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme');
+    await expect(makeBoardVerifier({ runKey: 'r', store, requestTimeoutMs: 20 }).run(g, ctxFor(hang, [g]))).rejects.toMatchObject({ code: 'timeout', message: expect.stringMatching(/timed out after 20 ms/) });
     expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+
+  it('a board read that fails with a network error FAILS the step with network (C1: an outage never adds a failed week)', async () => {
+    const reset: FetchLike = async () => {
+      throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+    };
+    const g = guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme');
+    await expect(makeBoardVerifier(fresh()).run(g, ctxFor(reset, [g]))).rejects.toMatchObject({ code: 'network' });
+  });
+
+  it('C1-e: a documented API read ignores a robots.txt state set by page crawling; only a refusal (401/403/429/challenge) defers it', async () => {
+    const g = guess(cand('acme.test', 'Acme'), 'greenhouse', 'acme');
+    const n = serve({ [greenhouseUrl('acme')]: { body: gh('Acme') } });
+    for (const why of ['robots-transient', 'robots-unavailable', 'no-such-host', 'robots-forbidden']) {
+      const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+      gate.disable('boards-api.greenhouse.io', why, '2026-10-11T01:30:00.000Z');
+      expect((await verify(g, n.fetch, makeBoardVerifier({ gate }))).status).toBe('verified');
+    }
+    for (const why of ['http-401', 'http-403', 'http-429', 'challenge']) {
+      const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+      gate.disable('boards-api.greenhouse.io', why, '2026-10-11T01:30:00.000Z');
+      await expect(makeBoardVerifier({ gate }).run(g, ctxFor(n.fetch, [g]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(new RegExp(`host-disabled:${why} on boards-api\\.greenhouse\\.io`)) });
+    }
   });
 
   it('a board API that redirects is a failed verdict "board API redirected off-platform", never a policy denial or a step error', async () => {
@@ -278,10 +300,9 @@ describe('board-verifier: the hard gate (2xx, valid shape, at least 1 job, same 
     expect(n.calls).toEqual([greenhouseUrl('acme')]);
   });
 
-  it('a 5xx still reads as the broker\'s code through the page read: a failed verdict', async () => {
-    const v = await verify(guess(cand('acme.test', 'Acme'), 'lever', 'acme'), serve({ [leverUrl('acme', 0)]: { status: 503, body: 'down' } }).fetch);
-    expect(v.status).toBe('failed');
-    expect(v.reasons.join('\n')).toMatch(/503/);
+  it('a 5xx reads as the broker\'s code through the page read: the step FAILS overloaded (C1), never a failed verdict', async () => {
+    const g = guess(cand('acme.test', 'Acme'), 'lever', 'acme');
+    await expect(makeBoardVerifier(fresh()).run(g, ctxFor(serve({ [leverUrl('acme', 0)]: { status: 503, body: 'down' } }).fetch, [g]))).rejects.toMatchObject({ code: 'overloaded', message: expect.stringMatching(/503/) });
   });
 
   it('a platform without an adapter is proposed with "adapter not built yet", nothing fetched (carry 12)', async () => {
@@ -466,6 +487,17 @@ describe('board-verifier: Oracle Recruiting Cloud (a 403 robots.txt is unknown; 
     expect(n.calls).toEqual([`https://${JPM}/robots.txt`]);
     const r = serve({ [`https://${JPM}/robots.txt`]: { status: 403, body: '' }, [page1]: { status: 403, body: '' } });
     await expect(makeBoardVerifier(fresh()).run(jpmGuess(), ctxFor(r.fetch, [jpmGuess()]))).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^host-disabled:http-403 on jpmc\.fa\.oraclecloud\.com/) });
+  });
+
+  it('C1: a robots.txt that fails in transport or answers 5xx is not "unavailable": the step fails and is asked again later', async () => {
+    const fiveHundred = serve({ [`https://${JPM}/robots.txt`]: { status: 502, body: '' }, [page1]: { body: fx().discovery } });
+    await expect(makeBoardVerifier(fresh()).run(jpmGuess(), ctxFor(fiveHundred.fetch, [jpmGuess()]))).rejects.toMatchObject({ code: 'network', message: expect.stringMatching(/robots-transient/) });
+    const reset: FetchLike = async (url, init) => {
+      if (url.endsWith('/robots.txt')) throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) });
+      return fiveHundred.fetch(url, init);
+    };
+    await expect(makeBoardVerifier(fresh()).run(jpmGuess(), ctxFor(reset, [jpmGuess()]))).rejects.toMatchObject({ code: 'network' });
+    expect(fiveHundred.calls).not.toContain(page1);
   });
 });
 

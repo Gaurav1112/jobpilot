@@ -1,0 +1,386 @@
+import { describe, expect, it } from 'vitest';
+import {
+  DISABLE_EXPIRY_MS,
+  makeRunGate,
+  memoryHostStateStore,
+  OFFLINE_AFTER_NETWORK_ERRORS,
+  TRANSIENT_DISABLE_MS,
+  stepFetcher,
+  type RunGate,
+} from '../../../src/app/coverage/gate.js';
+import { careersLocatorContract, locatorEgressSets, makeCareersLocator } from '../../../src/app/coverage/locator.js';
+import { CareersSite, type CompanyCandidate } from '../../../src/app/coverage/types.js';
+import { networkKind } from '../../../src/app/net.js';
+import { issueContext } from '../../../src/kernel/broker.js';
+import type { Clock } from '../../../src/kernel/clock.js';
+import { KernelError } from '../../../src/kernel/errors.js';
+import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
+import type { FetchLike, FetchResponse } from '../../../src/kernel/providers.js';
+
+const T0 = '2026-10-11T02:00:00.000Z';
+const at = (h: number): string => new Date(Date.parse(T0) + h * 3_600_000).toISOString();
+const cand = (key: string): CompanyCandidate => ({ companyKey: key, name: key, website: `https://www.${key}`, careersUrl: null, source: 'yc', runDate: '2026-10-11' });
+
+const res = (status: number, body = ''): FetchResponse => ({ status, headers: { get: () => null }, text: async () => body });
+/** A failed fetch the way undici fails one: a TypeError whose `cause` has the system code. */
+const sysFail = (code: string): never => {
+  throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error(code), { code }) });
+};
+
+/** A fetch answered by `route` per URL (an Error thrown there is the transport failure); every URL asked is in `calls`. */
+function net(route: (url: string) => FetchResponse | 'reset' | 'nxdomain' | 'cert' | 'refused') {
+  const calls: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    calls.push(url);
+    const r = route(url);
+    if (r === 'reset') return sysFail('ECONNRESET');
+    if (r === 'nxdomain') return sysFail('ENOTFOUND');
+    if (r === 'cert') return sysFail('ERR_TLS_CERT_ALTNAME_INVALID');
+    if (r === 'refused') return sysFail('ECONNREFUSED');
+    return r;
+  };
+  return { fetch, calls };
+}
+
+const clockAt = (iso: () => string): Clock => ({ now: iso });
+const ctxFor = (fetch: FetchLike, c: CompanyCandidate, clock: Clock, signal = new AbortController().signal) =>
+  issueContext({ contract: careersLocatorContract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock, signal, egressSets: locatorEgressSets([c]) });
+
+/** Runs the locator for `c` on `gate` at `now`: its site, or the KernelError it failed with. */
+async function locate(gate: RunGate, fetch: FetchLike, c: CompanyCandidate, now: string): Promise<CareersSite | KernelError> {
+  try {
+    const [site] = await makeCareersLocator({ gate }).run(c, ctxFor(fetch, c, clockAt(() => now)));
+    return CareersSite.schema.parse(site);
+  } catch (e) {
+    if (e instanceof KernelError) return e;
+    throw e;
+  }
+}
+
+describe('C1: the gate splits robots.txt outcomes into definitive and transient', () => {
+  it('the limits are named constants: a transient disable lasts 1 h, a 429 24 h; 5 network errors in a row ask whether the machine is offline', () => {
+    expect(TRANSIENT_DISABLE_MS).toBe(60 * 60_000);
+    expect(DISABLE_EXPIRY_MS).toEqual({ 'http-429': 24 * 60 * 60_000, 'robots-transient': TRANSIENT_DISABLE_MS });
+    expect(OFFLINE_AFTER_NETWORK_ERRORS).toBe(5);
+  });
+
+  it('classifies transport failures: no-such-host only by name, refused and bad certificates definitive, the rest transient', () => {
+    expect(networkKind(new KernelError('network', 'x', 'ENOTFOUND'))).toBe('no-such-host');
+    expect(networkKind(new KernelError('network', 'x', 'ECONNREFUSED'))).toBe('definitive');
+    expect(networkKind(new KernelError('network', 'x', 'CERT_HAS_EXPIRED'))).toBe('definitive');
+    expect(networkKind(new KernelError('network', 'x', 'ERR_TLS_CERT_ALTNAME_INVALID'))).toBe('definitive');
+    for (const code of ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ENETUNREACH', 'UND_ERR_SOCKET']) expect(networkKind(new KernelError('network', 'x', code))).toBe('transient');
+    expect(networkKind(new KernelError('network', 'x'))).toBe('transient');
+    expect(networkKind(new KernelError('timeout', 'x'))).toBe('transient');
+  });
+
+  it('a robots.txt network error: the step FAILS (network), the host is disabled only for 1 h (persisted with its time), never cached', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store });
+    let down = true;
+    const n = net((u) => (u === 'https://www.acme.test/robots.txt' && down ? 'reset' : u === 'https://www.acme.test/' ? res(200, '<p>home</p>') : u === 'https://www.acme.test/careers' ? res(200, 'jobs') : res(404)));
+    const r = await locate(gate, n.fetch, cand('acme.test'), at(0));
+    expect(r).toBeInstanceOf(KernelError);
+    expect((r as KernelError).code).toBe('network');
+    expect([...store.coverageHostState('r')]).toContainEqual(['www.acme.test', 'robots-transient']);
+    expect(store.coverageHostTimes('r').get('www.acme.test')).toBe(at(0));
+    expect(gate.state.robots.has('www.acme.test')).toBe(false);
+    // within the hour the host stays off; after it, robots.txt is asked again and the host is read
+    down = false;
+    expect(gate.disabledWhy('www.acme.test', at(0.99))).toBe('robots-transient');
+    const later = await locate(gate, n.fetch, cand('acme.test'), at(1));
+    expect(later).toMatchObject({ method: 'path', careersUrl: 'https://www.acme.test/careers' });
+    expect(n.calls.filter((u) => u === 'https://www.acme.test/robots.txt')).toHaveLength(2);
+    expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+
+  it('a 5xx robots.txt that recovers an hour later: the host is read then (C1 test b)', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store });
+    let status = 503;
+    const n = net((u) => (u === 'https://www.acme.test/robots.txt' ? res(status, 'busy') : u === 'https://www.acme.test/' ? res(200, '<p>home</p>') : u === 'https://www.acme.test/careers' ? res(200, 'jobs') : res(404)));
+    const r = await locate(gate, n.fetch, cand('acme.test'), at(0));
+    expect(r).toMatchObject({ code: 'overloaded' });
+    expect(gate.disabledWhy('www.acme.test', at(0.5))).toBe('robots-transient');
+    status = 200;
+    expect(await locate(gate, n.fetch, cand('acme.test'), at(1.01))).toMatchObject({ method: 'path' });
+  });
+
+  it('a step aborted while its robots.txt is in flight: the host is not disabled for the run (C1 test c)', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store });
+    const step = new AbortController();
+    const fetch: FetchLike = (url, init) =>
+      url.endsWith('/robots.txt')
+        ? new Promise((_r, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')));
+            setTimeout(() => step.abort(new DOMException('step timed out', 'TimeoutError')), 5);
+          })
+        : Promise.resolve(res(404));
+    const c = cand('acme.test');
+    await expect(makeCareersLocator({ gate }).run(c, ctxFor(fetch, c, clockAt(() => at(0)), step.signal))).rejects.toBeInstanceOf(KernelError);
+    expect(gate.disabledWhy('www.acme.test', at(0))).toBe('robots-transient');
+    expect(gate.disabledWhy('www.acme.test', at(1))).toBeUndefined();
+  });
+
+  it('a name that does not exist (ENOTFOUND) while online is no-such-host for the run; while offline it is transient (C1 test d)', async () => {
+    const online = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => true });
+    const n = net((u) => (u.startsWith('https://www.acme.test/') ? 'nxdomain' : res(404)));
+    const r = await locate(online, n.fetch, cand('acme.test'), at(0));
+    expect(r).toMatchObject({ method: 'none' }); // a finished answer: the company's site does not exist
+    expect(online.disabledWhy('www.acme.test', at(100))).toBe('no-such-host');
+    const offline = makeRunGate({ runKey: 'r2', store: memoryHostStateStore(), online: async () => false });
+    expect(await locate(offline, n.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
+    expect(offline.disabledWhy('www.acme.test', at(0))).toBe('robots-transient');
+    expect(offline.disabledWhy('www.acme.test', at(1))).toBeUndefined();
+  });
+
+  it('unchanged: 401/403 robots.txt is robots-forbidden, another 4xx robots-unavailable, a bad certificate robots-unavailable, all for the run', async () => {
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+    const answers: Record<string, FetchResponse | 'cert' | 'refused'> = { 'a.test': res(403), 'b.test': res(400), 'c.test': 'cert', 'd.test': 'refused' };
+    const n = net((u) => {
+      const host = new URL(u).hostname.replace(/^www\./, '');
+      return u.endsWith('/robots.txt') && answers[host] !== undefined ? (answers[host] as FetchResponse) : res(404);
+    });
+    for (const k of Object.keys(answers)) expect(await locate(gate, n.fetch, cand(k), at(0))).toMatchObject({ method: 'none' });
+    expect(gate.disabledWhy('www.a.test', at(100))).toBe('robots-forbidden');
+    expect(gate.disabledWhy('www.b.test', at(100))).toBe('robots-unavailable');
+    expect(gate.disabledWhy('www.c.test', at(100))).toBe('robots-unavailable');
+    expect(gate.disabledWhy('www.d.test', at(100))).toBe('robots-unavailable');
+  });
+
+  it('a page probe that fails transiently: a "none" resting on it FAILS; a site found anyway is still found', async () => {
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+    const reset = net((u) => (u === 'https://www.acme.test/' ? 'reset' : res(404)));
+    expect(await locate(gate, reset.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
+    const five = net((u) => (u === 'https://www.beta.test/' ? res(502) : res(404)));
+    expect(await locate(gate, five.fetch, cand('beta.test'), at(0))).toMatchObject({ code: 'overloaded' });
+    const found = net((u) => (u === 'https://www.gamma.test/' ? 'reset' : u === 'https://www.gamma.test/careers' ? res(200, 'jobs') : res(404)));
+    expect(await locate(gate, found.fetch, cand('gamma.test'), at(0))).toMatchObject({ method: 'path' });
+  });
+});
+
+describe('C1: a run of network errors asks whether the machine is offline', () => {
+  const probe = (gate: RunGate, fetch: FetchLike, hosts: string[]) => {
+    const c = cand('acme.test');
+    const ctx = issueContext({ contract: careersLocatorContract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock: clockAt(() => at(0)), signal: new AbortController().signal, egressSets: { 'coverage:candidate-hosts': hosts } });
+    void c;
+    return stepFetcher({ ctx, gate, planned: new Set(hosts), acceptMoved: () => false, maxRequests: 100 });
+  };
+  const hosts = ['h1.test', 'h2.test', 'h3.test', 'h4.test', 'h5.test', 'h6.test'];
+
+  it(`${OFFLINE_AFTER_NETWORK_ERRORS} network errors in a row and the offline check says offline: the gate reports offline`, async () => {
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, false) });
+    const f = probe(gate, net(() => 'reset').fetch, hosts);
+    for (const h of hosts.slice(0, OFFLINE_AFTER_NETWORK_ERRORS - 1)) await f.fetchUrl(`https://${h}/robots.txt`, false);
+    expect(gate.offline()).toBe(false);
+    expect(asked).toBe(0);
+    await f.fetchUrl(`https://${hosts[4]}/robots.txt`, false);
+    expect(asked).toBe(1);
+    expect(gate.offline()).toBe(true);
+  });
+
+  it('online after all (a run of dead hosts): not offline; any answer resets the count', async () => {
+    const online = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => true });
+    const f = probe(online, net(() => 'reset').fetch, hosts);
+    for (const h of hosts) await f.fetchUrl(`https://${h}/robots.txt`, false);
+    expect(online.offline()).toBe(false);
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r2', store: memoryHostStateStore(), online: async () => (asked++, false) });
+    const g = probe(gate, net((u) => (u.startsWith('https://h3.test/') ? res(404) : 'reset')).fetch, hosts);
+    for (const h of hosts) await g.fetchUrl(`https://${h}/robots.txt`, false);
+    expect(asked).toBe(0); // 2 errors, an answer, 3 errors: never 5 in a row
+    expect(gate.offline()).toBe(false);
+  });
+});
+
+describe('final review N3: a robots.txt reached by redirect also answers for the host it was found on', () => {
+  it('www -> apex: the apex robots.txt is not asked again 2 s later', async () => {
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore() });
+    const n = net((u) =>
+      u === 'https://www.acme.test/robots.txt'
+        ? { status: 301, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? 'https://acme.test/robots.txt' : null) }, text: async () => '' }
+        : u === 'https://acme.test/robots.txt'
+          ? res(200, 'User-agent: *\nDisallow: /private\n')
+          : u === 'https://www.acme.test/'
+            ? { status: 301, headers: { get: (h: string) => (h.toLowerCase() === 'location' ? 'https://acme.test/' : null) }, text: async () => '' }
+            : u === 'https://acme.test/'
+              ? res(200, '<p>home</p>')
+              : res(404),
+    );
+    const c: CompanyCandidate = { ...cand('acme.test'), website: 'https://www.acme.test' };
+    await locate(gate, n.fetch, c, at(0));
+    expect(n.calls).toContain('https://acme.test/'); // the apex homepage was fetched, under the robots.txt already read
+    expect(n.calls.filter((u) => u === 'https://acme.test/robots.txt')).toHaveLength(1);
+  });
+});
+
+describe('R1: a captive portal or TLS-inspecting proxy is offline, not a week of dead hosts', () => {
+  const certFail = (): never => sysFail('CERT_HAS_EXPIRED');
+
+  it('httpsOnline: online only when a probe host answers over HTTPS (any status below 500); a certificate error, a refusal or 5xx everywhere is offline', async () => {
+    const { httpsOnline, PROBE_HOSTS } = await import('../../../src/app/net.js');
+    const asked: string[] = [];
+    const ok: FetchLike = async (url) => (asked.push(url), res(404));
+    expect(await httpsOnline(ok)).toBe(true);
+    expect(asked).toEqual([`https://${PROBE_HOSTS[0]}/robots.txt`]);
+    expect(await httpsOnline(async () => certFail())).toBe(false);
+    expect(await httpsOnline(async () => sysFail('ECONNREFUSED'))).toBe(false);
+    expect(await httpsOnline(async () => res(503))).toBe(false);
+    expect(await httpsOnline(async () => res(511))).toBe(false);
+    // one probe host down, another answering: online
+    expect(await httpsOnline(async (url) => (url.includes(PROBE_HOSTS[0] as string) ? certFail() : res(200, 'User-agent: *')))).toBe(true);
+  });
+
+  it('certificate errors count towards the 5-in-a-row check; offline then undoes the run-long disables they caused and the step fails transient', async () => {
+    const store = memoryHostStateStore();
+    let portal = true;
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => !portal });
+    const n = net(() => 'cert');
+    const r = await locate(gate, n.fetch, cand('acme.test'), at(0));
+    expect(r).toMatchObject({ code: 'network' });
+    expect(gate.offline()).toBe(true);
+    expect([...store.coverageHostState('r')].filter(([, why]) => why !== 'robots-transient')).toEqual([]);
+    expect(gate.state.robots.size).toBe(0);
+    portal = false;
+  });
+
+  it('a step whose last misses are certificate errors with no real answer after them asks the online check before finishing', async () => {
+    const store = memoryHostStateStore();
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => (asked++, false) });
+    // 2 certificate errors only (under the 5-in-a-row): the homepage and its robots.txt; nothing else is planned
+    const c: CompanyCandidate = { ...cand('acme.test'), website: 'https://acme.test' };
+    const f: FetchLike = async (url) => (new URL(url).hostname.startsWith('acme.test') ? certFail() : sysFail('ENOTFOUND'));
+    expect(await locate(gate, f, c, at(0))).toMatchObject({ code: 'network' });
+    expect(asked).toBeGreaterThan(0);
+    expect([...store.coverageHostState('r')].filter(([, why]) => why !== 'robots-transient')).toEqual([]);
+  });
+
+  it('one host with a bad certificate while others answer stays definitive (robots-unavailable for the run), with no online probe', async () => {
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, true) });
+    const n = net((u) => (u.startsWith('https://careers.acme.test/') ? 'cert' : u === 'https://www.acme.test/' ? res(200, '<p>home</p>') : res(404)));
+    expect(await locate(gate, n.fetch, cand('acme.test'), at(0))).toMatchObject({ method: 'none' });
+    expect(gate.disabledWhy('careers.acme.test', at(100))).toBe('robots-unavailable');
+    expect(gate.offline()).toBe(false);
+  });
+
+  it('a real HTTP answer resets the count; certificate errors do not', async () => {
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, false) });
+    for (let i = 0; i < 4; i++) await gate.noteTransport('network-error', at(0));
+    await gate.noteTransport('answer', at(0));
+    for (let i = 0; i < 4; i++) await gate.noteTransport('network-error', at(0));
+    expect(asked).toBe(0);
+    await gate.noteTransport('network-error', at(0));
+    expect(asked).toBe(1);
+    expect(gate.offline()).toBe(true);
+  });
+});
+
+describe('R1: what a real answer confirms stays', () => {
+  it('a disable confirmed by a later real answer survives a later offline spell; one with no answer after it is undone', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => false });
+    await gate.noteTransport('network-error', at(0));
+    gate.disable('confirmed.test', 'robots-unavailable', at(0));
+    gate.markProvisional('confirmed.test');
+    await gate.noteTransport('answer', at(0)); // the network answered after it: the host's own fact
+    await gate.noteTransport('network-error', at(0));
+    gate.disable('unproven.test', 'no-such-host', at(0));
+    gate.markProvisional('unproven.test');
+    for (let i = 0; i < 4; i++) await gate.noteTransport('network-error', at(0));
+    expect(gate.offline()).toBe(true);
+    expect(gate.disabledWhy('confirmed.test', at(0))).toBe('robots-unavailable');
+    expect(gate.disabledWhy('unproven.test', at(0))).toBeUndefined();
+    expect([...store.coverageHostState('r')]).toEqual([['confirmed.test', 'robots-unavailable']]);
+  });
+});
+
+describe('R1: once offline, the invocation trusts no transport error', () => {
+  it('after the gate found the machine offline, a certificate error is transient even when a later request answers', async () => {
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => false });
+    for (let i = 0; i < 5; i++) await gate.noteTransport('network-error', at(0));
+    expect(gate.offline()).toBe(true);
+    const n = net((u) => (u === 'https://www.acme.test/' ? 'cert' : res(404)));
+    expect(await locate(gate, n.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
+  });
+});
+
+describe('re-check m4: the request that finds the machine offline leaves no run-long disable', () => {
+  it('the robots.txt failure that makes the 5th error in a row (offline) is transient; the host is back within the hour', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => false });
+    for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS - 1; i++) await gate.noteTransport('network-error', at(0));
+    const n = net(() => 'cert');
+    expect(await locate(gate, n.fetch, cand('acme.test'), at(0))).toMatchObject({ code: 'network' });
+    expect(gate.offline()).toBe(true);
+    // the failure that found the outage is transient itself: off for the hour, never the run
+    expect([...store.coverageHostState('r').values()]).toContain('robots-transient');
+    for (const [h] of store.coverageHostState('r')) expect(gate.disabledWhy(h, at(1)), h).toBeUndefined();
+  });
+
+  it('a provisional mark made after the machine went offline undoes the disable at once', async () => {
+    const store = memoryHostStateStore();
+    const gate = makeRunGate({ runKey: 'r', store, online: async () => false });
+    for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS; i++) await gate.noteTransport('network-error', at(0));
+    expect(gate.offline()).toBe(true);
+    gate.disable('late.test', 'robots-unavailable', at(0));
+    gate.markProvisional('late.test');
+    expect(gate.disabledWhy('late.test', at(0))).toBeUndefined();
+    expect([...store.coverageHostState('r')]).toEqual([]);
+  });
+});
+
+describe('re-check m5: the online probe is rare and obeys host spacing', () => {
+  it('a positive check is reused for 60 s while real answers keep coming; without answers it is asked again', async () => {
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, true) });
+    const burst = async (t: string) => {
+      for (let i = 0; i < OFFLINE_AFTER_NETWORK_ERRORS; i++) await gate.noteTransport('network-error', t);
+    };
+    await burst(at(0));
+    expect(asked).toBe(1);
+    await gate.noteTransport('answer', at(0));
+    await burst(new Date(Date.parse(at(0)) + 59_000).toISOString());
+    expect(asked).toBe(1); // reused: answered since, under 60 s
+    await burst(new Date(Date.parse(at(0)) + 59_500).toISOString());
+    expect(asked).toBe(2); // no real answer since the last check: asked again
+  });
+
+  it('pacedOnline: two checks in quick succession put at least the host interval between two requests to one probe host', async () => {
+    const { pacedOnline } = await import('../../../src/app/coverage/run.js');
+    const { createHostPacer } = await import('../../../src/kernel/broker.js');
+    let t = Date.parse(at(0));
+    const clock = { now: () => new Date(t).toISOString() };
+    const pacer = createHostPacer(2000, clock, async (ms) => void (t += ms));
+    const sent: { host: string; t: number }[] = [];
+    const fetch: FetchLike = async (url) => (sent.push({ host: new URL(url).hostname, t }), res(404));
+    const online = pacedOnline(fetch, pacer);
+    await pacer.wait('boards-api.greenhouse.io'); // a board read of the verify stage just now
+    expect(await online()).toBe(true);
+    expect(await online()).toBe(true);
+    const times = [Date.parse(at(0)), ...sent.filter((s) => s.host === 'boards-api.greenhouse.io').map((s) => s.t)];
+    for (let i = 1; i < times.length; i++) expect((times[i] as number) - (times[i - 1] as number)).toBeGreaterThanOrEqual(2000);
+  });
+});
+
+describe('re-check m5: a reused online answer is never proof for a later miss', () => {
+  it('a portal starting right after a real answer: the reuse does not confirm the misses after it; the next settle probes', async () => {
+    let on = true;
+    let asked = 0;
+    const gate = makeRunGate({ runKey: 'r', store: memoryHostStateStore(), online: async () => (asked++, on) });
+    for (let i = 0; i < 5; i++) await gate.noteTransport('network-error', at(0)); // probe 1: online
+    await gate.noteTransport('answer', at(0));
+    on = false; // the portal starts
+    await gate.noteTransport('network-error', at(0));
+    const miss = gate.seq();
+    for (let i = 0; i < 4; i++) await gate.noteTransport('network-error', at(0)); // 5 in a row: the reuse answers
+    expect(asked).toBe(1);
+    expect(await gate.settled(miss, at(0))).toBe(false); // probed, offline
+    expect(asked).toBe(2);
+    expect(gate.offline()).toBe(true);
+  });
+});
