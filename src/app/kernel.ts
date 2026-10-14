@@ -126,6 +126,8 @@ export interface AppKernelOptions {
   readonly pageLedger?: PageLedger;
   /** The page adapters' state across runs (`appPageState`, Task 8); default in memory (this run only). */
   readonly pageState?: PageState;
+  /** The page adapters' job pages per company per IST day (`appPageLedger(app, PAGE_LEDGER_PREFIX)`); default in memory. */
+  readonly jobPageLedger?: PageLedger;
 }
 
 export interface AppKernel {
@@ -148,9 +150,10 @@ export function preparePipeline(
   boards: readonly RegistryBoard[] = [],
   pageLedger?: PageLedger,
   pageState?: PageState,
+  jobPageLedger?: PageLedger,
 ): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
   const guardrails = appGuardrails();
-  const state = { ...(pageLedger === undefined ? {} : { pageLedger }), ...(pageState === undefined ? {} : { pageState }) };
+  const state = { ...(pageLedger === undefined ? {} : { pageLedger }), ...(pageState === undefined ? {} : { pageState }), ...(jobPageLedger === undefined ? {} : { jobPageLedger }) };
   const { registry, compiled } = mode === 'daily' ? compileDaily(dailyAgents(pack.watchlist, boards, state), guardrails) : compileDaily(rebuildAgents(), guardrails, rebuildPipeline());
   const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
   // A rebuild fetches nothing, so only the daily run's pacing matters.
@@ -168,7 +171,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
   const { pack } = o.loaded;
   if (!isAbsolute(o.pdftotext)) throw new Error(`pdftotext must be an absolute path, not ${o.pdftotext}`);
   const boards = o.mode === 'rebuild' ? [] : (o.boards ?? []);
-  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards, o.pageLedger, o.pageState);
+  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards, o.pageLedger, o.pageState, o.jobPageLedger);
   if (registry.has('src-careers-list') && o.browser === undefined) throw new Error('the watchlist has careers entries but no browser provider was given');
   const supervisor = new Supervisor({
     store: o.store,

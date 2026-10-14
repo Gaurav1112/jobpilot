@@ -4,7 +4,7 @@ import { KernelError } from '../../../../kernel/errors.js';
 import { decodeEntities } from '../../../text/html.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { anchorHrefs, getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing } from './pages.js';
-import { refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { memoryPageLedger, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 import type { SrcPageOptions } from './icims.js';
 
 /**
@@ -103,8 +103,8 @@ export async function fetchSrListing(http: HttpTool, hosts: PlatformHosts, compa
 
 export const srcSmartRecruitersContract = defineContract({
   id: 'src-smartrecruiters',
-  version: '1.0.0',
-  description: 'Reads one verified SmartRecruiters company\'s public job pages from its listing, never the posting API, at most forty new or stale pages per run',
+  version: '1.1.0',
+  description: 'Reads one verified SmartRecruiters company\'s public job pages from its listing, never the posting API, at most forty new or stale pages per day',
   skills: ['job-sourcing'],
   team: 'sourcing-smartrecruiters',
   kind: 'io',
@@ -128,7 +128,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   try {
     const listing = await fetchSrListing(http, o.hosts, company);
     const jobs = prefilter(listing.jobs, pack, req.company, ctx);
-    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `smartrecruiters ${company}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, source: 'smartrecruiters', slug: req.slug, follow: onJobs });
+    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `smartrecruiters ${company}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, ledger: o.ledger, source: 'smartrecruiters', slug: req.slug, follow: onJobs });
   } catch (e) {
     refusal(e, req.company, ctx);
     return [];
@@ -137,6 +137,6 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
 
 /** Builds `src-smartrecruiters` for one run, on the run's host state and the page state. */
 export function makeSrcSmartRecruiters(o: SrcPageOptions): Agent<DiscoveryRequest, RawPosting> {
-  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
+  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), ledger: o.ledger ?? memoryPageLedger(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
   return defineAgent(srcSmartRecruitersContract, (req, ctx) => (req.ats === 'smartrecruiters' ? runCompany(req, ctx, opts) : Promise.resolve([])));
 }

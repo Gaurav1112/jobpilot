@@ -1,5 +1,5 @@
 {
-  "hash": "2f468c456d164220290e37f15261272499a03937a2f051c3bf417cd35e16c798",
+  "hash": "3e07868dcd695f1998f8b7b862965c4e614a57f7ae5e5b115ae88335bdc7ba98",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -128,6 +128,6 @@
     },
     "team": "sourcing-jsonld",
     "timeoutMs": 900000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

@@ -87,6 +87,8 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified Eightfold a
     expect(r.counts.byAgent['src-oracle']).toMatchObject({ done: 2, failed: 0 });
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
+      // the run.ts wiring of Oracle's per-day list-page ledger (Task 7 review minor; Task 8 fix round 1): removing it fails here
+      expect(app.getSetting('oracle.pages.2026-10-14.acme.fa.us2.oraclecloud.com/CX_1')).toBe('2');
       const rows = Object.fromEntries(app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] }).map((j) => [j.title, { verdict: j.verdict, ats: j.ats, company: j.company, location: j.location, url: j.url }]));
       expect(rows).toEqual({
         'Senior Backend Engineer': { verdict: 'eligible', ats: 'eightfold', company: 'Acme Freight', location: 'Bengaluru, KA, India', url: `${EF}/careers/job/601` },

@@ -5,7 +5,7 @@ import { isSitemapIndex, sitemapLocs } from '../../../text/sitemap.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { careersSourceId } from '../careers.js';
 import { getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing } from './pages.js';
-import { refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { memoryPageLedger, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 import type { SrcPageOptions } from './icims.js';
 
 /**
@@ -165,8 +165,8 @@ export async function fetchJsonLdListing(http: HttpTool, hosts: PlatformHosts, b
 
 export const srcJsonLdContract = defineContract({
   id: 'src-jsonld-sitemap',
-  version: '1.0.0',
-  description: 'Reads one verified in-house careers site\'s JobPosting pages from its sitemap, at most forty new or stale pages per run, under the strict page robots rule',
+  version: '1.1.0',
+  description: 'Reads one verified in-house careers site\'s JobPosting pages from its sitemap, at most forty new or stale pages per day, under the strict page robots rule',
   skills: ['job-sourcing'],
   team: 'sourcing-jsonld',
   kind: 'io',
@@ -190,7 +190,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   try {
     const listing = await fetchJsonLdListing(http, o.hosts, b, req.company);
     const jobs = prefilter(listing.jobs, pack, req.company, ctx);
-    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `jsonld-sitemap ${jsonLdRef(b)}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, source: 'jsonld-sitemap', slug: req.slug, follow: sameHost(b.host) });
+    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `jsonld-sitemap ${jsonLdRef(b)}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, ledger: o.ledger, source: 'jsonld-sitemap', slug: req.slug, follow: sameHost(b.host) });
   } catch (e) {
     refusal(e, req.company, ctx);
     return [];
@@ -199,6 +199,6 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
 
 /** Builds `src-jsonld-sitemap` for one run, on the run's host state and the page state. */
 export function makeSrcJsonLd(o: SrcPageOptions): Agent<DiscoveryRequest, RawPosting> {
-  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
+  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), ledger: o.ledger ?? memoryPageLedger(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
   return defineAgent(srcJsonLdContract, (req, ctx) => (req.ats === 'jsonld-sitemap' ? runCompany(req, ctx, opts) : Promise.resolve([])));
 }

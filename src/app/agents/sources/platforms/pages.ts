@@ -6,7 +6,7 @@ import { dayNumber } from '../careers.js';
 import { finish } from '../common.js';
 import { checkJobPosting, jsonLdJobPostings, keptJobPosting } from '../jsonld.js';
 import { sha256Hex } from '../sha256.js';
-import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type PlatformHosts, type TitlePack } from './shared.js';
+import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type PageLedger, type PlatformHosts, type TitlePack } from './shared.js';
 
 /**
  * The page crawl the four page adapters share (Task 8: iCIMS, SuccessFactors pages, SmartRecruiters, the generic
@@ -25,8 +25,10 @@ import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type P
  *   board's own host: SuccessFactors moves `/job/<title>/<id>/` to `/job/<title>/<n>-en_US/`, seen live). A redirect
  *   anywhere else is never followed (`page-moved`).
  *
- * **Budget and rotation (controller decision 3):** at most PAGE_MAX_FETCHES job pages per company per daily run,
- * chosen by `planPages`: (a) pages never fetched, in listing order; (b) then pages last fetched more than
+ * **Budget and rotation (controller decision 3; fix round 1):** at most PAGE_MAX_FETCHES job pages per company per IST
+ * day (`req.runDate`), counted across the day's runs (a retry, a `run --refresh`) in a `PageLedger` (the daily wiring's
+ * app-DB ledger, `appPageLedger(app, PAGE_LEDGER_PREFIX)`, as Oracle's list pages), each page counted before it is
+ * requested; chosen by `planPages` within what is left of the day's budget: (a) pages never fetched, in listing order; (b) then pages last fetched more than
  * PAGE_STALE_DAYS days ago, oldest first, ties by URL. The rest are queued by name (`page-budget <company>: N job pages
  * queued (…)`), never silently dropped. The listing's own requests are counted by each adapter, separately.
  *
@@ -44,8 +46,10 @@ import { goneNote, hostRequest, RobotsDenied, titlePasses, type HttpTool, type P
  * posting, so a stale listing that still names it does not spend the budget on it again within the week.
  */
 
-/** Job-page fetches per company per daily run. */
+/** Job-page fetches per company per IST day, across the day's runs. */
 export const PAGE_MAX_FETCHES = 40;
+/** The app_settings key prefix of the daily page ledger (`pages.fetched.<IST day>.<board>`). */
+export const PAGE_LEDGER_PREFIX = 'pages.fetched.';
 /** A page last fetched more than this many days ago is fetched again when the budget allows. */
 export const PAGE_STALE_DAYS = 7;
 /** Redirects followed per page, within the board's host. */
@@ -235,7 +239,10 @@ export interface ReadPagesOptions {
   /** Every URL the listing names (before any filter): records of other URLs are dropped. */
   readonly listed: ReadonlySet<string>;
   readonly state: PageState;
+  /** The company's job-page budget for its IST day. */
   readonly max: number;
+  /** The day's job pages per board, across the day's runs (each page counted before it is requested). */
+  readonly ledger: PageLedger;
   readonly source: string;
   readonly slug: string;
   readonly follow: (u: URL) => boolean;
@@ -249,7 +256,8 @@ const shortList = (xs: readonly string[]): string => `${xs.slice(0, 5).join('; '
 export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
   o.state.retain(o.board, o.listed);
   const records = o.state.records(o.board);
-  const plan = planPages(o.jobs, records, o.runDate, o.max);
+  const left = Math.max(0, o.max - o.ledger.used(o.runDate, o.board));
+  const plan = planPages(o.jobs, records, o.runDate, left);
   const out: RawPosting[] = [];
   const gone: string[] = [];
   const denied: string[] = [];
@@ -265,6 +273,8 @@ export async function readJobPages(o: ReadPagesOptions): Promise<RawPosting[]> {
   };
 
   for (const j of plan.fetch) {
+    // counted before it is asked: a page that fails still spends the day's budget
+    o.ledger.add(o.runDate, o.board, 1);
     let a: PageAnswer;
     try {
       a = await getRuledPage(o.http, o.hosts, j.fetchUrl, { follow: o.follow });

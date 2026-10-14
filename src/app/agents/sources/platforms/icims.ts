@@ -4,7 +4,7 @@ import { KernelError } from '../../../../kernel/errors.js';
 import { isSitemapIndex, sitemapLocs } from '../../../text/sitemap.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, slugTitle, type ListedJob, type PageListing, type PageState } from './pages.js';
-import { refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { memoryPageLedger, refusal, titlePackOf, type HttpTool, type PageLedger, type PlatformHosts } from './shared.js';
 
 /**
  * iCIMS (career-sites spec §4, Task 8): the daily adapter for every verified registry company on an iCIMS portal
@@ -19,7 +19,7 @@ import { refusal, titlePackOf, type HttpTool, type PlatformHosts } from './share
  *   is the slug's words (`senior-backend-software-engineer`); its sourceId the numeric id. A sitemap index is refused
  *   by name (`input_rejected`: not seen on iCIMS, never guessed through). 404/410 is `gone`.
  * - **Job pages:** `<loc>?in_iframe=1`, the page with the JobPosting JSON-LD (seen live), robots.txt matched with the
- *   path and the query. At most PAGE_MAX_FETCHES per company per run, in the fair rotation; the rest queued by name;
+ *   path and the query. At most PAGE_MAX_FETCHES per company per IST day, in the fair rotation; the rest queued by name;
  *   a page fetched before keeps its posting (`pages.ts`).
  * - `raw` (normalizer mapper `icims`, the careers JSON-LD mapping): `{ url, title, jsonLd }`, `url` the sitemap URL
  *   (without the query), `jsonLd` the kept JobPosting. Location from `jobLocation`, remote from `jobLocationType:
@@ -83,8 +83,8 @@ export async function fetchIcimsListing(http: HttpTool, hosts: PlatformHosts, ho
 
 export const srcIcimsContract = defineContract({
   id: 'src-icims',
-  version: '1.0.0',
-  description: 'Reads one verified iCIMS company\'s job pages from its portal sitemap, at most forty new or stale pages per run, under the strict page robots rule',
+  version: '1.1.0',
+  description: 'Reads one verified iCIMS company\'s job pages from its portal sitemap, at most forty new or stale pages per day, under the strict page robots rule',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead iCIMS portal never opens a breaker for another platform or the ATS sources.
   team: 'sourcing-icims',
@@ -105,6 +105,9 @@ export interface SrcPageOptions {
   readonly hosts: PlatformHosts;
   /** The page state across runs (the daily wiring's app DB); default in memory, this adapter's runs only. */
   readonly state?: PageState;
+  /** The day's job pages per board across runs (the daily wiring's app-DB ledger); default in memory, this adapter's runs only. */
+  readonly ledger?: PageLedger;
+  /** The job-page budget per company per IST day (at most PAGE_MAX_FETCHES). */
   readonly maxPages?: number;
 }
 
@@ -117,7 +120,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   try {
     const listing = await fetchIcimsListing(http, o.hosts, host);
     const jobs = prefilter(listing.jobs, pack, req.company, ctx);
-    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `icims ${host}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, source: 'icims', slug: req.slug, follow: sameHost(host) });
+    return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `icims ${host}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, ledger: o.ledger, source: 'icims', slug: req.slug, follow: sameHost(host) });
   } catch (e) {
     refusal(e, req.company, ctx);
     return [];
@@ -126,6 +129,6 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
 
 /** Builds `src-icims` for one run, on the run's host state (robots.txt cache, disabled hosts) and the page state. */
 export function makeSrcIcims(o: SrcPageOptions): Agent<DiscoveryRequest, RawPosting> {
-  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
+  const opts: Required<SrcPageOptions> = { hosts: o.hosts, state: o.state ?? memoryPageState(), ledger: o.ledger ?? memoryPageLedger(), maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES) };
   return defineAgent(srcIcimsContract, (req, ctx) => (req.ats === 'icims' ? runCompany(req, ctx, opts) : Promise.resolve([])));
 }

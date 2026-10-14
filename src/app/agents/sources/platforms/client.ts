@@ -64,7 +64,9 @@ import { fetchListPage, pagePostings, parseWorkdayRef, workdayBoardOfUrl, workda
  * fetched), then fetches ONE job page (the first listed) and requires a valid JobPosting (else `invalid_output`, a
  * failed verdict). The board name is that JobPosting's `hiringOrganization.name`, matched by the existing name rules;
  * without one, proposed. SuccessFactors is read the way its daily adapter reads it: `sitemal.xml` streamed only up to
- * its first item (the daily postings come from the feed itself, not job pages), the board name its `g:employer`. A
+ * its first item, within the policy's response cap, and no job page is fetched (the daily postings come from the feed
+ * itself, not job pages; an accepted deviation from "one job page with a valid JobPosting", Task 8 fix round 1); the
+ * board name is that item's `g:employer`. A
  * 401/403 is `BoardRefused`, a 429 `rate_limit`, a challenge `challenged`: the verifier defers all three.
  *
  * Agent code (containment): it imports only kernel definitions, so the platform is a plain string here; the coverage

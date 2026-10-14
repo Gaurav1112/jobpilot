@@ -1,5 +1,5 @@
 {
-  "hash": "fd78d5f9910c4bb198895ac671b00d619af08f31678b3768b47464ff791c643c",
+  "hash": "0eb454cb4ff75f4bf93dc0fc382aaf7bf4e7a5563f0da1c250dacf9e732868df",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -128,6 +128,6 @@
     },
     "team": "sourcing-icims",
     "timeoutMs": 900000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

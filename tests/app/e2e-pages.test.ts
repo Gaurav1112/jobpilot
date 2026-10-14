@@ -53,6 +53,15 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified iCIMS and j
       d.close();
     }
   };
+  /** The app_settings ledgers (run.ts wiring: Oracle's list pages and the page adapters' job pages per IST day). */
+  const ledgers = (): Record<string, string> => {
+    const d = new Database(join(home, 'jobpilot.db'), { readonly: true });
+    try {
+      return Object.fromEntries((d.prepare(`SELECT key, value FROM app_settings WHERE key LIKE 'pages.%' OR key LIKE 'oracle.pages.%' ORDER BY key`).all() as { key: string; value: string }[]).map((r) => [r.key, r.value]));
+    } finally {
+      d.close();
+    }
+  };
   const jobs = () => {
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
@@ -96,6 +105,8 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified iCIMS and j
       { board: 'icims careers-acme.icims.com', url: `${IC}/jobs/102/staff-software-engineer/job`, fetched_on: '2026-10-14' },
       { board: 'jsonld-sitemap www.betaco.test', url: `${BE}/careers/lead-platform-engineer-4401/`, fetched_on: '2026-10-14' },
     ]);
+    // fix round 1, the run.ts wiring: the day's job pages per board are counted in the app DB (removing it fails here)
+    expect(ledgers()).toEqual({ 'pages.fetched.2026-10-14.icims careers-acme.icims.com': '2', 'pages.fetched.2026-10-14.jsonld-sitemap www.betaco.test': '1' });
     // the account executive's page is never fetched (the title pre-filter), and named
     expect(r.warnings).toContainEqual(expect.stringMatching(/^src-icims: title-prefilter Acme Robotics: 1 of 3 listed jobs not fetched/));
   }, 120_000);
@@ -106,6 +117,7 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified iCIMS and j
     const r = await run(true);
     expect(r.counts.totals.failed).toBe(0);
     expect(offline.fetch.calls.slice(before)).toEqual([`${IC}/robots.txt`, `${IC}/sitemap.xml`, `${BE}/robots.txt`, `${BE}/sitemap.xml`]);
+    expect(ledgers()).toEqual({ 'pages.fetched.2026-10-14.icims careers-acme.icims.com': '2', 'pages.fetched.2026-10-14.jsonld-sitemap www.betaco.test': '1' });
     const j = jobs();
     expect(Object.keys(j).sort()).toEqual(['Lead Platform Engineer', 'Senior Backend Engineer', 'Staff Software Engineer']);
     // kept alive: seen by this run too
@@ -120,5 +132,7 @@ describe.skipIf(pdftotext === undefined)('jobpilot run with verified iCIMS and j
     await run();
     expect(offline.fetch.calls.slice(before)).toEqual([`${IC}/robots.txt`, `${IC}/sitemap.xml`, PAGES[0], PAGES[1], `${BE}/robots.txt`, `${BE}/sitemap.xml`, PAGES[2]]);
     expect(pageRows().map((p) => p.fetched_on)).toEqual(['2026-10-22', '2026-10-22', '2026-10-22']);
+    // a new IST day: a fresh count, the other days pruned
+    expect(ledgers()).toEqual({ 'pages.fetched.2026-10-22.icims careers-acme.icims.com': '2', 'pages.fetched.2026-10-22.jsonld-sitemap www.betaco.test': '1' });
   }, 120_000);
 });

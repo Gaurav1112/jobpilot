@@ -12,7 +12,7 @@ import {
   type ListedJob,
   type PageRecord,
 } from '../../src/app/agents/sources/platforms/pages.js';
-import { HostDisabled, HostRefused, RobotsDenied, type PlatformHosts } from '../../src/app/agents/sources/platforms/shared.js';
+import { HostDisabled, HostRefused, memoryPageLedger, RobotsDenied, type PageLedger, type PlatformHosts } from '../../src/app/agents/sources/platforms/shared.js';
 import { isSitemapIndex, sitemapLocs } from '../../src/app/text/sitemap.js';
 import { dailyPlatformHosts } from '../../src/app/daily-hosts.js';
 import type { RawPosting } from '../../src/app/types.js';
@@ -180,8 +180,8 @@ function harness(routes: Record<string, () => { status: number; text: () => Prom
   return { ctx, calls, slept, skipped, hosts: dailyPlatformHosts<never>({ minIntervalMs: 2000 }) };
 }
 
-const crawl = (h: ReturnType<typeof harness>, jobs: readonly ListedJob[], state = memoryPageState(), runDate = '2026-10-14', max = 2): Promise<RawPosting[]> =>
-  readJobPages({ http: h.ctx.http!, hosts: h.hosts as PlatformHosts, ctx: h.ctx, company: 'Acme', board: 'icims jobs.acme.test', runDate, jobs, listed: new Set(jobs.map((j) => j.url)), state, max, source: 'icims', slug: 'jobs.acme.test', follow: (u) => u.hostname === 'jobs.acme.test' });
+const crawl = (h: ReturnType<typeof harness>, jobs: readonly ListedJob[], state = memoryPageState(), runDate = '2026-10-14', max = 2, ledger: PageLedger = memoryPageLedger()): Promise<RawPosting[]> =>
+  readJobPages({ http: h.ctx.http!, hosts: h.hosts as PlatformHosts, ctx: h.ctx, company: 'Acme', board: 'icims jobs.acme.test', runDate, jobs, listed: new Set(jobs.map((j) => j.url)), state, max, ledger, source: 'icims', slug: 'jobs.acme.test', follow: (u) => u.hostname === 'jobs.acme.test' });
 
 describe('readJobPages: budget, rotation and keep-alive', () => {
   const ROBOTS = 'https://jobs.acme.test/robots.txt';
@@ -210,6 +210,31 @@ describe('readJobPages: budget, rotation and keep-alive', () => {
     // a kept posting is the very posting first emitted (so every later step replays)
     expect(second.find((p) => p.sourceId === 'a')).toEqual(first.find((p) => p.sourceId === 'a'));
     expect(h2.skipped).toEqual([]);
+  });
+
+  it('fix round 1: the budget is per company per IST day: a second run that day fetches 0 new pages once it is spent and keeps every posting; the next day resets it', async () => {
+    const state = memoryPageState();
+    const ledger = memoryPageLedger();
+    const jobs = [job('a'), job('b'), job('c')];
+    const h1 = harness(routes());
+    expect((await crawl(h1, jobs, state, '2026-10-14', 2, ledger)).map((p) => p.sourceId)).toEqual(['a', 'b']);
+    expect(ledger.used('2026-10-14', 'icims jobs.acme.test')).toBe(2);
+    // a --refresh run the same day: the day's 2 pages are spent, nothing is fetched, a and b are kept, c stays queued
+    const h2 = harness(routes());
+    expect((await crawl(h2, jobs, state, '2026-10-14', 2, ledger)).map((p) => p.sourceId)).toEqual(['a', 'b']);
+    expect(h2.calls).toEqual([]);
+    expect(h2.skipped).toEqual(['page-budget Acme: 1 job pages queued (1 never fetched, 0 stale kept from their last fetch)']);
+    // the next IST day: a fresh budget
+    const h3 = harness(routes());
+    expect((await crawl(h3, jobs, state, '2026-10-15', 2, ledger)).map((p) => p.sourceId)).toEqual(['a', 'b', 'c']);
+    expect(h3.calls).toEqual([ROBOTS, job('c').url]);
+  });
+
+  it('fix round 1: a page is counted before it is requested (a page that fails still spends the day\'s budget)', async () => {
+    const ledger = memoryPageLedger();
+    const h = harness(routes({ [job('a').url]: () => resp(502, 'bad gateway') }));
+    await expect(crawl(h, [job('a'), job('b')], memoryPageState(), '2026-10-14', 2, ledger)).rejects.toMatchObject({ code: 'overloaded' });
+    expect(ledger.used('2026-10-14', 'icims jobs.acme.test')).toBe(1);
   });
 
   it('a listing that drops a job drops its kept posting and its record', async () => {

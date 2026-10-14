@@ -164,12 +164,20 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
  * call, on a fresh `dailyWorkdayHosts()` (robots.txt once per host per run). With no boards the agents, the wiring
  * and so every step key are exactly as before the registry existed.
  */
-export function dailyAgents(watchlist: readonly WatchLike[], boards: readonly RegistryBoard[] = [], o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState } = {}): AnyAgent[] {
+export function dailyAgents(
+  watchlist: readonly WatchLike[],
+  boards: readonly RegistryBoard[] = [],
+  o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState; readonly jobPageLedger?: PageLedger } = {},
+): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   // one adapter per platform with a verified company, each on its own fresh host state (robots.txt, disabled hosts)
   const has = (p: RegistryPlatform): boolean => boards.some((b) => b.platform === p);
   // the page adapters share the run's page state (the app DB in a daily run); each has its own host state
-  const pages = (): { hosts: ReturnType<typeof dailyPageHosts>; state?: PageState } => ({ hosts: dailyPageHosts(), ...(o.pageState === undefined ? {} : { state: o.pageState }) });
+  const pages = (): { hosts: ReturnType<typeof dailyPageHosts>; state?: PageState; ledger?: PageLedger } => ({
+    hosts: dailyPageHosts(),
+    ...(o.pageState === undefined ? {} : { state: o.pageState }),
+    ...(o.jobPageLedger === undefined ? {} : { ledger: o.jobPageLedger }),
+  });
   const platforms: AnyAgent[] = [
     ...(has('workday') ? [makeSrcWorkday({ hosts: dailyWorkdayHosts() })] : []),
     ...(has('eightfold') ? [makeSrcEightfold({ hosts: dailyEightfoldHosts() })] : []),

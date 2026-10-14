@@ -7,7 +7,7 @@ import { countriesIn } from '../../../text/norm.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { finish } from '../common.js';
 import { memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, PAGE_MIN_INTERVAL_MS, prefilter, readJobPages, type ListedJob } from './pages.js';
-import { hostRequest, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { hostRequest, memoryPageLedger, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 import type { SrcPageOptions } from './icims.js';
 
 /**
@@ -284,6 +284,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       listed: new Set(needPage.map((j) => j.url)),
       state: o.state,
       max: o.maxPages,
+      ledger: o.ledger,
       source: 'successfactors',
       slug: req.slug,
       follow: (u) => u.hostname.toLowerCase() === host,
@@ -301,6 +302,7 @@ export function makeSrcSuccessFactors(o: SrcSuccessFactorsOptions): Agent<Discov
   const opts: Required<SrcSuccessFactorsOptions> = {
     hosts: o.hosts,
     state: o.state ?? memoryPageState(),
+    ledger: o.ledger ?? memoryPageLedger(),
     maxPages: Math.min(o.maxPages ?? PAGE_MAX_FETCHES, PAGE_MAX_FETCHES),
     maxBytes: Math.min(o.maxBytes ?? SF_SITEMAL_MAX_BYTES, SF_SITEMAL_MAX_BYTES),
   };

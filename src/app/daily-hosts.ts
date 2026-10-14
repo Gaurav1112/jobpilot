@@ -129,10 +129,11 @@ export function appPageState(store: PageStore): PageState {
 /**
  * The Oracle list-page ledger kept in the app DB (`app_settings`, key `oracle.pages.<IST day>.<board>`), so a retry or
  * a `run --refresh` on the same day shares the day's 10 pages (Task 7 fix round 2). Writing a day drops every other
- * day's entries. Trusted wiring code: the adapter sees only `PageLedger`.
+ * day's entries. Task 8 fix round 1: the page adapters' job pages use the same ledger under `PAGE_LEDGER_PREFIX`
+ * (`pages.fetched.<IST day>.<platform> <ref>`, 40 per company per day). Trusted wiring code: the adapter sees only `PageLedger`.
  */
-export function appPageLedger(store: { getSetting(key: string): string | undefined; setSetting(key: string, value: string): void; pruneSettings(prefix: string, keep: string): void }): PageLedger {
-  const PREFIX = 'oracle.pages.';
+export function appPageLedger(store: { getSetting(key: string): string | undefined; setSetting(key: string, value: string): void; pruneSettings(prefix: string, keep: string): void }, prefix = 'oracle.pages.'): PageLedger {
+  const PREFIX = prefix;
   const key = (day: string, board: string): string => `${PREFIX}${day}.${board}`;
   const used = (day: string, board: string): number => {
     const n = Number(store.getSetting(key(day, board)) ?? '0');
