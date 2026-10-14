@@ -10,8 +10,9 @@
     "jobpilot": "tsx src/bin.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "perf": "vitest run --config vitest.perf.config.ts",
     "contracts:export": "tsx src/bin.ts contracts export",
-    "verify": "node --run typecheck && node --run test && node --run jobpilot -- contracts check && node --run jobpilot -- eval"
+    "verify": "node --run typecheck && node --run test && node --run jobpilot -- contracts check && node --run jobpilot -- eval && node --run perf"
   },
   "dependencies": {
     "@hono/node-server": "2.1.4",

@@ -195,6 +195,13 @@ node --run jobpilot -- audit verify --db ~/.jobpilot/jobpilot.db
 - **Backups:** `sqlite3 ~/.jobpilot/jobpilot.db ".backup 'backup.db'"`. Migrations are one-way;
   to roll back, restore the backup taken before upgrading (guide, section 9).
 - **Logs:** `~/.jobpilot/logs/`.
+- **Audit:** `audit verify` walks the whole event chain and, when it passes, records a checkpoint.
+  The dashboard's Runs page then checks only the events after it and says when the last full
+  check ran; run `audit verify` now and then (the page suggests it after 7 days).
+- **Performance budget:** `node --run perf` (also the last step of `node --run verify`) builds a
+  synthetic 1.8 GB database in a temp dir (about 15 s; 20,000 jobs, 300,000 envelopes, 500,000
+  events, no personal data) and fails when the Jobs or Runs page breaks its time or memory budget
+  (`tests/perf/budget.perf.ts`, which also says how the numbers were chosen).
 
 ## Guarantees
 
