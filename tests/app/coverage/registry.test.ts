@@ -51,12 +51,12 @@ function verdict(over: { key?: string; status?: Status; platform?: Platform | nu
   };
 }
 
-/** Every table other than `companies`: its name, SQL and rows, hashed, so a later migration must leave them byte-identical. */
+/** Every table other than `companies`: its name, SQL and rows, hashed, so a later migration must leave them byte-identical. `skip`: tables (with their indexes) or single objects, by name. */
 function dumpHash(db: import('better-sqlite3').Database, skip: readonly string[] = []): string {
   const h = createHash('sha256');
   const objs = db.prepare(`SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name`).all() as { type: string; name: string; tbl_name: string; sql: string | null }[];
   for (const o of objs) {
-    if (skip.includes(o.tbl_name)) continue;
+    if (skip.includes(o.tbl_name) || skip.includes(o.name)) continue;
     h.update(JSON.stringify(o));
     // app_schema's one row is the version counter itself; every other row of every other table must not change.
     if (o.type === 'table' && o.name !== 'app_schema') for (const r of db.prepare(`SELECT * FROM "${o.name}" ORDER BY rowid`).all()) h.update(JSON.stringify(r));
@@ -84,10 +84,11 @@ describe('migration 9: the companies registry', () => {
     const before = dumpHash(db);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toBeUndefined();
     const s = AppStore.on(kernel);
-    expect(APP_MIGRATIONS.length).toBe(15);
-    expect(s.schemaVersion()).toBe(15);
+    expect(APP_MIGRATIONS.length).toBe(18);
+    expect(s.schemaVersion()).toBe(18);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toEqual({ name: 'companies' });
-    expect(dumpHash(db, ['companies', 'coverage_host_state', 'platform_pages', 'job_ats', 'job_board_ids'])).toBe(before);
+    // dashboard-perf migrations 16-18 add indexes only (tests/app/indexes.test.ts): skipped by name, their tables' rows still compared
+    expect(dumpHash(db, ['companies', 'coverage_host_state', 'platform_pages', 'job_ats', 'job_board_ids', 'jobs_list', 'events_by_run', 'envelopes_rendered_by_job'])).toBe(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
   });
 
@@ -109,7 +110,7 @@ describe('migration 9: the companies registry', () => {
 describe('migration 10: coverage host state', () => {
   it('adds coverage_host_state, keeps the earlier SQL, and round-trips a disabled host per run', () => {
     const s = AppStore.on(Store.open(':memory:'));
-    expect(s.schemaVersion()).toBe(15);
+    expect(s.schemaVersion()).toBe(18);
     const cols = (s.kernel.db.prepare(`PRAGMA table_info(coverage_host_state)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(['run_key', 'host', 'reason', 'at']);
     s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-429', '2026-10-13T01:00:00.000Z');
@@ -267,7 +268,7 @@ describe('migration 15: coverage_status (Task 11 fix round 1)', () => {
     ins.run('r.test', 'R', 'https://r.test', 'rejected', '[]', 'yc', 'rejected');
     ins.run('p.test', 'P', 'https://p.test', 'proposed', '["added by you, resolves on the next coverage run"]', 'pick', null);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(15);
+    expect(s.schemaVersion()).toBe(18);
     expect(Object.fromEntries(s.listCompanies().map((c) => [c.companyKey, c.coverageStatus]))).toEqual({ 'a.test': null, 'p.test': null, 'r.test': null, 'v.test': 'verified' });
   });
 });

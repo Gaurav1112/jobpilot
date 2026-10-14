@@ -279,7 +279,7 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     expect(db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all()).toEqual(before.map((r) => ({ ...(r as object), cited_facts: null })));
     expect(db.pragma('foreign_key_check')).toEqual([]);
     expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs' AND sql IS NOT NULL`).all()).toEqual([{ name: 'jobs_by_dedupe_key' }]);
+    expect(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'jobs' AND sql IS NOT NULL`).all()).toEqual([{ name: 'jobs_by_dedupe_key' }, { name: 'jobs_list' }]);
     // stale is accepted now; foreign keys still hold
     expect(s.setDocs('0123456789abcdef', 'stale', 'cites a fact you rejected (f-1)', [])).toBe(true);
     expect(s.getJob('0123456789abcdef')?.docsState).toBe('stale');

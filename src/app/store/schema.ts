@@ -2,7 +2,8 @@ import type Database from 'better-sqlite3';
 
 /**
  * The app catalogue's tables (spec §6). They live in the kernel's DB file but are the app's own: the app keeps its
- * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never touch a kernel table.
+ * schema version in `app_schema` (never the kernel's `user_version`) and its migrations never change a kernel table
+ * (its definition or its rows); migrations 17 and 18 only add read-path indexes on two of them (dashboard-perf).
  * Each entry is applied once, in order, in its own transaction, by `AppStore`.
  *
  * A job is one posting: `job_key` is `jobKey(source, sourceId)`, and `job_sources` holds that one pair (kept for
@@ -391,4 +392,16 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   UPDATE companies SET coverage_status = status WHERE user_override IS NULL AND status <> 'rejected'
     AND NOT (source = 'pick' AND last_verified IS NULL AND reasons = '["added by you, resolves on the next coverage run"]');
   `,
+  // dashboard-perf fix 2: the jobs list's covering index. Every column the list filters, bands, sorts and counts on, led
+  // by duplicate_of (the default view's `duplicate_of IS NULL`, and a group's rows for its status), so the list never
+  // reads the table (whose rows carry the description in overflow pages). Index only; IF NOT EXISTS, so an opener that
+  // lost a race is not refused. A literal.
+  `CREATE INDEX IF NOT EXISTS jobs_list ON jobs (duplicate_of, verdict, docs_state, comp_max_inr, score, first_seen, status, job_key, company, title);`,
+  // dashboard-perf fix 3: a run's events (`Store.events(runId)`: the run projector, freelance health) without scanning
+  // every event. An index on a kernel table: it changes neither the table nor a row. A literal.
+  `CREATE INDEX IF NOT EXISTS events_by_run ON events (run_id, seq);`,
+  // dashboard-perf fix 3: the job page's `renderedPlanOf` (the Rendered@1 envelopes of one job) without scanning every
+  // envelope body. Partial (Rendered@1 rows only), so it is small and costs other envelope writes nothing; building it
+  // reads the envelopes table once (see perf-report.md for its time on a large DB). A literal.
+  `CREATE INDEX IF NOT EXISTS envelopes_rendered_by_job ON envelopes (json_extract(body, '$.payload.jobKey')) WHERE type = 'Rendered@1';`,
 ];
