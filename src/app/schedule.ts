@@ -3,9 +3,10 @@ import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, rmSyn
 import { homedir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
 
-import { DAILY_HOUR_IST } from './due.js';
+import { COVERAGE_START_FILE, coverageNotBefore, DAILY_HOUR_IST } from './due.js';
 import { checkHome, fileWarning, warnOnce } from './home.js';
 import { homePaths } from './pack/paths.js';
+import { AppStore } from './store/app-store.js';
 
 export const DAILY_LABEL = 'com.jobpilot.daily';
 export const FREELANCE_LABEL = 'com.jobpilot.freelance';
@@ -126,6 +127,52 @@ export interface ScheduleOpts extends PlistOpts {
 }
 export interface InstallOpts extends ScheduleOpts {
   readonly now?: Date;
+  /** `--coverage-now`: the weekly coverage run is owed at once (COVERAGE_START_FILE is removed). */
+  readonly coverageNow?: boolean;
+}
+
+const IST_MS = IST_OFFSET_MINUTES * 60_000;
+const WEEK_MS = 7 * 86_400_000;
+
+/** The first Sunday 06:00 IST strictly after `now` (ISO): today's when it is Sunday before 06:00 IST, else the coming one. */
+export function firstCoverageFrom(now: Date): string {
+  const ist = new Date(now.getTime() + IST_MS);
+  const sundayMidnightIst = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - ist.getUTCDay());
+  const thisWeek = sundayMidnightIst + 6 * 3_600_000 - IST_MS;
+  return new Date(thisWeek > now.getTime() ? thisWeek : thisWeek + WEEK_MS).toISOString();
+}
+
+const istText = (ms: number): string => new Date(ms + IST_MS).toISOString().slice(0, 16).replace('T', ' ') + ' IST';
+
+/** Whether this home has ever recorded a coverage run (its DB has a `jobpilot-coverage` run row). */
+function coverageRanOn(home: string): boolean {
+  const db = homePaths(home).db;
+  if (!existsSync(db)) return false;
+  const app = AppStore.open(db);
+  try {
+    return app.kernel.db.prepare(`SELECT 1 FROM runs WHERE pipeline = 'jobpilot-coverage' LIMIT 1`).get() !== undefined;
+  } finally {
+    app.close();
+  }
+}
+
+/**
+ * I1 (final review): on a home that never ran coverage, the first coverage run is owed from the next Sunday 06:00 IST
+ * (COVERAGE_START_FILE), so an install on a weekday never starts a 7-hour run at once; a repeat install keeps the date
+ * it wrote. `coverageNow` removes the file: owed at once. Returns the first owed time, or null when owed as usual.
+ */
+function scheduleFirstCoverage(home: string, now: Date, coverageNow: boolean, ranBefore: () => boolean): string | null {
+  const file = join(home, COVERAGE_START_FILE);
+  if (coverageNow) {
+    rmSync(file, { force: true });
+    return null;
+  }
+  const kept = coverageNotBefore(home);
+  if (kept !== undefined) return istText(kept);
+  if (ranBefore()) return null;
+  const from = firstCoverageFrom(now);
+  writeFileSync(file, `${JSON.stringify({ notBefore: from })}\n`, { mode: 0o600 });
+  return istText(Date.parse(from));
 }
 
 const agentsDirOf = (o: { agentsDir?: string | undefined }): string => o.agentsDir ?? join(homedir(), 'Library', 'LaunchAgents');
@@ -168,6 +215,8 @@ export interface InstallResult {
   readonly plists: readonly string[];
   readonly logs: readonly string[];
   readonly nextRun: string;
+  /** The first time the weekly coverage run is owed (`YYYY-MM-DD 06:00 IST`), or null when it is owed as usual (I1). */
+  readonly coverageFrom: string | null;
 }
 
 export function installSchedule(o: InstallOpts, run: Runner = realRunner): InstallResult {
@@ -183,6 +232,8 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   prepareLogsDir(o.home, logsDir);
   const logs = ['daily.log', 'freelance.log', 'coverage.log', 'dashboard.log'].map((n) => join(logsDir, n));
   for (const l of logs) prepareLogFile(l);
+  // before any job is loaded: the coverage job starts at load (RunAtLoad) and must already see the date
+  const coverageFrom = scheduleFirstCoverage(o.home, now, o.coverageNow === true, () => coverageRanOn(o.home));
   mkdirSync(agentsDirOf(o), { recursive: true });
 
   const plists: string[] = [];
@@ -198,7 +249,7 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
     const e = run('launchctl', ['enable', `${domain}/${label}`]);
     if (e.status !== 0) throw new Error(`launchctl enable ${label} failed (${e.status}): ${(e.stderr || e.stdout).trim()}`);
   }
-  return { plists, logs, nextRun: nextRunIst(now, DAILY_HOUR_IST, 0) };
+  return { plists, logs, nextRun: nextRunIst(now, DAILY_HOUR_IST, 0), coverageFrom };
 }
 
 /** True when a failed bootout only means the job was not loaded. */

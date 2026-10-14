@@ -10,8 +10,9 @@ import { withLock } from '../../src/app/lock.js';
 import { runWithDue } from '../../src/app/run-command.js';
 import {
   COVERAGE_LABEL, DAILY_LABEL, DASHBOARD_LABEL, FREELANCE_LABEL, escapeXml, plistCoverage, plistFreelance, installSchedule, nextRunIst, plistDaily, plistDashboard,
-  runNow, scheduleStatus, uninstallSchedule, type Runner,
+  runNow, scheduleStatus, uninstallSchedule, firstCoverageFrom, type Runner,
 } from '../../src/app/schedule.js';
+import { COVERAGE_START_FILE } from '../../src/app/due.js';
 
 const base = { node: '/opt/homebrew/Cellar/node/24.15.0/bin/node', repo: '/Users/x/jobpilot', home: '/Users/x/.jobpilot' };
 
@@ -166,6 +167,41 @@ describe('install / uninstall / status', () => {
     expect(readFileSync(cv, 'utf8')).toContain('<string>run-coverage</string>');
     expect(r.nextRun).toBe('2026-10-09 07:00 IST');
     expect(readFileSync(d, 'utf8')).toContain('<string>--if-due</string>');
+  });
+
+  it('I1: a first install owes coverage only from the next Sunday 06:00 IST (coverage-start.json); --coverage-now owes it at once', () => {
+    const o = opts(); // Friday 2026-10-09 05:30 IST
+    // the coverage job runs at load: the date must be written before launchd loads it
+    const seenAtLoad: boolean[] = [];
+    const f = fake();
+    const r = installSchedule(o, (cmd, args) => {
+      if (args[0] === 'bootstrap' && String(args[2]).includes(COVERAGE_LABEL)) seenAtLoad.push(existsSync(join(o.home, COVERAGE_START_FILE)));
+      return f.run(cmd, args);
+    });
+    expect(seenAtLoad).toEqual([true]);
+    expect(r.coverageFrom).toBe('2026-10-11 06:00 IST');
+    expect(JSON.parse(readFileSync(join(o.home, COVERAGE_START_FILE), 'utf8'))).toEqual({ notBefore: '2026-10-11T00:30:00.000Z' });
+    // a repeat install keeps the first one's date, even a week later
+    expect(installSchedule({ ...o, now: new Date('2026-10-14T06:00:00Z') }, fake().run).coverageFrom).toBe('2026-10-11 06:00 IST');
+    expect(JSON.parse(readFileSync(join(o.home, COVERAGE_START_FILE), 'utf8'))).toEqual({ notBefore: '2026-10-11T00:30:00.000Z' });
+    // --coverage-now: owed at once (the file is removed)
+    expect(installSchedule({ ...o, coverageNow: true }, fake().run).coverageFrom).toBeNull();
+    expect(existsSync(join(o.home, COVERAGE_START_FILE))).toBe(false);
+  });
+
+  it('I1: the next Sunday 06:00 IST: today before 06:00 on a Sunday, else the coming Sunday; a home that already ran coverage owes it as before', async () => {
+    expect(firstCoverageFrom(new Date('2026-10-10T20:00:00Z'))).toBe('2026-10-11T00:30:00.000Z'); // Sunday 01:30 IST
+    expect(firstCoverageFrom(new Date('2026-10-11T00:30:00Z'))).toBe('2026-10-18T00:30:00.000Z'); // Sunday 06:00 IST exactly
+    expect(firstCoverageFrom(new Date('2026-10-12T04:30:00Z'))).toBe('2026-10-18T00:30:00.000Z'); // Monday
+    expect(firstCoverageFrom(new Date('2026-10-17T18:29:00Z'))).toBe('2026-10-18T00:30:00.000Z'); // Saturday 23:59 IST
+    const o = opts();
+    const { AppStore } = await import('../../src/app/store/app-store.js');
+    mkdirSync(o.home, { recursive: true, mode: 0o700 });
+    const app = AppStore.open(join(o.home, 'jobpilot.db'));
+    app.kernel.db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, status) VALUES ('coverage-2026-10-04', 'jobpilot-coverage', 'h', '2026-10-04T01:00:00.000Z', 'completed')`).run();
+    app.close();
+    expect(installSchedule(o, fake().run).coverageFrom).toBeNull();
+    expect(existsSync(join(o.home, COVERAGE_START_FILE))).toBe(false);
   });
 
   it('never chmods an existing home (one warning), tightens an existing logs dir and log files', () => {

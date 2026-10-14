@@ -606,17 +606,22 @@ const scheduleOpts = () => {
 };
 schedule
   .command('install')
-  .description('Write the four launchd plists to ~/Library/LaunchAgents and load them (safe to repeat)')
-  .action(() =>
+  .description('Write the four launchd plists to ~/Library/LaunchAgents and load them (safe to repeat). On a home that never ran coverage, the weekly coverage run is first owed from the next Sunday 06:00 IST')
+  .option('--coverage-now', 'owe the weekly coverage run at once instead of from the next Sunday 06:00 IST')
+  .action((opts: { coverageNow?: boolean }) =>
     guarded(() => {
-      const r = installSchedule(scheduleOpts());
+      const r = installSchedule({ ...scheduleOpts(), coverageNow: opts.coverageNow === true });
       for (const p of r.plists) console.log(`wrote ${p}`);
       const owed = dueOrError(new Date().toISOString());
       console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
       const fOwed = dueOrError(new Date().toISOString(), FREELANCE_DUE);
       console.log(`freelance run: from 07:30 and 19:30 IST, checked at login and every half hour; ${fOwed.includes('owed:') ? `a window is owed now (${fOwed})` : `now: ${fOwed}`}`);
       const cOwed = dueOrError(new Date().toISOString(), COVERAGE_DUE);
-      console.log(`coverage run: weekly, owed from Sunday 06:00 IST through Saturday, checked at login and every half hour; ${cOwed.includes('owed:') ? `owed now (${cOwed})` : `now: ${cOwed}`}`);
+      console.log(
+        `coverage run: weekly, owed from Sunday 06:00 IST through Saturday, checked at login and every half hour; ${
+          r.coverageFrom !== null ? `the first run is owed from ${r.coverageFrom} (schedule install --coverage-now starts it now)` : cOwed.includes('owed:') ? `owed now (${cOwed})` : `now: ${cOwed}`
+        }`,
+      );
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
