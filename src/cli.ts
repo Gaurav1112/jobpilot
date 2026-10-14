@@ -345,7 +345,7 @@ pack
   .requiredOption('--as-of <YYYY-MM>', 'the experience month written to experience.yaml (the daily run uses the current month)')
   .requiredOption('--available-from <text>', 'answers available_from, e.g. "1 November 2026"')
   .requiredOption('--notice-period <text>', 'answers notice_period, e.g. "30 days"')
-  .requiredOption('--floor-inr <amount>', 'the base salary floor in INR a year, e.g. 1200000 (equity never counts)')
+  .requiredOption('--floor-inr <amount>', 'the base salary floor in INR a year, e.g. 1234567 (equity never counts)')
   .option('--education-text <file>', 'one "qualification | institution | YYYY-MM..YYYY-MM" per line (status user-stated)')
   .option('--claimable-title <title>', 'a title the candidate can truthfully claim, added to the ongoing roles\' titles; repeatable', collect, [])
   .option('--extra-watchlist <yaml>', 'extra watchlist entries ({watchlist: [...]}); they replace Desk entries for the same board')

@@ -44,7 +44,7 @@ Two ways to start:
    node --run jobpilot -- pack import --career-ops ~/career-ops --resume-text ~/resume-experience.txt \
      --desk ~/desk-export --forbid "Example Client Ltd" --name "Your Name" --email you@example.com \
      --phone "+91 00000 00000" --city "Pune" --as-of 2026-10 --available-from "1 November 2026" \
-     --notice-period "30 days" --floor-inr 1200000 --dry-run
+     --notice-period "30 days" --floor-inr 1234567 --dry-run
    ```
 
    `--dry-run` checks every input and prints the summary without writing anything. Drop it to

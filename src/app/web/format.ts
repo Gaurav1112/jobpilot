@@ -2,7 +2,7 @@ import type { Posting } from '../types.js';
 
 /**
  * Number and date formatting for the dashboard (Task 13). INR is written the Indian way: lakh and crore per year
- * (`₹12 LPA`, `₹1.2 Cr`); foreign pay keeps its own currency and adds an INR equivalent at the pack's rates.
+ * (`₹12.5 LPA`, `₹1.2 Cr`); foreign pay keeps its own currency and adds an INR equivalent at the pack's rates.
  * Locale-free: the same input always gives the same text.
  */
 
@@ -28,13 +28,13 @@ const unitOf = (n: number): Unit => (n >= CRORE ? 'Cr' : n >= LAKH ? 'LPA' : '')
 const inUnit = (n: number, u: Unit): string => (u === 'Cr' ? trim(n / CRORE, 2) : u === 'LPA' ? trim(n / LAKH, 1) : groupIndian(n));
 const withUnit = (body: string, u: Unit): string => (u === '' ? `₹${body}` : `₹${body} ${u}`);
 
-/** One annual INR amount: `₹12 LPA`, `₹1.2 Cr`, `₹85,000`. */
+/** One annual INR amount: `₹12.5 LPA`, `₹1.2 Cr`, `₹85,000`. */
 export function inr(n: number): string {
   const u = unitOf(n);
   return withUnit(inUnit(n, u), u);
 }
 
-/** An annual INR range; one unit when both ends share it (`₹45–12 LPA`), else both spelled out. */
+/** An annual INR range; one unit when both ends share it (`₹12–15 LPA`), else both spelled out. */
 export function inrRange(min: number | null, max: number | null): string {
   if (min !== null && max !== null) {
     if (min === max) return inr(max);
@@ -64,7 +64,7 @@ function foreignRange(c: NonNullable<Posting['comp']>): string {
 }
 
 export interface CompText {
-  /** The pay as stated (`₹45–12 LPA`, `$150k–180k`), or "Pay not disclosed". */
+  /** The pay as stated (`₹12–15 LPA`, `$150k–180k`), or "Pay not disclosed". */
   readonly main: string;
   /** For foreign pay: the INR equivalent at the pack's rates (`≈ ₹1.25–1.5 Cr`). */
   readonly inr: string | null;
