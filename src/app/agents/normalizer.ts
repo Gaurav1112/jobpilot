@@ -3,7 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { parseComp } from '../comp/parse.js';
 import { decodeEntities, htmlToText, plainToText } from '../text/html.js';
-import { countriesIn, dedupeKey, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
+import { countriesIn, dedupeKey, excludedParts, excludedPlaces, jobKey, placeOf, postedAtOf, postingSourceId, remoteTextSignals, withoutExcluded, yearsRequired } from '../text/norm.js';
 import { atsRefFromUrls, normalAtsRef, type AtsRef } from '../text/ats-id.js';
 import { Posting, RawPosting } from '../types.js';
 
@@ -356,11 +356,13 @@ function assemble(raw: RawPosting, ats: Posting['ats'], m: Mapped): Posting {
   if (url === null) throw fail(raw, `no http(s) url (${String(m.url).slice(0, 80)})`);
   const locationText = m.locationText.replace(/\s+/g, ' ').trim();
   const excluded = excludedPlaces(locationText);
+  // fix round 4: a tenant-scoped platform's id is qualified with its board, so two tenants' JR1001 are two jobs
+  const sourceId = postingSourceId(raw.source, raw.slug, raw.sourceId);
   return {
-    jobKey: jobKey(raw.source, raw.sourceId),
+    jobKey: jobKey(raw.source, sourceId),
     dedupeKey: dedupeKey(raw.company, title, locationText),
     source: raw.source,
-    sourceId: raw.sourceId,
+    sourceId,
     company: raw.company,
     slug: raw.slug,
     ats,

@@ -9,6 +9,8 @@ import { normalize } from '../../src/app/agents/normalizer.js';
 import { linkJobs, type LinkRow } from '../../src/app/store/links.js';
 import { AppStore, type JobUpsert } from '../../src/app/store/app-store.js';
 import { atsJobKey, atsRefFromIdentity, atsRefFromUrls, atsRefOf, normalAtsRef } from '../../src/app/text/ats-id.js';
+import { postingSourceId, TENANT_SCOPED_SOURCES } from '../../src/app/text/norm.js';
+import type { Posting } from '../../src/app/types.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { AT, jobRow, LATER } from '../support/app-fixtures.js';
 
@@ -632,4 +634,47 @@ describe.skipIf(pdftotext === undefined)('offline daily run: a company page and 
       rmSync(home, { recursive: true, force: true });
     }
   }, 120_000);
+});
+
+describe('tenant-qualified identities (fix round 4)', () => {
+  const wdRaw = { title: 'Senior Backend Engineer', url: 'https://acme.wd5.myworkdayjobs.com/External/job/India-Bengaluru/Senior-Backend-Engineer_JR1001', externalPath: '/job/India-Bengaluru/Senior-Backend-Engineer_JR1001', locationsText: 'India, Bengaluru', reqId: 'JR1001', detail: null };
+  const wd = (company: string, slug: string): Posting => normalize({ source: 'workday', sourceId: 'JR1001', company, slug, raw: { ...wdRaw, url: `https://${slug.split('/')[0]}/External/job/India-Bengaluru/Senior-Backend-Engineer_JR1001` } });
+  const ps = (company: string, slug: string): Posting =>
+    normalize({ source: 'personio', sourceId: '1001', company, slug, raw: { title: 'Senior Backend Engineer', url: `https://${slug}/job/1001`, offices: ['Bengaluru, India'], description: '<p>Build services.</p>' } });
+  const rowOf = (p: Posting): JobUpsert =>
+    jobRow({ jobKey: p.jobKey, source: p.source, sourceId: p.sourceId, slug: p.slug, company: p.company, title: p.title, ats: p.ats, url: p.url, location: p.locationText, dedupeKey: p.dedupeKey, atsJob: atsRefOf(p), docsState: 'ready' });
+
+  it('the helper qualifies a tenant-scoped platform id with its board (an Eightfold API variant does not move it); others are unchanged', () => {
+    expect(postingSourceId('workday', 'acme.wd5.myworkdayjobs.com/acme/External', 'JR1001')).toBe('acme.wd5.myworkdayjobs.com/acme/External|JR1001');
+    expect(postingSourceId('eightfold', 'pcsx:careers.acme.example/acme.example', '42')).toBe(postingSourceId('eightfold', 'careers.acme.example/acme.example', '42'));
+    expect(postingSourceId('eightfold', 'v2:careers.acme.example/acme.example', '42')).toBe('careers.acme.example/acme.example|42');
+    for (const s of ['greenhouse', 'lever', 'ashby', 'careers', 'himalayas', 'jobicy', 'jsonld-sitemap', 'bamboohr']) expect(postingSourceId(s, 'x', '1001'), s).toBe('1001');
+    expect([...TENANT_SCOPED_SOURCES].sort()).toEqual(['breezy', 'eightfold', 'gem', 'icims', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday']);
+  });
+
+  for (const [name, make, a, b] of [
+    ['Workday', wd, 'acme.wd5.myworkdayjobs.com/acme/External', 'globex.wd1.myworkdayjobs.com/globex/Careers'],
+    ['Personio', ps, 'acme.jobs.personio.de', 'globex.jobs.personio.de'],
+  ] as const) {
+    it(`${name}: two tenants posting one id are two rows, both announced; the same tenant read again is the same row`, () => {
+      const one = make('Example Acme Co', a);
+      const two = make('Example Globex Co', b);
+      expect(one.jobKey).not.toBe(two.jobKey);
+      const s = AppStore.on(Store.open(':memory:'));
+      s.upsertJob(rowOf(one));
+      s.upsertJob(rowOf(two));
+      const fresh = s.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null).map((j) => j.company).sort();
+      expect(fresh).toEqual(['Example Acme Co', 'Example Globex Co']);
+      // the next day: the same tenant's job is the same row
+      const again = make('Example Acme Co', a);
+      expect(again.jobKey).toBe(one.jobKey);
+      expect(s.upsertJob({ ...rowOf(again), at: LATER }).inserted).toBe(false);
+      expect(s.listJobs(all)).toHaveLength(2);
+    });
+  }
+
+  it('the watchlist adapters keep their identities (the golden): a Greenhouse posting\'s source id is the job id', () => {
+    const p = normalize({ source: 'greenhouse', sourceId: '7001', company: CO, slug: 'example-identity', raw: { id: 7001, title: 'Engineer', absolute_url: 'https://boards.greenhouse.io/example-identity/jobs/7001', location: { name: 'India' }, content: '' } });
+    expect(p.sourceId).toBe('7001');
+  });
 });

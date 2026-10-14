@@ -839,7 +839,9 @@ describe('Eightfold and Oracle postings: mapping and the existing eligibility', 
     for (const p of bengaluru) expect(decideEligibility(p, ELIG).verdict, p.title).toBe('eligible');
     for (const p of mumbai) expect(decideEligibility(p, ELIG).verdict, p.title).toBe('rejected');
     for (const p of mapped) expect(p.postedAt).toMatch(/^2026-\d\d-\d\d$/u);
-    expect(mapped[0]?.url).toBe(oracleJobUrl(b, mapped[0]!.sourceId));
+    // the posting's source id is `<board>|<requisition id>` (fix round 4); the URL carries the requisition id
+    expect(mapped[0]?.sourceId).toMatch(/^jpmc\.fa\.oraclecloud\.com\/CX_1001\|\d+$/);
+    expect(mapped[0]?.url).toBe(oracleJobUrl(b, mapped[0]!.sourceId.split('|')[1] as string));
     if (raw !== null) {
       expect(blr.employmentType).toBe('Full time');
       expect(blr.descriptionText.length).toBeGreaterThan(100);

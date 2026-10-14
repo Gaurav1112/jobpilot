@@ -331,6 +331,30 @@ export function jobKey(source: string, sourceId: string): string {
 }
 
 /**
+ * Career-sites fix round 4: the registry platform adapters whose job ids are only unique within one tenant, board or
+ * site (a Workday req id `JR1001`, an Oracle requisition, a Personio or Pinpoint number, ...), or not confirmed global.
+ * Their posting's `sourceId`, and so its identity, is qualified with the board. Left out: the watchlist adapters
+ * (greenhouse, lever, ashby: global ids; careers and the feeds: URLs), jsonld-sitemap (a hash of the full page URL,
+ * host included) and bamboohr (its adapter already emits `<slug>:<id>`).
+ */
+export const TENANT_SCOPED_SOURCES: ReadonlySet<string> = new Set([
+  'workday', 'eightfold', 'oracle', 'icims', 'successfactors', 'smartrecruiters',
+  'workable', 'recruitee', 'teamtailor', 'personio', 'breezy', 'pinpoint', 'rippling', 'gem',
+]);
+
+/**
+ * A posting's source id, the stable documented format the normalizer stores: `<board>|<platform id>` for a
+ * TENANT_SCOPED_SOURCES source, where `<board>` is the DiscoveryRequest slug (the registry board ref, e.g. Workday
+ * `<host>/<tenant>/<site>`) without an Eightfold API-variant prefix (`pcsx:`, `v2:`, which a weekly verify may change),
+ * so the same tenant's job keeps one identity across days. Board refs hold no `|`, so the pair is unambiguous. Any other
+ * source: the adapter's id unchanged.
+ */
+export function postingSourceId(source: string, slug: string, sourceId: string): string {
+  if (!TENANT_SCOPED_SOURCES.has(source)) return sourceId;
+  return `${slug.replace(/^(?:v2|pcsx):/u, '')}|${sourceId}`;
+}
+
+/**
  * The cross-source duplicate key: `sha256(company | normTitle | normLocation)`, first 16 hex chars. The company is
  * trimmed, whitespace-collapsed and lower-cased; the places taken out of the title join the location parts. Used only
  * to link one job listed on two sources (a Greenhouse posting also on a feed); never an identity.
