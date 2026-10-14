@@ -439,6 +439,41 @@ describe('cross-source dedupe in the store', () => {
     expect(s.listJobs().map((j) => j.jobKey).sort()).toEqual([PAGE, 'f000000000000001']);
   });
 
+  // Fix round 3: Greenhouse, Lever and Ashby job ids are global, so two different ids are two jobs on ANY board
+  const U1 = '0d3a2b1c-1111-2222-3333-444455556666';
+  const U2 = '0d3a2b1c-1111-2222-3333-777788889999';
+  for (const [platform, idA, idB] of [['greenhouse', '7001', '9001'], ['lever', U1, U2], ['ashby', U1, U2]] as const) {
+    it(`R3 (${platform}): a page stating another board's different id is never a dedupe-key duplicate; it is shown and announced`, () => {
+      const s = AppStore.on(Store.open(':memory:'));
+      s.upsertJob(gh({ source: platform, sourceId: idA, docsState: 'ready', atsJob: { platform, board: 'ex', id: idA } }));
+      s.markNotified([GH], AT);
+      s.upsertJob(page({ docsState: 'ready', dedupeKey: '1111111111111111', atsJob: { platform, board: 'ex-intern', id: idB }, at: LATER }));
+      expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
+      expect(s.listJobs().map((j) => j.jobKey).sort()).toEqual([GH, PAGE]);
+      expect(fresh(s)).toEqual([PAGE]);
+    });
+  }
+
+  it('Workday ids are per tenant: different req ids on two tenants are no proof, the dedupe key still links them', () => {
+    for (const other of ['JR2', 'JR1']) {
+      const s = AppStore.on(Store.open(':memory:'));
+      s.upsertJob(jobRow({ jobKey: WD, source: 'workday', sourceId: 'JR1', slug: 'a.wd5.myworkdayjobs.com/a/External', company: CO, ats: 'workday', dedupeKey: '1111111111111111', atsJob: { platform: 'workday', board: 'a', id: 'JR1' } }));
+      s.upsertJob(page({ dedupeKey: '1111111111111111', atsJob: { platform: 'workday', board: 'b', id: other } }));
+      expect(s.getJob(WD)?.duplicateOf, other).toBe(PAGE);
+    }
+  });
+
+  it('a departing row with a different global id on another board is not stamped with the old announcement', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.upsertJob(gh({ docsState: 'ready' }));
+    s.upsertJob(page({ docsState: 'ready', atsJob: null, dedupeKey: '1111111111111111' }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBe(GH);
+    s.markNotified([GH], AT);
+    s.upsertJob(page({ docsState: 'ready', dedupeKey: '1111111111111111', atsJob: { platform: 'greenhouse', board: 'example-identity-intern', id: '9001' }, at: LATER }));
+    expect(s.getJob(PAGE)?.duplicateOf).toBeNull();
+    expect(s.getJob(PAGE)?.notifiedAt).toBeNull();
+  });
+
   it('a feed listing of the merged job joins the same group (the user sees it once)', () => {
     const s = AppStore.on(Store.open(':memory:'));
     s.upsertJob(gh());
@@ -472,6 +507,15 @@ describe('linkJobs (pure)', () => {
       row('b2', { source: 'careers', dedupeKey: 'd2' }),
     ];
     expect(Object.fromEntries(linkJobs(rows, () => []).duplicateOf)).toEqual({ a1: null, b1: 'a1', '01': 'a1', b2: null });
+  });
+  it('different global ids prove two jobs only within one company (fix round 3)', () => {
+    const gh1 = (company: string) => ({ platform: 'greenhouse' as const, board: 'b1', id: '1', slug: 'b1', companyNorm: company });
+    const gh2 = (company: string) => ({ platform: 'greenhouse' as const, board: 'b2', id: '2', slug: 'c', companyNorm: company });
+    const same = linkJobs([row('g1', { ats: gh1('acme') }), row('p1', { source: 'careers', ats: gh2('acme') })], () => []);
+    expect(same.duplicateOf.get('p1')).toBeNull();
+    // one dedupe key, two companies' ids (the name matcher's normalisation differs): no proof, v1 links them
+    const two = linkJobs([row('g1', { ats: gh1('acme') }), row('p1', { source: 'careers', ats: gh2('acme labs') })], () => []);
+    expect(two.duplicateOf.get('p1')).toBe('g1');
   });
   it('is the same for every input order', () => {
     const rows = [

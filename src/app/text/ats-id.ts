@@ -17,6 +17,20 @@
 export const ATS_ID_PLATFORMS = ['greenhouse', 'lever', 'ashby', 'workday'] as const;
 export type AtsIdPlatform = (typeof ATS_ID_PLATFORMS)[number];
 
+/**
+ * Fix round 3: the platforms whose job ids are GLOBAL, unique across every board of every company. Two different ids
+ * on one of them are two jobs whatever board each is on; on any other platform (Workday req ids are per tenant) only
+ * on the same board. Confirmed for each:
+ * - greenhouse: a job post id is one integer sequence across all boards (the Job Board API's `id`; `gh_jid=<id>` on
+ *   any company's own domain names the posting with no board);
+ * - lever, ashby: the posting / job id is a random UUID (`text/ats-id.ts` accepts only the UUID shape).
+ * jobpilot already relies on this: a posting's identity is `jobKey(source, sourceId)` with no board for all three.
+ */
+export const GLOBAL_ID_PLATFORMS: ReadonlySet<AtsIdPlatform> = new Set<AtsIdPlatform>(['greenhouse', 'lever', 'ashby']);
+
+/** The scope within which two different ids of a company prove two jobs: the platform when its ids are global, else the board. */
+export const idScope = (platform: AtsIdPlatform, board: string): string => (GLOBAL_ID_PLATFORMS.has(platform) ? platform : `${platform}:${board}`);
+
 export interface AtsRef {
   readonly platform: AtsIdPlatform;
   readonly board: string | null;

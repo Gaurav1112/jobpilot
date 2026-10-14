@@ -1,4 +1,4 @@
-import type { AtsIdPlatform } from '../text/ats-id.js';
+import { idScope, type AtsIdPlatform } from '../text/ats-id.js';
 
 /** Sources that are the employer's own ATS or career site; their listing is preferred over a feed's (the v1 rule). */
 export const ATS_SOURCES: ReadonlySet<string> = new Set(['greenhouse', 'lever', 'ashby', 'careers']);
@@ -29,7 +29,7 @@ export function preferred(a: Pick<LinkRow, 'source' | 'firstSeen' | 'jobKey'>, b
 
 interface Comp {
   readonly members: string[];
-  /** `<company>\0<platform>:<board>` -> the one job id this component has there. */
+  /** `<company>\0<id scope>` (`idScope`: the platform for global ids, else platform and board) -> the one job id the component has there. */
   readonly slots: Map<string, string>;
   readonly sources: Set<string>;
   /** Whether an ATS-id match joined rows of this component. */
@@ -48,12 +48,13 @@ interface Comp {
  *    unmerged. So a second board appearing later can never split a pair the stored row joined. Two rows from the SAME source and board with one key are a source bug, never
  *    hidden: no row of that key is merged, and an `ats-id-collision` note names them.
  * 2. **v1 dedupe key, unchanged.** In each dedupe group the preferred row (`preferred`) takes every row from another
- *    source. Such a link is refused when it would put two different ids of one platform board in one job (two openings
- *    with one title: the ids prove they differ), or, in a job an ATS id joined, two rows of one source.
+ *    source. Such a link is refused when it would put two different ids of one company in one job within their
+ *    `idScope` (any board of a global-id platform, Greenhouse, Lever, Ashby; the same board or tenant otherwise): the ids
+ *    prove two jobs. It is also refused when, in a job an ATS id joined, it would add a second row of one source.
  * 3. **Primary.** The earliest first_seen (then job key) among the job's rows, an ATS source, or a row an ATS id joined,
  *    ahead of a feed: with no ATS id this is the v1 preferred row exactly.
  */
-export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[]): { duplicateOf: Map<string, string | null>; notes: string[]; slots: Map<string, { slot: string; id: string }> } {
+export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[]): { duplicateOf: Map<string, string | null>; notes: string[]; slots: Map<string, { scope: string; id: string }> } {
   const sorted = [...rows].sort((a, b) => cmp(a.jobKey, b.jobKey));
   const byKey = new Map(sorted.map((r) => [r.jobKey, r]));
   const notes: string[] = [];
@@ -73,7 +74,7 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
     idBoards.set(k, (idBoards.get(k) ?? new Set()).add(r.ats.board));
   }
   const ambiguous = new Map<string, { platform: AtsIdPlatform; id: string; boards: string[]; keys: string[] }>();
-  const slotOf = new Map<string, { slot: string; id: string; key: string }>();
+  const slotOf = new Map<string, { slot: string; scope: string; id: string; key: string }>();
   for (const r of sorted) {
     if (r.ats === null || r.ats.companyNorm === '') continue;
     let board = r.ats.board;
@@ -95,7 +96,12 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
         board = [...known][0] as string;
       }
     }
-    slotOf.set(r.jobKey, { slot: `${r.ats.companyNorm}\u0000${r.ats.platform}:${board}`, id: r.ats.id, key: `${r.ats.platform}:${board}:${r.ats.id}` });
+    slotOf.set(r.jobKey, {
+      slot: `${r.ats.companyNorm}\u0000${r.ats.platform}:${board}`,
+      scope: `${r.ats.companyNorm}\u0000${idScope(r.ats.platform, board)}`,
+      id: r.ats.id,
+      key: `${r.ats.platform}:${board}:${r.ats.id}`,
+    });
   }
   for (const k of [...ambiguous.keys()].sort()) {
     const a = ambiguous.get(k) as { platform: AtsIdPlatform; id: string; boards: string[]; keys: string[] };
@@ -109,7 +115,7 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
   for (const r of sorted) {
     parent.set(r.jobKey, r.jobKey);
     const s = slotOf.get(r.jobKey);
-    comps.set(r.jobKey, { members: [r.jobKey], slots: new Map(s ? [[s.slot, s.id]] : []), sources: new Set([r.source]), ats: false });
+    comps.set(r.jobKey, { members: [r.jobKey], slots: new Map(s ? [[s.scope, s.id]] : []), sources: new Set([r.source]), ats: false });
   }
   const find = (k: string): string => {
     let x = k;
@@ -180,6 +186,6 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
   }
   // each row's resolved ATS id (`<company>\0<platform>:<board>` and the id): the store tells a departing row that is
   // another job from one that is the same job by it
-  const slots = new Map([...slotOf].map(([k, v]) => [k, { slot: v.slot, id: v.id }]));
+  const slots = new Map([...slotOf].map(([k, v]) => [k, { scope: v.scope, id: v.id }]));
   return { duplicateOf, notes, slots };
 }
