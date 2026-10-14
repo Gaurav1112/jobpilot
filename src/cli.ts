@@ -29,7 +29,7 @@ import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
 import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { forbiddenTermsAt, redactedError, runCommand, runCoverageCommand, runFreelanceCommand } from './app/run-command.js';
-import { AppStore } from './app/store/app-store.js';
+import { AppStore, SchemaBehindError } from './app/store/app-store.js';
 import { COVERAGE_DUE, DAILY_DUE, FREELANCE_DUE, coverageWeek, due, type DueSpec } from './app/due.js';
 import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
@@ -156,7 +156,7 @@ audit
       }
       expected = { hash: (m[1] as string).toLowerCase(), count: Number(m[2]) };
     }
-    const store = o.record ? Store.open(db) : Store.openReadOnly(db);
+    const store = o.record ? Store.open(db) : Store.openReadOnly(db, { forensic: true });
     try {
       // dashboard-perf fix 1: a passing full walk records its checkpoint (a failing one, the broken marker) in a jobpilot
       // home DB, best effort: a record that cannot be written is a warning, the walk's verdict stands
@@ -236,6 +236,12 @@ async function guarded(fn: () => Promise<void> | void): Promise<void> {
   try {
     await fn();
   } catch (e) {
+    // re-review: a command that is not allowed to migrate met a schema behind this code: say so, exit 2
+    if (e instanceof SchemaBehindError) {
+      console.error(`error: ${e.message}`);
+      process.exitCode = 2;
+      return;
+    }
     // final I9: every CLI error goes through the one redactor (`redactText`), with the home pack's forbidden terms
     console.error(`error: ${redactedError(e, forbiddenTermsAt(homePaths(jobpilotHome()).pack))}`);
     process.exitCode = 1;

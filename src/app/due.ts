@@ -255,7 +255,8 @@ export function due(spec: DueSpec, home: string, now: string, opts: { readonly i
   if (!early.due) return early;
   const db = homePaths(home).db;
   if (!existsSync(db)) return early;
-  const app = AppStore.open(db);
+  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock
+  const app = AppStore.open(db, { schema: 'as-is' });
   try {
     const r = runsIn(app, `${spec.runPrefix}${keyOf(now, w.id)}`);
     return { ...decide({ now, completedToday: r.completed, startedToday: r.started, failuresToday }, start, wording), window };
@@ -291,7 +292,8 @@ function dueWeekly(spec: DueSpec, weekday: number, home: string, now: string): D
   if (!early.due) return early;
   const db = homePaths(home).db;
   if (!existsSync(db)) return early;
-  const app = AppStore.open(db);
+  // read as it is: a schema behind this code must not stop the scheduled run, which migrates it under its lock
+  const app = AppStore.open(db, { schema: 'as-is' });
   try {
     let completed = false;
     let started = false;

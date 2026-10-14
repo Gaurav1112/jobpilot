@@ -119,13 +119,30 @@ const isBusy = (e: unknown): boolean => typeof (e as { code?: unknown })?.code =
  * recorded as the checkpoint. `bestEffort`: a busy database (a run writing) skips the record instead of waiting.
  */
 export function fullChainCheck(store: Store, at: string, opts: FullCheckOptions = {}): AuditResult {
-  const { result, through } = verifyChainThrough(store, opts.expectedHead);
-  if (opts.record === false || !hasSettings(store.db)) return result;
   const db = store.db;
+  const settings = hasSettings(db);
+  const rawMarker = (): string | null => (db.prepare(`SELECT value FROM app_settings WHERE key = ?`).get(CHAIN_BROKEN_KEY) as { value: string } | undefined)?.value ?? null;
+  // re-review R2: the marker is read in the SAME read transaction (snapshot) as the walk, so the record below can tell
+  // whether a failed check wrote (or changed) it while this walk ran on its older snapshot
+  const { walk, markerSeen } = db.transaction(() => {
+    const markerSeen = settings ? rawMarker() : null;
+    return { walk: verifyChainThrough(store, opts.expectedHead), markerSeen };
+  })();
+  const { result, through } = walk;
+  if (opts.record === false || !settings) return result;
   record(store, opts, () =>
     db.transaction(() => {
       if (result.ok) {
-        if (through !== undefined) writeCheckpoint(db, { ...through, verifiedAt: at, fullSeq: through.seq, fullCount: through.count });
+        // compare-and-set: a marker that appeared or changed since the snapshot is newer than this pass; keep it,
+        // and record no checkpoint from the older snapshot either
+        if (rawMarker() !== markerSeen) {
+          throw new Error('a full check recorded the chain broken meanwhile; this pass, on an older snapshot, is not recorded (run the check again)');
+        }
+        const cp = readCheckpoint(db);
+        // never move the full check backwards (another full check reached further meanwhile)
+        if (through !== undefined && (cp === undefined || cp.fullSeq <= through.seq)) {
+          writeCheckpoint(db, { ...through, verifiedAt: at, fullSeq: through.seq, fullCount: through.count });
+        }
         db.prepare(`DELETE FROM app_settings WHERE key = ?`).run(CHAIN_BROKEN_KEY);
       } else {
         const marker: BrokenMarker = 'headMismatch' in result ? { seq: null, reason: result.reason, at } : { seq: result.brokenAt, reason: result.reason, at };
@@ -151,12 +168,14 @@ function record(store: Store, opts: Pick<FullCheckOptions, 'lockWaitMs' | 'onRec
   }
 }
 
+const markerStatus = (b: BrokenMarker): ChainStatus => ({ ok: false, reason: `${b.seq !== null ? `at event ${b.seq}: ` : ''}${b.reason} (found by the full check at ${b.at})` });
+
 const reasonOf = (r: Exclude<AuditResult, { ok: true }>): string => ('headMismatch' in r ? r.reason : `at event ${r.brokenAt}: ${r.reason}`);
 
 /** What `/runs` shows: red while a full walk's broken marker stands; else from the checkpoint when it matches the chain, else (and only then) the full walk. */
 export function chainStatus(store: Store, at: string): ChainStatus {
   const broken = readBroken(store.db);
-  if (broken !== undefined) return { ok: false, reason: `${broken.seq !== null ? `at event ${broken.seq}: ` : ''}${broken.reason} (found by the full check at ${broken.at})` };
+  if (broken !== undefined) return markerStatus(broken);
   const cp = readCheckpoint(store.db);
   const dashboard = { lockWaitMs: DASHBOARD_RECORD_TIMEOUT_MS };
   if (cp !== undefined) {
@@ -181,5 +200,9 @@ export function chainStatus(store: Store, at: string): ChainStatus {
     // the checkpoint is not a point on this chain: only the full walk can tell
   }
   const full = fullChainCheck(store, at, dashboard);
-  return full.ok ? { ok: true, events: full.events, check: { kind: 'full-now' } } : { ok: false, reason: reasonOf(full) };
+  if (!full.ok) return { ok: false, reason: reasonOf(full) };
+  // a failed check that recorded the marker while this walk ran (on its older snapshot) wins: never "intact" over it
+  const after = readBroken(store.db);
+  if (after !== undefined) return markerStatus(after);
+  return { ok: true, events: full.events, check: { kind: 'full-now' } };
 }

@@ -23,12 +23,13 @@ import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
 import { diskDocCheck } from '../docs-check.js';
 import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
-import { AppStore, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
+import { AppStore, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
 import { dateText, daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
+import { liveHolder } from '../lock.js';
 import { SharedStore, UpgradePending } from './connection.js';
 import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
@@ -246,7 +247,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     c.html(layout({ title, nav, banners, body }).value, status);
 
   // dashboard-perf fix 5: one long-lived connection per dashboard, never holding a transaction (`connection.ts`)
-  const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer);
+  const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer, () => liveHolder(deps.home) !== undefined);
   // idle maintenance (review): a TRUNCATE checkpoint of the -wal once no request has come for IDLE_MS; it never waits
   let idle: ReturnType<typeof setTimeout> | undefined;
   const scheduleIdle = (): void => {
@@ -695,7 +696,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));
   app.onError((err, c) => {
-    if (err instanceof UpgradePending) {
+    if (err instanceof UpgradePending || err instanceof SchemaBehindError) {
       if (c.req.method === 'POST' || c.req.header('hx-request') === 'true') return c.text(UPGRADE_MESSAGE, 503, { 'retry-after': '30' });
       c.header('retry-after', '30');
       return page(c, 'jobs', 'Upgrading', [], html`<h1>One moment</h1><p>jobpilot is being upgraded; the next run (or <code>jobpilot facts list</code>) applies it. This page works again as soon as it has.</p>`, 503);
@@ -722,7 +723,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
  */
 function keptSecret(db: string, timeoutMs: number): Buffer {
   const state = schemaState(db);
-  if (state === 'missing' || state === 'newer') return ephemeralSecret();
+  if (state !== 'current' && state !== 'behind') return ephemeralSecret();
   const peek = Store.openReadOnly(db);
   let usable: boolean;
   try {

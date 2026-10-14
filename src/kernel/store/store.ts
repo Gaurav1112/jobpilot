@@ -1,4 +1,4 @@
-import { chmodSync, closeSync, constants, lstatSync, openSync, statSync } from 'node:fs';
+import { chmodSync, closeSync, constants, existsSync, lstatSync, openSync, statSync, unlinkSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { canonicalJson, sha256 } from '../canonical.js';
 import type { Cost, Envelope } from '../envelope.js';
@@ -92,7 +92,10 @@ export function tightenOwnedFile(path: string, mode: number, onLoose: (path: str
 }
 
 export class Store {
-  private constructor(readonly db: Database.Database) {}
+  private constructor(
+    readonly db: Database.Database,
+    private readonly afterClose?: () => void,
+  ) {}
 
   /** `timeoutMs`: how long a statement waits for another connection's lock (SQLite busy_timeout); default the driver's 5 s. */
   /**
@@ -133,21 +136,40 @@ export class Store {
   }
 
   /**
-   * A read-only connection (`audit verify --no-record`, a forensic copy): no file is created or tightened, no journal
-   * mode is set and no migration runs; a schema newer than this code is refused.
+   * A read-only connection: no file is tightened, no journal mode set and no migration run; a schema newer than this
+   * code is refused. SQLite still makes the -wal and -shm files of a WAL database it reads (a read-only reader needs the
+   * shared-memory index, and this build cannot open a WAL file `immutable`); they are made owner-only at once.
+   * `forensic` (`audit verify --no-record`, a copy): whatever this connection made beside the file (an empty -wal, the
+   * -shm) is removed again on `close`, so the copy's folder is left as it was found.
    */
-  static openReadOnly(path: string): Store {
+  static openReadOnly(path: string, opts: { readonly forensic?: boolean } = {}): Store {
+    const side = [`${path}-wal`, `${path}-shm`];
+    const existed = side.map((f) => existsSync(f));
     const db = new Database(path, { readonly: true, fileMustExist: true });
+    for (const f of side) tightenOwnedFile(f, 0o600, () => {});
+    const cleanup =
+      opts.forensic === true
+        ? () => {
+            for (const [i, f] of side.entries()) {
+              if (existed[i] === true || !existsSync(f)) continue;
+              // only what this read made: an empty -wal, and the -shm index
+              if (f.endsWith('-wal') && statSync(f).size !== 0) continue;
+              unlinkSync(f);
+            }
+          }
+        : undefined;
     const version = db.pragma('user_version', { simple: true }) as number;
     if (version > MIGRATIONS.length) {
       db.close();
+      cleanup?.();
       throw new Error(`database schema version ${version} is newer than this jobpilot (${MIGRATIONS.length})`);
     }
-    return new Store(db);
+    return new Store(db, cleanup);
   }
 
   close(): void {
     this.db.close();
+    this.afterClose?.();
   }
 
   tx<T>(fn: () => T): T {

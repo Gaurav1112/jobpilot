@@ -200,7 +200,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
     const paths = homePaths(o.home);
     ensureHome(paths.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();
-    const app = AppStore.open(paths.db);
+    const app = AppStore.open(paths.db, { schema: 'migrate' }); // inside the run lock: the one place runs migrate
     try {
       const now = o.clock.now();
       const runDate = istDate(now);
@@ -308,7 +308,7 @@ export function rebuildDocs(o: RebuildOptions): Promise<RebuildSummary> {
   return withLock(o.home, 'docs rebuild', async () => {
     const paths = homePaths(o.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();
-    const app = AppStore.open(paths.db);
+    const app = AppStore.open(paths.db, { schema: 'migrate' }); // inside the run lock: the one place runs migrate
     try {
       const now = o.clock.now();
       const latest = app.latestRun('daily-');

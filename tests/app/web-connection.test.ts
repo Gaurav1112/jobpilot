@@ -235,6 +235,61 @@ describe('the WAL file stays bounded beside the long-lived connection (review)',
     shared.close();
   });
 
+  it('PASSIVE first; TRUNCATE only when PASSIVE copied every frame (a reader pinning frames: no TRUNCATE)', () => {
+    const shared = new SharedStore(db, 1000);
+    shared.use((s) => s.getSetting('x'));
+    const seen: string[] = [];
+    const spy = (s: AppStore): void => {
+      const d = s.kernel.db;
+      const pragma = d.pragma.bind(d);
+      d.pragma = ((src: string, o?: unknown) => {
+        if (src.startsWith('wal_checkpoint')) seen.push(src);
+        return pragma(src, o as never);
+      }) as typeof d.pragma;
+    };
+    shared.use(spy);
+    const w = new Database(db);
+    w.exec('CREATE TABLE IF NOT EXISTS t_run (x BLOB)');
+    w.prepare('INSERT INTO t_run VALUES (randomblob(4000))').run();
+    // a reader holds a snapshot from before the next write: PASSIVE cannot copy the frames after it
+    const reader = new Database(db);
+    reader.exec('BEGIN');
+    reader.prepare('SELECT count(*) FROM t_run').get();
+    w.transaction(() => {
+      for (let i = 0; i < 200; i++) w.prepare('INSERT INTO t_run VALUES (randomblob(4000))').run();
+    })();
+    shared.maintain();
+    expect(seen).toEqual(['wal_checkpoint(PASSIVE)']);
+    reader.exec('COMMIT');
+    reader.close();
+    seen.length = 0;
+    shared.maintain();
+    expect(seen).toEqual(['wal_checkpoint(PASSIVE)', 'wal_checkpoint(TRUNCATE)']);
+    w.close();
+    shared.close();
+  });
+
+  it('skipped entirely while a run holds the jobpilot lock', () => {
+    let running = true;
+    const shared = new SharedStore(db, 1000, () => {}, () => {}, () => running);
+    shared.use((s) => s.getSetting('x'));
+    const w = new Database(db);
+    w.exec('CREATE TABLE IF NOT EXISTS t_run (x BLOB)');
+    w.transaction(() => {
+      for (let i = 0; i < 2_000; i++) w.prepare('INSERT INTO t_run VALUES (randomblob(4000))').run();
+    })();
+    w.close();
+    const walBytes = (): number => (existsSync(`${db}-wal`) ? statSync(`${db}-wal`).size : 0);
+    const size = walBytes();
+    expect(size).toBeGreaterThan(1_000_000);
+    shared.maintain();
+    expect(walBytes()).toBe(size);
+    running = false;
+    shared.maintain();
+    expect(walBytes()).toBe(0);
+    shared.close();
+  });
+
   it('maintenance never waits for a writer: a run holding the write lock makes it a no-op', () => {
     const shared = new SharedStore(db, 5_000);
     shared.use((s) => s.getSetting('x'));

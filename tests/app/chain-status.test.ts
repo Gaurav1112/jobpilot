@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { CHAIN_CHECKPOINT_KEY, chainStatus, fullChainCheck, readBroken, readCheckpoint } from '../../src/app/chain-status.js';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { CHAIN_BROKEN_KEY, CHAIN_CHECKPOINT_KEY, chainStatus, fullChainCheck, readBroken, readCheckpoint } from '../../src/app/chain-status.js';
 import { AppStore } from '../../src/app/store/app-store.js';
 import { eventHash, Store } from '../../src/kernel/store/store.js';
 
@@ -230,6 +233,97 @@ describe('review findings', () => {
     }
     expect(raced).toBe(true);
     expect(readCheckpoint(db)).toMatchObject({ seq: 5, count: 5, verifiedAt: T1, fullSeq: 5, fullCount: 5 });
+  });
+});
+
+describe('re-review: the marker is compare-and-set, and fails closed', () => {
+  const T2 = '2026-10-14T03:00:00.000Z';
+  /** Runs `during` once, in the middle of `walker`'s event walk (after its 3rd event): another process acting meanwhile. */
+  const midWalk = (walker: AppStore, during: () => void): (() => void) => {
+    const orig = walker.kernel.eventsAfter.bind(walker.kernel);
+    let n = 0;
+    (walker.kernel as unknown as { eventsAfter: unknown }).eventsAfter = function* (s: number) {
+      for (const r of orig(s)) {
+        if (n++ === 2) during();
+        yield r;
+      }
+    };
+    return () => {
+      (walker.kernel as unknown as { eventsAfter: unknown }).eventsAfter = orig;
+    };
+  };
+  const twoConnections = (fn: (walker: AppStore, other: AppStore) => void): void => {
+    const dir = mkdtempSync(join(tmpdir(), 'jobpilot-r2-'));
+    try {
+      const path = join(dir, 'j.db');
+      const walker = AppStore.open(path);
+      for (let i = 0; i < 6; i++) walker.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+      const other = AppStore.open(path);
+      try {
+        fn(walker, other);
+      } finally {
+        other.close();
+        walker.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const tamperAndFail = (other: AppStore) => () => {
+    // meanwhile: an edit commits and the weekly full check (coverage) fails and writes the marker
+    other.kernel.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 1`).run();
+    expect(fullChainCheck(other.kernel, T1)).toMatchObject({ ok: false, brokenAt: 1 });
+  };
+
+  it('R2: /runs\' fallback walk on a pre-edit snapshot never clears a marker written meanwhile, nor says intact', () => {
+    twoConnections((walker, other) => {
+      const restore = midWalk(walker, tamperAndFail(other));
+      let st;
+      try {
+        st = chainStatus(walker.kernel, T2);
+      } finally {
+        restore();
+      }
+      expect(st).toMatchObject({ ok: false, reason: expect.stringMatching(/^at event 1: hash does not match/) });
+      expect(readBroken(walker.kernel.db)).toMatchObject({ seq: 1, at: T1 });
+      expect(readCheckpoint(walker.kernel.db)).toBeUndefined();
+      expect(chainStatus(walker.kernel, T2)).toMatchObject({ ok: false });
+    });
+  });
+
+  it('R2 for audit verify: a pass on the older snapshot records nothing and says why', () => {
+    twoConnections((walker, other) => {
+      fullChainCheck(walker.kernel, T0);
+      const before = readCheckpoint(walker.kernel.db);
+      const told: string[] = [];
+      const restore = midWalk(walker, tamperAndFail(other));
+      try {
+        expect(fullChainCheck(walker.kernel, T2, { onRecordFailed: (m) => told.push(m) })).toMatchObject({ ok: true });
+      } finally {
+        restore();
+      }
+      expect(told).toEqual([expect.stringMatching(/a full check recorded the chain broken meanwhile/)]);
+      expect(readBroken(walker.kernel.db)).toMatchObject({ seq: 1, at: T1 });
+      expect(readCheckpoint(walker.kernel.db)).toEqual(before);
+    });
+  });
+
+  it('a pass whose snapshot already saw the marker clears it (the repair case is unchanged)', () => {
+    twoConnections((walker, other) => {
+      tamperAndFail(other)();
+      other.kernel.db.prepare(`UPDATE events SET data = '{"i":0}' WHERE seq = 1`).run();
+      expect(fullChainCheck(walker.kernel, T2)).toMatchObject({ ok: true });
+      expect(readBroken(walker.kernel.db)).toBeUndefined();
+    });
+  });
+
+  it('N9: an unreadable or garbage marker value counts as broken (fail closed)', () => {
+    for (const bad of ['not json', 'null', '42', '"x"', '[]', '{}', '{"seq":"x"}']) {
+      const app = appWith(2);
+      app.kernel.db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(CHAIN_BROKEN_KEY, bad);
+      expect(readBroken(app.kernel.db), bad).toBeDefined();
+      expect(chainStatus(app.kernel, T1), bad).toMatchObject({ ok: false });
+    }
   });
 });
 

@@ -305,7 +305,7 @@ describe('AppStore status, note, docs, overrides and runs', () => {
     const at = Date.now() + 2500;
     const script = `import { AppStore } from ${JSON.stringify(join(import.meta.dirname, '../../src/app/store/app-store.ts'))};
 while (Date.now() < ${at}) {}
-try { const s = AppStore.open(${JSON.stringify(path)}); console.log('OK ' + s.schemaVersion()); s.close(); } catch (e) { console.log('ERR ' + e.message); }`;
+try { const s = AppStore.open(${JSON.stringify(path)}, { schema: 'migrate' }); console.log('OK ' + s.schemaVersion()); s.close(); } catch (e) { console.log('ERR ' + e.message); }`;
     const child = () =>
       new Promise<string>((resolve) => {
         const c = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', script], { cwd: join(import.meta.dirname, '../..') });

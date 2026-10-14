@@ -34,6 +34,8 @@ export class SharedStore {
     private readonly onOpen: () => void = () => {},
     /** Told when the database's schema is newer than this code (a newer jobpilot migrated it); `serve` exits so launchd restarts it on the new code. */
     private readonly onSchemaNewer: () => void = () => {},
+    /** Whether a run holds the jobpilot lock (`liveHolder`); idle maintenance waits until it does not. */
+    private readonly runActive: () => boolean = () => false,
   ) {}
 
   /** `cache_size` of the shared connection, in KiB (negative: KiB, SQLite's convention): 32 MB. */
@@ -71,18 +73,25 @@ export class SharedStore {
 
   /**
    * Idle maintenance (review): this connection staying open means a run is no longer the last to close the DB, so its
-   * -wal file (as large as its biggest transaction) is no longer removed. When the dashboard is idle, a TRUNCATE
-   * checkpoint copies what is left into the DB and empties the -wal; it never waits (busy_timeout 0: a run writing or
-   * a reader mid-read makes it a no-op, retried at the next idle).
+   * -wal file (as large as its biggest transaction) is no longer removed. When the dashboard is idle and no run holds
+   * the jobpilot lock: a PASSIVE checkpoint (it copies frames without taking the write lock), then, only when it copied
+   * every frame, a TRUNCATE (now just emptying the file, so the write lock is held for no time). It never waits
+   * (busy_timeout 0): anything in the way makes it a no-op, retried at the next idle.
    */
   maintain(): void {
     const s = this.store;
     if (s === undefined || s.kernel.db.inTransaction) return;
+    try {
+      if (this.runActive()) return;
+    } catch {
+      return;
+    }
     const db = s.kernel.db;
     const before = db.pragma('busy_timeout', { simple: true }) as number;
     try {
       db.pragma('busy_timeout = 0');
-      db.pragma('wal_checkpoint(TRUNCATE)');
+      const [p] = db.pragma('wal_checkpoint(PASSIVE)') as { busy: number; log: number; checkpointed: number }[];
+      if (p !== undefined && p.busy === 0 && p.log >= 0 && p.checkpointed === p.log) db.pragma('wal_checkpoint(TRUNCATE)');
     } catch {
       // busy or anything else: nothing to do now
     } finally {
@@ -99,7 +108,7 @@ export class SharedStore {
     if (this.store === undefined) {
       // the dashboard never migrates (review I2): a schema behind this code waits for a run or the CLI (under the lock)
       const state = schemaState(this.path);
-      if (state === 'missing' || state === 'behind') throw new UpgradePending();
+      if (state === 'missing' || state === 'empty' || state === 'behind') throw new UpgradePending();
       const id = fileIdOf(this.path);
       let s: AppStore;
       try {

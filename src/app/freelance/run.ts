@@ -179,7 +179,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
     const paths = homePaths(o.home);
     ensureHome(paths.home);
     const pdftotext = o.pdftotext ?? resolvePdftotext();
-    const app = AppStore.open(paths.db);
+    const app = AppStore.open(paths.db, { schema: 'migrate' }); // inside the run lock
     try {
       const now = o.clock.now();
       const runDate = istDate(now);

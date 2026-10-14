@@ -391,8 +391,8 @@ export async function coverageProbeCommand(o: CoverageProbeOptions): Promise<num
     const paths = homePaths(o.home);
     ensureHome(paths.home);
     if (!existsSync(paths.db)) throw new Error(`no database at ${paths.db}: run jobpilot first`);
-    // AppStore.open is the same path the dashboard uses: it is NOT a read-only handle (an older DB is migrated on open).
-    // The probe itself only reads; the lock above keeps a run from writing meanwhile.
+    // A schema behind this code is refused (SchemaBehindError: run `jobpilot facts list`), never migrated here. The
+    // probe itself only reads; the lock above keeps a run from writing meanwhile.
     const app = AppStore.open(paths.db);
     try {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(o.clock.now()), undefined, 'daily');

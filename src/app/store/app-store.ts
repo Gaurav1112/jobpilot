@@ -1,7 +1,9 @@
 import { FactStatus } from '../pack/schema.js';
 import type { Fact } from '../pack/schema.js';
 import type { Posting } from '../types.js';
+import { existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { MIGRATIONS } from '../../kernel/store/migrations.js';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import type { CompanyVerdict, Platform } from '../coverage/types.js';
@@ -30,6 +32,48 @@ export type Band = 'disclosed' | 'undisclosed' | 'review' | 'below-floor' | 'rej
 export const DEFAULT_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review'];
 const BAND_RANK: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 1, review: 2, 'below-floor': 3, rejected: 4 };
 export { ATS_SOURCES };
+
+/**
+ * How `AppStore.open` treats a database whose schema is behind this code (re-review: only locked commands migrate):
+ * - `current` (default): refuse (`SchemaBehindError`): every command but the runs and `facts list`.
+ * - `migrate`: apply the pending migrations: the runs, inside their `withLock`, and `upgradeUnderLock`.
+ * - `as-is`: open without migrating, for reads the older schema serves (the `--if-due` checks, which must let the
+ *   scheduled run start so it can migrate).
+ * A new or empty database (no tables yet) is created by any of them: there is nothing to migrate and it takes no time.
+ */
+export type SchemaMode = 'current' | 'migrate' | 'as-is';
+
+export class SchemaBehindError extends Error {
+  override readonly name = 'SchemaBehindError';
+  constructor() {
+    super('the database needs an upgrade; run `jobpilot facts list` (it takes the run lock)');
+  }
+}
+
+/** missing: no file; empty: no tables yet; current, behind or newer than this code's kernel and app migrations. */
+export type SchemaState = 'missing' | 'empty' | 'current' | 'behind' | 'newer';
+
+/** The database's schema against this code's migrations, read-only (nothing is created, set or migrated). */
+export function schemaState(dbPath: string): SchemaState {
+  if (!existsSync(dbPath)) return 'missing';
+  let k: Store;
+  try {
+    k = Store.openReadOnly(dbPath);
+  } catch (e) {
+    if (e instanceof Error && /newer than this jobpilot/.test(e.message)) return 'newer';
+    throw e;
+  }
+  try {
+    if (k.db.prepare(`SELECT 1 FROM sqlite_master LIMIT 1`).get() === undefined) return 'empty';
+    const kernel = k.db.pragma('user_version', { simple: true }) as number;
+    const hasApp = k.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_schema'`).get() !== undefined;
+    const app = hasApp ? (k.db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number } | undefined)?.version : undefined;
+    if (app !== undefined && app > APP_MIGRATIONS.length) return 'newer';
+    return kernel === MIGRATIONS.length && app === APP_MIGRATIONS.length ? 'current' : 'behind';
+  } finally {
+    k.close();
+  }
+}
 
 export interface Doc {
   readonly kind: 'resume' | 'cover';
@@ -352,20 +396,26 @@ export class AppStore {
    * The DB file lives in the jobpilot home. Its directory is never chmodded (see `app/home.ts`); an open home, or a DB
    * file jobpilot may not tighten, gets one warning per process. The DB itself is 0600 (`Store.open`).
    */
-  static open(path: string, opts: { readonly timeoutMs?: number } = {}): AppStore {
+  static open(path: string, opts: { readonly timeoutMs?: number; readonly schema?: SchemaMode } = {}): AppStore {
     const onDisk = path !== ':memory:' && path !== '';
     if (onDisk) checkHome(dirname(path));
+    const mode = opts.schema ?? 'current';
+    // re-review: only runs (inside their lock) and `facts list` (`upgradeUnderLock`) migrate an existing database
+    const state = onDisk ? schemaState(path) : 'missing';
+    if (state === 'behind' && mode === 'current') throw new SchemaBehindError();
     const kernel = Store.open(path, {
-      ...opts,
+      ...(opts.timeoutMs !== undefined ? { timeoutMs: opts.timeoutMs } : {}),
       onLooseFile: (f, why) => warnOnce(why === 'link' ? fileWarning(f) : homeWarning(dirname(path))),
     });
     try {
+      if (state === 'behind' && mode === 'as-is') return new AppStore(kernel, true);
       return AppStore.migrate(kernel, true);
     } catch (err) {
       kernel.close();
       throw err;
     }
   }
+
 
   /** The app catalogue on an already open kernel store (same connection). `close` leaves the kernel store open. */
   static on(kernel: Store): AppStore {

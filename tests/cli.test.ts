@@ -119,6 +119,8 @@ describe('audit verify', () => {
     expect(nr.stdout).toContain('audit chain intact: 2 events');
     expect(nr.stdout).toContain('not recorded (--no-record)');
     expect(sha()).toBe(before);
+    // N8: nothing beside the copy either: no -wal, no -shm
+    expect([existsSync(`${copy}-wal`), existsSync(`${copy}-shm`)]).toEqual([false, false]);
     // app_settings refuses writes: the walk passes, the record fails, exit 0 with a warning
     const s = AppStore.open(copy);
     s.kernel.db.exec(`CREATE TRIGGER ro_i BEFORE INSERT ON app_settings BEGIN SELECT RAISE(ABORT, 'read-only copy'); END;

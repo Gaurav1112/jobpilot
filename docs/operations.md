@@ -491,6 +491,8 @@ Migrations are one-way, so the order matters:
 4. Apply the database upgrade: `node --run jobpilot -- facts list` does it under the run lock
    (or the next scheduled run does). The dashboard never migrates: until this step it answers
    "jobpilot is being upgraded" (HTTP 503) and works again on the next page load after it.
+   Every other command (`pack check`, the probes, `facts verify`, ...) refuses with "the database
+   needs an upgrade; run `jobpilot facts list` (it takes the run lock)" and exit code 2.
    The dashboard-perf upgrade adds three indexes; the envelope one reads the whole database once
    (about 8 s on a 4 GB home, up to 30 s when the file is not in memory).
 5. Run `node --run jobpilot -- schedule install` so launchd points at the new code and Node.

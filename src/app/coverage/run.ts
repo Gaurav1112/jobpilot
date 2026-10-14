@@ -244,7 +244,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
     o.onLocked?.();
     const paths = homePaths(o.home);
     ensureHome(paths.home);
-    const app = AppStore.open(paths.db);
+    const app = AppStore.open(paths.db, { schema: 'migrate' }); // inside the run lock
     try {
       const now = o.clock.now();
       const runDate = istDate(now);
