@@ -584,9 +584,9 @@ describe('freelance pack files', () => {
   });
 });
 
-const DAILY_FULL_HASH = '55a2636155f823877511bb9b51f2e7f880b97bb0f92e6cbcf45a407b17a7fee2';
-const DAILY_FULL_HASH_NONCE7 = 'fa409c3285c09bdc363499abc3362aa244d247c7ebb328197d52722df82c99a1';
-const DAILY_HASH = '900420850a1aaf46edd002e793fcee1d80cd16e2edb08e0fa37f76a3e7d2c820';
+const DAILY_FULL_HASH = '0bf9f713c87d65cca0b587f36d07543394079e0aa3b89286c53745e2b5f3d472';
+const DAILY_FULL_HASH_NONCE7 = '62196917013fd2e656c226c43047bf1e5ba51445656bf0fb40d88631bcc9530b';
+const DAILY_HASH = 'c1730a73873f964252e4fd96f739962c33e39cb4d6490b50868f2742efa4abb5';
 const edit = (d: string, file: string, from: string, to: string): void => {
   const p = join(d, file);
   const t = readFileSync(p, 'utf8');

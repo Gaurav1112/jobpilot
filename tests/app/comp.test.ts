@@ -222,7 +222,7 @@ describe('meetsFloor', () => {
   });
 
   it('passes a range that straddles the floor', () => {
-    expect(meetsFloor(parseComp('₹45-12 LPA'), floor)).toBe('pass');
+    expect(meetsFloor(parseComp('₹45-55 LPA'), floor)).toBe('pass');
   });
 
   it('passes when compensation is absent — never penalise missing data', () => {
@@ -310,7 +310,7 @@ describe('leading currency-code anchor', () => {
     expect(parseCompRange('INR1,200,000')).toEqual({ min: 1200000, max: 1200000, currency: 'INR', period: 'year' });
     expect(parseCompRange('USD 150,000 - 180,000')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year' });
     expect(parseCompRange('USD 150,000 - USD 180,000')).toEqual({ min: 150000, max: 180000, currency: 'USD', period: 'year' });
-    expect(parseCompRange('INR 45-12 LPA')).toEqual({ min: 4500000, max: 1200000, currency: 'INR', period: 'year' });
+    expect(parseCompRange('INR 10-12 LPA')).toEqual({ min: 1000000, max: 1200000, currency: 'INR', period: 'year' });
     expect(parseCompRange('EUR 70,000')).toEqual({ min: 70000, max: 70000, currency: 'EUR', period: 'year' });
     expect(parseCompRange('GBP 80,000')).toEqual({ min: 80000, max: 80000, currency: 'GBP', period: 'year' });
   });

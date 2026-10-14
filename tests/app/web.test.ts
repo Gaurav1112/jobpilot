@@ -120,7 +120,7 @@ function seed(): void {
     s.upsertJob(row(K3, 3, { title: 'Platform Engineer', company: 'Hooli', score: 90 }));
     s.upsertJob(row(K4, 4, { title: 'Backend Developer', company: 'Vandelay', score: 85, verdict: 'review' }));
     s.upsertJob(row(K5, 5, { title: 'Frontend Engineer', company: 'Umbrella', score: null, verdict: 'rejected', reasons: ['role:front[- ]?end'], breakdown: null }));
-    s.upsertJob(row(K6, 6, { title: 'Junior Engineer', company: 'Soylent', score: 75, compMaxInr: 3_000_000, compMinInr: 2_000_000, comp: { min: 2_000_000, max: 3_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
+    s.upsertJob(row(K6, 6, { title: 'Junior Engineer', company: 'Soylent', score: 75, compMaxInr: 1_000_000, compMinInr: 400_000, comp: { min: 400_000, max: 1_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
     s.upsertJob(row(K7, 7, { title: '<script>alert("x")</script>" onmouseover="y', company: "O'Reilly & Sons", score: 60 }));
     // a feed listing of K1: hidden from the list, K1 shows "also listed on himalayas"
     s.upsertJob(row(K8, 8, { title: 'Senior Backend Engineer', company: 'Acme Robotics', source: 'himalayas', dedupeKey: '1d1d1d1d1d1d1d1d', score: 80 }));
@@ -1076,7 +1076,7 @@ describe('dashboard: number formatting', () => {
     expect(inr(4_250_000)).toBe('₹42.5 LPA');
     expect(inr(12_000_000)).toBe('₹1.2 Cr');
     expect(inr(85_000)).toBe('₹85,000');
-    expect(inrRange(4_500_000, 1_200_000)).toBe('₹45–12 LPA');
+    expect(inrRange(1_000_000, 1_200_000)).toBe('₹10–12 LPA');
     expect(inrRange(8_000_000, 12_000_000)).toBe('₹80 LPA – ₹1.2 Cr');
     expect(inrRange(null, 1_200_000)).toBe('up to ₹12 LPA');
     expect(compText({ min: 150_000, max: 180_000, currency: 'USD', period: 'year', basis: 'unknown' }, 12_525_000, 15_030_000)).toEqual({

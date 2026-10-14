@@ -343,7 +343,7 @@ describe('AppStore.listJobs comp-first sort (spec §7)', () => {
       { jobKey: k(8), sourceId: '8', verdict: 'review', score: 60 },
       { jobKey: k(9), sourceId: '9', verdict: 'rejected', reasons: ['onsite'], score: null },
       { jobKey: k(10), sourceId: '10', score: 30, docsState: 'below-floor' },
-      { jobKey: k(11), sourceId: '11', compMaxInr: 3_000_000, compBasis: 'base', score: 99 },
+      { jobKey: k(11), sourceId: '11', compMaxInr: 1_000_000, compBasis: 'base', score: 99 },
       { jobKey: k(12), sourceId: '12', score: 95 },
     ];
     for (const r of rows) s.upsertJob(jobRow(r));

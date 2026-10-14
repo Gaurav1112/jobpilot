@@ -393,7 +393,7 @@ describe('greenhouse', () => {
     expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary', '<p>The base salary range for this role</p>')])?.basis).toBe('base');
     expect(comp([range(10000000, 12000000, 'USD', 'Zone 1 Salary')])?.basis).toBe('unknown');
     // An INR range is the one that applies to India.
-    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(400000000, 120000000, 'INR', 'India Base Salary')])).toEqual({ min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
+    expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(100000000, 120000000, 'INR', 'India Base Salary')])).toEqual({ min: 1000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' });
     // Two currencies without INR: no single figure is faithful.
     expect(comp([range(10000000, 12000000, 'USD', 'US Salary'), range(9000000, 11000000, 'EUR', 'EU Salary')])).toBeNull();
     // Unsupported currency, hourly, OTE.
@@ -638,7 +638,7 @@ describe('careers', () => {
       employmentType: 'FULL_TIME',
       descriptionText: 'Build payment services.\n\n- Go\n- Postgres',
       postedAt: '2026-10-01',
-      comp: { min: 4000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' },
+      comp: { min: 1000000, max: 1200000, currency: 'INR', period: 'year', basis: 'base' },
       yearsRequired: null,
     });
   });

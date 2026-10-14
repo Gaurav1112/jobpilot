@@ -489,18 +489,18 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   });
 
   it('6. comp: a disclosed max below the floor rejects, base or unknown basis; open ranges never do', () => {
-    expect(decide({ comp: base(3_000_000, 4_000_000) })).toEqual(rejected('below-floor:4000000'));
-    expect(decide({ comp: base(50_000, 60_000, 'USD') })).toEqual(rejected('below-floor:5010000'));
-    expect(decide({ comp: base(null, 4_000_000) })).toEqual(rejected('below-floor:4000000'));
+    expect(decide({ comp: base(800_000, 1_000_000) })).toEqual(rejected('below-floor:1000000'));
+    expect(decide({ comp: base(10_000, 12_000, 'USD') })).toEqual(rejected('below-floor:1002000'));
+    expect(decide({ comp: base(null, 1_000_000) })).toEqual(rejected('below-floor:1000000'));
     expect(decide({ comp: base(null, 1_200_000) })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
     expect(decide({ comp: base(70_000, 80_000, 'USD') })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
     expect(decide({ comp: base(1_000_000, null) })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
     // fix round 2: a total-type figure (CTC, total comp, OTE, package) is at least base, so its max below the floor rejects too
-    expect(decide({ comp: base(3_000_000, 4_000_000, 'INR', 'unknown') })).toEqual(rejected('below-floor:4000000'));
+    expect(decide({ comp: base(800_000, 1_000_000, 'INR', 'unknown') })).toEqual(rejected('below-floor:1000000'));
     expect(decide({ comp: base(5_000_000, 7_000_000, 'INR', 'unknown') })).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
     expect(decide({ comp: base(2_000_000, null, 'INR', 'unknown') })).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
     // a review posting still gets the comp check
-    expect(decide({ remote: remote('remote', []), comp: base(1_000_000, 2_000_000) })).toEqual(rejected('below-floor:2000000'));
+    expect(decide({ remote: remote('remote', []), comp: base(400_000, 1_000_000) })).toEqual(rejected('below-floor:1000000'));
     // no floor in the pack: nothing is below it
     expect(decide({ comp: base(1, 2) }, { ...pack, offers: { floor: null } })).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
   });
@@ -508,9 +508,9 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   it('6. comp, end to end through the normalizer: total comp, OTE and pay plus equity below the floor reject (fix round 2)', () => {
     const through = (descriptionText: string) =>
       decideEligibility(normalize({ source: 'jobicy', sourceId: '1', company: 'X', slug: 'jobicy', raw: { id: 1, jobTitle: 'Backend Engineer', companyName: 'X', url: 'https://jobicy.com/jobs/1', jobGeo: 'India', jobDescription: `<p>${descriptionText}</p>` } }), pack);
-    expect(through('Total compensation $40k–$60k')).toEqual(rejected('below-floor:5010000'));
-    expect(through('OTE ₹50 LPA')).toEqual(rejected('below-floor:5000000'));
-    expect(through('Salary: ₹30 LPA + equity')).toEqual(rejected('below-floor:3000000'));
+    expect(through('Total compensation $8k–$12k')).toEqual(rejected('below-floor:1002000'));
+    expect(through('OTE ₹10 LPA')).toEqual(rejected('below-floor:1000000'));
+    expect(through('Salary: ₹8 LPA + equity')).toEqual(rejected('below-floor:800000'));
     expect(through('Total compensation $100k–$150k')).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
     // components alone are still not pay
     expect(through('Bonus: ₹5 LPA')).toEqual(ELIGIBLE_UNDISCLOSED);
@@ -530,10 +530,10 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
       'TC includes ₹25 LPA in ESOPs.',
       'Total rewards: ₹2 LPA learning stipend.',
     ]) expect(through(t), t).toEqual(ELIGIBLE_UNDISCLOSED);
-    expect(through('OTE ₹50 LPA')).toEqual(rejected('below-floor:5000000'));
+    expect(through('OTE ₹10 LPA')).toEqual(rejected('below-floor:1000000'));
     expect(through('TC: $250,000')).toEqual({ verdict: 'eligible', reasons: [], notes: ['pay basis unclear'] });
-    expect(through('Total compensation $40k–$60k')).toEqual(rejected('below-floor:5010000'));
-    expect(through('CTC up to ₹45 LPA including variable')).toEqual(rejected('below-floor:4500000'));
+    expect(through('Total compensation $8k–$12k')).toEqual(rejected('below-floor:1002000'));
+    expect(through('CTC up to ₹9 LPA including variable')).toEqual(rejected('below-floor:900000'));
   });
 
   it('4. employment: a bare contract word from filters.employmentDeny in the title rejects (fix round 2)', () => {
@@ -747,8 +747,8 @@ describe('office cities: onsite or hybrid in one of the pack\'s office cities pa
   });
 
   it('the comp floor still applies after it', () => {
-    const v = decide(onsite('Pune, India', { comp: base(1_000_000, 2_000_000) }), pune);
-    expect(v).toEqual(rejected('below-floor:2000000'));
+    const v = decide(onsite('Pune, India', { comp: base(400_000, 1_000_000) }), pune);
+    expect(v).toEqual(rejected('below-floor:1000000'));
     expect(decide(onsite('Pune, India', { comp: base(7_000_000, 9_000_000) }), pune)).toEqual({ verdict: 'eligible', reasons: [], notes: [officeNote('Pune')] });
   });
 
