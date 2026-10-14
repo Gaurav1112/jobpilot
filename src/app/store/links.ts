@@ -51,9 +51,11 @@ interface Comp {
  *    hidden: no row of that key is merged, and an `ats-id-collision` note names them.
  * 1c. **Retired board ref (fix round 5).** A tenant-scoped posting's identity is `<board ref>|<platform id>`
  *    (`postingSourceId`), so a registry re-verify that changes the ref (a host move, a tenant rename) gives the same job
- *    a new row. Rows of one company and source with one platform id under different refs are linked when at most one of
- *    those refs is a current registry board of the company (`currentBoards`); two current boards are two tenants: never
- *    linked, an `ats-id-ambiguous` note. With no registry view nothing is linked. Only rows seen again are re-linked.
+ *    a new row. Rows of one company and source with one platform id AND one v1 dedupe key (title and place, fix round 6)
+ *    under different refs are linked when at most one of those refs is a current registry board of the company
+ *    (`currentBoards`); two current boards are two tenants: never linked, an `ats-id-ambiguous` note. With no registry
+ *    view nothing is linked. Only rows seen again are re-linked. Accepted: a rename whose title or place was also
+ *    edited is two rows (a visible duplicate, never a hidden job).
  * 2. **v1 dedupe key, unchanged.** In each dedupe group the preferred row (`preferred`) takes every row from another
  *    source. Such a link is refused when it would put two different ids of one company in one job within their
  *    `idScope` (any board of a global-id platform, Greenhouse, Lever, Ashby; the same board or tenant otherwise): the ids
@@ -186,7 +188,9 @@ export function linkJobs(
     const tenants = new Map<string, LinkRow[]>();
     for (const r of sorted) {
       if (!r.tenant || r.tenant.companyNorm === '') continue;
-      const k = `${r.tenant.companyNorm}\u0000${r.source}\u0000${r.tenant.id}`;
+      // fix round 6: and the same v1 dedupe key (title and place). Ids are small, repeat across tenants and over time,
+      // and old rows stay in the store: a rename of one job keeps its title and place; another job with the id does not
+      const k = `${r.tenant.companyNorm}\u0000${r.source}\u0000${r.tenant.id}\u0000${r.dedupeKey}`;
       tenants.set(k, [...(tenants.get(k) ?? []), r]);
     }
     for (const k of [...tenants.keys()].sort()) {

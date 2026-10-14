@@ -477,7 +477,7 @@ describe('projector: the ATS job id (career-sites Task 10)', () => {
 
 describe('projector: one job across a retired board ref (career-sites Task 10 fix round 5)', () => {
   const ps = (n: number, host: string): Posting =>
-    posting(n, { source: 'personio', ats: 'personio', sourceId: `${host}|1001`, slug: host, company: 'Example Identity Co', title: n === 1 ? 'Backend Engineer' : 'Backend Engineer II', url: `https://${host}/job/1001` });
+    posting(n, { source: 'personio', ats: 'personio', sourceId: `${host}|1001`, slug: host, company: 'Example Identity Co', title: 'Backend Engineer', url: `https://${host}/job/1001` });
   const company = (app: AppStore, host: string, status: string): void => {
     app.kernel.db
       .prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, board_url, status, source, updated_at) VALUES (?, 'Example Identity Co', 'https://identity.example', 'personio', ?, ?, ?, 'picks', ?)`)

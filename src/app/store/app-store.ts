@@ -578,8 +578,14 @@ export class AppStore {
       const others = oldGroups.get(r.duplicate_of ?? r.job_key) ?? [];
       const mine = slots.get(r.job_key);
       const another = mine !== undefined && others.some((m) => slots.get(m.job_key)?.scope === mine.scope && slots.get(m.job_key)?.id !== mine.id);
+      // fix round 6: leaving a retired-ref link, the row carries the announcement only with its partner's title and place
+      // (its dedupe key); else it is another job. A partner is another row of its source: rows of one source share a
+      // group only through such a link (or a Workday ATS key), never on one board (v1 and the collision rule keep those
+      // apart), so no board or id test is needed
+      const partners = r.t_id === null ? [] : others.filter((m) => m !== r && m.source === r.source);
+      const retitled = partners.length > 0 && !partners.some((m) => m.dedupe_key === r.dedupe_key);
       const was = others.map((m) => m.notified_at).filter((n): n is string => n !== null).sort()[0];
-      if (was !== undefined && !another) stamp.run(was, r.job_key);
+      if (was !== undefined && !another && !retitled) stamp.run(was, r.job_key);
     }
     return notes;
   }

@@ -9,7 +9,7 @@ import { normalize } from '../../src/app/agents/normalizer.js';
 import { linkJobs, type LinkRow } from '../../src/app/store/links.js';
 import { AppStore, type JobUpsert } from '../../src/app/store/app-store.js';
 import { atsJobKey, atsRefFromIdentity, atsRefFromUrls, atsRefOf, normalAtsRef } from '../../src/app/text/ats-id.js';
-import { postingSourceId, splitPostingSourceId, TENANT_SCOPED_SOURCES } from '../../src/app/text/norm.js';
+import { dedupeKey, jobKey, postingSourceId, splitPostingSourceId, TENANT_SCOPED_SOURCES } from '../../src/app/text/norm.js';
 import type { Posting } from '../../src/app/types.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { AT, jobRow, LATER } from '../support/app-fixtures.js';
@@ -683,7 +683,7 @@ describe('one job across a retired board ref (fix round 5)', () => {
   const A = 'e000000000000001';
   const B = 'e000000000000002';
   const ps = (jobKey: string, board: string, over: Partial<JobUpsert> = {}): JobUpsert =>
-    jobRow({ jobKey, source: 'personio', sourceId: `${board}|1001`, slug: board, company: CO, ats: 'personio', dedupeKey: `${jobKey.slice(-1)}${'0'.repeat(15)}`, docsState: 'ready', ...over });
+    jobRow({ jobKey, source: 'personio', sourceId: `${board}|1001`, slug: board, company: CO, ats: 'personio', dedupeKey: '1000000000000000', docsState: 'ready', ...over });
   const fresh = (st: AppStore) => st.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null).map((j) => j.jobKey);
 
   it('Personio acme -> acme-gmbh, the old ref retired from the registry: one visible row, not announced again', () => {
@@ -745,7 +745,7 @@ describe('one job across a retired board ref (fix round 5)', () => {
   });
 
   it('the pure linker scopes a board-ref link to one company', () => {
-    const t = (jobKey: string, board: string, companyNorm: string): LinkRow => ({ jobKey, source: 'personio', firstSeen: AT, dedupeKey: jobKey, ats: null, tenant: { board, id: '1001', companyNorm } });
+    const t = (jobKey: string, board: string, companyNorm: string): LinkRow => ({ jobKey, source: 'personio', firstSeen: AT, dedupeKey: 'd', ats: null, tenant: { board, id: '1001', companyNorm } });
     const none = () => new Set<string>();
     expect(linkJobs([t('a', 'x', 'acme'), t('b', 'y', 'acme')], () => [], none).duplicateOf.get('b')).toBe('a');
     expect(linkJobs([t('a', 'x', 'acme'), t('b', 'y', 'other')], () => [], none).duplicateOf.get('b')).toBeNull();
@@ -761,5 +761,129 @@ describe('one job across a retired board ref (fix round 5)', () => {
     const r = s.upsertJob(ps(B, 'x', { source: 'eightfold', ats: 'eightfold', sourceId: 'careers.b.example/b.example|42' }));
     expect(s.getJob(B)?.duplicateOf).toBeNull();
     expect(r.notes?.[0]).toContain('both current registry boards');
+  });
+});
+
+describe('a retired-ref link needs the same title and place (fix round 6, the reviewer\'s P/F/V repros)', () => {
+  const L2 = '2026-12-01T01:30:00.000Z';
+  const L3 = '2026-12-08T01:30:00.000Z';
+  const L4 = '2026-12-15T01:30:00.000Z';
+  const fresh = (s: AppStore) => s.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null).map((j) => j.sourceId).sort();
+  /** A Personio posting as the normalizer and projector make it: the real identity and the real v1 dedupe key. */
+  const pe = (slug: string, id: string, at: string, title = 'Senior Backend Engineer') => {
+    const sid = postingSourceId('personio', slug, id);
+    return jobRow({ jobKey: jobKey('personio', sid), source: 'personio', sourceId: sid, slug, company: CO, ats: 'personio', title, location: 'Bengaluru, India', dedupeKey: dedupeKey(CO, title, 'Bengaluru, India'), docsState: 'ready', at });
+  };
+  const cur = (...refs: string[]) => refs.map((ref) => ({ platform: 'personio', company: CO, ref }));
+  const visible = (s: AppStore) => s.listJobs().map((j) => j.sourceId).sort();
+
+  it('P1: a ref change of one job (same title and place) is still one row, not announced again', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme'));
+    s.upsertJob(pe('acme', '1001', AT));
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    s.useRegistryBoards(cur('acme-gmbh'));
+    s.upsertJob(pe('acme-gmbh', '1001', LATER));
+    expect(visible(s)).toEqual(['acme|1001']);
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('P2: both refs current, one title, one id: two rows and the note', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme', '1001', AT));
+    const r = s.upsertJob(pe('acme-labs', '1001', AT));
+    expect(visible(s)).toEqual(['acme-labs|1001', 'acme|1001']);
+    expect(r.notes?.[0]).toMatch(/^ats-id-ambiguous personio 1001: boards acme, acme-labs are both current registry boards/);
+  });
+
+  it('P3: a stale row under a retired ref never hides another tenant\'s new job with the same id', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme', 'acmelabs'));
+    s.upsertJob(pe('acmelabs', '123', AT, 'Data Engineer'));
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme-labs', '77', L2, 'QA Engineer'));
+    s.upsertJob(pe('acme', '123', L2, 'Senior Backend Engineer'));
+    expect(visible(s)).toEqual(['acme-labs|77', 'acmelabs|123', 'acme|123']);
+    expect(fresh(s)).toEqual(['acme-labs|77', 'acme|123']);
+  });
+
+  it('F0-F2: while one tenant is not current for a week, jobs with different titles that share an id are never linked', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme', '5', AT));
+    s.upsertJob(pe('acme-labs', '5', AT, 'Data Engineer'));
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    expect(visible(s)).toEqual(['acme-labs|5', 'acme|5']);
+    s.useRegistryBoards(cur('acme'));
+    s.upsertJob(pe('acme', '5', L2));
+    expect(visible(s)).toEqual(['acme-labs|5', 'acme|5']);
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme', '5', L3));
+    s.upsertJob(pe('acme-labs', '5', L3, 'Data Engineer'));
+    expect(visible(s)).toEqual(['acme-labs|5', 'acme|5']);
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('V1-V3: a new job on a tenant that is briefly not current is announced, never stamped from another job', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme', '9', AT));
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    s.upsertJob(pe('acme-labs', '9', L2, 'Data Engineer'));
+    expect(fresh(s)).toEqual(['acme-labs|9']);
+    s.useRegistryBoards(cur('acme'));
+    s.upsertJob(pe('acme', '9', L3));
+    expect(fresh(s)).toEqual(['acme-labs|9']);
+    s.useRegistryBoards(cur('acme', 'acme-labs'));
+    s.upsertJob(pe('acme-labs', '9', L4, 'Data Engineer'));
+    expect(fresh(s)).toEqual(['acme-labs|9']);
+  });
+
+  it('a row leaving a retired-ref link with another title is not stamped with the group\'s announcement', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme-gmbh'));
+    s.upsertJob(pe('acme', '1001', AT));
+    s.upsertJob(pe('acme-gmbh', '1001', AT));
+    expect(visible(s)).toEqual(['acme-gmbh|1001']);
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    // the stale row is re-read with another title (another job now holds the id): it leaves the link, unannounced
+    s.upsertJob(pe('acme', '1001', LATER, 'Data Engineer'));
+    expect(visible(s)).toEqual(['acme-gmbh|1001', 'acme|1001']);
+    expect(fresh(s)).toEqual(['acme|1001']);
+  });
+
+  it('a retired-ref link that splits because both refs are current again keeps the same job announced', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme-gmbh'));
+    s.upsertJob(pe('acme', '1001', AT));
+    s.upsertJob(pe('acme-gmbh', '1001', AT));
+    s.markNotified(s.listJobs().map((j) => j.jobKey), AT);
+    s.useRegistryBoards(cur('acme', 'acme-gmbh'));
+    s.upsertJob(pe('acme-gmbh', '1001', LATER));
+    expect(visible(s)).toEqual(['acme-gmbh|1001', 'acme|1001']);
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('a tenant row leaving a plain v1 group (a feed listing) still carries the announcement (only a retired-ref link is title-checked)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme'));
+    // the feed listing is seen first, so the Personio row is its duplicate (both rank as feeds in v1)
+    s.upsertJob(jobRow({ jobKey: HM, source: 'himalayas', sourceId: 'h1', company: CO, title: 'Senior Backend Engineer', dedupeKey: dedupeKey(CO, 'Senior Backend Engineer', 'Bengaluru, India'), docsState: 'ready', at: AT }));
+    s.upsertJob(pe('acme', '1001', LATER));
+    expect(s.getJob(jobKey('personio', 'acme|1001'))?.duplicateOf).toBe(HM);
+    s.markNotified([HM], AT);
+    s.upsertJob(pe('acme', '1001', L2, 'Staff Backend Engineer'));
+    expect(s.getJob(jobKey('personio', 'acme|1001'))?.duplicateOf).toBeNull();
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('documented trade-off: a rename whose title was also edited slightly is two rows (a duplicate, never a hidden job)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards(cur('acme-gmbh'));
+    s.upsertJob(pe('acme', '1001', AT));
+    s.upsertJob(pe('acme-gmbh', '1001', LATER, 'Senior Backend Engineer II'));
+    expect(visible(s)).toEqual(['acme-gmbh|1001', 'acme|1001']);
   });
 });
