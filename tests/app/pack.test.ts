@@ -562,7 +562,9 @@ describe('freelance pack files', () => {
     expect(pack.freelance.kinds).toEqual(['contract', 'gig', 'bounty']);
     expect(pack.freelance.platforms['upwork']?.enabled).toBe(false);
     expect(pack.freelance.platforms['reddit']?.enabled).toBe(false);
-    expect(pack.freelance.platforms['freelancer']?.queries).toEqual(['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm']);
+    // freelance-boost: the research's backend/AI keywords (react and python dropped), for Freelancer and Himalayas.
+    expect(pack.freelance.platforms['freelancer']?.queries).toEqual(['backend', 'api development', 'java', 'spring boot', 'kafka', 'golang', 'microservices', 'aws', 'llm', 'ai agent', 'rag', 'node.js', 'typescript', 'kubernetes']);
+    expect(pack.freelance.platforms['himalayas']).toEqual({ enabled: true, queries: pack.freelance.platforms['freelancer']?.queries });
     expect(pack.platformRules['upwork']).toEqual({ maxChars: 5000, hookChars: 220, linksAllowed: true, attachmentsAllowed: true, minIntervalMs: 2000, presetBrackets: [] });
     expect(pack.networks).toEqual([]);
     expect(hash).toMatch(/^[0-9a-f]{64}$/);

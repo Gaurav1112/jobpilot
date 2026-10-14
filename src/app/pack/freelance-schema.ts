@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { Platform } from '../freelance/types.js';
 
-const FREELANCER_QUERIES = ['java', 'golang', 'typescript', 'node.js', 'react', 'aws', 'kafka', 'kubernetes', 'python', 'llm'];
 /**
  * The default freelance keywords (freelance-boost, research C1/B2 2026-10-14): backend and AI-agent work, the stack
  * the research found paying at or above the floor; the generic `react` and `python` are left out (they pulled consumer
@@ -15,7 +14,7 @@ export type PlatformConfig = z.infer<ReturnType<typeof PlatformConfig>>;
 
 /** Sources without a query list are on by default; upwork and reddit have no source in this build, so they start off. */
 const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
-  freelancer: { enabled: true, queries: FREELANCER_QUERIES },
+  freelancer: { enabled: true, queries: [...FREELANCE_KEYWORDS] },
   remotive: { enabled: true, queries: [] },
   'hn-freelancer': { enabled: true, queries: [] },
   'hn-hiring': { enabled: true, queries: [] },

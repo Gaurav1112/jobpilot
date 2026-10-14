@@ -89,6 +89,7 @@ export function breakdownText(label: string, display: (key: string) => string): 
   if (label === 'title:seniority') return 'Seniority in the title';
   if (label === 'title:family') return 'Job family in the title';
   if (label === 'years>max') return 'Asks for more years than your limit';
+  if (label === 'stack:off') return 'Every skill tag is off your stack';
   const m = /^(strong|medium|gap):(.+)$/.exec(label);
   if (m) {
     const term = display(m[2] as string);

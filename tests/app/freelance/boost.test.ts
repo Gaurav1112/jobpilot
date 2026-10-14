@@ -3,9 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { decideGig, type GigPack } from '../../../src/app/freelance/gig-eligibility.js';
 import { normalizeGig } from '../../../src/app/freelance/gig-normalizer.js';
 import { rateOf } from '../../../src/app/freelance/rate.js';
-import type { Gig, RawGig } from '../../../src/app/freelance/types.js';
+import type { Gig, RawGig, ScoredGig } from '../../../src/app/freelance/types.js';
+import { scoreGig, STACK_PENALTY } from '../../../src/app/freelance/gig-scorer.js';
+import { rankGigs } from '../../../src/app/freelance/rank.js';
+import { freelancerUrl } from '../../../src/app/freelance/sources/freelancer.js';
+import { packOf } from '../../../src/app/agents/scorer-lexicon.js';
+import { FREELANCE_KEYWORDS, FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
 import { loadPack } from '../../../src/app/pack/load.js';
-import { rateLabel, type GigRate } from '../../../src/app/web/copy.js';
+import { breakdownText, rateLabel, type GigRate } from '../../../src/app/web/copy.js';
 
 /**
  * freelance-boost (2026-10-14): the quick fixes and the one approved rule change, each against a fictional fixture
@@ -204,5 +209,50 @@ describe('approved rule change (2026-10-14): Freelancer hourly at or above the f
   it('nothing else changes: a non-Freelancer contract with a stated rate and no hours stays in review', () => {
     const g = normalizeGig(boards({ descriptionText: 'Pay: $150/hr. Remote contract.' }));
     expect(decide(g)).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
+  });
+});
+
+describe('Freelancer search terms and ranking (research A4, C2)', () => {
+  it('default Freelancer queries are the backend/AI keywords, without the generic react and python', () => {
+    const q = FreelanceFile.parse({}).platforms.freelancer.queries;
+    expect(q).toEqual([...FREELANCE_KEYWORDS]);
+    expect(q).toEqual(expect.arrayContaining(['backend', 'api development', 'java', 'spring boot', 'kafka', 'golang', 'microservices', 'aws', 'llm', 'ai agent', 'rag']));
+    expect(q).not.toContain('react');
+    expect(q).not.toContain('python');
+    // A pack's list still replaces the defaults whole.
+    expect(FreelanceFile.parse({ platforms: { freelancer: { queries: ['elixir'] } } }).platforms.freelancer.queries).toEqual(['elixir']);
+  });
+
+  it('the Freelancer request carries no rate filter: its min_hourly_rate works in each project\'s own currency, so the floor is ours, after FX', () => {
+    expect(freelancerUrl('golang')).not.toMatch(/min_hourly_rate|min_price|max_price|min_avg/);
+  });
+
+  const scoring = packOf(full);
+  const gigOf = (skills: string[], description = 'Build a small app.'): Gig => ({ ...normalizeGig(fl({ min: 50, max: 60, text: description })), skills });
+
+  it('a Freelancer gig whose skill tags are all off-stack loses STACK_PENALTY, shown in the breakdown', () => {
+    const on = scoreGig(gigOf(['Java', 'Spring Boot']), scoring);
+    const off = scoreGig(gigOf(['WordPress', 'Shopify', 'Graphic Design']), scoring);
+    expect(on.breakdown.some((b) => b.label === 'stack:off')).toBe(false);
+    expect(off.breakdown).toContainEqual({ label: 'stack:off', points: -STACK_PENALTY });
+    expect(breakdownText('stack:off', (k) => k)).toBe('Every skill tag is off your stack');
+    const plain = scoreGig(gigOf([]), scoring).fit;
+    expect(off.fit).toBe(Math.max(0, plain - STACK_PENALTY));
+  });
+
+  it('one on-stack tag among off-stack ones is enough; no tags, or another platform, is no penalty', () => {
+    expect(scoreGig(gigOf(['WordPress', 'Golang']), scoring).breakdown.some((b) => b.label === 'stack:off')).toBe(false);
+    expect(scoreGig(gigOf([]), scoring).breakdown.some((b) => b.label === 'stack:off')).toBe(false);
+    expect(scoreGig({ ...gigOf(['WordPress']), platform: 'remotive' }, scoring).breakdown.some((b) => b.label === 'stack:off')).toBe(false);
+  });
+
+  it('lists sort by rate × fit (red flags last, unknown rate after every known one)', () => {
+    const sc = (id: string, maxUsdH: number | null, fit: number, flags: string[] = []): ScoredGig => {
+      const gig = { ...normalizeGig(fl({ min: 50, max: 60, id })), sourceId: id };
+      return { risked: { verdict: { rated: { gig, rate: { minUsdH: null, maxUsdH, method: 'stated', fxDate: null, fxSource: null, budgetUsd: null } }, verdict: 'eligible', reasons: [], notes: [] }, flags: flags.map((f) => ({ id: f, detail: '' })) }, fit, breakdown: {}, list: 'contracts' };
+    };
+    const rows = [sc('a', 100, 46), sc('b', 80, 70), sc('c', null, 90), sc('d', 200, 50, ['off-platform']), sc('e', 60, 75)];
+    // b 5600, a 4600, e 4500, then c (rate unknown), then the red-flagged d
+    expect(rankGigs(rows, 45).contracts.map((r) => r.risked.verdict.rated.gig.sourceId)).toEqual(['b', 'a', 'e', 'c', 'd']);
   });
 });
