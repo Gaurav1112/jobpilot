@@ -702,11 +702,11 @@ describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () =>
     const first = (await get('/runs')).body;
     expect(first).toContain('Audit log intact: <span class="num">3</span> events');
     expect(first).toContain('Full check: just now.');
-    expect(withStore((s) => readCheckpoint(s.kernel.db))).toMatchObject({ seq: 3, count: 3, verifiedAt: NOW });
+    expect(withStore((s) => readCheckpoint(s.kernel.db))).toMatchObject({ seq: 3, count: 3, verifiedAt: NOW, fullSeq: 3 });
     append(2);
     const next = (await get('/runs')).body;
     expect(next).toContain('Audit log intact: <span class="num">5</span> events');
-    expect(next).toContain('Last full check: 9 Oct 2026, 12:00 IST, through event <span class="num">3</span>; the <span class="num">2</span> newer events were checked now.');
+    expect(next).toContain('Last full check: 9 Oct 2026, 12:00 IST, through event <span class="num">3</span>; the <span class="num">2</span> newer events were checked against it.');
     expect(next).not.toContain('Full check: just now');
   });
 

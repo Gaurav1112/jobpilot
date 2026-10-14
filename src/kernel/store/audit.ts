@@ -59,7 +59,8 @@ export function verifyChainThrough(store: Store, expectedHead?: { hash: string; 
 const broken = (brokenAt: number, reason: string): { result: AuditResult; through: undefined } => ({ result: { ok: false, brokenAt, reason }, through: undefined });
 
 export type SinceResult =
-  | { ok: true; events: number; checked: number }
+  /** `head`: the verified chain head (the last event), a checkpoint the next call can start from. */
+  | { ok: true; events: number; checked: number; head: ChainPoint }
   | { ok: false; brokenAt: number; reason: string }
   /** The checkpoint is not a point on the stored chain (its event is gone or differs, or the counts disagree): only a full walk can say more. */
   | { ok: false; mismatch: true; reason: string };
@@ -91,6 +92,6 @@ export function verifyChainSince(store: Store, from: ChainPoint): SinceResult {
       return { ok: false, brokenAt: lastSeq, reason: 'chain head does not match the events (truncated or rewritten tail)' };
     }
     if (head.count !== from.count + checked) return { ok: false, mismatch: true, reason: `the checkpoint's event count does not match the chain head` };
-    return { ok: true, events: head.count, checked };
+    return { ok: true, events: head.count, checked, head: { seq: head.seq, hash: head.hash, count: head.count } };
   })();
 }

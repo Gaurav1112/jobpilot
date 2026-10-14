@@ -25,7 +25,7 @@ describe('fullChainCheck (jobpilot audit)', () => {
     const app = appWith(3);
     expect(fullChainCheck(app.kernel, T0)).toEqual({ ok: true, events: 3 });
     const head = app.kernel.chainHead();
-    expect(readCheckpoint(app.kernel.db)).toEqual({ seq: 3, hash: head?.hash, count: 3, verifiedAt: T0 });
+    expect(readCheckpoint(app.kernel.db)).toEqual({ seq: 3, hash: head?.hash, count: 3, verifiedAt: T0, fullSeq: 3, fullCount: 3 });
   });
 
   it('records nothing when it fails, and keeps the old checkpoint', () => {
@@ -64,9 +64,23 @@ describe('chainStatus (/runs)', () => {
     fullChainCheck(app.kernel, T0);
     app.kernel.appendEvent('r', 't3', 'k', { i: 3 }, 'p');
     app.kernel.appendEvent('r', 't4', 'k', { i: 4 }, 'p');
-    expect(chainStatus(app.kernel, T1)).toEqual({ ok: true, events: 5, check: { kind: 'since', fullAt: T0, through: 3, newer: 2 } });
-    // the dashboard never moves the checkpoint forward on its own walk of the newer events
-    expect(readCheckpoint(app.kernel.db)).toMatchObject({ seq: 3, verifiedAt: T0 });
+    expect(chainStatus(app.kernel, T1)).toEqual({ ok: true, events: 5, check: { kind: 'since', fullAt: T0, through: 3, newer: 2, checkedNow: 2 } });
+    // the walked events extend the verified point; the last FULL check (time, seq, count) is never moved by the dashboard
+    expect(readCheckpoint(app.kernel.db)).toEqual({ seq: 5, hash: app.kernel.chainHead()?.hash, count: 5, verifiedAt: T0, fullSeq: 3, fullCount: 3 });
+    expect(chainStatus(app.kernel, T1)).toEqual({ ok: true, events: 5, check: { kind: 'since', fullAt: T0, through: 3, newer: 2, checkedNow: 0 } });
+    app.kernel.appendEvent('r', 't5', 'k', { i: 5 }, 'p');
+    expect(chainStatus(app.kernel, T1)).toEqual({ ok: true, events: 6, check: { kind: 'since', fullAt: T0, through: 3, newer: 3, checkedNow: 1 } });
+  });
+
+  it('an event the dashboard already checked and that is edited later: /runs does not see it, audit does', () => {
+    const app = appWith(2);
+    fullChainCheck(app.kernel, T0);
+    app.kernel.appendEvent('r', 't2', 'k', { i: 2 }, 'p');
+    app.kernel.appendEvent('r', 't3', 'k', { i: 3 }, 'p');
+    chainStatus(app.kernel, T1);
+    tamper(app, 3);
+    expect(chainStatus(app.kernel, T1)).toMatchObject({ ok: true, check: { kind: 'since', fullAt: T0, through: 2 } });
+    expect(fullChainCheck(app.kernel, T1)).toMatchObject({ ok: false, brokenAt: 3 });
   });
 
   it('detects tampering after the checkpoint', () => {
@@ -82,7 +96,7 @@ describe('chainStatus (/runs)', () => {
     fullChainCheck(app.kernel, T0);
     tamper(app, 2);
     const st = chainStatus(app.kernel, T1);
-    expect(st).toEqual({ ok: true, events: 4, check: { kind: 'since', fullAt: T0, through: 4, newer: 0 } });
+    expect(st).toEqual({ ok: true, events: 4, check: { kind: 'since', fullAt: T0, through: 4, newer: 0, checkedNow: 0 } });
     expect(fullChainCheck(app.kernel, T1)).toMatchObject({ ok: false, brokenAt: 2 });
   });
 
@@ -111,7 +125,9 @@ describe('chainStatus (/runs)', () => {
   });
 
   it('an unreadable checkpoint is treated as missing', () => {
-    for (const bad of ['not json', '{}', JSON.stringify({ seq: 'x', hash: 'h', count: 1, verifiedAt: T0 }), JSON.stringify({ seq: 1, hash: 'nothex', count: 1, verifiedAt: T0 })]) {
+    const ok = { seq: 2, hash: 'a'.repeat(64), count: 2, verifiedAt: T0, fullSeq: 1, fullCount: 1 };
+    const bads = ['not json', '{}', JSON.stringify({ ...ok, seq: 'x' }), JSON.stringify({ ...ok, hash: 'nothex' }), JSON.stringify({ ...ok, fullSeq: 3 }), JSON.stringify({ ...ok, fullCount: 0 }), JSON.stringify({ ...ok, verifiedAt: '' })];
+    for (const bad of bads) {
       const app = appWith(2);
       app.kernel.db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)`).run(CHAIN_CHECKPOINT_KEY, bad);
       expect(readCheckpoint(app.kernel.db)).toBeUndefined();

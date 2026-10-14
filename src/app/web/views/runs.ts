@@ -29,7 +29,7 @@ function chainLine(d: RunsPageData): Html {
   if (c.check === undefined) return intact;
   if (c.check.kind === 'full-now') return html`${intact} Full check: just now.`;
   const stale = d.fullCheckAgeDays !== undefined && d.fullCheckAgeDays > FULL_CHECK_STALE_DAYS && d.fullCheckCommand !== undefined;
-  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span>; the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked now.${
+  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span>; the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.${
     stale ? html` Run <code>${d.fullCheckCommand}</code> for a full check.` : ''
   }`;
 }

@@ -39,10 +39,10 @@ describe('verifyChainSince', () => {
   it('checks only the events after the checkpoint and agrees with the head', () => {
     const s = chain(3);
     const cp = cpOf(s);
-    expect(verifyChainSince(s, cp)).toEqual({ ok: true, events: 3, checked: 0 });
+    expect(verifyChainSince(s, cp)).toEqual({ ok: true, events: 3, checked: 0, head: cp });
     s.appendEvent('r', 't3', 'k', { i: 3 }, 'p');
     s.appendEvent('r', 't4', 'k', { i: 4 }, 'p');
-    expect(verifyChainSince(s, cp)).toEqual({ ok: true, events: 5, checked: 2 });
+    expect(verifyChainSince(s, cp)).toEqual({ ok: true, events: 5, checked: 2, head: { seq: 5, hash: s.chainHead()?.hash, count: 5 } });
   });
 
   it('detects an edited event after the checkpoint', () => {
@@ -71,7 +71,7 @@ describe('verifyChainSince', () => {
     const s = chain(4);
     const cp = cpOf(s);
     s.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 2`).run();
-    expect(verifyChainSince(s, cp)).toEqual({ ok: true, events: 4, checked: 0 });
+    expect(verifyChainSince(s, cp)).toMatchObject({ ok: true, events: 4, checked: 0 });
     expect(verifyChain(s)).toMatchObject({ ok: false, brokenAt: 2 });
   });
 
