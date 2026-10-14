@@ -167,6 +167,11 @@ export interface JobFilter {
   readonly floorInr?: number;
   /** Also list duplicate listings (rows with `duplicateOf` set). Default false. */
   readonly duplicates?: boolean;
+  /**
+   * Only jobs of this company (the Companies tab's links): the job's company equals it after `normalCompanyName`
+   * (the coverage name matcher's normalisation), so "Okta, Inc." and "Okta" are one company. Empty: no job.
+   */
+  readonly company?: string;
 }
 
 export interface RunSummary {
@@ -721,6 +726,7 @@ export class AppStore {
     const bands = new Set(filter.band ?? DEFAULT_BANDS);
     const statuses = filter.status === undefined ? undefined : new Set<string>(filter.status);
     const text = filter.text?.toLowerCase();
+    const company = filter.company === undefined ? undefined : normalCompanyName(filter.company);
     const all = this.db.prepare(`SELECT * FROM jobs ORDER BY job_key`).all() as JobRowDb[];
     const byKey = new Map(all.map((r) => [r.job_key, r]));
     const dupsOf = new Map<string, JobRowDb[]>();
@@ -736,6 +742,7 @@ export class AppStore {
       .filter((j) => statuses === undefined || statuses.has(j.status))
       .filter((j) => filter.minScore === undefined || (j.score !== null && j.score >= filter.minScore))
       .filter((j) => text === undefined || j.company.toLowerCase().includes(text) || j.title.toLowerCase().includes(text))
+      .filter((j) => company === undefined || (company !== '' && normalCompanyName(j.company) === company))
       .sort(
         (a, b) =>
           BAND_RANK[a.band] - BAND_RANK[b.band] ||
@@ -1298,6 +1305,41 @@ export class AppStore {
     return rows.map(companyOf);
   }
 
+  /** One registry row, or undefined. */
+  getCompany(companyKey: string): Company | undefined {
+    const r = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(companyKey) as CompanyRowDb | undefined;
+    return r === undefined ? undefined : companyOf(r);
+  }
+
+  /**
+   * The Companies tab's "Add company" (Task 11): records the user's pick as a `proposed` registry row (source `pick`,
+   * no platform yet) with the reason ADDED_PICK_REASON, for the next coverage run (which seeds every registry pick,
+   * `registryPickItems`) or "resolve now" to verify. Never touches the pack. False, with nothing written, when the
+   * company key is already in the registry.
+   */
+  addCompanyPick(p: { readonly companyKey: string; readonly name: string; readonly website: string }, at: string): boolean {
+    const r = this.db
+      .prepare(
+        `INSERT INTO companies (company_key, name, website, careers_url, platform, platform_slug, board_url, status, reasons, source, jobs_seen, last_verified, failing_since, fail_weeks, user_override, updated_at)
+         VALUES (?, ?, ?, NULL, NULL, NULL, NULL, 'proposed', ?, 'pick', NULL, NULL, NULL, 0, NULL, ?) ON CONFLICT (company_key) DO NOTHING`,
+      )
+      .run(p.companyKey, p.name, p.website, JSON.stringify([ADDED_PICK_REASON]), at);
+    return r.changes === 1;
+  }
+
+  /**
+   * Logs one action the user took on the dashboard (an approve, a reject, an added company, a resolve) as an event in
+   * the kernel's hash-chained log, under the run id USER_ACTIONS_RUN: `kind` names it, `data` says what changed.
+   */
+  logUserAction(kind: string, data: unknown, at: string): void {
+    this.kernel.appendEvent(USER_ACTIONS_RUN, at, kind, data, '');
+  }
+
+  /** The logged user actions, oldest first. */
+  userActions(): { readonly at: string; readonly kind: string; readonly data: unknown }[] {
+    return this.kernel.events(USER_ACTIONS_RUN).map((e) => ({ at: e.at, kind: e.kind, data: JSON.parse(e.data) as unknown }));
+  }
+
   /** Every company, or those with the given status, platform or source; by key. */
   listCompanies(filter: { readonly status?: CompanyStatus; readonly platform?: Platform; readonly source?: string } = {}): Company[] {
     const where: string[] = [];
@@ -1328,6 +1370,11 @@ export type GigList = (typeof GIG_LISTS)[number];
 export type NetworkStatus = (typeof NETWORK_STATUSES)[number];
 export type CompanyStatus = (typeof COMPANY_STATUSES)[number];
 export type CompanyOverride = (typeof COMPANY_OVERRIDES)[number];
+
+/** The reason on a company the user added on the dashboard, until a coverage run (or resolve now) verifies it. */
+export const ADDED_PICK_REASON = 'added by you, resolves on the next coverage run';
+/** The run id under which the dashboard logs the user's actions in the event chain (never a pipeline run). */
+export const USER_ACTIONS_RUN = 'dashboard';
 
 /** A verified company that fails this many weeks running becomes `failing` (spec §3). */
 const FAIL_WEEKS_TO_FAILING = 3;

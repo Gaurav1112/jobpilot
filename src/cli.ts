@@ -6,6 +6,7 @@ import { Command } from 'commander';
 import { checkDrift, exportContracts } from './kernel/contracts-export.js';
 import { systemClock } from './kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from './kernel/policy.js';
+import { nodeFetch } from './kernel/providers.js';
 import { Registry } from './kernel/registry.js';
 import { verifyChain } from './kernel/store/audit.js';
 import { Store } from './kernel/store/store.js';
@@ -561,7 +562,7 @@ program
           return false;
         }
       };
-      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
       server.on('error', (e) => {
         console.error(`error: ${e.message}`);
         process.exit(1);

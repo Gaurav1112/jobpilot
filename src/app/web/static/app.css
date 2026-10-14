@@ -376,3 +376,22 @@ pre.paste, pre.checklist {
 }
 .stack { display: grid; gap: var(--space-3); }
 .warn-note { color: var(--warn); font-weight: 600; }
+
+/* --- companies (career-sites Task 11) ------------------------------------------------------------------------- */
+input[type="url"], input[type="text"] {
+  font: inherit; font-size: var(--fs-md); color: var(--text); background: var(--surface);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;
+}
+.filter-company { font-size: var(--fs-sm); margin: 0; overflow-wrap: anywhere; }
+.job-reasons { font-size: var(--fs-sm); color: var(--critical); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.cos { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.co { border-top: 1px solid var(--border); padding-top: var(--space-2); min-width: 0; overflow-wrap: anywhere; }
+.co:first-child { border-top: 0; padding-top: 0; }
+.co-head { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: center; }
+.co-name { font-size: var(--fs-lg); margin: 0; overflow-wrap: anywhere; }
+.co-key { font-size: var(--fs-xs); }
+.co-found, .co-links, .co-jobs, .co-error, .co-effect { font-size: var(--fs-sm); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
+.co-reasons { font-size: var(--fs-sm); color: var(--text-2); margin-top: var(--space-1); }
+.co-reasons li, .co-deferred li { overflow-wrap: anywhere; }
+.co .btn-row { margin-top: var(--space-2); }
+.co-add { margin-bottom: 0; }

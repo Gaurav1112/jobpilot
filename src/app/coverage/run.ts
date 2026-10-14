@@ -15,7 +15,7 @@ import { AppStore } from '../store/app-store.js';
 import { makeRunGate } from './gate.js';
 import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, type CoverageStagesOutcome, type StageId } from './pipeline.js';
 import { coverageNotification, deferralHosts, deferralLine, projectCoverage, registryCounts, type CoverageProjection, type RegistryCounts } from './project.js';
-import { seedItemsFromJobs } from './seed.js';
+import { registryPickItems, seedItemsFromJobs } from './seed.js';
 import type { CandidateSource, CareersSite } from './types.js';
 
 /** The umbrella run's pipeline label in the `runs` table; each stage runs as `<runId>.<stage>` (see pipeline.ts). */
@@ -245,7 +245,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         sleep: o.sleep ?? realSleep,
         fetch: o.fetch,
         codeHash: o.codeHash ?? codeHash(),
-        seeds: coverageSeeds(week, loaded.companies, seedItemsFromJobs(app)),
+        seeds: coverageSeeds(week, [...loaded.companies, ...registryPickItems(app, loaded.companies)], seedItemsFromJobs(app)),
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
         afterStep,
         pauseBefore,

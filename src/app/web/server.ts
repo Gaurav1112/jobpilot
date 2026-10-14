@@ -24,6 +24,7 @@ import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobStatus } fr
 import { JOB_STATUSES } from '../store/schema.js';
 import { daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
+import { mountCompanies, type ResolveDeps } from './companies.js';
 import { mountFreelance } from './freelance.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
@@ -40,8 +41,9 @@ import { runsBody } from './views/runs.js';
  *
  * Routes: `GET /` jobs, `GET /jobs/:key` one job, `POST /jobs/:key/status`, `POST /jobs/:key/note`,
  * `GET /jobs/:key/files/:name` a current document, `GET /jobs/:key/sent/:day/:name` an applied snapshot file,
- * `GET /facts`, `POST /facts/:id/verify|reject`, `GET /runs`, `GET /static/*`, and the freelance tab under `/freelance`
- * (`freelance.ts`, Task 10). Security rules: `security.ts`.
+ * `GET /facts`, `POST /facts/:id/verify|reject`, `GET /runs`, `GET /static/*`, the freelance tab under `/freelance`
+ * (`freelance.ts`, Task 10) and the Companies tab under `/companies` (`companies.ts`, career-sites Task 11). `GET /`
+ * takes `company=<name>` to list one company's jobs (the Companies tab's links). Security rules: `security.ts`.
  *
  * Forbidden terms: the dashboard is generated output, so every text it shows from the store or the pack is checked
  * against the pack's `naming.forbiddenTerms` and replaced with "[hidden]" when it names one.
@@ -62,6 +64,8 @@ export interface DashboardDeps {
   readonly busyTimeoutMs?: number;
   /** Whether Gmail is connected, for the freelance Sources page (the CLI checks the Keychain). Absent: not connected. */
   readonly gmailConnected?: () => boolean;
+  /** What the Companies tab's "Resolve now" fetches with (the CLI: the real fetcher). Absent: Resolve now is not offered. */
+  readonly resolve?: ResolveDeps;
 }
 
 /** Tests only (reached through `server-testing.ts`): runs just before an applied snapshot is recorded. */
@@ -219,7 +223,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   }
   const portOf = (): number | undefined => (typeof deps.port === 'function' ? deps.port() : deps.port);
 
-  const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 403 | 404 | 500 | 503 = 200) =>
+  const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 400 | 403 | 404 | 409 | 500 | 503 = 200) =>
     c.html(layout({ title, nav, banners, body }).value, status);
 
   const withStore = <T>(fn: (store: AppStore) => T): T => {
@@ -329,6 +333,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const minRaw = c.req.query('min')?.trim() ?? '';
     const min = /^\d{1,3}(\.\d+)?$/.test(minRaw) ? Number(minRaw) : undefined;
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
+    const company = (c.req.query('company') ?? '').trim().slice(0, 100);
     const pageRaw = c.req.query('page') ?? '1';
     const pageAsked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
     const floor = ps.pack?.offers.floor;
@@ -338,6 +343,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       ...(bands.length > 0 ? { band: bands } : {}),
       ...(min !== undefined ? { minScore: min } : {}),
       ...(q !== '' ? { text: q } : {}),
+      ...(company !== '' ? { company } : {}),
       ...(floorInr !== undefined ? { floorInr } : {}),
     };
     // "New since your last visit": the previous visit's start, kept in a cookie (prev.last, epoch ms).
@@ -373,12 +379,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       for (const v of bands) qs.append('band', v);
       if (min !== undefined) qs.set('min', String(min));
       if (q !== '') qs.set('q', q);
+      if (company !== '') qs.set('company', company);
       if (n > 1) qs.set('page', String(n));
       const t = qs.toString();
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, company: r.text(company) }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
       page: pageNo, pages, total, newCount, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
@@ -651,6 +658,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     paths, now, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf, isHx, isBusy,
     ...(hooks.beforeSnapshot !== undefined ? { beforeSnapshot: hooks.beforeSnapshot } : {}),
     ...(deps.gmailConnected !== undefined ? { gmailConnected: deps.gmailConnected } : {}),
+  });
+
+  // --- companies (career-sites Task 11): same middleware, same helpers --------------------------------------------------
+  mountCompanies(app, {
+    home: deps.home, now, clock: deps.clock, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf,
+    ...(deps.resolve !== undefined ? { resolve: deps.resolve } : {}),
   });
 
   app.notFound((c) => notFound(c, 'There is no page at this address.'));

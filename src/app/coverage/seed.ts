@@ -67,7 +67,7 @@ export function registrableDomain(host: string): string | null {
 }
 
 /** `https://host` for a website string (a missing scheme means https), plus its registrable domain; or why not. */
-function resolveWebsite(raw: string): { readonly origin: string; readonly key: string } | { readonly reason: string } {
+export function resolveWebsite(raw: string): { readonly origin: string; readonly key: string } | { readonly reason: string } {
   const t = raw.trim();
   if (t === '') return { reason: 'no website' };
   let u: URL;
@@ -371,7 +371,7 @@ export const parseJobsItems = (items: unknown, runDate: string): Parsed => fromI
  * Registrable domains of ATS vendors and job boards. A job from the `careers` source can sit on one of these, and
  * then its host says nothing about the employer (every Lever company would share `lever.co`), so it is not a website.
  */
-const SHARED_HOSTS: ReadonlySet<string> = new Set([
+export const SHARED_HOSTS: ReadonlySet<string> = new Set([
   'greenhouse.io', 'lever.co', 'ashbyhq.com', 'workable.com', 'myworkdayjobs.com', 'smartrecruiters.com', 'icims.com', 'bamboohr.com',
   'recruitee.com', 'teamtailor.com', 'personio.de', 'personio.com', 'breezy.hr', 'pinpointhq.com', 'rippling.com', 'jobvite.com',
   'linkedin.com', 'indeed.com', 'naukri.com', 'himalayas.app', 'wellfound.com',
@@ -403,6 +403,20 @@ export function seedItemsFromJobs(app: AppStore): { name: string; website: strin
     if (cur === null || site < cur) byName.set(name, site);
   }
   return [...byName].map(([name, website]) => ({ name, website })).sort((a, b) => cmp(a.name, b.name));
+}
+
+/**
+ * Task 11: the registry's own picks (source `pick`: added on the dashboard, or a pick verified earlier) that are not in
+ * `companies.yaml`, as picks seed items, so the weekly run verifies a company the user added on the dashboard and keeps
+ * re-verifying it. A rejected company is left out (it is never verified again); a pick whose key a `companies.yaml`
+ * entry already holds is left out (the file's entry seeds it). SELECT-only; by key.
+ */
+export function registryPickItems(app: AppStore, packPicks: readonly { readonly website?: string | undefined }[]): { name: string; website: string; careersUrl?: string }[] {
+  const inPack = new Set(packPicks.map((p) => resolveWebsite(p.website ?? '')).flatMap((r) => ('key' in r ? [r.key] : [])));
+  return app
+    .listCompanies({ source: 'pick' })
+    .filter((c) => c.status !== 'rejected' && c.userOverride !== 'rejected' && !inPack.has(c.companyKey))
+    .map((c) => ({ name: c.name, website: c.website, ...(c.careersUrl !== null ? { careersUrl: c.careersUrl } : {}) }));
 }
 
 // ---------------------------------------------------------------------------------------------------------------
