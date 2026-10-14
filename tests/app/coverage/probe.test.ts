@@ -178,6 +178,40 @@ describe('new jobs', () => {
   });
 });
 
+describe('boundary and duplicate guards', () => {
+  it('a review row with fit exactly minFit passes', () => {
+    const e = makeHome();
+    e.app.upsertJob(wdRow('8000000000000001', 'B1', { at: D0, verdict: 'review', score: 60 }));
+    e.app.upsertJob(wdRow('8000000000000002', 'B2', { at: D0, verdict: 'review', score: 59.9 }));
+    const by = Object.fromEntries(reportOf(e).newJobs.jobs.map((j) => [j.title, j.passes]));
+    expect(by).toEqual({ 'Engineer B1': true, 'Engineer B2': false });
+  });
+
+  it('a watchlist board matches whatever the case of the stored board or the slug', () => {
+    const e = makeHome();
+    e.app.upsertJob(ghRow('8100000000000001', 'Example-GH', '1', { at: D0, title: 'Mixed Case Board' }));
+    expect(reportOf(e).newJobs.total.found).toBe(0);
+    // the command lower-cases the pack's slug too
+    const f = makeHome();
+    writeFileSync(join(f.home, 'pack', 'watchlist.yaml'), 'watchlist:\n  - {company: Example Greenhouse Co, ats: greenhouse, slug: Example-GH, hiresInIndia: true, allRemote: false}\n');
+    f.app.upsertJob(ghRow('8100000000000002', 'example-gh', '2', { at: D0 }));
+    f.app.close();
+    const out: string[] = [];
+    return coverageProbeCommand({ home: f.home, json: true, clock: fixedClock(NOW), out: (l) => out.push(l) }).then(() => {
+      expect((JSON.parse(out.join('\n')) as CoverageProbeReport).newJobs.total.found).toBe(0);
+    });
+  });
+
+  it('an iCIMS copy of a Workday job does not make it existing: the Workday row is still new', () => {
+    const e = makeHome();
+    const same = 'efefefefefefefef';
+    e.app.upsertJob(wdRow('8200000000000001', 'W1', { at: D2, dedupeKey: same, title: 'Shared Role', atsJob: null }));
+    e.app.upsertJob(jobRow({ jobKey: '8200000000000002', source: 'icims', sourceId: 'acme.icims.com|9', slug: 'acme.icims.com', company: 'Acme', ats: 'icims', dedupeKey: same, title: 'Shared Role', at: D0 }));
+    const r = reportOf(e);
+    expect(r.newJobs.jobs.map((j) => [j.platform, j.title])).toEqual([['workday', 'Shared Role']]);
+  });
+});
+
 describe('per platform', () => {
   it('uses the day ledgers where they exist and the boards the run read otherwise', () => {
     const p = Object.fromEntries(reportOf(h).platforms.map((x) => [x.platform, x.requests]));

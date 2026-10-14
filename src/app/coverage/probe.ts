@@ -351,6 +351,7 @@ export function formatReport(r: CoverageProbeReport): string {
   out.push('', `New jobs only the platform adapters found (no copy on an existing source), passing = eligible or review with fit >= ${r.newJobs.minFit}`);
   if (r.newJobs.platforms.length === 0) out.push('  none');
   else out.push(...table(['platform', 'new', 'passing'], [...r.newJobs.platforms.map((p) => [p.platform, String(p.found), String(p.passing)]), ['total', String(r.newJobs.total.found), String(r.newJobs.total.passing)]], [1, 2]).map((l) => `  ${l}`));
+  out.push('  Note: "new" counts every job the adapters found in the window, including ones you have since skipped or rejected and ones no longer listed.');
   if (r.newJobs.jobs.length > 0) {
     out.push('', '  Jobs');
     out.push(...table(['platform', 'verdict', 'fit', 'company', 'title'], r.newJobs.jobs.map((j) => [j.platform, `${j.verdict ?? '-'}${j.passes ? ' *' : ''}`, j.fit === null ? '-' : String(Math.round(j.fit)), j.company, j.title]), [2]).map((l) => `  ${l}`), '  (* passes the rules)');
@@ -390,6 +391,8 @@ export async function coverageProbeCommand(o: CoverageProbeOptions): Promise<num
     const paths = homePaths(o.home);
     ensureHome(paths.home);
     if (!existsSync(paths.db)) throw new Error(`no database at ${paths.db}: run jobpilot first`);
+    // AppStore.open is the same path the dashboard uses: it is NOT a read-only handle (an older DB is migrated on open).
+    // The probe itself only reads; the lock above keeps a run from writing meanwhile.
     const app = AppStore.open(paths.db);
     try {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(o.clock.now()), undefined, 'daily');

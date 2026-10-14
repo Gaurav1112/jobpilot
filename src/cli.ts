@@ -501,7 +501,7 @@ sources
 const coverage = program.command('coverage').description('Career-site coverage tools');
 coverage
   .command('probe')
-  .description('Read-only, no network: companies by status and platform, the NEW jobs only the platform adapters found (not on any existing source) and how many pass your rules, and today\'s requests and the latest run\'s problems per platform. Takes the run lock; refuses while another jobpilot process holds it')
+  .description('Read-only, no network: companies by status and platform, the NEW jobs only the platform adapters found (not on any existing source) and how many pass your rules (the count includes jobs you skipped or rejected and ones no longer listed), and today\'s requests and the latest run\'s problems per platform. Takes the run lock; refuses while another jobpilot process holds it')
   .option('--json', 'machine-readable output (documented in src/app/coverage/probe.ts, version 1)')
   .option('--days <n>', 'the window for new jobs: the last <n> IST days by first seen (1 to 90, default 7)', (v: string) => {
     try {
