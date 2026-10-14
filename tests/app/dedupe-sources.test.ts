@@ -9,7 +9,7 @@ import { normalize } from '../../src/app/agents/normalizer.js';
 import { linkJobs, type LinkRow } from '../../src/app/store/links.js';
 import { AppStore, type JobUpsert } from '../../src/app/store/app-store.js';
 import { atsJobKey, atsRefFromIdentity, atsRefFromUrls, atsRefOf, normalAtsRef } from '../../src/app/text/ats-id.js';
-import { postingSourceId, TENANT_SCOPED_SOURCES } from '../../src/app/text/norm.js';
+import { postingSourceId, splitPostingSourceId, TENANT_SCOPED_SOURCES } from '../../src/app/text/norm.js';
 import type { Posting } from '../../src/app/types.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { AT, jobRow, LATER } from '../support/app-fixtures.js';
@@ -676,5 +676,90 @@ describe('tenant-qualified identities (fix round 4)', () => {
   it('the watchlist adapters keep their identities (the golden): a Greenhouse posting\'s source id is the job id', () => {
     const p = normalize({ source: 'greenhouse', sourceId: '7001', company: CO, slug: 'example-identity', raw: { id: 7001, title: 'Engineer', absolute_url: 'https://boards.greenhouse.io/example-identity/jobs/7001', location: { name: 'India' }, content: '' } });
     expect(p.sourceId).toBe('7001');
+  });
+});
+
+describe('one job across a retired board ref (fix round 5)', () => {
+  const A = 'e000000000000001';
+  const B = 'e000000000000002';
+  const ps = (jobKey: string, board: string, over: Partial<JobUpsert> = {}): JobUpsert =>
+    jobRow({ jobKey, source: 'personio', sourceId: `${board}|1001`, slug: board, company: CO, ats: 'personio', dedupeKey: `${jobKey.slice(-1)}${'0'.repeat(15)}`, docsState: 'ready', ...over });
+  const fresh = (st: AppStore) => st.listJobs().filter((j) => j.docsState === 'ready' && j.notifiedAt === null).map((j) => j.jobKey);
+
+  it('Personio acme -> acme-gmbh, the old ref retired from the registry: one visible row, not announced again', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards([{ platform: 'personio', company: CO, ref: 'acme-gmbh.jobs.personio.de' }]);
+    s.upsertJob(ps(A, 'acme.jobs.personio.de', { at: AT }));
+    s.markNotified([A], AT);
+    s.upsertJob(ps(B, 'acme-gmbh.jobs.personio.de', { at: LATER }));
+    expect(s.getJob(B)?.duplicateOf).toBe(A);
+    expect(s.listJobs().map((j) => j.jobKey)).toEqual([A]);
+    expect(fresh(s)).toEqual([]);
+  });
+
+  it('both refs current boards of the company: two rows, and a named note', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards([
+      { platform: 'personio', company: CO, ref: 'acme.jobs.personio.de' },
+      { platform: 'personio', company: 'example identity co.', ref: 'acme-gmbh.jobs.personio.de' },
+    ]);
+    s.upsertJob(ps(A, 'acme.jobs.personio.de'));
+    const r = s.upsertJob(ps(B, 'acme-gmbh.jobs.personio.de'));
+    expect([A, B].map((k) => s.getJob(k)?.duplicateOf)).toEqual([null, null]);
+    expect(r.notes).toEqual([`ats-id-ambiguous personio 1001: boards acme-gmbh.jobs.personio.de, acme.jobs.personio.de are both current registry boards (${A}, ${B}); not merged`]);
+  });
+
+  it('a Workday tenant rename without a req id (the externalPath) is the same rule', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards([{ platform: 'workday', company: CO, ref: 'acme2.wd5.myworkdayjobs.com/acme2/External' }]);
+    const path = '/job/India-Bengaluru/Senior-Engineer';
+    s.upsertJob(ps(A, 'x', { source: 'workday', ats: 'workday', sourceId: `acme.wd5.myworkdayjobs.com/acme/External|${path}`, slug: 'acme.wd5.myworkdayjobs.com/acme/External' }));
+    s.upsertJob(ps(B, 'x', { source: 'workday', ats: 'workday', sourceId: `acme2.wd5.myworkdayjobs.com/acme2/External|${path}`, slug: 'acme2.wd5.myworkdayjobs.com/acme2/External', at: LATER }));
+    expect(s.getJob(B)?.duplicateOf).toBe(A);
+  });
+
+  it('another company with the same ref change is never linked; with no registry view nothing is linked', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards([{ platform: 'personio', company: CO, ref: 'acme-gmbh.jobs.personio.de' }]);
+    s.upsertJob(ps(A, 'acme.jobs.personio.de'));
+    s.upsertJob(ps(B, 'acme-gmbh.jobs.personio.de', { company: 'Another Example Co' }));
+    expect(s.getJob(B)?.duplicateOf).toBeNull();
+    // no registry view given (a caller outside the daily run): uncertain, never merged
+    const t = AppStore.on(Store.open(':memory:'));
+    t.upsertJob(ps(A, 'acme.jobs.personio.de'));
+    t.upsertJob(ps(B, 'acme-gmbh.jobs.personio.de', { at: LATER }));
+    expect(t.getJob(B)?.duplicateOf).toBeNull();
+    // one id at one company on two boards but different platform ids: never linked
+    const u = AppStore.on(Store.open(':memory:'));
+    u.useRegistryBoards([]);
+    u.upsertJob(ps(A, 'acme.jobs.personio.de'));
+    u.upsertJob(ps(B, 'acme-gmbh.jobs.personio.de', { sourceId: 'acme-gmbh.jobs.personio.de|1002' }));
+    expect(u.getJob(B)?.duplicateOf).toBeNull();
+  });
+
+  it('splits only a well-formed tenant-scoped source id', () => {
+    expect(splitPostingSourceId('personio', 'acme.jobs.personio.de|1001')).toEqual({ board: 'acme.jobs.personio.de', id: '1001' });
+    expect(splitPostingSourceId('workday', 'h/t/s|/job/x|y')).toEqual({ board: 'h/t/s', id: '/job/x|y' });
+    for (const bad of ['1001', '|1001', 'acme.jobs.personio.de|']) expect(splitPostingSourceId('personio', bad), bad).toBeNull();
+    expect(splitPostingSourceId('greenhouse', 'a|1')).toBeNull();
+  });
+
+  it('the pure linker scopes a board-ref link to one company', () => {
+    const t = (jobKey: string, board: string, companyNorm: string): LinkRow => ({ jobKey, source: 'personio', firstSeen: AT, dedupeKey: jobKey, ats: null, tenant: { board, id: '1001', companyNorm } });
+    const none = () => new Set<string>();
+    expect(linkJobs([t('a', 'x', 'acme'), t('b', 'y', 'acme')], () => [], none).duplicateOf.get('b')).toBe('a');
+    expect(linkJobs([t('a', 'x', 'acme'), t('b', 'y', 'other')], () => [], none).duplicateOf.get('b')).toBeNull();
+  });
+
+  it('a retired ref of an Eightfold board with its API variant counts as the current ref (the prefix is not part of it)', () => {
+    const s = AppStore.on(Store.open(':memory:'));
+    s.useRegistryBoards([
+      { platform: 'eightfold', company: CO, ref: 'pcsx:careers.a.example/a.example' },
+      { platform: 'eightfold', company: CO, ref: 'careers.b.example/b.example' },
+    ]);
+    s.upsertJob(ps(A, 'x', { source: 'eightfold', ats: 'eightfold', sourceId: 'careers.a.example/a.example|42' }));
+    const r = s.upsertJob(ps(B, 'x', { source: 'eightfold', ats: 'eightfold', sourceId: 'careers.b.example/b.example|42' }));
+    expect(s.getJob(B)?.duplicateOf).toBeNull();
+    expect(r.notes?.[0]).toContain('both current registry boards');
   });
 });

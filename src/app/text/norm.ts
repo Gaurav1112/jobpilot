@@ -351,7 +351,17 @@ export const TENANT_SCOPED_SOURCES: ReadonlySet<string> = new Set([
  */
 export function postingSourceId(source: string, slug: string, sourceId: string): string {
   if (!TENANT_SCOPED_SOURCES.has(source)) return sourceId;
-  return `${slug.replace(/^(?:v2|pcsx):/u, '')}|${sourceId}`;
+  return `${boardRefOf(slug)}|${sourceId}`;
+}
+
+/** A registry board ref as it appears in a posting source id: without an Eightfold API-variant prefix. */
+export const boardRefOf = (ref: string): string => ref.replace(/^(?:v2|pcsx):/u, '');
+
+/** The board and platform id of a tenant-scoped posting source id (`postingSourceId`), or null for any other source. */
+export function splitPostingSourceId(source: string, sourceId: string): { board: string; id: string } | null {
+  if (!TENANT_SCOPED_SOURCES.has(source)) return null;
+  const cut = sourceId.indexOf('|');
+  return cut <= 0 || cut === sourceId.length - 1 ? null : { board: sourceId.slice(0, cut), id: sourceId.slice(cut + 1) };
 }
 
 /**

@@ -4,6 +4,7 @@ import type { Doc, DocsState, JobUpsert } from './store/app-store.js';
 import type { AppStore } from './store/app-store.js';
 import { citeable } from './pack/rules.js';
 import type { Fact } from './pack/schema.js';
+import { registryBoards } from './pipeline.js';
 import { atsRefOf } from './text/ats-id.js';
 import { JOB_TRACKER_KIND, jobKeyOf } from './tracker.js';
 import type { CoverPlan, EligibilityVerdict, Evidence, Posting, QaReport, Rendered, ResumePlan, Scored } from './types.js';
@@ -208,6 +209,8 @@ export function projectRun(kernel: Store, app: AppStore, runId: string, opts: Pr
   let inserted = 0;
   let stale = 0;
   const dedupeNotes = new Set<string>();
+  // fix round 5: the registry's current boards tell one job under a retired board ref (linked) from two live tenants
+  app.useRegistryBoards(registryBoards(app.verifiedCompanies()));
   app.tx(() => {
     for (const key of [...groups.keys()].sort()) {
       const g = groups.get(key) as JobGroup;

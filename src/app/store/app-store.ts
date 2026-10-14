@@ -7,6 +7,7 @@ import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import type { CompanyVerdict, Platform } from '../coverage/types.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
+import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
@@ -263,8 +264,12 @@ interface LinkRowDb {
   slug: string | null;
   company_norm: string | null;
   notified_at: string | null;
+  t_board: string | null;
+  t_id: string | null;
+  t_company: string | null;
 }
-const LINK_COLUMNS = `j.job_key, j.source, j.first_seen, j.dedupe_key, j.duplicate_of, a.platform, a.board, a.ats_id, a.slug, a.company_norm, j.notified_at`;
+const LINK_COLUMNS = `j.job_key, j.source, j.first_seen, j.dedupe_key, j.duplicate_of, a.platform, a.board, a.ats_id, a.slug, a.company_norm, j.notified_at, b.board AS t_board, b.platform_id AS t_id, b.company_norm AS t_company`;
+const LINK_FROM = `jobs j LEFT JOIN job_ats a ON a.job_key = j.job_key LEFT JOIN job_board_ids b ON b.job_key = j.job_key`;
 
 /**
  * The app catalogue, beside the kernel's tables in the same DB file.
@@ -419,7 +424,7 @@ export class AppStore {
       } else {
         this.insert(r, undefined);
       }
-      const companies = this.putAts(r);
+      const companies = [...this.putAts(r), ...this.putBoardId(r)];
       const notes = this.relink([r.dedupeKey, ...(cur && cur.dedupe_key !== r.dedupeKey ? [cur.dedupe_key] : [])], companies);
       return { jobKey: r.jobKey, inserted: !cur, stale: false, ...(notes.length > 0 ? { notes } : {}) };
     });
@@ -441,6 +446,37 @@ export class AppStore {
       .run(r.jobKey, a.platform, a.board, a.id, r.slug ?? '', companyNorm);
     return old?.company_norm === companyNorm ? out : [...out, companyNorm];
   }
+
+  /**
+   * Fix round 5: records (or clears) a tenant-scoped posting's board ref and platform id in `job_board_ids`; returns the
+   * companies whose rows must be re-linked (the new one and, when it changed, the old one).
+   */
+  private putBoardId(r: JobUpsert): string[] {
+    const old = this.db.prepare(`SELECT company_norm FROM job_board_ids WHERE job_key = ?`).get(r.jobKey) as { company_norm: string } | undefined;
+    this.db.prepare(`DELETE FROM job_board_ids WHERE job_key = ?`).run(r.jobKey);
+    const companyNorm = companyNormOf(r.company);
+    const t = splitPostingSourceId(r.source, r.sourceId);
+    const out = old === undefined ? [] : [old.company_norm];
+    if (t === null || companyNorm === '') return out;
+    this.db.prepare(`INSERT INTO job_board_ids (job_key, source, board, platform_id, company_norm) VALUES (?, ?, ?, ?, ?)`).run(r.jobKey, r.source, t.board, t.id, companyNorm);
+    return old?.company_norm === companyNorm ? out : [...out, companyNorm];
+  }
+
+  /**
+   * Fix round 5: the registry's CURRENT boards (`registryBoards(verifiedCompanies())`: verified, approved or failing,
+   * never rejected), which tell one job under a retired board ref (linked) from two live tenants of one company (never
+   * linked). The daily run sets it before projecting; without it no board-ref link is made (uncertain: never merge).
+   */
+  useRegistryBoards(boards: readonly { readonly platform: string; readonly company: string; readonly ref: string }[]): void {
+    const m = new Map<string, Set<string>>();
+    for (const b of boards) {
+      const k = `${companyNormOf(b.company)}\u0000${b.platform}`;
+      m.set(k, (m.get(k) ?? new Set()).add(boardRefOf(b.ref)));
+    }
+    this.currentBoards = m;
+  }
+
+  private currentBoards: Map<string, Set<string>> | null = null;
 
   /**
    * Migration only. A new posting is inserted with the Desk's status, note and applied_at and a `migration` history
@@ -492,21 +528,22 @@ export class AppStore {
     const doneCompany = new Set<string>();
     const dq = [...dedupeKeys];
     const cq = [...companies];
-    const byDedupe = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM jobs j LEFT JOIN job_ats a ON a.job_key = j.job_key WHERE j.dedupe_key = ?`);
-    const byCompany = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM job_ats a JOIN jobs j ON j.job_key = a.job_key WHERE a.company_norm = ?`);
+    const byDedupe = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM ${LINK_FROM} WHERE j.dedupe_key = ?`);
+    const byCompany = this.db.prepare(`SELECT ${LINK_COLUMNS} FROM ${LINK_FROM} WHERE a.company_norm = ? OR b.company_norm = ?`);
     const add = (list: LinkRowDb[]): void => {
       for (const r of list) {
         if (rows.has(r.job_key)) continue;
         rows.set(r.job_key, r);
         dq.push(r.dedupe_key);
         if (r.company_norm !== null) cq.push(r.company_norm);
+        if (r.t_company !== null) cq.push(r.t_company);
       }
     };
     // A row's old group is inside this closure: every link was made over the same two relations, and a write that
     // changes a row's dedupe key or company seeds the old ones too (upsertJob, putAts).
     while (dq.length > 0 || cq.length > 0) {
       for (const d of dq.splice(0)) if (!doneDedupe.has(d)) (doneDedupe.add(d), add(byDedupe.all(d) as LinkRowDb[]));
-      for (const c of cq.splice(0)) if (!doneCompany.has(c) && c !== '') (doneCompany.add(c), add(byCompany.all(c) as LinkRowDb[]));
+      for (const c of cq.splice(0)) if (!doneCompany.has(c) && c !== '') (doneCompany.add(c), add(byCompany.all(c, c) as LinkRowDb[]));
     }
     if (rows.size === 0) return [];
     const linkRows: LinkRow[] = [...rows.values()].map((r) => ({
@@ -515,8 +552,14 @@ export class AppStore {
       firstSeen: r.first_seen,
       dedupeKey: r.dedupe_key,
       ats: r.platform === null || r.ats_id === null || r.company_norm === null ? null : { platform: r.platform, board: r.board, id: r.ats_id, slug: r.slug ?? '', companyNorm: r.company_norm },
+      tenant: r.t_board === null || r.t_id === null || r.t_company === null ? null : { board: r.t_board, id: r.t_id, companyNorm: r.t_company },
     }));
-    const { duplicateOf, notes, slots } = linkJobs(linkRows, (companyNorm, platform) => this.registryBoards(companyNorm, platform));
+    const current = this.currentBoards;
+    const { duplicateOf, notes, slots } = linkJobs(
+      linkRows,
+      (companyNorm, platform) => this.registryBoards(companyNorm, platform),
+      current === null ? null : (companyNorm, source) => current.get(`${companyNorm}\u0000${source}`) ?? new Set(),
+    );
     const set = this.db.prepare(`UPDATE jobs SET duplicate_of = ? WHERE job_key = ?`);
     // Fix rounds 1-2 (I2b): announced never regresses for the same job. A row whose group changes carries its old
     // group's earliest announcement, unless its ATS id proves it another job (another id of the company within its

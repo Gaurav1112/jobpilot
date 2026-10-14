@@ -371,4 +371,16 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   );
   CREATE INDEX job_ats_by_company ON job_ats (company_norm);
   `,
+  // Career-sites Task 10 fix round 5: a tenant-scoped posting's board ref and platform id (its source id, split), so one
+  // job seen under a retired board ref and its new one is linked (store/links.ts). Additive; a literal.
+  `
+  CREATE TABLE job_board_ids (
+    job_key TEXT PRIMARY KEY REFERENCES jobs (job_key),
+    source TEXT NOT NULL,
+    board TEXT NOT NULL,
+    platform_id TEXT NOT NULL,
+    company_norm TEXT NOT NULL
+  );
+  CREATE INDEX job_board_ids_by_company ON job_board_ids (company_norm);
+  `,
 ];

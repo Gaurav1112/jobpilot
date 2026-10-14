@@ -474,3 +474,26 @@ describe('projector: the ATS job id (career-sites Task 10)', () => {
     expect(app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] })).toHaveLength(2);
   });
 });
+
+describe('projector: one job across a retired board ref (career-sites Task 10 fix round 5)', () => {
+  const ps = (n: number, host: string): Posting =>
+    posting(n, { source: 'personio', ats: 'personio', sourceId: `${host}|1001`, slug: host, company: 'Example Identity Co', title: n === 1 ? 'Backend Engineer' : 'Backend Engineer II', url: `https://${host}/job/1001` });
+  const company = (app: AppStore, host: string, status: string): void => {
+    app.kernel.db
+      .prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, board_url, status, source, updated_at) VALUES (?, 'Example Identity Co', 'https://identity.example', 'personio', ?, ?, ?, 'picks', ?)`)
+      .run(`k-${host}`, host, `https://${host}/xml`, status, AT);
+  };
+  for (const [what, oldStatus, linked] of [['the old ref retired', 'rejected', true], ['both refs current', 'verified', false]] as const) {
+    it(`reads the registry's current boards itself (${what})`, () => {
+      const b = new RunBuilder();
+      const app = AppStore.on(b.store);
+      company(app, 'acme-gmbh.jobs.personio.de', 'verified');
+      company(app, 'acme.jobs.personio.de', oldStatus);
+      b.chain(ps(1, 'acme.jobs.personio.de'), 'eligible');
+      b.chain(ps(2, 'acme-gmbh.jobs.personio.de'), 'eligible');
+      const r = projectRun(b.store, app, RUN, OPTS);
+      expect(app.listJobs({ band: ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'] })).toHaveLength(linked ? 1 : 2);
+      expect(r.dedupeNotes.some((n) => n.startsWith('ats-id-ambiguous personio 1001'))).toBe(!linked);
+    });
+  }
+});

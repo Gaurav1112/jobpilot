@@ -17,6 +17,8 @@ export interface LinkRow {
     readonly slug: string;
     readonly companyNorm: string;
   } | null;
+  /** Fix round 5: a tenant-scoped posting's board ref and platform id (its source id split), with its company. */
+  readonly tenant?: { readonly board: string; readonly id: string; readonly companyNorm: string } | null;
 }
 
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -47,6 +49,11 @@ interface Comp {
  *    on the platform (the boards its other rows state plus `knownBoards`, the verified registry); none or several:
  *    unmerged. So a second board appearing later can never split a pair the stored row joined. Two rows from the SAME source and board with one key are a source bug, never
  *    hidden: no row of that key is merged, and an `ats-id-collision` note names them.
+ * 1c. **Retired board ref (fix round 5).** A tenant-scoped posting's identity is `<board ref>|<platform id>`
+ *    (`postingSourceId`), so a registry re-verify that changes the ref (a host move, a tenant rename) gives the same job
+ *    a new row. Rows of one company and source with one platform id under different refs are linked when at most one of
+ *    those refs is a current registry board of the company (`currentBoards`); two current boards are two tenants: never
+ *    linked, an `ats-id-ambiguous` note. With no registry view nothing is linked. Only rows seen again are re-linked.
  * 2. **v1 dedupe key, unchanged.** In each dedupe group the preferred row (`preferred`) takes every row from another
  *    source. Such a link is refused when it would put two different ids of one company in one job within their
  *    `idScope` (any board of a global-id platform, Greenhouse, Lever, Ashby; the same board or tenant otherwise): the ids
@@ -54,7 +61,11 @@ interface Comp {
  * 3. **Primary.** The earliest first_seen (then job key) among the job's rows, an ATS source, or a row an ATS id joined,
  *    ahead of a feed: with no ATS id this is the v1 preferred row exactly.
  */
-export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[]): { duplicateOf: Map<string, string | null>; notes: string[]; slots: Map<string, { scope: string; id: string }> } {
+export function linkJobs(
+  rows: readonly LinkRow[],
+  knownBoards: (companyNorm: string, platform: AtsIdPlatform) => readonly string[],
+  currentBoards: ((companyNorm: string, source: string) => ReadonlySet<string>) | null = null,
+): { duplicateOf: Map<string, string | null>; notes: string[]; slots: Map<string, { scope: string; id: string }> } {
   const sorted = [...rows].sort((a, b) => cmp(a.jobKey, b.jobKey));
   const byKey = new Map(sorted.map((r) => [r.jobKey, r]));
   const notes: string[] = [];
@@ -165,6 +176,33 @@ export function linkJobs(rows: readonly LinkRow[], knownBoards: (companyNorm: st
     }
     for (const k of keys.slice(1)) join(keys[0] as string, k, 'ats');
     for (const k of keys) joined.add(k);
+  }
+
+  // 1c. fix round 5: one tenant-scoped job under two board refs (a re-verify, a host move, a tenant rename). Rows of one
+  //     company and source with one platform id on different boards are one job only when at most one of those boards
+  //     is a current registry board of the company (the others are retired refs); two current boards are two tenants
+  //     whose ids may collide: never linked, and named. With no registry view (null) nothing is linked.
+  if (currentBoards !== null) {
+    const tenants = new Map<string, LinkRow[]>();
+    for (const r of sorted) {
+      if (!r.tenant || r.tenant.companyNorm === '') continue;
+      const k = `${r.tenant.companyNorm}\u0000${r.source}\u0000${r.tenant.id}`;
+      tenants.set(k, [...(tenants.get(k) ?? []), r]);
+    }
+    for (const k of [...tenants.keys()].sort()) {
+      const g = tenants.get(k) as LinkRow[];
+      const boards = [...new Set(g.map((r) => (r.tenant as { board: string }).board))].sort();
+      if (boards.length < 2) continue;
+      const first = g[0] as LinkRow;
+      const live = currentBoards((first.tenant as { companyNorm: string }).companyNorm, first.source);
+      const current = boards.filter((b) => live.has(b));
+      if (current.length > 1) {
+        notes.push(`ats-id-ambiguous ${first.source} ${(first.tenant as { id: string }).id}: boards ${current.join(', ')} are both current registry boards (${g.map((r) => r.jobKey).join(', ')}); not merged`);
+        continue;
+      }
+      // one source's rows: the primary is ranked as v1 ranks that source (no ATS-id promotion over a feed)
+      for (const r of g.slice(1)) join(first.jobKey, r.jobKey, 'ats');
+    }
   }
 
   // 2. the v1 rule, per dedupe group, in a fixed order
