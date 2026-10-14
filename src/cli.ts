@@ -61,7 +61,7 @@ const program = new Command().name('jobpilot').description('Deterministic multi-
 
 program
   .command('demo')
-  .description('Run the two-agent demo pipeline end to end')
+  .description('Run the built-in two-agent demo pipeline end to end on a scratch SQLite file; makes no requests and does not touch your jobpilot home')
   .option('--db <path>', 'SQLite file', 'jobpilot.db')
   .option('--count <n>', 'items to generate', '5')
   .option('--run <id>', 'run id', `run-${new Date().toISOString().slice(0, 10)}`)
@@ -132,10 +132,10 @@ program
     }
   });
 
-const audit = program.command('audit').description('Audit log tools');
+const audit = program.command('audit').description('Audit log tools: check that a database\'s event history has not been altered');
 audit
   .command('verify')
-  .description('Walk the hash-chained event log')
+  .description('Walk the hash-chained event log of a SQLite file and fail if any link is broken (pass --db <home>/jobpilot.db for your own)')
   .option('--db <path>', 'SQLite file', 'jobpilot.db')
   .option('--expect-head <hash:count>', 'fail unless the chain head is exactly this (detects a truncated or rewritten tail)')
   .action((o: { db: string; expectHead?: string }) => {
@@ -567,7 +567,7 @@ docs
 
 program
   .command('serve')
-  .description('Serve the dashboard on http://127.0.0.1:<port> (this machine only)')
+  .description('Serve the dashboard on http://127.0.0.1:<port> (this machine only; the schedule keeps one running). Tabs: Jobs, Freelance, Companies (approve, reject, undo, add, resolve now), Your facts, Runs')
   .option('--port <n>', 'port to listen on', String(DEFAULT_PORT))
   .action((o: { port: string }) =>
     guarded(() => {
@@ -646,7 +646,7 @@ schedule
   );
 schedule
   .command('run-now')
-  .description('Start the daily job now through launchd (a manual test of the scheduled command); --freelance starts the freelance job')
+  .description('Start the daily job now through launchd (a manual test of the scheduled command, which runs only if the run is owed); --freelance starts the freelance job, --coverage the weekly coverage job. Follow the log with tail -f on the path it prints')
   .option('--freelance', 'start com.jobpilot.freelance (run-freelance --if-due) instead')
   .option('--coverage', 'start com.jobpilot.coverage (run-coverage --if-due) instead')
   .action((o: { freelance?: boolean; coverage?: boolean }) =>

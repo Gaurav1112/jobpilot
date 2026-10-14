@@ -165,6 +165,37 @@ details redacted. In practice:
 4. Add a test where the sample parses to its expected jobs and an altered fingerprint is set
    aside, then run `node --run verify`.
 
+## Running jobpilot on your own
+
+Everything is a command, and no assistant, account or API key is needed: there is no AI in it,
+and the same inputs give the same outputs. (Claude Code was only the tool the project was built
+with. The kernel has an unused `LlmProvider` slot where an optional, local-model-friendly step
+could plug in later.) The full guide, with the real output of each command, is in
+[docs/operations.md](docs/operations.md). The short version:
+
+```sh
+node --run jobpilot -- --help                      # every command; each takes --help too
+node --run jobpilot -- pack check                  # validate your pack
+node --run jobpilot -- run                         # the daily run (add --if-due to run only when owed)
+node --run jobpilot -- run-freelance --if-due      # the freelance run
+node --run jobpilot -- run-coverage --if-due       # the weekly career-site coverage run
+node --run jobpilot -- coverage probe              # what the coverage adds: companies, new jobs, requests, problems
+node --run jobpilot -- sources probe               # live measurement of the freelance sources
+node --run jobpilot -- schedule install            # daily 07:00 IST, freelance 07:30 and 19:30, coverage Sunday 06:00, dashboard
+node --run jobpilot -- schedule status
+node --run jobpilot -- serve                       # the dashboard on http://127.0.0.1:4317
+node --run jobpilot -- networks pack arc           # application pack for one freelance network
+node --run jobpilot -- gmail status
+node --run jobpilot -- audit verify --db ~/.jobpilot/jobpilot.db
+```
+
+- **Coverage** is sliced (at most 90 minutes) and yields to the daily and freelance runs; the next
+  start continues the same run.
+- **Companies tab** on the dashboard: approve, reject, undo, add a company, or resolve one now.
+- **Backups:** `sqlite3 ~/.jobpilot/jobpilot.db ".backup 'backup.db'"`. Migrations are one-way;
+  to roll back, restore the backup taken before upgrading (guide, section 9).
+- **Logs:** `~/.jobpilot/logs/`.
+
 ## Guarantees
 
 - **No language model.** Every step is plain code with fixed rules.
