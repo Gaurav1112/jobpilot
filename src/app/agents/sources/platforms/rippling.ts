@@ -18,7 +18,8 @@ import { feedBoard, feedProblem, httpsUrl, jsonBody, plainHttps, textOf, zodWhy,
  * other places is read as located there, never judged by its first location only). `raw` (normalizer mapper
  * `rippling`): `{ uuid, title, url, department, locations }`, `locations` the distinct `workLocation.label`s, each of
  * which can be a state code or a city: "AR", "Louisville, KY", "Remote (Dallas, Texas, US)"; a country is never invented
- * from them. `sourceId` = the uuid.
+ * from them. When entries sharing a uuid disagree on the name or the URL, the first is kept and the named note
+ * `rippling-uuid-conflict <uuid> (<company>): …` records it. `sourceId` = the uuid.
  */
 
 export const RIPPLING_HOST = 'api.rippling.com';
@@ -53,6 +54,7 @@ export function parseRippling(body: string, slug: string, req: { company: string
   const postings: RawPosting[] = [];
   const malformed: string[] = [];
   const byUuid = new Map<string, { posting: RawPosting; locations: string[] }>();
+  const notes: string[] = [];
   json.forEach((e: unknown, i) => {
     const r = Entry.safeParse(e);
     if (!r.success) return void malformed.push(`entry ${i}: ${zodWhy(r.error)}`);
@@ -60,6 +62,8 @@ export function parseRippling(body: string, slug: string, req: { company: string
     const label = textOf(d.workLocation?.label);
     const had = byUuid.get(d.uuid);
     if (had !== undefined) {
+      const first = had.posting.raw as { title: string; url: string | null };
+      if (first.title !== d.name.trim() || first.url !== httpsUrl(d.url)) notes.push(`rippling-uuid-conflict ${d.uuid} (${req.company}): entry ${i} names '${d.name.trim().slice(0, 60)}', the first entry '${first.title.slice(0, 60)}'; the first is kept`);
       if (label !== null && !had.locations.includes(label)) had.locations.push(label);
       return;
     }
@@ -69,7 +73,7 @@ export function parseRippling(body: string, slug: string, req: { company: string
     byUuid.set(d.uuid, { posting, locations });
     postings.push(posting);
   });
-  return { postings, malformed, listed: json.length, names: [], total: null };
+  return { postings, malformed, listed: json.length, names: [], total: null, notes };
 }
 
 export const rippling = feedBoard<string>({

@@ -13,6 +13,7 @@ import { memoryHostStateStore } from '../../src/app/coverage/gate.js';
 import type { CareersSite, CompanyCandidate, Platform, PlatformGuess } from '../../src/app/coverage/types.js';
 import { dailyFeedHosts } from '../../src/app/daily-hosts.js';
 import { dailyAgents, dailyPipeline, pacingProblems, registryBoards, registryEgressSets, dailySeeds } from '../../src/app/pipeline.js';
+import { PLATFORM_NOTE_PREFIXES } from '../../src/app/agents/sources/platforms/shared.js';
 import { Posting, type DiscoveryRequest, type RawPosting } from '../../src/app/types.js';
 import type { Agent, AgentContext } from '../../src/kernel/agent.js';
 import { createHostPacer, issueContext } from '../../src/kernel/broker.js';
@@ -677,5 +678,161 @@ describe('wiring: teams, egress, pacing, and an empty registry changes nothing',
     expect(documentedHosts().disabledWhy('a.test')).toBeUndefined();
     const s = dailyFeedHosts(false);
     expect(s.robotsHash).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fix round 1 (the Task 9 review): naming, malformed and mapping guards
+// ---------------------------------------------------------------------------
+
+describe('fix round 1: naming, malformed and mapping guards', () => {
+  const row = (n: string): Row => ROWS.find((r) => r.fb.spec.platform === n) as Row;
+  const parsed = (n: string, body: string): RawPosting[] => byName(n).spec.parse(body, row(n).ref, REC()).postings;
+  const mapped = (n: string, body: string) => normalize(parsed(n, body)[0] as RawPosting);
+  const feedPage = (r: Row, body: string) => {
+    const h = harness(r, feedRoutes(r, body));
+    return { p: run(r.fb.make({ hosts: dailyFeedHosts(r.documented) }), req(r), h.ctx), h };
+  };
+
+  it('D1: a feed listing two company names is proposed ("board lists several company names"), never verified under the first', async () => {
+    const rec = row('recruitee');
+    const two = JSON.parse(BUILD['recruitee']!('blr')) as { offers: Record<string, unknown>[] };
+    two.offers.push({ ...(two.offers[0] as object), id: 1002, company_name: 'Other Holdings' });
+    const n = serve(feedRoutes(rec, JSON.stringify(two)));
+    const g = guess(cand('acme.test', 'Acme'), 'recruitee', rec.ref, rec.boardUrl);
+    const v = (await makeBoardVerifier(fresh()).run(g, vctx(n.fetch, [g])))[0] as { status: string; boardName: string | null; reasons: string[] };
+    expect(v.status).toBe('proposed');
+    expect(v.boardName).toBeNull();
+    expect(v.reasons[0]).toBe('board lists several company names (Acme, Other Holdings), please confirm');
+  });
+
+  it('D2: Personio\'s host label is the name key: acme-gmbh.jobs.personio.de compares as "acme-gmbh", not as the whole host', async () => {
+    const pe = row('personio');
+    const body = BUILD['personio']!('blr').replace('<subcompany>Acme GmbH</subcompany>', '');
+    const url = 'https://acme-gmbh.jobs.personio.de/xml';
+    const n = serve({ [url]: { status: 200, body } });
+    // the slug is the whole host here, so a null name key would compare the host and miss
+    const g = guess(cand('other.test', 'Acme GmbH'), 'personio', 'acme-gmbh.jobs.personio.de', url);
+    const v = (await makeBoardVerifier(fresh()).run(g, vctx(n.fetch, [g])))[0] as { status: string; reasons: string[] };
+    expect(v.status).toBe('verified');
+    expect(v.reasons[0]).toContain("personio tenant 'acme-gmbh'");
+    const no = guess(cand('other.test', 'Beta AG'), 'personio', 'acme-gmbh.jobs.personio.de', url);
+    const w = (await makeBoardVerifier(fresh()).run(no, vctx(n.fetch, [no])))[0] as { status: string; reasons: string[] };
+    expect(w.status).toBe('proposed');
+    expect(w.reasons.join('\n')).toContain("personio tenant 'acme-gmbh' is neither");
+    expect(pe.ref).toBe('personio.jobs.personio.de');
+  });
+
+  it('C5: a feed with exactly one entry, malformed, is input_rejected, not 0 jobs with a skip note', async () => {
+    for (const n of ['rippling', 'gem', 'breezy', 'bamboohr']) {
+      const body = n === 'bamboohr' ? JSON.stringify({ result: [{ id: '1' }] }) : JSON.stringify([{ id: 'x' }]);
+      const { p, h } = feedPage(row(n), body);
+      await expect(p, n).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/all 1 entries are malformed/u) });
+      expect(h.skipped, n).toEqual([]);
+    }
+  });
+
+  it('D6: a BambooHR list shorter than the platform\'s total is incomplete ("5+ open jobs"); a full one is not', async () => {
+    const bh = row('bamboohr');
+    const g = guess(cand('rednucleus.com', 'Red Nucleus'), 'bamboohr', 'rednucleus', bh.boardUrl);
+    const short = serve(feedRoutes(bh));
+    const c = platformClient('bamboohr')!;
+    const h = harness(bh, feedRoutes(bh));
+    await expect(c.readBoard('rednucleus', h.ctx.http!, { hosts: dailyFeedHosts(false) })).resolves.toMatchObject({ complete: false });
+    const v = (await makeBoardVerifier(fresh()).run(g, vctx(short.fetch, [g])))[0] as { status: string; reasons: string[] };
+    expect(v.status).toBe('verified');
+    expect(v.reasons[0]).toContain('5+ open jobs');
+    const full = JSON.parse(fx(bh.file)) as { meta: { totalCount: number } };
+    full.meta.totalCount = 5;
+    const h2 = harness(bh, feedRoutes(bh, JSON.stringify(full)));
+    await expect(c.readBoard('rednucleus', h2.ctx.http!, { hosts: dailyFeedHosts(false) })).resolves.toMatchObject({ complete: true });
+  });
+
+  it('E3: Breezy: any remote location makes the job remote; none, not', () => {
+    const mk = (flags: boolean[]) => {
+      const j = JSON.parse(BUILD['breezy']!('blr')) as Record<string, unknown>[];
+      const loc = (r: boolean) => ({ country: { name: 'India', id: 'IN' }, state: { id: 'KA', name: 'Karnataka' }, city: 'Bengaluru', name: 'Bengaluru, Karnataka', is_remote: r });
+      (j[0] as Record<string, unknown>)['locations'] = flags.map(loc);
+      return mapped('breezy', JSON.stringify(j)).remote.structured;
+    };
+    expect(mk([false, true])).toBe('remote');
+    expect(mk([true, false])).toBe('remote');
+    expect(mk([false, false])).toBeNull();
+  });
+
+  it('E4: Gem location_type: in_office and onsite are on-site, hybrid, remote; an unknown value states nothing', () => {
+    const mk = (t: string) => {
+      const j = JSON.parse(BUILD['gem']!('blr')) as Record<string, unknown>[];
+      (j[0] as Record<string, unknown>)['location_type'] = t;
+      return mapped('gem', JSON.stringify(j)).remote.structured;
+    };
+    expect([mk('in_office'), mk('onsite'), mk('on-site'), mk('hybrid'), mk('remote'), mk('mystery')]).toEqual(['onsite', 'onsite', 'onsite', 'hybrid', 'remote', null]);
+  });
+
+  it('E5: Recruitee: remote wins over hybrid and on-site; hybrid over on-site', () => {
+    const mk = (f: { remote: boolean; hybrid: boolean; on_site: boolean }) => {
+      const j = JSON.parse(BUILD['recruitee']!('blr')) as { offers: Record<string, unknown>[] };
+      Object.assign(j.offers[0] as object, f);
+      return mapped('recruitee', JSON.stringify(j)).remote.structured;
+    };
+    expect([mk({ remote: true, hybrid: true, on_site: true }), mk({ remote: false, hybrid: true, on_site: true }), mk({ remote: false, hybrid: false, on_site: true }), mk({ remote: false, hybrid: false, on_site: false })]).toEqual(['remote', 'hybrid', 'onsite', null]);
+  });
+
+  it('E6/E7: Workable: hidden locations are dropped; with none visible the job-level city, state and country are read', () => {
+    const mk = (locations: unknown[]) => {
+      const j = JSON.parse(BUILD['workable']!('blr')) as { jobs: Record<string, unknown>[] };
+      Object.assign(j.jobs[0] as object, { city: 'Pune', state: 'Maharashtra', country: 'India', locations });
+      return mapped('workable', JSON.stringify(j)).locationText;
+    };
+    const loc = (city: string, hidden: boolean) => ({ city, region: null, country: 'India', countryCode: 'IN', hidden });
+    expect(mk([loc('Paris', true), loc('Chennai', false)])).toBe('Chennai, India');
+    expect(mk([loc('Paris', true)])).toBe('Pune, Maharashtra, India');
+    expect(mk([])).toBe('Pune, Maharashtra, India');
+  });
+
+  it('E12b: the platform ISO codes give the country when the text names none (Workable, Recruitee, Breezy)', () => {
+    const w = JSON.parse(BUILD['workable']!('blr')) as { jobs: Record<string, unknown>[] };
+    Object.assign(w.jobs[0] as object, { city: 'Zzzville', state: null, country: null, telecommuting: false, locations: [{ city: 'Zzzville', region: null, country: null, countryCode: 'DE', hidden: false }] });
+    const a = mapped('workable', JSON.stringify(w));
+    expect([a.locationText, a.remote.countries]).toEqual(['Zzzville', ['germany']]);
+    const r = JSON.parse(BUILD['recruitee']!('blr')) as { offers: Record<string, unknown>[] };
+    Object.assign(r.offers[0] as object, { location: 'Zzzville', city: 'Zzzville', country: null, country_code: null, remote: false, locations: [{ id: 1, name: 'Zzzville', state: null, country: null, country_code: 'DE' }] });
+    const b = mapped('recruitee', JSON.stringify(r));
+    expect([b.locationText, b.remote.countries]).toEqual(['Zzzville', ['germany']]);
+    const r2 = JSON.parse(BUILD['recruitee']!('blr')) as { offers: Record<string, unknown>[] };
+    Object.assign(r2.offers[0] as object, { location: 'Zzzville', city: 'Zzzville', country: null, country_code: 'DE', remote: false, locations: [] });
+    expect(mapped('recruitee', JSON.stringify(r2)).remote.countries).toEqual(['germany']);
+    const z = JSON.parse(BUILD['breezy']!('blr')) as Record<string, unknown>[];
+    (z[0] as Record<string, unknown>)['location'] = { country: { name: null, id: 'DE' }, state: null, city: 'Zzzville', name: 'Zzzville', is_remote: false };
+    const c = mapped('breezy', JSON.stringify(z));
+    expect([c.locationText, c.remote.countries]).toEqual(['Zzzville', ['germany']]);
+  });
+
+  it('Rippling: entries of one uuid that disagree on the name or the URL keep the first and record rippling-uuid-conflict; agreeing ones do not', async () => {
+    const rp = row('rippling');
+    const e = (over: Record<string, unknown>) => ({ uuid: '11111111-2222-3333-4444-555555555555', name: 'Senior Software Engineer', url: 'https://ats.rippling.com/a/jobs/1', workLocation: { label: 'Pune, India' }, ...over });
+    const quiet = feedPage(rp, JSON.stringify([e({}), e({ workLocation: { label: 'Remote' } })]));
+    expect(await quiet.p).toHaveLength(1);
+    expect(quiet.h.skipped).toEqual([]);
+    const byName = feedPage(rp, JSON.stringify([e({}), e({ name: 'Staff Designer' })]));
+    const out = await byName.p;
+    expect((out[0]?.raw as { title: string }).title).toBe('Senior Software Engineer');
+    expect(byName.h.skipped).toEqual([expect.stringMatching(/^rippling-uuid-conflict 11111111-2222-3333-4444-555555555555 \(Acme\): entry 1 names 'Staff Designer', the first entry 'Senior Software Engineer'; the first is kept$/u)]);
+    const byUrl = feedPage(rp, JSON.stringify([e({}), e({ url: 'https://ats.rippling.com/a/jobs/2' })]));
+    await byUrl.p;
+    expect(byUrl.h.skipped).toHaveLength(1);
+    expect(PLATFORM_NOTE_PREFIXES).toContain('rippling-uuid-conflict ');
+  });
+
+  it('a posting URL must be https: an http link is a malformed entry (Rippling, Gem, Teamtailor)', async () => {
+    const rp = JSON.parse(BUILD['rippling']!('blr')) as Record<string, unknown>[];
+    (rp[0] as Record<string, unknown>)['url'] = 'http://ats.rippling.com/a/jobs/1';
+    const a = feedPage(row('rippling'), JSON.stringify(rp));
+    await expect(a.p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/all 1 entries are malformed \(entry 0: url: no url\)/u) });
+    const g = JSON.parse(BUILD['gem']!('blr')) as Record<string, unknown>[];
+    (g[0] as Record<string, unknown>)['absolute_url'] = 'http://jobs.gem.com/acme/5001';
+    await expect(feedPage(row('gem'), JSON.stringify(g)).p).rejects.toMatchObject({ code: 'input_rejected' });
+    const t = BUILD['teamtailor']!('blr').replace('https://career.acme.test/jobs/1-sse', 'http://career.acme.test/jobs/1-sse');
+    await expect(feedPage(row('teamtailor'), t).p).rejects.toMatchObject({ code: 'input_rejected' });
   });
 });

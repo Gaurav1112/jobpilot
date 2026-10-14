@@ -68,6 +68,8 @@ export interface FeedPage {
   readonly names: readonly string[];
   /** The platform's own total, where it states one (BambooHR `meta.totalCount`); null otherwise. */
   readonly total: number | null;
+  /** Named notes the parser records as they are (Rippling `rippling-uuid-conflict <uuid> …`); absent: none. */
+  readonly notes?: string[];
 }
 
 export interface FeedSpec<B> {
@@ -183,6 +185,7 @@ export function feedBoard<B>(spec: FeedSpec<B>): FeedBoard<B> {
     try {
       const page = await fetchFeed(http, hosts, b, req);
       if (page.malformed.length > 0) ctx.skipped(page.malformed.map((m) => `${spec.platform} ${req.company} ${m}`));
+      if (page.notes !== undefined && page.notes.length > 0) ctx.skipped(page.notes);
       if (page.total !== null && page.total > page.listed) ctx.skipped([`short-list ${req.company}: total ${page.total}, listed ${page.listed}`]);
       return finish(page.postings);
     } catch (e) {
@@ -231,7 +234,7 @@ export function httpsUrl(v: unknown): string | null {
   if (t === null) return null;
   try {
     const u = new URL(t);
-    return u.protocol === 'https:' || u.protocol === 'http:' ? u.href : null;
+    return u.protocol === 'https:' ? u.href : null;
   } catch {
     return null;
   }

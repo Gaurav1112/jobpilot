@@ -15,7 +15,7 @@ import { feedBoard, feedProblem, jsonBody, plainHttps, textOf, zodWhy, type Feed
  * problem. An entry needs an `id` and a `jobOpeningName`, else it is skipped with a note. A `totalCount` above the
  * entries listed is the note `short-list`. `raw` (normalizer mapper `bamboohr`): `{ id, title, url, department,
  * employmentStatus, city, state, country, isRemote }` (`atsLocation` first, the legacy `location` for the city and
- * state it lacks; `locationType`, whose codes the list does not explain, is dropped). `sourceId` = `<slug>:<id>`: BambooHR
+ * state it lacks; `locationType` is dropped: its codes are not documented and the recorded board does not settle them (Red Nucleus: "1" on 39 jobs with a country only, "2" on 21 with a city and no country, "0" on one; none says remote in its own text), so no arrangement is guessed from it). `sourceId` = `<slug>:<id>`: BambooHR
  * ids are small numbers counted per company.
  */
 

@@ -277,4 +277,6 @@ export const PLATFORM_NOTE_PREFIXES = [
   'robots-disallow ', 'detail-budget ', 'detail-gone ', 'no-india-or-remote-facet ', 'scope-not-applied ', 'short-list ',
   // Task 8, the page adapters (pages.ts)
   'page-budget ', 'title-prefilter ', 'no-jobposting ', 'page-moved ', 'page-error ', 'not-india ', 'malformed-entries ',
+  // Task 9, the small platforms (feed-board.ts, rippling.ts)
+  'rippling-uuid-conflict ',
 ] as const;

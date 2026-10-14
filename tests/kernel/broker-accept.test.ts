@@ -56,4 +56,14 @@ describe('getPage accept option', () => {
     await expect(ctx.http!.getPage('http://career.example.com/a', { accept: 'application/rss+xml' })).rejects.toThrow(/only https/);
     expect(sent).toBe(0);
   });
+
+  it('getJson and postJson refuse the accept option outright (it is getPage\'s alone): nothing is sent', async () => {
+    let sent = 0;
+    const poster = defineContract({ ...feeder, id: 'poster', capabilities: { http: true, httpPost: true } });
+    const ctx = issueContext({ contract: poster, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: async () => { sent++; return { status: 200, text: async () => '{}' }; } }, clock: fixedClock('2026-10-14T00:00:00Z'), signal: new AbortController().signal });
+    await expect(ctx.http!.getJson('https://career.example.com/a', { accept: 'application/rss+xml' })).rejects.toThrow(/G-NO-EVASION: getJson takes no accept/);
+    await expect(ctx.http!.postJson('https://career.example.com/a', {}, { accept: 'application/rss+xml' })).rejects.toThrow(/G-NO-EVASION: postJson takes no accept/);
+    expect(sent).toBe(0);
+    await expect(ctx.http!.getJson('https://career.example.com/a')).resolves.toMatchObject({ status: 200 });
+  });
 });

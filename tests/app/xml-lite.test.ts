@@ -16,7 +16,7 @@ describe('parseXml', () => {
     expect(childText(parseXml('<a><d>&lt;p&gt;a &amp;amp; b&lt;/p&gt;</d></a>'), 'd')).toBe('<p>a &amp; b</p>');
   });
   it('rejects malformed documents by name', () => {
-    for (const bad of ['', 'nothing', '<a><b></a>', '<a>', '<a></b>', '<a><b></b></a><c/>', '<a x="1></a>', '<!-- never closed', '<a><![CDATA[x</a>']) {
+    for (const bad of ['', 'nothing', '<a><b></a>', '<a>', '<a></b>', '<a><b></b></a><c/>', '<a x="1></a>', '<!-- never closed', '<a><![CDATA[x</a>', '<![CDATA[x]]><a/>', '<a/><![CDATA[x]]>']) {
       expect(() => parseXml(bad), bad).toThrow(XmlError);
     }
   });

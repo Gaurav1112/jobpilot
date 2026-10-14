@@ -537,11 +537,14 @@ export function issueContext(a: IssueArgs): AgentContext {
         return { status, bytes: body };
       },
       async getJson(url, opts) {
+        // `accept` is getPage's alone (an RSS feed); a JSON read sends the fixed headers
+        if (opts?.accept !== undefined) throw deny('G-NO-EVASION: getJson takes no accept option');
         const { status, body } = await getText(url, opts);
         return parseJson(url, status, body);
       },
       async postJson(url, payload, opts) {
         if (a.contract.capabilities.httpPost !== true) throw deny(`G-EGRESS: ${a.contract.id} may not POST (no capabilities.httpPost)`);
+        if (opts?.accept !== undefined) throw deny('G-NO-EVASION: postJson takes no accept option');
         let text: string | undefined;
         try {
           text = JSON.stringify(payload);
