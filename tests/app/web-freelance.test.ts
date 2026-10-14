@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { Gig, GigRendered } from '../../src/app/freelance/types.js';
 import { AppStore, type GigDoc, type GigUpsert } from '../../src/app/store/app-store.js';
 import { rateLabel } from '../../src/app/web/copy.js';
+import { NETWORK_CATALOGUE } from '../../src/app/freelance/network-catalogue.js';
 import { presetTierUsd } from '../../src/app/freelance/gig-eligibility.js';
 import { createDashboard } from '../../src/app/web/server.js';
 import { createTestDashboard } from '../../src/app/web/server-testing.js';
@@ -366,14 +367,16 @@ describe('freelance: status', () => {
 });
 
 describe('freelance: networks', () => {
-  it('one card per network, alphabetical with a note, the pack files, the checklist and "check before use"', async () => {
+  it('one card per network in the recommended order (freelance-boost), the pack files, the checklist and "check before use"', async () => {
     writeFileSync(join(home, 'pack', 'networks', 'contra.yaml'), readFileSync(join(home, 'pack', 'networks', 'contra.yaml'), 'utf8').replace('checkedByUser: false', 'checkedByUser: true'));
     for (const path of ['/freelance/networks', '/freelance?tab=networks']) {
       const { status, body } = await get(path);
       expect(status).toBe(200);
-      const ids = [...body.matchAll(/data-network="([a-z-]+)"/g)].map((m) => m[1]);
-      expect(ids).toEqual(['arc', 'braintrust', 'contra', 'flexiple', 'gunio', 'lemon', 'toptal', 'turing']);
-      expect(text(body)).toContain('Shown alphabetically');
+      const ids = [...body.matchAll(/data-network="([a-z0-9-]+)"/g)].map((m) => m[1]);
+      // The catalogue's order (micro1, Mercor, Alignerr, then Arc, Braintrust, Toptal, Proxify, ...), the pack's own
+      // files joined by id, and Lemon.io (not open to India) last.
+      expect(ids).toEqual(['micro1', 'mercor', 'alignerr', 'arc', 'braintrust', 'toptal', 'proxify', 'a-team', 'turing', 'contra', 'flexiple', 'gunio', 'lemon']);
+      expect(text(body)).toContain('Recommended order');
       const card = (id: string): string => {
         const i = body.indexOf(`data-network="${id}"`);
         const j = body.indexOf('data-network="', i + 1);
@@ -384,6 +387,16 @@ describe('freelance: networks', () => {
       expect(card('arc')).toContain('href="/freelance/networks/arc/files/resume.pdf"');
       expect(card('arc')).toContain('Live coding');
       expect(text(card('braintrust'))).toContain('No pack yet');
+      // What the research verified, the application link (out of the dashboard, new tab), and one-click "mark applied".
+      expect(card('micro1')).toContain('href="https://www.micro1.ai/experts/opportunities" rel="noopener noreferrer" target="_blank"');
+      expect(text(card('micro1'))).toContain('$50–100/h for software engineering');
+      expect(text(card('micro1'))).toContain('15–20 h/week typical');
+      expect(text(card('micro1'))).toContain('Open to India');
+      expect(text(card('micro1'))).toContain('No network file');
+      expect(card('micro1')).toMatch(/<form[^>]*action="\/freelance\/networks\/micro1\/status"[^>]*>\s*<input type="hidden" name="_csrf"[^]*?<button[^>]*name="to" value="applied"[^>]*>Mark applied<\/button>/);
+      expect(text(card('lemon'))).toContain('Not open to India');
+      expect(card('lemon')).not.toContain('Mark applied');
+      expect(text(card('arc'))).toContain('Not applied');
     }
   });
 
@@ -395,9 +408,20 @@ describe('freelance: networks', () => {
     expect((await get('/freelance/networks/nope/files/profile.txt')).status).toBe(404);
   });
 
-  it('POST status records the network status', async () => {
+  it('POST status records the network status, for a catalogue network too, and logs the change', async () => {
     expect((await post('/freelance/networks/arc/status', { to: 'applied', _csrf: token }, hx)).status).toBe(200);
     expect(withStore((s) => s.networkStatuses()['arc']?.status)).toBe('applied');
+    const r = await post('/freelance/networks/micro1/status', { to: 'applied', _csrf: token }, hx);
+    expect(r.status).toBe(200);
+    expect(text(await r.text())).toMatch(/Applied on \d{1,2} \w{3} \d{4}/);
+    expect(withStore((s) => s.networkStatuses()['micro1']?.status)).toBe('applied');
+    expect(withStore((s) => s.userActions().filter((a) => a.kind === 'network.status').map((a) => a.data))).toEqual([
+      { networkId: 'arc', from: 'todo', to: 'applied' },
+      { networkId: 'micro1', from: 'todo', to: 'applied' },
+    ]);
+    // Accepted later: the applied date stays on the card.
+    const later = await post('/freelance/networks/micro1/status', { to: 'passed', _csrf: token }, hx);
+    expect(text(await later.text())).toMatch(/Accepted.*applied on \d{1,2} \w{3} \d{4}/i);
     expect((await post('/freelance/networks/arc/status', { to: 'won', _csrf: token }, hx)).status).toBe(400);
     expect((await post('/freelance/networks/nope/status', { to: 'applied', _csrf: token }, hx)).status).toBe(404);
   });
@@ -433,9 +457,9 @@ describe('freelance: sources', () => {
 });
 
 describe('freelance: no external assets', () => {
-  it('the only http(s) link on any freelance page is a gig source link that opens in a new tab', async () => {
+  it('the only http(s) links on any freelance page are gig source links and (freelance-boost) the catalogue networks\' application pages, each in a new tab', async () => {
     const pages = ['/freelance', '/freelance?tab=gigs', '/freelance?tab=review', '/freelance/networks', '/freelance/sources', `/freelance/${G2}`, `/freelance/${C1}`, `/freelance/${R5}`];
-    const sources = new Set([C1, G2, G3, G4, R5].map(SRC));
+    const sources = new Set([...[C1, G2, G3, G4, R5].map(SRC), ...NETWORK_CATALOGUE.map((n) => n.applyUrl)]);
     let links = 0;
     for (const p of pages) {
       const { body } = await get(p);

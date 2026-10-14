@@ -1,6 +1,7 @@
 import type { Context, Hono } from 'hono';
 import { termDisplay } from '../agents/writing/grounded.js';
 import { NETWORK_FILES } from '../freelance/networks-command.js';
+import { catalogueEntry, NETWORKS_CHECKED, orderedNetworkIds } from '../freelance/network-catalogue.js';
 import { isoWeek } from '../freelance/health.js';
 import { ALERT_PARSERS } from '../freelance/mail/parsers/index.js';
 import { PLATFORM_AGENT } from '../freelance/pipeline.js';
@@ -228,31 +229,51 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
   const packBanner = (ps: { error: string | undefined }): Banner[] => (ps.error !== undefined ? [{ tone: 'critical', text: `Your pack could not be read: ${ps.error}` }] : []);
 
   // --- networks --------------------------------------------------------------------------------------------------------
-  const networkCards = (pack: Pack | undefined, statuses: Record<string, { status: NetworkStatus; updatedAt: string }>, text: (s: string) => string): NetworkCard[] =>
-    [...(pack?.networks ?? [])]
-      .sort((a, b) => {
-        // by name, case folded, then id; code-unit order (no locale)
-        const x = a.name.toLowerCase();
-        const y = b.name.toLowerCase();
-        return x < y ? -1 : x > y ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-      })
-      .map((n) => {
-        const files = NETWORK_FILES.filter((f) => readConfined(d.paths.out, `networks/${n.id}/${f}`).ok);
-        const cl = readConfined(d.paths.out, `networks/${n.id}/checklist.md`);
-        return {
-          id: n.id, name: text(n.name), checkedByUser: n.checkedByUser, stages: n.screening.map((s) => text(s.stage)),
-          status: statuses[n.id]?.status ?? 'todo', updatedAt: statuses[n.id]?.updatedAt ?? null, files,
-          checklist: cl.ok ? text(Buffer.from(cl.bytes).toString('utf8')) : null,
-        };
-      });
+  /**
+   * The Networks section (freelance-boost): the catalogue's networks and the user's own network files, joined by id, in
+   * the recommended order (`orderedNetworkIds`). A catalogue network without a file has no application pack; a file the
+   * catalogue does not know has no verified facts.
+   */
+  const networkCards = (
+    pack: Pack | undefined,
+    statuses: Record<string, { status: NetworkStatus; updatedAt: string }>,
+    applied: ReadonlyMap<string, string>,
+    text: (s: string) => string,
+  ): NetworkCard[] => {
+    const files = new Map((pack?.networks ?? []).map((n) => [n.id, n]));
+    return orderedNetworkIds(pack?.networks ?? []).map((id) => {
+      const n = files.get(id);
+      const c = catalogueEntry(id);
+      const onDisk = n === undefined ? [] : NETWORK_FILES.filter((f) => readConfined(d.paths.out, `networks/${id}/${f}`).ok);
+      const cl = n === undefined ? { ok: false as const } : readConfined(d.paths.out, `networks/${id}/checklist.md`);
+      return {
+        id, name: text(n?.name ?? c?.name ?? id), hasFile: n !== undefined, checkedByUser: n?.checkedByUser ?? false, stages: (n?.screening ?? []).map((s) => text(s.stage)),
+        status: statuses[id]?.status ?? 'todo', updatedAt: statuses[id]?.updatedAt ?? null, appliedAt: applied.get(id) ?? null, files: onDisk,
+        checklist: cl.ok ? text(Buffer.from(cl.bytes).toString('utf8')) : null,
+        facts: c === undefined ? null : { applyUrl: c.applyUrl, india: c.india, indiaNote: c.indiaNote, rates: c.rates, hours: c.hours, process: c.process, order: c.order },
+      };
+    });
+  };
+  /** When each network was first marked applied, from the logged `network.status` actions. */
+  const appliedDates = (s: AppStore): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const a of s.userActions()) {
+      const x = a.data as { networkId?: unknown; to?: unknown } | null;
+      if (a.kind === 'network.status' && x !== null && typeof x.networkId === 'string' && x.to === 'applied' && !out.has(x.networkId)) out.set(x.networkId, a.at);
+    }
+    return out;
+  };
+  /** A network the dashboard knows: one of the user's files or one of the catalogue's. */
+  const knownNetwork = (pack: Pack | undefined, id: string): boolean => (pack?.networks.some((n) => n.id === id) ?? false) || catalogueEntry(id) !== undefined;
 
   const networksPage = (c: Context<Env>) => {
     const at = d.now();
     const ps = d.packState(at);
     const r = d.redactor(ps.naming);
-    const { statuses, gigs } = d.withStore((s) => ({ statuses: s.networkStatuses(), gigs: s.listGigs() }));
-    const counts = { ...countsOf(gigs, rulesOf(ps.pack).fitFloor), networks: ps.pack?.networks.length ?? 0 };
-    const body = networksBody({ cards: networkCards(ps.pack, statuses, r.text), counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
+    const { statuses, gigs, applied } = d.withStore((s) => ({ statuses: s.networkStatuses(), gigs: s.listGigs(), applied: appliedDates(s) }));
+    const cards = networkCards(ps.pack, statuses, applied, r.text);
+    const counts = { ...countsOf(gigs, rulesOf(ps.pack).fitFloor), networks: cards.length };
+    const body = networksBody({ checked: NETWORKS_CHECKED, cards, counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
     return d.page(c, 'freelance', 'Freelance networks', packBanner(ps), body);
   };
   app.get('/freelance/networks', (c) => networksPage(c));
@@ -271,13 +292,21 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     if (!NETWORK_ID.test(id) || typeof to !== 'string' || !(NETWORK_STATUSES as readonly string[]).includes(to)) return c.text('Bad request', 400);
     const at = d.now();
     const ps = d.packState(at);
-    if (!ps.pack?.networks.some((n) => n.id === id)) return c.text('No such network', 404);
-    const st = d.withStore((s) => {
-      s.setNetworkStatus(id, to as NetworkStatus, at);
-      return s.networkStatuses()[id];
-    });
+    if (!knownNetwork(ps.pack, id)) return c.text('No such network', 404);
+    const { st, applied } = d.withStore((s) =>
+      s.tx(() => {
+        const from = s.networkStatuses()[id]?.status ?? 'todo';
+        if (from !== to) {
+          s.setNetworkStatus(id, to as NetworkStatus, at);
+          // Logged in the hash-chained user-action log, like every other dashboard action.
+          s.logUserAction('network.status', { networkId: id, from, to }, at);
+        }
+        return { st: s.networkStatuses()[id], applied: appliedDates(s).get(id) ?? null };
+      }),
+    );
     if (!d.isHx(c)) return c.redirect(`/freelance/networks#net-${id}`, 303);
-    return c.html(networkStatusBlock({ id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null }, d.csrf(c), istDate).value);
+    const notOpen = catalogueEntry(id)?.india === 'not-open';
+    return c.html(networkStatusBlock({ id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null, appliedAt: applied, notOpen }, d.csrf(c), istDate).value);
   });
 
   // --- sources ---------------------------------------------------------------------------------------------------------

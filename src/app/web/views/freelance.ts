@@ -27,7 +27,8 @@ const GIG_STATUS_TONE: Readonly<Record<GigStatus, Tone>> = {
 };
 const gigStatusPill = (s: GigStatus): Html => pill(GIG_STATUS_LABEL[s], GIG_STATUS_TONE[s]);
 
-const NETWORK_LABEL: Readonly<Record<NetworkStatus, string>> = { todo: 'Not applied', applied: 'Applied', screening: 'In screening', passed: 'Passed', rejected: 'Not accepted' };
+// `passed` reads "Accepted" since freelance-boost (the stored value is unchanged).
+const NETWORK_LABEL: Readonly<Record<NetworkStatus, string>> = { todo: 'Not applied', applied: 'Applied', screening: 'In screening', passed: 'Accepted', rejected: 'Not accepted' };
 const NETWORK_TONE: Readonly<Record<NetworkStatus, Tone>> = { todo: 'neutral', applied: 'accent', screening: 'accent', passed: 'good', rejected: 'critical' };
 
 /** One gig as a list row or page header shows it; every text already in the user's words. */
@@ -274,10 +275,24 @@ ${fitSection(d)}
 export interface NetworkCard {
   readonly id: string;
   readonly name: string;
+  /** Whether the user's pack has a network file for it (screening stages, application pack). */
+  readonly hasFile: boolean;
   readonly checkedByUser: boolean;
   readonly stages: readonly string[];
   readonly status: NetworkStatus;
   readonly updatedAt: string | null;
+  /** When the user first marked it applied (the logged action), or null. */
+  readonly appliedAt: string | null;
+  /** What the research verified (the catalogue), or null for a network only the user's pack knows. */
+  readonly facts: {
+    readonly applyUrl: string;
+    readonly india: 'open' | 'not-open' | 'unverified';
+    readonly indiaNote: string;
+    readonly rates: string;
+    readonly hours: string;
+    readonly process: string;
+    readonly order: number | null;
+  } | null;
   /** The pack files on disk (`resume.pdf`, …), in NETWORK_FILES order. */
   readonly files: readonly string[];
   /** checklist.md as written, or null when there is no pack yet. */
@@ -288,37 +303,79 @@ const NETWORK_FILE_LABEL: Readonly<Record<string, string>> = {
   'resume.pdf': 'CV (PDF)', 'resume.docx': 'CV (Word, DOCX)', 'profile.txt': 'Profile text', 'checklist.md': 'Vetting checklist',
 };
 
-export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updatedAt'>, csrf: string, istDay: (iso: string) => string): Html {
+/**
+ * The status block, returned alone to htmx: the status with its date ("Applied on 15 Oct 2026"; a later status keeps
+ * "applied on …"), a one-click "Mark applied" while not applied yet (never for a network not open to India), and every
+ * status as a button. Each POST carries the CSRF token and is logged (`network.status`).
+ */
+export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updatedAt' | 'appliedAt'> & { readonly notOpen?: boolean }, csrf: string, istDay: (iso: string) => string): Html {
+  const since =
+    n.status === 'applied' && (n.appliedAt ?? n.updatedAt) !== null ? html` <span>on ${dateText(istDay((n.appliedAt ?? n.updatedAt) as string))}</span>`
+    : n.status !== 'todo' && n.appliedAt !== null ? html` <span class="hint">since ${n.updatedAt !== null ? dateText(istDay(n.updatedAt)) : ''}; applied on ${dateText(istDay(n.appliedAt))}</span>`
+    : n.updatedAt !== null && n.status !== 'todo' ? html` <span class="hint">since ${dateText(istDay(n.updatedAt))}</span>`
+    : '';
+  const action = "/freelance/networks/" + n.id + "/status";
+  const quick = n.status === 'todo' && n.notOpen !== true
+    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">
+${csrfField(csrf)}<button class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
+    : '';
   return html`<div class="net-status" id="net-status-${n.id}">
-<p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${n.updatedAt !== null ? html` <span class="hint">since ${dateText(istDay(n.updatedAt))}</span>` : ''}</p>
-<form method="post" action="/freelance/networks/${n.id}/status" hx-post="/freelance/networks/${n.id}/status" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
+<p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${since}</p>
+${quick}
+<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
 <div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
 </form></div>`;
 }
 
+const INDIA_PILL: Readonly<Record<'open' | 'not-open' | 'unverified', Html>> = {
+  open: pill('Open to India', 'good'),
+  'not-open': pill('Not open to India', 'critical'),
+  unverified: pill('India not confirmed', 'warn'),
+};
+
+function networkFacts(n: NetworkCard): Html {
+  const f = n.facts;
+  if (f === null) return html`<p class="muted">Not in jobpilot's network list: only your network file is known.</p>`;
+  const url = externalUrl(f.applyUrl);
+  return html`<p>${INDIA_PILL[f.india]}${f.order !== null ? html` <span class="hint">#${f.order} in the recommended order</span>` : ''}</p>
+<p class="hint">${f.indiaNote}</p>
+<dl class="net-facts"><dt>Typical rates</dt><dd>${f.rates}</dd><dt>Hours</dt><dd>${f.hours}</dd><dt>How</dt><dd>${f.process}</dd></dl>
+${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on ${n.name}<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}`;
+}
+
 function networkCard(n: NetworkCard, csrf: string, istDay: (iso: string) => string): Html {
+  const unchecked = n.hasFile && !n.checkedByUser;
   return html`<section class="card net" id="net-${n.id}" data-network="${n.id}" aria-labelledby="net-h-${n.id}">
-<h2 id="net-h-${n.id}">${n.name}${n.checkedByUser ? '' : pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page')}</h2>
-${n.checkedByUser ? '' : html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>`}
-${networkStatusBlock(n, csrf, istDay)}
+<h2 id="net-h-${n.id}">${n.name}${unchecked ? pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page') : ''}</h2>
+${networkFacts(n)}
+${unchecked ? html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>` : ''}
+${networkStatusBlock({ ...n, notOpen: n.facts?.india === 'not-open' }, csrf, istDay)}
 <h3>Your pack</h3>
 ${
-  n.files.length === 0
+  !n.hasFile
+    ? html`<p class="muted">No network file: add <code>pack/networks/${n.id}.yaml</code> to build an application pack for it.</p>`
+    : n.files.length === 0
     ? html`<p class="muted">No pack yet: run <code>jobpilot networks pack ${n.id}</code>.</p>`
     : html`<div class="downloads">${n.files.map((f) => html`<a class="btn" href="/freelance/networks/${n.id}/files/${f}" download>${NETWORK_FILE_LABEL[f] ?? f}</a>`)}</div>`
 }
-<h3>Checklist</h3>
+${
+  !n.hasFile
+    ? ''
+    : html`<h3>Checklist</h3>
 ${
   n.checklist !== null
     ? html`<pre class="checklist">${n.checklist}</pre>`
     : n.stages.length > 0
       ? html`<ol class="stages">${n.stages.map((s) => html`<li>${s}</li>`)}</ol>`
       : html`<p class="muted">No screening stages in the network file.</p>`
+}`
 }
 </section>`;
 }
 
 export interface NetworksData {
+  /** The date the catalogue's facts were checked (NETWORKS_CHECKED). */
+  readonly checked: string;
   readonly cards: readonly NetworkCard[];
   readonly counts: Partial<Record<FreelanceTab, number>>;
   readonly csrf: string;
@@ -327,11 +384,11 @@ export interface NetworksData {
 }
 
 export function networksBody(d: NetworksData): Html {
-  const lede = html`Vetted networks you apply to once. Each pack is built only from your verified facts.`;
+  const lede = html`Vetted networks you apply to once; after that they send you matching work. Each pack is built only from your verified facts.`;
   return html`${head('networks', d.counts, lede)}
-<p class="note">Shown alphabetically: no fit score for networks is stored, so none is ranked above another here.</p>
+<p class="note">Recommended order (research of ${dateText(d.checked)}): micro1, Mercor and Alignerr first (hourly AI-evaluation work at 10–20 h/week, quick to apply), then Arc, Braintrust, Toptal and Proxify, then the rest. A network that does not take people in India is last and has no “Mark applied”.</p>
 ${d.packError !== null ? html`<p class="blocked">Your pack could not be read: ${d.packError}</p>` : ''}
-${d.cards.length === 0 && d.packError === null ? html`<p class="empty">No network files in pack/networks/ yet.</p>` : html`<div class="net-grid">${d.cards.map((c) => networkCard(c, d.csrf, d.istDay))}</div>`}`;
+<div class="net-grid">${d.cards.map((c) => networkCard(c, d.csrf, d.istDay))}</div>`;
 }
 
 // ---- sources --------------------------------------------------------------------------------------------------------

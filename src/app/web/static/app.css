@@ -363,6 +363,11 @@ pre.paste, pre.checklist {
 .fact-src { text-decoration: underline dotted var(--accent); text-underline-offset: 3px; cursor: help; }
 .net-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: var(--space-3); }
 .net h3 { margin-top: var(--space-3); }
+/* freelance-boost: the catalogue facts and the one-click "Mark applied" on each network card */
+.net-facts { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-1) var(--space-3); margin: var(--space-2) 0; }
+.net-facts dt { font-weight: 600; }
+.net-facts dd { margin: 0; }
+.net-quick { margin: var(--space-2) 0; }
 .stages { margin: 0; padding-left: var(--space-5); }
 .problems-list li { overflow-wrap: anywhere; }
 @media (max-width: 720px) {

@@ -6,6 +6,8 @@ import { rateOf } from '../../../src/app/freelance/rate.js';
 import type { Gig, RawGig, ScoredGig } from '../../../src/app/freelance/types.js';
 import { scoreGig, STACK_PENALTY } from '../../../src/app/freelance/gig-scorer.js';
 import { rankGigs } from '../../../src/app/freelance/rank.js';
+import { networksList } from '../../../src/app/freelance/networks-command.js';
+import { catalogueEntry, NETWORK_CATALOGUE, orderedNetworkIds } from '../../../src/app/freelance/network-catalogue.js';
 import { freelancerUrl } from '../../../src/app/freelance/sources/freelancer.js';
 import { packOf } from '../../../src/app/agents/scorer-lexicon.js';
 import { FREELANCE_KEYWORDS, FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
@@ -254,5 +256,35 @@ describe('Freelancer search terms and ranking (research A4, C2)', () => {
     const rows = [sc('a', 100, 46), sc('b', 80, 70), sc('c', null, 90), sc('d', 200, 50, ['off-platform']), sc('e', 60, 75)];
     // b 5600, a 4600, e 4500, then c (rate unknown), then the red-flagged d
     expect(rankGigs(rows, 45).contracts.map((r) => r.risked.verdict.rated.gig.sourceId)).toEqual(['b', 'a', 'e', 'c', 'd']);
+  });
+});
+
+describe('the networks catalogue (research C3, B2)', () => {
+  it('adds micro1, Mercor, Alignerr, Proxify and A.Team; marks Lemon.io not open to India, citing the research', () => {
+    const ids = NETWORK_CATALOGUE.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ['micro1', 'mercor', 'alignerr', 'proxify', 'a-team']) expect(ids).toContain(id);
+    const lemon = catalogueEntry('lemon');
+    expect(lemon).toMatchObject({ india: 'not-open', order: null });
+    expect(lemon?.indiaNote).toMatch(/Philippines and Indonesia.*nodesk\.co.*lemon\.io/);
+    for (const n of NETWORK_CATALOGUE) {
+      expect(new URL(n.applyUrl).protocol).toBe('https:');
+      for (const v of [n.name, n.indiaNote, n.rates, n.hours, n.process]) expect(v.trim()).not.toBe('');
+    }
+  });
+
+  it('the recommended order: micro1, Mercor, Alignerr, then Arc, Braintrust, Toptal, Proxify; own files after the ordered ones; not-open last', () => {
+    const order = orderedNetworkIds([{ id: 'zeta-net', name: 'Zeta' }, { id: 'arc', name: 'Arc' }, { id: 'alpha-net', name: 'Alpha' }]);
+    expect(order.slice(0, 7)).toEqual(['micro1', 'mercor', 'alignerr', 'arc', 'braintrust', 'toptal', 'proxify']);
+    expect(order.slice(-3)).toEqual(['alpha-net', 'zeta-net', 'lemon']);
+    expect(order.filter((x) => x === 'arc')).toHaveLength(1);
+  });
+});
+
+describe('networks list (CLI) says when a network is not open to India', () => {
+  it('lemon is marked, arc is not', () => {
+    const lines = networksList({ pack: full });
+    expect(lines.find((l) => l.startsWith('lemon '))).toMatch(/not open to India$/);
+    expect(lines.find((l) => l.startsWith('arc '))).not.toMatch(/India/);
   });
 });
