@@ -125,6 +125,55 @@ describe('the dashboard keeps one read connection', () => {
   });
 });
 
+describe('the dashboard never migrates while a run holds the lock', () => {
+  it('pending migrations + a live lock holder: the busy page, nothing migrated; once the lock is free it migrates and serves', async () => {
+    const o = other();
+    o.prepare(`UPDATE app_schema SET version = ?`).run(APP_MIGRATIONS.length - 1);
+    o.close();
+    let holder: { pid: number; command: string } | undefined = { pid: 4242, command: 'run' };
+    const dash = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { runHolder: () => holder });
+    const ask = async (path: string) => {
+      const r = await dash.request(path, { headers: { host: 'localhost', cookie: SID } });
+      return { status: r.status, body: await r.text() };
+    };
+    const busy = await ask('/');
+    expect(busy.status).toBe(503);
+    expect(busy.body).toContain('jobpilot is busy finishing today');
+    const version = (): number => {
+      const v = new Database(db, { readonly: true });
+      try {
+        return (v.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version;
+      } finally {
+        v.close();
+      }
+    };
+    expect(version()).toBe(APP_MIGRATIONS.length - 1);
+    holder = undefined;
+    expect((await ask('/')).body).toContain('First Job');
+    expect(version()).toBe(APP_MIGRATIONS.length);
+  });
+
+  it('an up-to-date database is served while a run holds the lock', async () => {
+    const dash = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { runHolder: () => ({ pid: 4242, command: 'run' }) });
+    const r = await dash.request('/', { headers: { host: 'localhost', cookie: SID } });
+    expect(r.status).toBe(200);
+  });
+
+  it('starting the dashboard (its CSRF secret) applies no migration', () => {
+    const o = other();
+    o.prepare(`UPDATE app_schema SET version = ?`).run(APP_MIGRATIONS.length - 1);
+    o.close();
+    createTestDashboard({ home, clock: { now: () => NOW } }, {});
+    const v = new Database(db, { readonly: true });
+    try {
+      expect((v.prepare(`SELECT version FROM app_schema`).get() as { version: number }).version).toBe(APP_MIGRATIONS.length - 1);
+      expect(v.prepare(`SELECT value FROM app_settings WHERE key = 'dashboard.csrf_secret'`).get()).toMatchObject({ value: expect.stringMatching(/^[0-9a-f]{64}$/) });
+    } finally {
+      v.close();
+    }
+  });
+});
+
 describe('SharedStore guards', () => {
   it('a use that leaves a transaction open (a bug) is rolled back and the connection replaced', () => {
     let n = 0;

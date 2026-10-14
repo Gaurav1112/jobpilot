@@ -2,6 +2,7 @@ import { statSync } from 'node:fs';
 import { AppStore } from '../store/app-store.js';
 import { APP_MIGRATIONS } from '../store/schema.js';
 import { MIGRATIONS } from '../../kernel/store/migrations.js';
+import { Store } from '../../kernel/store/store.js';
 
 /**
  * dashboard-perf fix 5: the dashboard's ONE long-lived connection (per process), so SQLite's page cache survives from
@@ -20,7 +21,8 @@ import { MIGRATIONS } from '../../kernel/store/migrations.js';
  *   so launchd (KeepAlive) restarts the dashboard on the checkout's code, the newer jobpilot that migrated it.
  * - **A failing statement drops it.** Any error but SQLITE_BUSY closes the connection; the next request opens anew.
  * - Migrations run on it only when it is (re)opened, inside `AppStore.open`'s BEGIN IMMEDIATE (as every opener), never
- *   in the middle of its life.
+ *   in the middle of its life, and never while a run holds the jobpilot lock: then the request answers busy (503) and
+ *   the upgrade waits for the run to finish (a run applies pending migrations itself when it opens the DB).
  */
 export class SharedStore {
   private store: AppStore | undefined;
@@ -32,6 +34,8 @@ export class SharedStore {
     private readonly onOpen: () => void = () => {},
     /** Told when the database's schema is newer than this code (a newer jobpilot migrated it); `serve` exits so launchd restarts it on the new code. */
     private readonly onSchemaNewer: () => void = () => {},
+    /** The live holder of the jobpilot lock (a run), if any (`liveHolder`). */
+    private readonly lockHolder: () => { readonly pid: number; readonly command: string } | undefined = () => undefined,
   ) {}
 
   /** `cache_size` of the shared connection, in KiB (negative: KiB, SQLite's convention): 32 MB. */
@@ -67,6 +71,12 @@ export class SharedStore {
   private current(): AppStore {
     if (this.store !== undefined && !this.stillValid(this.store)) this.drop();
     if (this.store === undefined) {
+      // A migration holds the write lock for its whole build (an index on a 4 GB file: seconds), which would stall a
+      // run's writes past their busy timeout: with migrations pending and a run holding the lock, answer busy instead.
+      const holder = this.migrationPending() ? this.lockHolder() : undefined;
+      if (holder !== undefined) {
+        throw Object.assign(new Error(`the database needs an upgrade, which waits until ${holder.command} (pid ${holder.pid}) finishes`), { code: 'SQLITE_BUSY_UPGRADE' });
+      }
       const id = fileIdOf(this.path);
       let s: AppStore;
       try {
@@ -82,6 +92,19 @@ export class SharedStore {
       this.onOpen();
     }
     return this.store;
+  }
+
+  /** Whether opening would apply an app migration (the app schema is behind this code). Reads only. */
+  private migrationPending(): boolean {
+    if (fileIdOf(this.path) === undefined) return false; // a new home: creating its tables takes no time
+    const k = Store.open(this.path, { timeoutMs: this.timeoutMs });
+    try {
+      const has = k.db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'app_schema'`).get() !== undefined;
+      const v = has ? (k.db.prepare(`SELECT version FROM app_schema WHERE id = 1`).get() as { version: number } | undefined)?.version : undefined;
+      return v === undefined || v < APP_MIGRATIONS.length;
+    } finally {
+      k.close();
+    }
   }
 
   private stillValid(s: AppStore): boolean {
