@@ -1,13 +1,37 @@
 import type { RunSummary } from '../../store/app-store.js';
 import { html, type Html } from '../html.js';
 import { pill } from './common.js';
+import type { ChainCheck } from '../../chain-status.js';
 
-export type ChainStatus = { readonly ok: true; readonly events: number } | { readonly ok: false; readonly reason: string };
+/**
+ * The audit chain line. `check` (dashboard-perf fix 1): how it was verified for this view, a full walk now or the events
+ * after the last full check's checkpoint (`chain-status.ts`); absent, the plain line.
+ */
+export type ChainStatus = { readonly ok: true; readonly events: number; readonly check?: ChainCheck } | { readonly ok: false; readonly reason: string };
 
 export interface RunsPageData {
   readonly runs: readonly RunSummary[];
   readonly chain: ChainStatus;
   readonly istTime: (iso: string) => string;
+  /** The command a full check runs (`jobpilot audit verify --db <the DB>`), suggested when the last one is old. */
+  readonly fullCheckCommand?: string;
+  /** Days since the last full check, when it was checked from a checkpoint. */
+  readonly fullCheckAgeDays?: number;
+}
+
+/** A full check older than this is suggested again. */
+export const FULL_CHECK_STALE_DAYS = 7;
+
+function chainLine(d: RunsPageData): Html {
+  const c = d.chain;
+  if (!c.ok) return html`Audit log broken: ${c.reason}`;
+  const intact = html`Audit log intact: <span class="num">${c.events}</span> events, every one chained to the last.`;
+  if (c.check === undefined) return intact;
+  if (c.check.kind === 'full-now') return html`${intact} Full check: just now.`;
+  const stale = d.fullCheckAgeDays !== undefined && d.fullCheckAgeDays > FULL_CHECK_STALE_DAYS && d.fullCheckCommand !== undefined;
+  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span>; the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked now.${
+    stale ? html` Run <code>${d.fullCheckCommand}</code> for a full check.` : ''
+  }`;
 }
 
 const BASE_COLUMNS: readonly (readonly [key: string, label: string])[] = [
@@ -88,8 +112,7 @@ export function runsBody(d: RunsPageData): Html {
 <h1>Runs</h1>
 <p class="lede">The last ${d.runs.length === 14 ? '14' : String(d.runs.length)} run${d.runs.length === 1 ? '' : 's'}, newest first.</p>
 <p class="${d.chain.ok ? 'chain chain-ok' : 'chain chain-bad'}" role="status">${
-    d.chain.ok ? html`Audit log intact: <span class="num">${d.chain.events}</span> events, every one chained to the last.` : html`Audit log broken: ${d.chain.reason}`
-  }</p>
+chainLine(d)}</p>
 </div>
 ${d.runs.length === 0 ? html`<p class="empty">No runs yet. Run "jobpilot run" to fetch today's jobs.</p>` : d.runs.map((r) => run(r, d.istTime))}`;
 }

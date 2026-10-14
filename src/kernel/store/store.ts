@@ -365,6 +365,19 @@ export class Store {
       | undefined;
   }
 
+  /**
+   * Read-only, streamed: the events with seq above `afterSeq`, in seq order (a rowid range, so it never scans the
+   * events before it). The caller must finish (or `return()`) the iterator: an open one holds a read transaction.
+   */
+  *eventsAfter(afterSeq: number): Generator<EventRow> {
+    yield* this.db.prepare(`SELECT * FROM events WHERE seq > ? ORDER BY seq`).iterate(afterSeq) as IterableIterator<EventRow>;
+  }
+
+  /** Read-only: the seq and hash of one event, by seq. */
+  eventLink(seq: number): { seq: number; hash: string } | undefined {
+    return this.db.prepare(`SELECT seq, hash FROM events WHERE seq = ?`).get(seq) as { seq: number; hash: string } | undefined;
+  }
+
   events(runId?: string): EventRow[] {
     return (
       runId === undefined

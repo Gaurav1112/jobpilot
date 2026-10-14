@@ -3,6 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
+import { readCheckpoint } from '../src/app/chain-status.js';
+import { AppStore } from '../src/app/store/app-store.js';
 
 const bin = readFileSync(join(import.meta.dirname, '..', 'src', 'bin.ts'), 'utf8');
 
@@ -51,6 +53,27 @@ describe('audit verify', () => {
     expect(bad.stdout).toContain('chain head mismatch');
     expect(bad.stdout).toContain('chain head differs from the expected head');
     expect(bad.stdout).not.toContain('BROKEN');
+  }, 60_000);
+
+  it('records the verified checkpoint in a jobpilot home database when the full walk passes (dashboard-perf fix 1)', () => {
+    const appDb = join(dir, 'app.db');
+    const app = AppStore.open(appDb);
+    for (let i = 0; i < 3; i++) app.kernel.appendEvent('r', `t${i}`, 'k', { i }, 'p');
+    app.close();
+    const ok = cli('audit', 'verify', '--db', appDb);
+    expect(ok.status).toBe(0);
+    expect(ok.stdout).toContain('checkpoint recorded through event 3');
+    const s = AppStore.open(appDb);
+    try {
+      expect(readCheckpoint(s.kernel.db)).toMatchObject({ seq: 3, count: 3 });
+      s.kernel.db.prepare(`UPDATE events SET data = '{"i":9}' WHERE seq = 2`).run();
+    } finally {
+      s.close();
+    }
+    const bad = cli('audit', 'verify', '--db', appDb);
+    expect(bad.status).toBe(1);
+    expect(bad.stdout).toContain('BROKEN at event 2');
+    expect(bad.stdout).not.toContain('checkpoint recorded');
   }, 60_000);
 
   it('rejects a malformed --expect-head', () => {

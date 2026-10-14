@@ -8,7 +8,7 @@ import { bodyLimit } from 'hono/body-limit';
 import { getCookie, setCookie } from 'hono/cookie';
 import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../../kernel/clock.js';
-import { verifyChain } from '../../kernel/store/audit.js';
+import { chainStatus } from '../chain-status.js';
 import { coverNoteShort } from '../agents/writing/grounded.js';
 import { profileFor } from '../ats-profiles.js';
 import { CoverPlan } from '../types.js';
@@ -648,15 +648,14 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const at = now();
     const ps = packState(deps.home, at);
     const r = redactor(ps.naming);
-    const { runs, chain, overrides } = withStore((s) => {
-      const v = verifyChain(s.kernel);
-      return {
-        runs: s.listRuns(14),
-        chain: v.ok ? ({ ok: true, events: v.events } as const) : ({ ok: false, reason: 'headMismatch' in v ? v.reason : `at event ${v.brokenAt}: ${v.reason}` } as const),
-        overrides: s.factOverrides(),
-      };
-    });
-    return page(c, 'runs', 'Runs', commonBanners(ps, istDate(at), overrides), runsBody({ runs: r.deep(runs), chain, istTime: istTimeText }));
+    // dashboard-perf fix 1: the events after the last full check's checkpoint, or (no or mismatched checkpoint) a full walk
+    const { runs, chain, overrides } = withStore((s) => ({ runs: s.listRuns(14), chain: chainStatus(s.kernel, at), overrides: s.factOverrides() }));
+    const banners = commonBanners(ps, istDate(at), overrides);
+    if (!chain.ok) banners.unshift({ tone: 'critical', text: r.text(`The audit log is broken (${chain.reason}). Something changed the recorded history; run "jobpilot audit verify --db ${paths.db}" and keep a copy of the database before anything else.`) });
+    const age = chain.ok && chain.check?.kind === 'since' ? daysBetween(istDate(chain.check.fullAt), istDate(at)) : undefined;
+    return page(c, 'runs', 'Runs', banners, runsBody({
+      runs: r.deep(runs), chain, istTime: istTimeText, fullCheckCommand: `jobpilot audit verify --db ${paths.db}`, ...(age !== undefined ? { fullCheckAgeDays: age } : {}),
+    }));
   });
 
   // --- freelance (Task 10): same middleware, same helpers ----------------------------------------------------------------

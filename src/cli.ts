@@ -8,7 +8,7 @@ import { systemClock } from './kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from './kernel/policy.js';
 import { nodeFetch } from './kernel/providers.js';
 import { Registry } from './kernel/registry.js';
-import { verifyChain } from './kernel/store/audit.js';
+import { fullChainCheck, readCheckpoint } from './app/chain-status.js';
 import { Store } from './kernel/store/store.js';
 import { failedGates, runEval } from './evals/runner.js';
 import { demoEvalSpecs } from './demo/evals.js';
@@ -150,11 +150,14 @@ audit
     }
     const store = Store.open(o.db);
     try {
-      const r = verifyChain(store, expected);
+      // dashboard-perf fix 1: a passing full walk records its checkpoint (a jobpilot home DB), so /runs checks only newer events
+      const r = fullChainCheck(store, systemClock.now(), expected);
       if (r.ok) {
         console.log(`audit chain intact: ${r.events} events`);
         const head = store.chainHead();
         if (head) console.log(`head ${head.hash} (${head.count} events)`);
+        const cp = readCheckpoint(store.db);
+        if (cp !== undefined && head !== undefined && cp.seq === head.seq) console.log(`checkpoint recorded through event ${cp.seq}: the dashboard checks only the events after it`);
       } else if ('headMismatch' in r) {
         const head = store.chainHead();
         console.log(`audit chain intact (${r.events} events) but chain head mismatch: ${r.reason}`);

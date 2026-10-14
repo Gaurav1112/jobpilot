@@ -18,6 +18,7 @@ import { fillCover } from '../../src/app/render/fill.js';
 import { coverNoteShort } from '../../src/app/agents/writing/grounded.js';
 import type { CoverPlan } from '../../src/app/types.js';
 import { Store as KernelStore } from '../../src/kernel/store/store.js';
+import { CHAIN_CHECKPOINT_KEY, fullChainCheck, readCheckpoint } from '../../src/app/chain-status.js';
 
 /**
  * The dashboard (Task 13) through Hono's `app.request()`: a temp JOBPILOT_HOME with the fictional fixture pack, rows
@@ -687,6 +688,72 @@ describe('dashboard: runs', () => {
     });
     const { body } = await get('/runs');
     expect(body).toContain('Audit log broken: at event 1: hash does not match the event contents');
+  });
+});
+
+describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () => {
+  const T_FULL = '2026-10-08T03:30:00.000Z'; // 9:00 IST
+  const append = (n: number): void => withStore((s) => {
+    for (let i = 0; i < n; i++) s.kernel.appendEvent('r1', NOW, 'step_done', { i }, 'h');
+  });
+
+  it('with no checkpoint: a full check now, recorded, and the next view checks only newer events', async () => {
+    append(3);
+    const first = (await get('/runs')).body;
+    expect(first).toContain('Audit log intact: <span class="num">3</span> events');
+    expect(first).toContain('Full check: just now.');
+    expect(withStore((s) => readCheckpoint(s.kernel.db))).toMatchObject({ seq: 3, count: 3, verifiedAt: NOW });
+    append(2);
+    const next = (await get('/runs')).body;
+    expect(next).toContain('Audit log intact: <span class="num">5</span> events');
+    expect(next).toContain('Last full check: 9 Oct 2026, 12:00 IST, through event <span class="num">3</span>; the <span class="num">2</span> newer events were checked now.');
+    expect(next).not.toContain('Full check: just now');
+  });
+
+  it('shows when the last full check ran (jobpilot audit)', async () => {
+    append(2);
+    withStore((s) => fullChainCheck(s.kernel, T_FULL));
+    const { body } = await get('/runs');
+    expect(body).toContain('Last full check: 8 Oct 2026, 09:00 IST, through event <span class="num">2</span>');
+  });
+
+  it('tampering after the checkpoint is shown loudly: the line and a critical banner', async () => {
+    append(2);
+    withStore((s) => fullChainCheck(s.kernel, T_FULL));
+    append(2);
+    withStore((s) => s.kernel.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 4`).run());
+    const { body } = await get('/runs');
+    expect(body).toContain('Audit log broken: at event 4: hash does not match the event contents');
+    expect(body).toMatch(/class="banner[^"]*critical[^"]*"[^>]*>[^<]*The audit log is broken/);
+    expect(body).not.toContain('Audit log intact');
+  });
+
+  it('tampering before the checkpoint: /runs never claims a fresh full check', async () => {
+    append(3);
+    withStore((s) => fullChainCheck(s.kernel, T_FULL));
+    withStore((s) => s.kernel.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 1`).run());
+    const { body } = await get('/runs');
+    expect(body).not.toContain('Full check: just now');
+    expect(body).toContain('Last full check: 8 Oct 2026, 09:00 IST');
+    expect(withStore((s) => fullChainCheck(s.kernel, NOW))).toMatchObject({ ok: false, brokenAt: 1 });
+  });
+
+  it('a checkpoint that does not match the chain falls back to the full check', async () => {
+    append(3);
+    withStore((s) => {
+      fullChainCheck(s.kernel, T_FULL);
+      s.kernel.db.prepare(`UPDATE events SET data = '{"i":99}' WHERE seq = 2`).run();
+      s.kernel.db.prepare(`UPDATE app_settings SET value = ? WHERE key = ?`).run(JSON.stringify({ seq: 3, hash: 'f'.repeat(64), count: 3, verifiedAt: T_FULL }), CHAIN_CHECKPOINT_KEY);
+    });
+    const { body } = await get('/runs');
+    expect(body).toContain('Audit log broken: at event 2: hash does not match the event contents');
+  });
+
+  it('suggests a full check when the last one is more than 7 days old', async () => {
+    append(1);
+    withStore((s) => fullChainCheck(s.kernel, '2026-09-30T03:30:00.000Z'));
+    const { body } = await get('/runs');
+    expect(body).toContain('Run <code>jobpilot audit verify --db');
   });
 });
 
