@@ -148,6 +148,8 @@ export function keptJobPosting(p: JobPostingLd): Record<string, unknown> {
     ...(p.validThrough === undefined ? {} : { validThrough: p.validThrough }),
     ...(p.employmentType === undefined ? {} : { employmentType: p.employmentType }),
     ...(p.jobLocationType === undefined ? {} : { jobLocationType: p.jobLocationType }),
+    // Freshteam's own remote flag (`"remote": "true"`), kept only when set, for its mapper alone
+    ...(p.remote === true || (typeof p.remote === 'string' && p.remote.trim().toLowerCase() === 'true') ? { remote: p.remote } : {}),
     ...(located.length === 0 ? {} : { jobLocation: located }),
     ...(applicants.length === 0 ? {} : { applicantLocationRequirements: applicants }),
     ...(orgName === undefined || orgName.trim() === '' ? {} : { hiringOrganization: { name: orgName.trim() } }),

@@ -606,7 +606,9 @@ function jsonLdPosting(raw: RawPosting, r: Rec, ats: Posting['ats']): Posting {
   const ldDescription = ld === null ? null : str(ld.description);
   const descriptionText = ldDescription !== null ? htmlish(ldDescription) : (typeof r.text === 'string' ? r.text : '').trim();
   const types = ld === null ? [] : listOf(ld.jobLocationType).flatMap((t) => (typeof t === 'string' && t.trim() !== '' ? [t.trim()] : []));
-  const telecommute = types.some((t) => t.toUpperCase() === 'TELECOMMUTE');
+  // Freshteam also writes `"remote": "true"` (a string) beside a plain jobLocation; only its mapper reads it
+  const flagged = ats === 'freshteam' && ld !== null && (ld.remote === true || (typeof ld.remote === 'string' && ld.remote.trim().toLowerCase() === 'true'));
+  const telecommute = flagged || types.some((t) => t.toUpperCase() === 'TELECOMMUTE');
   const applicants = ld === null ? [] : listOf(ld.applicantLocationRequirements).map(nameOf).filter((x): x is string => x !== null);
   const located = ld === null ? [] : listOf(ld.jobLocation).map(placeText).filter((x): x is string => x !== null);
   const locationText = located.length > 0 ? [...new Set(located)].join('; ') : applicants.join(', ');
@@ -954,6 +956,8 @@ const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> 
   icims: (raw, r) => jsonLdPosting(raw, r, 'icims'),
   smartrecruiters: (raw, r) => jsonLdPosting(raw, r, 'smartrecruiters'),
   'jsonld-sitemap': (raw, r) => jsonLdPosting(raw, r, 'jsonld-sitemap'),
+  jazzhr: (raw, r) => jsonLdPosting(raw, r, 'jazzhr'),
+  freshteam: (raw, r) => jsonLdPosting(raw, r, 'freshteam'),
   successfactors,
   workable,
   recruitee,

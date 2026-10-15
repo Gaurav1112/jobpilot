@@ -61,6 +61,9 @@ export const CAPABILITY_ALLOW_LIST = {
   pinpointEgress: ['src-pinpoint'],
   ripplingEgress: ['src-rippling'],
   gemEgress: ['src-gem'],
+  /** Sources expansion, Task 2: the JazzHR and Freshteam listing adapters. */
+  jazzhrEgress: ['src-jazzhr'],
+  freshteamEgress: ['src-freshteam'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -103,6 +106,8 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
       ['registry:pinpoint-hosts', 'pinpointEgress', 'Pinpoint'],
       ['registry:rippling-hosts', 'ripplingEgress', 'Rippling'],
       ['registry:gem-hosts', 'gemEgress', 'Gem'],
+      ['registry:jazzhr-hosts', 'jazzhrEgress', 'JazzHR'],
+      ['registry:freshteam-hosts', 'freshteamEgress', 'Freshteam'],
     ] as const) {
       if (c.egress.includes(egress) && !allowed(CAPABILITY_ALLOW_LIST[key], c.id)) {
         problems.push(`${c.id} declares egress ${egress}; only ${CAPABILITY_ALLOW_LIST[key].join(', ')} may contact the registry's ${what} hosts`);

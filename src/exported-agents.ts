@@ -27,6 +27,9 @@ const WITH_PLATFORMS = [
   { platform: 'pinpoint', company: 'Example', ref: 'example' },
   { platform: 'rippling', company: 'Example', ref: 'example' },
   { platform: 'gem', company: 'Example', ref: 'example' },
+  // Sources expansion, Task 2, the listing-pages adapters
+  { platform: 'jazzhr', company: 'Example', ref: 'example' },
+  { platform: 'freshteam', company: 'Example', ref: 'example' },
 ] as const;
 
 /**

@@ -749,6 +749,8 @@ describe('capability allow-list', () => {
       pinpointEgress: ['src-pinpoint'],
       ripplingEgress: ['src-rippling'],
       gemEgress: ['src-gem'],
+      jazzhrEgress: ['src-jazzhr'],
+      freshteamEgress: ['src-freshteam'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;
