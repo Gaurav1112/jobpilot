@@ -149,8 +149,7 @@
   "fetched": [
     "https://api.ashbyhq.com/posting-api/job-board/example-ab?includeCompensation=true",
     "https://boards-api.greenhouse.io/v1/boards/example-gh/jobs?content=true&pay_transparency=true",
-    "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=1",
-    "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=2",
+    "https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent",
     "https://api.lever.co/v0/postings/example-lv?mode=json&skip=0&limit=100",
     "https://api.lever.co/v0/postings/example-lv?mode=json&skip=100&limit=100"
   ]

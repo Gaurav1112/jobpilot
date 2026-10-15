@@ -56,11 +56,11 @@ const sorted = (xs: readonly string[]): string[] => [...xs].sort((a, b) => (a < 
 const GH = 'https://boards-api.greenhouse.io/v1/boards/gitlab/jobs?content=true&pay_transparency=true';
 const LV = (skip: number) => `https://api.lever.co/v0/postings/veeva?mode=json&skip=${skip}&limit=100`;
 const AB = 'https://api.ashbyhq.com/posting-api/job-board/confluent?includeCompensation=true';
-const HM = (page: number) => `https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent&page=${page}`;
+// Page 1 only, and no `page` parameter at all: Himalayas' robots.txt body disallows `/jobs*&page=` (2026-10-15).
+const HM = 'https://himalayas.app/jobs/api/search?q=backend&country=IN&sort=recent';
 const JB = (geo: string, cursor?: string) =>
   `https://jobicy.com/api/v2/remote-jobs?count=50&geo=${geo}&tag=backend${cursor === undefined ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
 /** The end page after the trimmed fixture (5 jobs; its totalCount is set to 5 to match the trim). */
-const EMPTY_HM = JSON.stringify({ offset: 20, limit: 20, totalCount: 5, jobs: [] });
 
 describe('source contracts', () => {
   it.each([
@@ -90,7 +90,7 @@ describe('fix round 1', () => {
       [srcGreenhouse, req('greenhouse', 'gitlab'), { [GH]: { body: bad } }, 'greenhouse: all 2 jobs failed to parse'],
       [srcLever, req('lever', 'veeva'), { [LV(0)]: { body: '[{"nope":1},{"nope":2}]' } }, 'lever: all 2 jobs failed to parse'],
       [srcAshby, req('ashby', 'confluent'), { [AB]: { body: bad } }, 'ashby: all 2 jobs failed to parse'],
-      [srcHimalayas, req('feed', 'himalayas'), { [HM(1)]: { body: bad } }, 'himalayas: all 2 jobs failed to parse'],
+      [srcHimalayas, req('feed', 'himalayas'), { [HM]: { body: bad } }, 'himalayas: all 2 jobs failed to parse'],
       [srcJobicy, req('feed', 'jobicy'), { [JB('apac')]: { body: bad }, [JB('anywhere')]: { body: bad } }, 'jobicy: all 2 jobs failed to parse'],
     ];
     for (const [agent, r, routes, message] of cases) {
@@ -117,7 +117,7 @@ describe('fix round 1', () => {
       [srcGreenhouse, req('greenhouse', 'gitlab'), { [GH]: { body: gh } }, ['greenhouse gitlab job 1: missing id or title']],
       [srcAshby, req('ashby', 'confluent'), { [AB]: { body: ab } }, ['ashby confluent job 1: missing id or title']],
       [srcLever, req('lever', 'veeva'), { [LV(0)]: { body: '[{"id":"l1","text":"Backend"},{"nope":1}]' }, [LV(100)]: { body: '[]' } }, ['page 1: lever veeva posting 1: missing id or text']],
-      [srcHimalayas, req('feed', 'himalayas'), { [HM(1)]: { body: JSON.stringify({ ...hm, jobs: [...hm.jobs, { nope: 1 }] }) }, [HM(2)]: { body: EMPTY_HM } }, ['page 1: himalayas job 5: missing guid, title, companyName or locationRestrictions']],
+      [srcHimalayas, req('feed', 'himalayas'), { [HM]: { body: JSON.stringify({ ...hm, totalCount: 6, jobs: [...hm.jobs, { nope: 1 }] }) } }, ['himalayas job 5: missing guid, title, companyName or locationRestrictions']],
       [srcJobicy, req('feed', 'jobicy'), { [JB('apac')]: { body: jb('apac') }, [JB('anywhere')]: { body: jb('anywhere') } }, ['apac page 1: jobicy job 1: missing id, jobTitle or companyName', 'anywhere page 1: jobicy job 1: missing id, jobTitle or companyName']],
     ];
     for (const [agent, r, routes, notes] of cases) {
@@ -136,10 +136,6 @@ describe('fix round 1', () => {
     expect(parsed.skipped).toHaveLength(1);
   });
 
-  it('himalayas: an error on page 2 fails the whole step (idempotent GETs, retried as a unit)', async () => {
-    const rec = serve({ [HM(1)]: { body: fixture('himalayas') }, [HM(2)]: { status: 400, body: 'bad' } });
-    await expect(run(srcHimalayas, req('feed', 'himalayas'), rec)).rejects.toMatchObject({ code: 'invalid_output' });
-  });
 
   it('himalayas: worldwide or anywhere restrictions, and lower-case alpha2, are eligible', () => {
     expect(indiaEligible(['Worldwide'])).toBe(true);
@@ -274,15 +270,15 @@ describe('src-ashby', () => {
 });
 
 describe('src-himalayas', () => {
-  it('keeps worldwide or India-eligible jobs, drops expiryDate, stops at an empty page', async () => {
-    const rec = serve({ [HM(1)]: { body: fixture('himalayas') }, [HM(2)]: { body: EMPTY_HM } });
+  it('keeps worldwide or India-eligible jobs, drops expiryDate, reads page 1 only', async () => {
+    const rec = serve({ [HM]: { body: fixture('himalayas') } });
     const out = await run(srcHimalayas, req('feed', 'himalayas', 'ignored'), rec);
     const jobs = (fixtureJson('himalayas') as { jobs: { guid: string; locationRestrictions: string[] }[] }).jobs;
     const kept = jobs.filter((j) => j.locationRestrictions.length === 0 || j.locationRestrictions.includes('India'));
     expect(jobs).toHaveLength(5);
     expect(out).toHaveLength(4);
     expect(ids(out)).toEqual(sorted(kept.map((j) => j.guid)));
-    expect(rec.urls).toEqual([HM(1), HM(2)]);
+    expect(rec.urls).toEqual([HM]);
     expect(new URL(rec.urls[0]!).hostname).toBe('himalayas.app');
     expect(rec.headers[0]).toEqual(HTTP_HEADERS);
     for (const p of out) {
@@ -390,7 +386,7 @@ describe('paging: no silent truncation', () => {
 
   it('every paged source has at least 9 s of step time per page at its cap', () => {
     expect(LEVER_MAX_PAGES).toBe(70);
-    expect(HIMALAYAS_MAX_PAGES).toBe(80);
+    expect(HIMALAYAS_MAX_PAGES).toBe(1);
     expect(JOBICY_MAX_REQUESTS).toBe(20);
     expect(srcLever.contract.timeoutMs / LEVER_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
     expect(srcHimalayas.contract.timeoutMs / HIMALAYAS_MAX_PAGES).toBeGreaterThanOrEqual(9_000);
@@ -497,139 +493,35 @@ describe('paging: no silent truncation', () => {
     });
   });
 
-  describe('himalayas', () => {
+  describe('himalayas: page 1 only (its robots.txt body disallows /jobs*&page=)', () => {
     const feed = req('feed', 'himalayas');
 
-    it('a total that drops to 0 mid-walk (ending the walk early) → invalid_output', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 842) }, [HM(2)]: { body: hmFull(2, 842) }, [HM(3)]: { body: hmPage(40, [], 0) } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: totalCount fell from 842 to 0 during the walk' });
+    it('one request, no page parameter, whatever totalCount says; the rest is a loud named note', async () => {
+      const rec = dyn(() => ({ body: hmFull(1, 842) }));
+      const ctx = issueContext({ contract: srcHimalayas.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: rec.fetch }, clock: fixedClock('2026-10-15T00:00:00Z'), signal: new AbortController().signal });
+      await expect(srcHimalayas.run(feed, ctx)).resolves.toHaveLength(20);
+      expect(rec.urls).toEqual([HM]);
+      expect(new URL(HM).searchParams.has('page')).toBe(false);
+      expect(rec.urls.some((u) => /[?&](page|offset|cursor)=/.test(u))).toBe(false);
+      expect(ctx.skips()).toEqual(['himalayas: 822 more not read (page 1 only: robots.txt disallows paging under /jobs)']);
     });
 
-    it('a total that moves by one between pages (seen live) is fine', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 41) }, [HM(2)]: { body: hmFull(2, 40) }, [HM(3)]: { body: hmPage(40, [], 40) } });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(40);
+    it('all on page 1: no note', async () => {
+      const rec = serve({ [HM]: { body: hmFull(1, 7, 7) } });
+      const ctx = issueContext({ contract: srcHimalayas.contract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch: rec.fetch }, clock: fixedClock('2026-10-15T00:00:00Z'), signal: new AbortController().signal });
+      await expect(srcHimalayas.run(feed, ctx)).resolves.toHaveLength(7);
+      expect(ctx.skips()).toEqual([]);
     });
 
-    it('pages of 1 job each → invalid_output on the first such page', async () => {
-      const rec = dyn((u) => {
-        const page = Number(u.searchParams.get('page'));
-        return { body: page === 1 ? hmFull(1, 842) : hmFull(page, 842, 1) };
-      });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 10' });
-      expect(rec.urls).toHaveLength(2);
+    it('an empty page 1 is an empty feed; a body without a jobs array is invalid_output', async () => {
+      await expect(run(srcHimalayas, feed, serve({ [HM]: { body: hmPage(0, [], 0) } }))).resolves.toEqual([]);
+      await expect(run(srcHimalayas, feed, serve({ [HM]: { body: '{"totalCount":3}' } }))).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas: no jobs array' });
     });
 
-    it('19 duplicates plus 1 new job → invalid_output', async () => {
-      const page2 = hmPage(20, [...range(1, 19).map((k) => hmJob(k)), hmJob(500)], 842);
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 842) }, [HM(2)]: { body: page2 } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 brought 1 new jobs, minimum 10' });
-    });
-
-    it('live-like shortfall (pages short by 1 to 4, 1.8% missing overall) passes', async () => {
-      const short = new Map([[2, 19], [7, 19], [9, 19], [10, 19], [23, 19], [26, 18], [27, 19], [29, 19], [30, 19], [38, 19], [42, 16]]);
-      const rec = dyn((u) => {
-        const page = Number(u.searchParams.get('page'));
-        if (page === 43) return { body: hmFull(43, 842, 2) };
-        if (page >= 44) return { body: hmPage((page - 1) * 20, [], 842) };
-        return { body: hmFull(page, 842, short.get(page) ?? 20) };
-      });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(827);
-      expect(rec.urls).toHaveLength(44);
-    });
-
-    it('fewer than 95% of totalCount unique overall → invalid_output', async () => {
-      // every page passes the per-page floor (16 new of 20) but the walk ends 80% complete
-      const rec = dyn((u) => {
-        const page = Number(u.searchParams.get('page'));
-        if (page > 5) return { body: hmPage((page - 1) * 20, [], 100) };
-        return { body: hmFull(page, 100, 16) };
-      });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: 80 unique jobs for totalCount 100 (minimum 95%)' });
-    });
-
-    it('natural end: short pages mid-list are fine, the end is an empty page at offset ≥ totalCount', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 39) }, [HM(2)]: { body: hmFull(2, 39, 19) }, [HM(3)]: { body: hmPage(40, [], 39) } });
-      const out = await run(srcHimalayas, feed, rec);
-      expect(rec.urls).toEqual([HM(1), HM(2), HM(3)]);
-      expect(out).toHaveLength(39);
-      expect(ids(out)).toEqual(sorted(ids(out)));
-    });
-
-    it('server drops some slots (short pages) yet every offset window is visited', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 60, 18) }, [HM(2)]: { body: hmFull(2, 60, 20) }, [HM(3)]: { body: hmFull(3, 60, 19) }, [HM(4)]: { body: hmPage(60, [], 60) } });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(57);
-      expect(rec.urls).toHaveLength(4);
-    });
-
-    it('exact page boundary: full pages, then an empty page', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 40) }, [HM(2)]: { body: hmFull(2, 40) }, [HM(3)]: { body: hmPage(40, [], 40) } });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(40);
-      expect(rec.urls).toHaveLength(3);
-    });
-
-    it('a transient empty page before totalCount → invalid_output', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 100) }, [HM(2)]: { body: hmPage(20, [], 100) } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: empty page 2 at offset 20 before totalCount 100' });
-    });
-
-    it('an empty page 1 while totalCount > 0 → invalid_output', async () => {
-      const rec = serve({ [HM(1)]: { body: hmPage(0, [], 711) } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: empty page 1 at offset 0 before totalCount 711' });
-    });
-
-    it('an empty page 1 with totalCount 0 is an empty feed', async () => {
-      await expect(run(srcHimalayas, feed, serve({ [HM(1)]: { body: hmPage(0, [], 0) } }))).resolves.toEqual([]);
-    });
-
-    it('a missing totalCount, offset or limit → invalid_output', async () => {
-      for (const body of [JSON.stringify({ offset: 0, limit: 20, jobs: [hmJob(1)] }), JSON.stringify({ limit: 20, totalCount: 1, jobs: [hmJob(1)] }), JSON.stringify({ offset: 0, totalCount: 1, jobs: [hmJob(1)] })]) {
-        await expect(run(srcHimalayas, feed, serve({ [HM(1)]: { body } })), body).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 1 has no numeric offset, limit or totalCount' });
-      }
-    });
-
-    it('a page whose offset does not follow the previous window → invalid_output', async () => {
-      const rec = serve({ [HM(1)]: { body: hmFull(1, 100) }, [HM(2)]: { body: hmPage(40, range(40, 20).map((k) => hmJob(k)), 100) } });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 starts at offset 40, expected 20' });
-    });
-
-    it('exactly at the cap: one more request confirms the end', async () => {
-      const total = HIMALAYAS_MAX_PAGES * 20;
-      const rec = dyn((u) => {
-        const page = Number(u.searchParams.get('page'));
-        return { body: page <= HIMALAYAS_MAX_PAGES ? hmFull(page, total) : hmPage((page - 1) * 20, [], total) };
-      });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(total);
-      expect(rec.urls).toHaveLength(HIMALAYAS_MAX_PAGES + 1);
-    });
-
-    it('past the cap → invalid_output', async () => {
-      const rec = dyn((u) => ({ body: hmFull(Number(u.searchParams.get('page')), 100_000) }));
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page cap reached at 1600 postings' });
-      expect(rec.urls).toHaveLength(HIMALAYAS_MAX_PAGES + 1);
-    });
-
-    it('a repeated page → invalid_output after two requests, even when nothing is eligible', async () => {
-      const page = hmPage(0, range(0, 20).map((k) => hmJob(k, ['United States'])), 1000);
-      const rec = dyn((u) => ({ body: page.replace('"offset":0', `"offset":${(Number(u.searchParams.get('page')) - 1) * 20}`) }));
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 2 repeats earlier postings' });
-      expect(rec.urls).toHaveLength(2);
-    });
-
-    it('an A, B, A cycle → invalid_output on the third request', async () => {
-      const rec = dyn((u) => {
-        const page = Number(u.searchParams.get('page'));
-        const from = page % 2 === 1 ? 0 : 20;
-        return { body: hmPage((page - 1) * 20, range(from, 20).map((k) => hmJob(k)), 1000) };
-      });
-      await expect(run(srcHimalayas, feed, rec)).rejects.toMatchObject({ code: 'invalid_output', message: 'himalayas himalayas: page 3 repeats earlier postings' });
-      expect(rec.urls).toHaveLength(3);
-    });
-
-    it('jobs restricted elsewhere count as seen, not lost', async () => {
-      const elsewhere = (page: number) => hmPage((page - 1) * 20, range((page - 1) * 20, 20).map((k) => hmJob(k, ['United States'])), 40);
-      const rec = serve({ [HM(1)]: { body: elsewhere(1) }, [HM(2)]: { body: elsewhere(2) }, [HM(3)]: { body: hmPage(40, [], 40) } });
-      await expect(run(srcHimalayas, feed, rec)).resolves.toEqual([]);
-      expect(rec.urls).toHaveLength(3);
+    it('a job restricted elsewhere is left out (page 1 still)', async () => {
+      const rec = serve({ [HM]: { body: hmPage(0, [hmJob(1, ['United States']), hmJob(2, ['India']), hmJob(3)], 3) } });
+      await expect(run(srcHimalayas, feed, rec)).resolves.toHaveLength(2);
+      expect(rec.urls).toEqual([HM]);
     });
   });
 
