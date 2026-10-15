@@ -13,5 +13,6 @@ export default defineConfig({
     silent: false,
     testTimeout: 300_000,
     hookTimeout: 300_000,
+    setupFiles: ['tests/support/net-guard.ts'],
   },
 });

@@ -1,3 +1,4 @@
+import { refuseRealNetwork } from '../../kernel/no-network.js';
 import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -677,6 +678,7 @@ export interface ProbeCommandOptions {
 
 /** The parked readers' real door: the honest user-agent, redirects followed, 45 s timeout. */
 export const liveGet: ParkedGet = async (url) => {
+  refuseRealNetwork(url);
   const res = await fetch(url, { headers: { ...HTTP_HEADERS, accept: 'application/json, application/rss+xml, application/xml, */*;q=0.1' }, signal: AbortSignal.timeout(45_000), redirect: 'follow' });
   return { status: res.status, text: await res.text() };
 };

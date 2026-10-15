@@ -1,3 +1,4 @@
+import { refuseRealNetwork } from '../../kernel/no-network.js';
 import { chromium, type Browser, type BrowserContext, type Page, type Request, type Route } from 'playwright';
 import { type AwakeClock, type AwakeStopwatch, systemAwake } from '../../kernel/awake.js';
 import { HTTP_HEADERS } from '../../kernel/broker.js';
@@ -170,6 +171,8 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 
   async render(req: BrowserRenderRequest): Promise<BrowserPage> {
     if (req.signal.aborted) throw req.signal.reason;
+    // JOBPILOT_NO_NETWORK=1 (the test suite): only a loopback page, or a host the test maps to loopback, is rendered
+    if (!(this.opts.resolveToLoopbackForTests ?? []).includes(new URL(req.url).hostname)) refuseRealNetwork(req.url);
     const browser = await this.launch();
     const context = await browser.newContext({
       userAgent: HTTP_HEADERS['user-agent'] as string,

@@ -1,3 +1,4 @@
+import { refuseRealNetwork } from '../../../kernel/no-network.js';
 import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -53,6 +54,7 @@ export type FormPost = (url: string, form: Readonly<Record<string, string>>, sig
 /** The real form post: the token endpoint only, the honest user agent, no redirect followed. */
 export const realFormPost: FormPost = async (url, form, signal) => {
   if (url !== TOKEN_URL) throw new Error(`refused: jobpilot posts only to ${TOKEN_URL}`);
+  refuseRealNetwork(url);
   return fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'jobpilot/0.1 (+local)' },

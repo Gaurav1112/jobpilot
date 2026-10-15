@@ -1,3 +1,4 @@
+import { refuseRealNetwork } from '../kernel/no-network.js';
 import { lookup } from 'node:dns/promises';
 import { HTTP_HEADERS, type HostPacer } from '../kernel/broker.js';
 import type { KernelError } from '../kernel/errors.js';
@@ -13,6 +14,7 @@ export const PROBE_HOSTS: readonly string[] = ['boards-api.greenhouse.io', 'api.
 
 /** One of `hosts` resolves (each lookup given 5 s): the machine is online. */
 export async function dnsOnline(hosts: readonly string[] = PROBE_HOSTS): Promise<boolean> {
+  for (const h of hosts) refuseRealNetwork(h);
   const one = (h: string) => Promise.race([lookup(h).then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 5_000).unref())]).catch(() => false);
   return (await Promise.all(hosts.map(one))).some(Boolean);
 }
