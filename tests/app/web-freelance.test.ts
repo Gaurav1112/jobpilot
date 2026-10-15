@@ -568,3 +568,11 @@ describe('fix round 1', () => {
     expect(text((await get('/freelance?tab=gigs')).body)).toContain('Fit floor 45');
   });
 });
+
+describe('A7: gig rows label their fit and lead with the title', () => {
+  it('a gig row reads title first and "Fit score 70 out of 100"', async () => {
+    const r = rowOf((await get('/freelance?tab=gigs')).body, 'data-gig', G2);
+    expect(r).toMatch(/^<li class="gig" data-gig="[0-9a-f]{16}"[^>]*>\s*<div class="gig-main">/);
+    expect(textOf(r)).toContain('fit Fit score 70 out of 100');
+  });
+});

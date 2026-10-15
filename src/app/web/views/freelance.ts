@@ -3,7 +3,7 @@ import { GIG_STATUSES, NETWORK_STATUSES } from '../../store/schema.js';
 import { countText, dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { gigReasonText, platformName } from '../copy.js';
-import { csrfField, meta, pill, techDetail, type Tone } from './common.js';
+import { csrfField, fitChip, meta, pill, techDetail, type Tone } from './common.js';
 
 /**
  * The freelance tab (Task 10, spec §8): Contracts, Gigs, Review, Networks and Sources, one gig's page, and the fragments
@@ -91,8 +91,6 @@ function factsLine(v: GigRowView): Html {
 function gigRow(v: GigRowView): Html {
   const g = v.gig;
   return html`<li class="gig" data-gig="${g.gigKey}">
-<div class="gig-rate"><span class="rate-label">${v.rate}</span></div>
-<div class="gig-fit num" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h2 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h2>
 <p class="gig-sub">${meta([platformName(g.platform), v.client.length > 0 ? v.client.join(', ') : html`<span class="muted">no client details</span>`, sourceLink(g, 'Open the posting')])}</p>
@@ -102,6 +100,8 @@ ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 ${v.alsoInRoles === true ? html`<p class="gig-also"><a class="pill pill-accent" href="/freelance#contract-roles">Also in Contract roles</a></p>` : ''}
 </div>
+<div class="gig-rate"><span class="rate-label">${v.rate}</span></div>
+<div class="gig-fit" title="${v.fitTitle}">${fitChip(g.fit)}</div>
 <div class="gig-status">${gigStatusPill(g.status)}</div>
 </li>`;
 }
@@ -161,7 +161,6 @@ function roleRow(r: ContractRoleView): Html {
   ];
   const url = externalUrl(g.url);
   return html`<li class="role" data-role="${g.gigKey}">
-<div class="gig-fit num" title="Fit">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h3 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h3>
 <p class="gig-sub">${meta(sub)}</p>
@@ -170,6 +169,7 @@ function roleRow(r: ContractRoleView): Html {
 ${files.length > 0 ? html`<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${ROLE_FILE_LABEL(f)}</a>`)}</div>` : html`<p class="muted">${r.docsReason ?? 'No documents yet.'}</p>`}
 ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}
 </div>
+<div class="gig-fit" title="Fit">${fitChip(g.fit)}</div>
 </li>`;
 }
 
@@ -349,7 +349,7 @@ export function gigBody(d: GigPageData): Html {
 <div class="fact-box"><span class="label">Rate</span><span class="rate-label">${v.rate}</span></div>
 <div class="fact-box"><span class="label">Hours</span><span>${v.hours}</span></div>
 <div class="fact-box"><span class="label">IST overlap</span><span>${v.overlap ?? 'not stated'}</span><span class="hint">your window ${v.istWindow}</span></div>
-<div class="fact-box"><span class="label">Fit</span><span class="big num" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}</span></div>
+<div class="fact-box"><span class="label">Fit</span><span class="big num" aria-hidden="true" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">${g.fit === null ? 'Not scored' : html`Fit score ${scoreText(g.fit)} out of 100`}</span></div>
 </div>
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 <p>${sourceLink(g, 'Open the original posting')}</p>

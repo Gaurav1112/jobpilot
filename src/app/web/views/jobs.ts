@@ -2,7 +2,7 @@ import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-sto
 import { countText, dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { reasonText, remoteText, sourceName } from '../copy.js';
-import { meta, BAND_LABEL, compCell, exceptionPill, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { meta, BAND_LABEL, compCell, exceptionPill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -69,8 +69,6 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
 
 function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): Html {
   return html`<li class="job" data-job="${j.jobKey}">
-<div class="job-comp">${compCell(j)}</div>
-<div class="job-score num"><span class="visually-hidden">Fit score </span>${j.score === null ? '–' : scoreText(j.score)}</div>
 <div class="job-main">
 <h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="/jobs/${j.jobKey}">${j.title}</a></h2>
 <p class="job-sub">${meta([
@@ -83,6 +81,8 @@ function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): H
 ${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${[...new Set(j.reasons.map(reasonText))].join('; ')}</p>` : ''}
 ${historyLine(j, istDay)}
 </div>
+<div class="job-comp">${compCell(j)}</div>
+<div class="job-score">${fitChip(j.score)}</div>
 <div class="job-status">${j.status === 'new' ? '' : statusPill(j.status)}</div>
 </li>`;
 }

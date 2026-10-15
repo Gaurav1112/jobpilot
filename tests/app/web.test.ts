@@ -1188,3 +1188,15 @@ describe('I9: pack-load errors on the dashboard never show a forbidden term', ()
     expect(body).not.toMatch(/initech/i);
   });
 });
+
+describe('A7: the fit score is labelled and scaled; the title is read first', () => {
+  it('a job row reads title, then pay, then "Fit score 80 out of 100"', async () => {
+    const r = rowOf((await get('/')).body, 'data-job', K1);
+    expect(textOf(r)).toMatch(/^Senior Backend Engineer .*₹70–90 LPA.*fit Fit score 80 out of 100/);
+    expect(r).not.toContain('title="Fit score"');
+    expect(textOf(rowOf((await get('/?band=rejected')).body, 'data-job', K5))).toContain('Not scored');
+  });
+  it('the job page states the scale', async () => {
+    expect(textOf((await get(`/jobs/${K1}`)).body)).toMatch(/Fit score 80 out of 100/);
+  });
+});

@@ -41,7 +41,7 @@ function header(j: JobDetail): Html {
 ])}</p>
 <div class="head-facts">
 <div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
-<div class="fact-box"><span class="label">Fit score</span><span class="big num">${j.score === null ? '–' : scoreText(j.score)}</span></div>
+<div class="fact-box"><span class="label">Fit score</span><span class="big num" aria-hidden="true">${j.score === null ? '–' : scoreText(j.score)}</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">${j.score === null ? 'Not scored' : html`Fit score ${scoreText(j.score)} out of 100`}</span></div>
 <div class="fact-box"><span class="label">Band</span>${bandPill(j.band)}</div>
 <div class="fact-box"><span class="label">Where</span>${remotePill(j.remote)}</div>
 </div>

@@ -188,7 +188,7 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
 .comp-main { font-weight: 650; }
 .comp-inr, .comp-caveat { font-size: var(--fs-xs); color: var(--text-3); }
 .job-band { margin-top: 2px; }
-.job-score { grid-area: score; font-size: var(--fs-xl); font-weight: 650; text-align: right; line-height: 1.2; }
+.job-score { grid-area: score; }
 .job-main { grid-area: main; min-width: 0; }
 .job-title { font-size: var(--fs-lg); font-weight: 600; margin-bottom: 2px; overflow-wrap: anywhere; }
 .job-title a { color: var(--text); text-decoration: none; }
@@ -339,7 +339,11 @@ details summary { cursor: pointer; color: var(--accent); }
 .gig:hover { background: var(--surface-2); }
 .gig-rate { grid-area: rate; min-width: 0; }
 .rate-label { font-weight: 650; overflow-wrap: anywhere; }
-.gig-fit { grid-area: fit; font-size: var(--fs-xl); font-weight: 650; text-align: right; line-height: 1.2; cursor: help; }
+.gig-fit { grid-area: fit; cursor: help; }
+.job-score, .gig-fit { text-align: right; line-height: 1.1; }
+.fit-chip { display: inline-grid; justify-items: end; }
+.fit-num { font-size: var(--fs-xl); font-weight: 600; }
+.fit-cap { font-size: var(--fs-xs); color: var(--text-3); }
 .gig-main { grid-area: main; min-width: 0; }
 .gig-title { font-size: var(--fs-lg); font-weight: 600; margin-bottom: 2px; overflow-wrap: anywhere; }
 .gig-title a { color: var(--text); text-decoration: none; }
@@ -387,13 +391,16 @@ pre.paste, pre.checklist {
 .role { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: var(--space-1) var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--border); align-items: start; }
 .role:first-child { border-top: 0; }
 .role .gig-fit, .role .gig-main { grid-area: auto; }
+.role .gig-fit { grid-column: 1; grid-row: 1; }
+.role .gig-main { grid-column: 2; grid-row: 1; }
 .role-skills, .role-ask { font-size: var(--fs-sm); margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
 .role-ask .pill { white-space: normal; }
 .gig-also { margin: var(--space-1) 0 0; }
 .gig-also .pill { text-decoration: none; }
 @media (max-width: 720px) {
   .role { grid-template-columns: minmax(0, 1fr); }
-  .role .gig-fit { text-align: left; }
+  .role .gig-fit { text-align: left; grid-column: 1; grid-row: 2; }
+  .role .gig-main { grid-column: 1; grid-row: 1; }
 }
 
 /* --- companies (career-sites Task 11) ------------------------------------------------------------------------- */
