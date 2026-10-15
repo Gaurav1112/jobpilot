@@ -281,7 +281,7 @@ export interface NetworkCard {
   readonly stages: readonly string[];
   readonly status: NetworkStatus;
   readonly updatedAt: string | null;
-  /** When the user first marked it applied (the logged action), or null. */
+  /** When the user last marked it applied (the logged action), or null. */
   readonly appliedAt: string | null;
   /** What the research verified (the catalogue), or null for a network only the user's pack knows. */
   readonly facts: {

@@ -384,3 +384,10 @@ Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/fr
   "robots.txt disallows /api (2026-10-15)" and no request, and the Sources page and `sources probe` show that reason.
   The code is kept. Remotive was never a daily source.
 - **Daily Himalayas reads page 1 only (controller, 2026-10-15)**: its robots.txt body disallows `/jobs*&page=`.
+- **Review round (2026-10-15).** "Hours not stated" means no hours figure in any unit or wording and no full-time
+  wording ("full-time", "entire week", "9-5", "40 hours"). Hours per month (÷ 4.33) or per day (× 5) convert to a week as
+  a stated assumption: within the cap they pass with a note, over it they are review (a converted figure never rejects).
+  An hours range whose top exceeds the cap is review ("hours range up to N/week exceeds 20; confirm"). Structured
+  Himalayas pay needs both ends for a stated range (max only: ceiling; min only: no rate); a figure the text gives per
+  task/day/week/month or as a total/flat/fixed sum, the currency before or after it, voids the hourly label. A Freelancer
+  hourly project with only a maximum is a ceiling. IST in Himalayas time zones means +5.5 exactly.

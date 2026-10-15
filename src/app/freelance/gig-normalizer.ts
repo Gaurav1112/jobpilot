@@ -56,10 +56,10 @@ const fail = (r: RawGig, why: string): KernelError => new KernelError('invalid_o
 
 /**
  * "10 hours per week", "15-30 hrs/week", "10–39 hours per week" (en dash), "10—39" (em dash), "10 to 39 hours a
- * week", "20h a wk", "between 10 and 20 hours a week". A phrase without a per-week unit is not hours per week.
+ * week", "20h a wk", "10 hours weekly", "between 10 and 20 hours a week". A phrase without a per-week unit is not hours per week.
  * (freelance-boost: before, only "-" joined a range, so "10–39 hours" read as 39; research A7.1.)
  */
-export const HOURS_PER_WEEK = /\b(?:between\s+(\d{1,2})\s+and\s+(\d{1,2})|(\d{1,2})(?:\s?(?:-|–|—|to)\s?(\d{1,2}))?)\s?(?:h|hrs|hours)\s?(?:\/|per|a)\s?(?:week|wk)\b/gi;
+export const HOURS_PER_WEEK = /\b(?:between\s+(\d{1,2})\s+and\s+(\d{1,2})|(\d{1,2})(?:\s?(?:-|–|—|to)\s?(\d{1,2}))?)\s?(?:h|hrs|hours)\s?(?:(?:\/|per|a)\s?(?:week|wk)|weekly)\b/gi;
 
 /** The stated hours per week; several distinct figures ("not 40 h/week, just 10 h/week") are ambiguous, so null. */
 function hoursOf(text: string): Gig['hoursPerWeek'] {
@@ -213,7 +213,12 @@ function freelancer(r: RawGig, o: Rec): Draft {
     description: stripped(description),
     clientName: null,
     kind: o.type === 'hourly' ? 'contract' : 'gig',
-    budget: known ? { type: o.type as 'hourly' | 'fixed', min: finite(budget.minimum), max: finite(budget.maximum), currency: code, usdPerUnit: code === null ? null : positive(rateOfCurrency) } : UNKNOWN_BUDGET,
+    budget: !known
+      ? UNKNOWN_BUDGET
+      : o.type === 'hourly' && finite(budget.minimum) === null && finite(budget.maximum) !== null
+        // An hourly project with only a maximum states a ceiling (review round 2026-10-15): it can never pass alone.
+        ? { type: 'hourly', min: null, max: finite(budget.maximum), currency: code, usdPerUnit: code === null ? null : positive(rateOfCurrency), bound: 'ceiling' }
+        : { type: o.type as 'hourly' | 'fixed', min: finite(budget.minimum), max: finite(budget.maximum), currency: code, usdPerUnit: code === null ? null : positive(rateOfCurrency) },
     location: { countries: [], worldwide: !o.local, text: null },
     skills: Array.isArray(o.jobs) ? o.jobs.flatMap((j: unknown) => (isRec(j) && typeof j.name === 'string' ? [j.name] : [])) : [],
     postedAt: postedAtOf(o.time_submitted, 's'),
@@ -323,12 +328,15 @@ function gmail(r: RawGig, o: Rec): Draft {
 
 const HIMALAYAS_KINDS: readonly string[] = ['Contractor', 'Part Time', 'Temporary'];
 /** A figure followed by a unit that is not time-based work ("$500/task"): the platform's `hourly` label is then wrong. */
-const NOT_HOURLY_UNIT = /^\s?(?:\/|per\s|an?\s)\s?(?:task|project|item|word|page|unit|submission|annotation|piece|video|image|deliverable|article)s?\b/i;
+const NOT_HOURLY_UNIT =
+  /^\s?(?:(?:\/|per\s|an?\s|each\s)\s?(?:task|project|item|word|page|unit|submission|annotation|piece|video|image|deliverable|article|day|week|month|year|annum|milestone)s?\b|(?:total|flat|fixed|in\s+total|lump\s+sum)\b)/i;
 
 /** Whether the text names `figure` (as money) with a non-time unit: "$500/task", "$500 per project". */
 function statedPerTask(text: string, figure: number): boolean {
-  for (const m of text.matchAll(/(?:[$€£₹]|\b(?:USD|EUR|GBP|INR)\s?)\s?(\d[\d,]*(?:\.\d+)?)/gi)) {
-    if (Number((m[1] ?? '').replace(/,/g, '')) !== figure) continue;
+  // "$500/task", "USD 400 per day", and the code after the figure: "400 USD per task", "250 USD/day".
+  const money = /(?:[$€£₹]|\b(?:USD|EUR|GBP|INR)\s?)\s?(\d[\d,]*(?:\.\d+)?)(?:\s?(?:USD|EUR|GBP|INR)\b)?|\b(\d[\d,]*(?:\.\d+)?)\s?(?:USD|EUR|GBP|INR)\b/gi;
+  for (const m of text.matchAll(money)) {
+    if (Number((m[1] ?? m[2] ?? '').replace(/,/g, '')) !== figure) continue;
     if (NOT_HOURLY_UNIT.test(text.slice((m.index ?? 0) + m[0].length))) return true;
   }
   return false;
@@ -336,9 +344,10 @@ function statedPerTask(text: string, figure: number): boolean {
 
 /**
  * Himalayas' structured pay (`minSalary`, `maxSalary`, `salaryPeriod`, `currency`): `hourly` or `monthly` with a
- * figure and a known currency is the budget, labelled `from: 'platform'`. Contradicted by the text (the figure stated
- * per task, project, item ...: the platform's period is wrong, live 2026-10-14 "Up to $500/task" filed as hourly 500),
- * it is no budget at all. Anything else (an `annual` salary, no figure) is null: the text is read instead.
+ * figure and a known currency is the budget, labelled `from: 'platform'`: both ends a stated range, a maximum alone a
+ * ceiling (`bound: 'ceiling'`), a minimum alone no budget. Contradicted by the text (the figure stated per task,
+ * project, item, day, week, month, or as a total, flat or fixed sum, the currency before or after it: the platform's
+ * period is wrong, live 2026-10-14 "Up to $500/task" filed as hourly 500), it is no budget at all. Anything else (an `annual` salary, no figure) is null: the text is read instead.
  */
 function himalayasPay(o: Rec, text: string): Budget | 'contradicted' | null {
   const period = o.salaryPeriod;
@@ -348,6 +357,10 @@ function himalayasPay(o: Rec, text: string): Budget | 'contradicted' | null {
   const currency = currencyOf(o.currency);
   if ((min === null && max === null) || currency === null) return null;
   if ([min, max].some((f) => f !== null && statedPerTask(text, f))) return 'contradicted';
+  // Review round 2026-10-15: a stated range needs both ends; a maximum alone is a ceiling (it can never pass alone);
+  // a minimum alone is no rate at all (review).
+  if (max === null) return 'contradicted';
+  if (min === null) return { type: period, min: null, max, currency, usdPerUnit: null, from: 'platform', bound: 'ceiling' };
   return { type: period, min, max, currency, usdPerUnit: null, from: 'platform' };
 }
 
@@ -366,8 +379,9 @@ function himalayas(r: RawGig, o: Rec): Draft {
   const pay = himalayasPay(o, text);
   const names = restrictionNames(o.locationRestrictions);
   const zones = Array.isArray(o.timezoneRestrictions) ? o.timezoneRestrictions.filter((z): z is number => typeof z === 'number' && Number.isFinite(z)) : [];
-  // Time zones that leave out IST (UTC+5:30, so nothing from +5 to +6): not worldwide, and said so in the location text.
-  const zonesExcludeIst = zones.length > 0 && !zones.some((z) => z >= 5 && z <= 6);
+  // Time zones that leave out IST exactly (no +5.5 in the list; +5 and +6 are other zones): not worldwide, said so in
+  // the location text. Review round 2026-10-15: the rule is exact, a near zone is no IST.
+  const zonesExcludeIst = zones.length > 0 && !zones.includes(IST_OFFSET_H);
   const zoneText = zonesExcludeIst ? `time zones UTC${fmtZone(Math.min(...zones))} to UTC${fmtZone(Math.max(...zones))} only` : null;
   const place = [names.join(', '), zoneText].filter((x) => x !== null && x !== '').join('; ');
   const where = placesOf(names.join(', '));
@@ -385,6 +399,7 @@ function himalayas(r: RawGig, o: Rec): Draft {
   };
 }
 
+const IST_OFFSET_H = 5.5;
 const fmtZone = (z: number): string => `${z >= 0 ? '+' : '−'}${Math.floor(Math.abs(z))}${Math.abs(z) % 1 === 0 ? '' : `:${String(Math.round((Math.abs(z) % 1) * 60)).padStart(2, '0')}`}`;
 
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */

@@ -367,6 +367,40 @@ export function youSetHours(r: RatedGig, floor: number): boolean {
   return gig.platform === 'freelancer' && gig.kind === 'contract' && gig.budget.type === 'hourly' && rate.method === 'stated' && rate.maxUsdH !== null && rate.maxUsdH >= floor;
 }
 
+/* freelance-boost review round (I1): hours in any unit, and the wording that rules out "not stated". */
+const WEEKS_PER_MONTH = 4.33;
+const DAYS_PER_WEEK = 5;
+const RANGE_SEP = '\\s?(?:-|–|—|to)\\s?';
+/** "160 hours per month", "40-80 hrs/mo", "8 hours a day", "6-8 h/day". */
+const HOURS_PER_MONTH = new RegExp(`\\b(\\d{1,3})(?:${RANGE_SEP}(\\d{1,3}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:month|mo)\\b`, 'gi');
+const HOURS_PER_DAY = new RegExp(`\\b(\\d{1,2})(?:${RANGE_SEP}(\\d{1,2}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:day|weekday)\\b`, 'gi');
+/** Any hours figure in any unit or wording: digits or written-out numbers next to "hour(s)", "N hours weekly", "per week ... N hours". */
+const ANY_HOURS =
+  /\b\d{1,3}(?:\.\d+)?\s?(?:\+|(?:-|–|—|to)\s?\d{1,3})?\s?(?:h|hrs?|hours?)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|eighty|hundred|few|several|couple of)(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?[\s-]+(?:hours?|hrs)\b|\bper\s+(?:week|month|day)\b[^.;\n]{0,40}\b\d{1,3}\s?(?:h|hrs?|hours?)\b/i;
+/** Full-time wording of any shape, or a working-day window: never "hours not stated". */
+const FULL_TIME_ANY = /\bfull[\s-]?time\b|\bentire\s+(?:week|day)\b|\b9\s?(?:am)?\s?(?:-|–|to)\s?[56]\s?(?:pm)?\b|\b\d{1,2}\s?(?:am|pm)\s?(?:-|–|to)\s?\d{1,2}\s?(?:am|pm)\b|\b40\s?(?:h|hrs?|hours?)\b/i;
+
+/** One unambiguous per-month or per-day figure, as hours per week (÷ 4.33, × 5), with how it was reached; else null. */
+export function convertedHours(text: string): { min: number; max: number; note: string } | null {
+  const found = new Map<string, { min: number; max: number; note: string }>();
+  const r1 = (x: number): number => Math.round(x * 10) / 10;
+  for (const m of text.matchAll(HOURS_PER_MONTH)) {
+    const lo = Number(m[1]);
+    const hi = Number(m[2] ?? m[1]);
+    if (!(lo > 0 && hi >= lo)) return null;
+    found.set(`m${lo}-${hi}`, { min: r1(lo / WEEKS_PER_MONTH), max: r1(hi / WEEKS_PER_MONTH), note: `${lo === hi ? lo : `${lo}–${hi}`} hours per month` });
+  }
+  for (const m of text.matchAll(HOURS_PER_DAY)) {
+    const lo = Number(m[1]);
+    const hi = Number(m[2] ?? m[1]);
+    if (!(lo > 0 && hi >= lo)) return null;
+    found.set(`d${lo}-${hi}`, { min: lo * DAYS_PER_WEEK, max: hi * DAYS_PER_WEEK, note: `${lo === hi ? lo : `${lo}–${hi}`} hours per day` });
+  }
+  return found.size === 1 ? ([...found.values()][0] ?? null) : null;
+}
+
+export const noteWideRange = (max: number, cap: number): string => `hours range up to ${max}/week exceeds ${cap}; confirm`;
+
 export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
   if (g.kind !== 'contract') return PASS;
   const text = `${g.title}\n${g.description}`;
@@ -386,15 +420,26 @@ export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
       if (end >= 0 && softenedAfter(g.description.slice(end).split(CLAUSES).slice(1), FEWER_HOURS_OK)) return softened();
       return rejectOf('hours-over-cap');
     }
-    return ft === 'yes' ? reviewOf('hours-unclear', NOTE_HOURS_CONFLICT) : PASS;
+    if (ft === 'yes') return reviewOf('hours-unclear', NOTE_HOURS_CONFLICT);
+    // A range whose top is over the cap ("10–39 h/week") is review, never a pass (controller decision 2026-10-15).
+    const max = g.hoursPerWeek.max;
+    if (g.hoursPerWeek.min !== null && max !== null && max > cap) return reviewOf('hours-unclear', noteWideRange(max, cap));
+    return PASS;
   }
   if (ft === 'softened') return softened();
+  // Hours per month or per day: converted to a week as a stated assumption (÷ 4.33, × 5). Within the cap it passes
+  // with the note; over it, or a range reaching over it, is review: a converted figure never rejects.
+  const converted = ft === 'no' ? convertedHours(g.description) : null;
+  if (converted !== null) {
+    const how = `≈${converted.min === converted.max ? converted.min : `${converted.min}–${converted.max}`} h/week from ${converted.note} (assumed ${converted.note.endsWith('month') ? `${WEEKS_PER_MONTH} weeks a month` : `${DAYS_PER_WEEK} days a week`})`;
+    return converted.max <= cap ? noteOf(how) : reviewOf('hours-unclear', `${how} - verify`);
+  }
   if (ft === 'yes') return rejectOf('hours-over-cap');
-  // No figure and no full-time wording at all ('unclear', a hedged full-time mention, stays review).
-  // Only when the text states no per-week figure at all: ambiguous figures ("5-10 h/week now, maybe 40 later") are
-  // stated hours, not "not stated", and stay review.
-  const anyFigure = [...text.matchAll(HOURS_PER_WEEK)].length > 0 || [...text.matchAll(PLUS_HOURS)].length > 0;
-  if (ft === 'no' && setByYou && !anyFigure) return noteOf(NOTE_YOU_SET_HOURS);
+  // "Hours not stated" only when the text has NO hours figure in any unit or wording ("160 hours per month", "8
+  // hours a day", "forty hours a week", "per week we need 30 hours") and no full-time wording of any shape ("This is a
+  // full-time job", "your entire week, 9-5", "40 hours"): anything else stays review (review round I1, 2026-10-15).
+  const anyFigure = ANY_HOURS.test(text) || [...text.matchAll(HOURS_PER_WEEK)].length > 0 || [...text.matchAll(PLUS_HOURS)].length > 0;
+  if (ft === 'no' && setByYou && !anyFigure && !FULL_TIME_ANY.test(text)) return noteOf(NOTE_YOU_SET_HOURS);
   return reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
 }
 

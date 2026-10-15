@@ -254,12 +254,12 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       };
     });
   };
-  /** When each network was first marked applied, from the logged `network.status` actions. */
+  /** When each network was last marked applied, from the logged `network.status` actions (the latest wins). */
   const appliedDates = (s: AppStore): Map<string, string> => {
     const out = new Map<string, string>();
     for (const a of s.userActions()) {
       const x = a.data as { networkId?: unknown; to?: unknown } | null;
-      if (a.kind === 'network.status' && x !== null && typeof x.networkId === 'string' && x.to === 'applied' && !out.has(x.networkId)) out.set(x.networkId, a.at);
+      if (a.kind === 'network.status' && x !== null && typeof x.networkId === 'string' && x.to === 'applied') out.set(x.networkId, a.at);
     }
     return out;
   };
@@ -293,6 +293,8 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const at = d.now();
     const ps = d.packState(at);
     if (!knownNetwork(ps.pack, id)) return c.text('No such network', 404);
+    // A network that does not take people in India cannot be marked applied (the page offers no button either).
+    if (to === 'applied' && catalogueEntry(id)?.india === 'not-open') return c.text('This network is not open to India', 409);
     const { st, applied } = d.withStore((s) =>
       s.tx(() => {
         const from = s.networkStatuses()[id]?.status ?? 'todo';

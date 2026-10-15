@@ -40,6 +40,8 @@ export const HIMALAYAS_GIGS_HOST = 'himalayas.app';
 export const HIMALAYAS_GIGS_MIN_INTERVAL_MS = 2000;
 /** The employment types asked for: contract and part-time work only. */
 export const HIMALAYAS_GIGS_TYPES = 'Contractor,Part Time';
+/** The employment types the normalizer maps (a job of any other type is skipped by name). */
+export const HIMALAYAS_GIG_TYPES: readonly string[] = ['Contractor', 'Part Time', 'Temporary'];
 
 export const himalayasGigsUrl = (query: string): string =>
   `https://${HIMALAYAS_GIGS_HOST}/jobs/api/search?q=${encodeURIComponent(query)}&employment_type=${encodeURIComponent(HIMALAYAS_GIGS_TYPES)}&country=India&sort=recent`;
@@ -159,6 +161,11 @@ export function makeSrcHimalayasGigs(hosts: HimalayasGigsHosts = himalayasGigsHo
         return;
       }
       if (Array.isArray(job.locationRestrictions) && !indiaEligible(job.locationRestrictions)) return;
+      // A job of another employment type (the filter leaked one): a named skip, never a failed step downstream.
+      if (typeof job.employmentType !== 'string' || !HIMALAYAS_GIG_TYPES.includes(job.employmentType)) {
+        skipped.push(`himalayas ${req.query} job ${i}: employment type ${JSON.stringify(job.employmentType ?? null)} is not contract or part-time work`);
+        return;
+      }
       const raw: Record<string, unknown> = {};
       for (const k of KEPT) raw[k] = job[k] ?? null;
       gigs.push({ platform: 'himalayas', sourceId: id, raw });

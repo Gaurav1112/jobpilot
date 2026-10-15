@@ -1163,6 +1163,20 @@ export class AppStore {
     }[]).sort((a, b) => Number(a.platform === 'boards') - Number(b.platform === 'boards') || cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
     const top = rows[0];
     if (!top) return;
+    // A new head (the Himalayas row becoming the group's row over the boards one it duplicates) takes over the status
+    // the user set on the old head, so the shown row never loses it (review round 2026-10-15). Only from 'new': a status
+    // the user set on the new head itself wins. No history row is written: the user's own entry stays on the old row.
+    const oldHead = rows.find((r) => r !== top && r.platform !== top.platform && r.duplicate_of === null);
+    if (oldHead !== undefined) {
+      const st = this.db.prepare(`SELECT status, applied_at, note FROM gigs WHERE gig_key = ?`);
+      const from = st.get(oldHead.gig_key) as { status: string; applied_at: string | null; note: string };
+      const to = st.get(top.gig_key) as { status: string; applied_at: string | null; note: string };
+      if (from.status !== 'new' && to.status === 'new') {
+        this.db
+          .prepare(`UPDATE gigs SET status = ?, applied_at = COALESCE(applied_at, ?), note = CASE WHEN note = '' THEN ? ELSE note END WHERE gig_key = ?`)
+          .run(from.status, from.applied_at, from.note ?? '', top.gig_key);
+      }
+    }
     const set = this.db.prepare(`UPDATE gigs SET duplicate_of = ? WHERE gig_key = ?`);
     for (const r of rows) {
       const dup = r !== top && r.platform !== top.platform ? top.gig_key : null;

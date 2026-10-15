@@ -419,11 +419,28 @@ describe('freelance: networks', () => {
       { networkId: 'arc', from: 'todo', to: 'applied' },
       { networkId: 'micro1', from: 'todo', to: 'applied' },
     ]);
+    // Lemon.io (not open to India) is refused on the server too, and nothing is stored or logged.
+    expect((await post('/freelance/networks/lemon/status', { to: 'applied', _csrf: token }, hx)).status).toBe(409);
+    expect(withStore((s) => s.networkStatuses()['lemon'])).toBeUndefined();
     // Accepted later: the applied date stays on the card.
     const later = await post('/freelance/networks/micro1/status', { to: 'passed', _csrf: token }, hx);
     expect(text(await later.text())).toMatch(/Accepted.*applied on \d{1,2} \w{3} \d{4}/i);
     expect((await post('/freelance/networks/arc/status', { to: 'won', _csrf: token }, hx)).status).toBe(400);
     expect((await post('/freelance/networks/nope/status', { to: 'applied', _csrf: token }, hx)).status).toBe(404);
+  });
+
+  it('the applied date shown is the LATEST "applied" action, not the first', async () => {
+    withStore((s) => {
+      s.logUserAction('network.status', { networkId: 'mercor', from: 'todo', to: 'applied' }, '2026-10-01T06:00:00.000Z');
+      s.logUserAction('network.status', { networkId: 'mercor', from: 'applied', to: 'todo' }, '2026-10-02T06:00:00.000Z');
+      s.logUserAction('network.status', { networkId: 'mercor', from: 'todo', to: 'applied' }, '2026-10-05T06:00:00.000Z');
+      s.setNetworkStatus('mercor', 'applied', '2026-10-05T06:00:00.000Z');
+    });
+    const { body } = await get('/freelance/networks');
+    const i = body.indexOf('data-network="mercor"');
+    const card = body.slice(i, body.indexOf('data-network="', i + 1));
+    expect(text(card)).toContain('Applied on 5 Oct 2026');
+    expect(text(card)).not.toContain('1 Oct 2026');
   });
 });
 

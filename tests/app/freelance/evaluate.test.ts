@@ -241,8 +241,10 @@ describe('gig-eligibility: rules', () => {
     // On a non-Freelancer platform: a Freelancer hourly contract at or above the floor with no hours figure passes the
     // hours rule with a note since freelance-boost (the approved rule, user 2026-10-14), so it is checked apart below.
     const text = (description: string, over: Partial<Gig> = {}) => decide(rated({ hoursPerWeek: noHours, description, platform: 'remotive', ...over }));
-    for (const d of ['We are a full-time remote team of engineers.', 'Full time or part time role.', 'Dedicated resource for our team.']) {
-      expect(decide(rated({ hoursPerWeek: noHours, description: d })), d).toEqual({ verdict: 'eligible', reasons: [], notes: ['hours not stated; you set them'] });
+    // ... but only with no full-time wording at all (review round 2026-10-15): any "full-time" keeps the review.
+    expect(decide(rated({ hoursPerWeek: noHours, description: 'Dedicated resource for our team.' }))).toEqual({ verdict: 'eligible', reasons: [], notes: ['hours not stated; you set them'] });
+    for (const d of ['We are a full-time remote team of engineers.', 'Full time or part time role.']) {
+      expect(decide(rated({ hoursPerWeek: noHours, description: d })), d).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
     }
     for (const d of [
       'We are a full-time remote team of engineers.',
