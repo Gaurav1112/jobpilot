@@ -76,7 +76,10 @@ export type StepOutcome =
 
 /** Rejects when the signal aborts, even if the agent ignores the signal. */
 function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) return Promise.reject(signal.reason);
+  if (signal.aborted) {
+    p.catch(() => undefined); // the agent's own late failure is not an unhandled rejection
+    return Promise.reject(signal.reason);
+  }
   return new Promise<T>((resolve, reject) => {
     const onAbort = () => reject(signal.reason);
     signal.addEventListener('abort', onAbort, { once: true });

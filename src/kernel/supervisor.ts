@@ -1,10 +1,11 @@
+import { type AwakeClock, systemAwake } from './awake.js';
 import { Breakers } from './breaker.js';
 import { canonicalJson, hashOf } from './canonical.js';
 import type { Clock } from './clock.js';
 import { createHostPacer, freezePack, type EgressSets, type HostPacer } from './broker.js';
 import { contractHash, contractShape, securityDiff } from './contract.js';
 import { type Envelope, type GuardrailVerdict, makeEnvelopeId, openObligations, ZERO_COST } from './envelope.js';
-import { InvalidTransition } from './errors.js';
+import { type ErrorCode, InvalidTransition } from './errors.js';
 import { recoverPending } from './files.js';
 import { executeStep, type ExecutorDeps, type StepOutcome } from './executor.js';
 import type { GuardrailRegistry } from './guardrails/index.js';
@@ -12,7 +13,7 @@ import type { Policy } from './policy.js';
 import type { Providers } from './providers.js';
 import type { Registry } from './registry.js';
 import type { StateMachine } from './state-machine.js';
-import type { EventRow, Store } from './store/store.js';
+import type { EventRow, QueueRow, Store } from './store/store.js';
 import { type CompiledPipeline, SUPERVISOR_ID, seedClass } from './wiring.js';
 
 /** Maps envelopes and outcomes onto an entity state machine (e.g. one row per job). */
@@ -76,7 +77,44 @@ export interface SupervisorDeps {
    * Default 'none' (kernel and demo), which leaves the keys as before.
    */
   readonly codeHash?: string;
+  /**
+   * The awake-time clock (step and request timeouts, and wake detection: a gap in it is the Mac waking from sleep);
+   * default the process's `systemAwake`. Tests inject one on `manualTimers`.
+   */
+  readonly awake?: AwakeClock;
+  /**
+   * Is the machine online (the app's HTTPS check)? Asked after a transport failure that is not just after a wake (an
+   * offline answer makes it not final, cached ONLINE_CACHE_MS), and before re-queueing such failures. Without it, only
+   * the wake rule applies and the re-queue does not wait.
+   */
+  readonly online?: () => Promise<boolean>;
 }
+
+/** A transport failure (network, timeout) within this long after a detected wake is not final: it is re-queued. */
+export const WAKE_GRACE_MS = 120_000;
+/** The most times one queue item is re-queued after a wake or an offline failure in a run; then it fails as before. */
+export const MAX_WAKE_REQUEUES = 3;
+/** Before re-queueing, the online check is asked up to ONLINE_MAX_POLLS times, ONLINE_POLL_MS apart. */
+export const ONLINE_POLL_MS = 15_000;
+export const ONLINE_MAX_POLLS = 20;
+/** An online answer is reused this long when judging failures (so a burst of failures costs one check). */
+export const ONLINE_CACHE_MS = 30_000;
+/** The transport error codes a sleep or an outage causes. */
+const TRANSPORT: ReadonlySet<ErrorCode> = new Set(['network', 'timeout']);
+
+/** The events of the wake rule; never in a step key, an envelope or a hash input. */
+export const WAKE_EVENT = {
+  /** The run's awake clock saw a gap: the Mac slept and woke (data: wokeAt, sleptMs). */
+  woke: 'resumed_from_sleep',
+  /** A transport failure is not final (data: agent, envelopeId, error, why: after-wake | offline). */
+  due: 'wake_retry_due',
+  /** The item was put back in the queue (data: agent, envelopeId, attempt). */
+  requeued: 'wake_requeued',
+  /** The online check never passed: the item stays failed (data: agent, envelopeId). */
+  abandoned: 'wake_retry_abandoned',
+} as const;
+
+const itemKey = (agentId: string, envelopeId: string): string => `${agentId}\u0000${envelopeId}`;
 
 export interface RunReport {
   readonly runId: string;
@@ -112,8 +150,17 @@ export class Supervisor {
   /** One frozen deep copy of each pack, made once; the caller's objects are left alone. */
   private readonly pack: unknown;
   private readonly fullPack: unknown;
+  private readonly awake: AwakeClock;
+  /** Wall ms of the last wake the awake clock detected during a drain. */
+  private lastWakeAt: number | undefined;
+  /** Wakes detected and not yet recorded as events (recorded between steps, never inside a store transaction). */
+  private wakesToLog: { at: number; slept: number }[] = [];
+  private onlineSeen: { at: number; ok: boolean } | undefined;
+  /** Per run: how many times each item was re-queued by the wake rule (read from the events once, then kept). */
+  private readonly wakeCounts = new Map<string, Map<string, number>>();
 
   constructor(private readonly d: SupervisorDeps) {
+    this.awake = d.awake ?? systemAwake;
     this.sleep = d.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.hostPacer = d.hostPacer ?? createHostPacer(d.policy.minHostIntervalMs, d.clock, this.sleep);
     this.browserPacer = createHostPacer(d.policy.minBrowserIntervalMs, d.clock, this.sleep);
@@ -131,6 +178,7 @@ export class Supervisor {
       clock: d.clock,
       guardrails: d.guardrails,
       sleep: this.sleep,
+      awake: this.awake,
       hostPacer: this.hostPacer,
       browserPacer: this.browserPacer,
       ...(this.pack !== undefined ? { pack: this.pack } : {}),
@@ -247,11 +295,43 @@ export class Supervisor {
   }
 
   private async drain(runId: string): Promise<RunReport> {
+    // The awake clock is read every second while the run drains: a gap is the Mac waking from sleep.
+    const release = this.awake.hold();
+    const off = this.awake.onWake((at, slept) => {
+      this.lastWakeAt = at;
+      this.wakesToLog.push({ at, slept });
+    });
+    try {
+      return await this.drainAll(runId);
+    } finally {
+      off();
+      release();
+      this.logWakes(runId);
+    }
+  }
+
+  private logWakes(runId: string): void {
+    const wakes = this.wakesToLog;
+    this.wakesToLog = [];
+    for (const w of wakes) this.event(runId, WAKE_EVENT.woke, { wokeAt: new Date(w.at).toISOString(), sleptMs: Math.round(w.slept) });
+  }
+
+  private async drainAll(runId: string): Promise<RunReport> {
     const { store } = this.d;
     const steps = { count: 0 };
     for (;;) {
       const paused = await this.drainQueue(runId, steps);
       if (paused) return this.report(runId, 'paused');
+      const woke = await this.wakeRequeue(runId);
+      if (woke.paused !== undefined) {
+        this.event(runId, 'run_paused', { reason: woke.paused, pending: store.queueCounts(runId).pending });
+        return this.report(runId, 'paused');
+      }
+      if (woke.requeued > 0) {
+        this.breakersByRun.set(runId, new Breakers());
+        this.event(runId, 'run_requeued', { pending: store.queueCounts(runId).pending, after: 'wake' });
+        continue;
+      }
       const hold = (await this.d.beforeFinish?.()) ?? null;
       if (hold !== null) {
         this.event(runId, 'run_paused', { reason: hold, pending: store.queueCounts(runId).pending });
@@ -299,6 +379,10 @@ export class Supervisor {
       this.d.afterStep?.(steps.count);
       const trip = executed.kind === 'done' ? this.trackerTrip(executed.outputs) : undefined;
       const outcome: StepOutcome = trip ? { kind: 'quarantined', stepKey: executed.stepKey, verdicts: [trip] } : executed;
+      // read the awake clock now, so a wake during the step is known before its failure is judged
+      this.awake.sleptMs();
+      this.logWakes(runId);
+      const wakeWhy = outcome.kind === 'failed' ? await this.notFinalWhy(runId, item, outcome.error) : undefined;
 
       store.tx(() => {
         if (trip) {
@@ -320,11 +404,16 @@ export class Supervisor {
         // The input never got past this step (or the step produced nothing to carry it), so whatever it still owes stays open.
         if (outcome.kind !== 'done' || outcome.outputs.length === 0) this.reportOpen(runId, input);
         store.markQueue(runId, item.agent_id, item.envelope_id, outcome.kind);
+        if (wakeWhy !== undefined && outcome.kind === 'failed') {
+          this.event(runId, WAKE_EVENT.due, { agent: item.agent_id, envelopeId: item.envelope_id, error: outcome.error, why: wakeWhy });
+        }
       });
 
       // A gone or input-rejected item is that item's failure, not the service's: it neither trips nor resets a breaker.
       if (outcome.kind === 'failed' && (outcome.error === 'gone' || outcome.error === 'input_rejected')) {
         // reported through the step_failed event and RunReport.gone / inputRejected
+      } else if (wakeWhy !== undefined) {
+        // not final (asked again after the wake or the outage): it says nothing yet about the service
       } else if (outcome.kind === 'failed') {
         this.failure(agentKey, agent.contract.breaker.consecutiveFailures, runId);
         if (team && teamKey !== undefined) this.failure(teamKey, team.breaker.consecutiveFailures, runId);
@@ -334,6 +423,91 @@ export class Supervisor {
       }
     }
     return false;
+  }
+
+  /**
+   * Why a failed step is not final: `after-wake` for a transport failure within WAKE_GRACE_MS of a detected wake,
+   * `offline` for one while the online check says offline; undefined (final, as before) otherwise, and once the item
+   * was re-queued MAX_WAKE_REQUEUES times.
+   */
+  private async notFinalWhy(runId: string, item: QueueRow, error: ErrorCode): Promise<'after-wake' | 'offline' | undefined> {
+    if (!TRANSPORT.has(error)) return undefined;
+    if ((this.wakeCountsOf(runId).get(itemKey(item.agent_id, item.envelope_id)) ?? 0) >= MAX_WAKE_REQUEUES) return undefined;
+    if (this.lastWakeAt !== undefined && this.awake.now() - this.lastWakeAt <= WAKE_GRACE_MS) return 'after-wake';
+    const online = this.d.online;
+    if (online === undefined) return undefined;
+    const now = this.awake.now();
+    if (this.onlineSeen === undefined || now - this.onlineSeen.at >= ONLINE_CACHE_MS) {
+      this.onlineSeen = { at: now, ok: await online().catch(() => false) };
+    }
+    return this.onlineSeen.ok ? undefined : 'offline';
+  }
+
+  private wakeCountsOf(runId: string): Map<string, number> {
+    let m = this.wakeCounts.get(runId);
+    if (m === undefined) {
+      m = new Map();
+      for (const e of this.d.store.events(runId)) {
+        if (e.kind !== WAKE_EVENT.requeued) continue;
+        const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown };
+        const k = itemKey(String(d.agent), String(d.envelopeId));
+        m.set(k, (m.get(k) ?? 0) + 1);
+      }
+      this.wakeCounts.set(runId, m);
+    }
+    return m;
+  }
+
+  /** The failed items whose last word is `wake_retry_due` (read from the events, so a resumed run keeps them). */
+  private wakeDue(runId: string): QueueRow[] {
+    const last = new Map<string, string>();
+    for (const e of this.d.store.events(runId)) {
+      if (e.kind !== 'step_failed' && e.kind !== WAKE_EVENT.due && e.kind !== WAKE_EVENT.abandoned) continue;
+      const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown };
+      last.set(itemKey(String(d.agent), String(d.envelopeId)), e.kind);
+    }
+    return this.d.store.queueItems(runId).filter((q) => q.status === 'failed' && last.get(itemKey(q.agent_id, q.envelope_id)) === WAKE_EVENT.due);
+  }
+
+  /**
+   * Puts back the failures that were not final (`wakeDue`), once the online check passes (asked up to ONLINE_MAX_POLLS
+   * times, ONLINE_POLL_MS apart; a `pauseBefore` reason stops the wait). If it never passes, they stay failed.
+   */
+  private async wakeRequeue(runId: string): Promise<{ readonly requeued: number; readonly paused?: string }> {
+    const due = this.wakeDue(runId);
+    if (due.length === 0) return { requeued: 0 };
+    const { store } = this.d;
+    const online = this.d.online;
+    if (online !== undefined) {
+      let ok = false;
+      for (let i = 0; i < ONLINE_MAX_POLLS; i++) {
+        ok = await online().catch(() => false);
+        if (ok) break;
+        const pause = this.d.pauseBefore?.() ?? null;
+        if (pause !== null) return { requeued: 0, paused: pause };
+        if (i < ONLINE_MAX_POLLS - 1) await this.sleep(ONLINE_POLL_MS);
+      }
+      this.onlineSeen = { at: this.awake.now(), ok };
+      if (!ok) {
+        store.tx(() => {
+          for (const q of due) this.event(runId, WAKE_EVENT.abandoned, { agent: q.agent_id, envelopeId: q.envelope_id });
+        });
+        return { requeued: 0 };
+      }
+    }
+    const counts = this.wakeCountsOf(runId);
+    let n = 0;
+    store.tx(() => {
+      for (const q of due) {
+        if (!store.requeue(runId, q.agent_id, q.envelope_id)) continue;
+        const k = itemKey(q.agent_id, q.envelope_id);
+        const attempt = (counts.get(k) ?? 0) + 1;
+        counts.set(k, attempt);
+        this.event(runId, WAKE_EVENT.requeued, { agent: q.agent_id, envelopeId: q.envelope_id, attempt });
+        n++;
+      }
+    });
+    return { requeued: n };
   }
 
   private report(runId: string, status: RunReport['status']): RunReport {
