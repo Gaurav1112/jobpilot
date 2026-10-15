@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import type { RunEnv } from './run-env.js';
 
 /**
  * The macOS Keychain, through `/usr/bin/security`, for jobpilot's few secrets (Task 13: the Gmail OAuth client and its
@@ -93,3 +94,23 @@ export function keychain(run: SecretsRunner = realSecretsRunner): Secrets {
     delete: (n) => deleteSecret(n, run),
   };
 }
+
+export const ENV_SECRET_PREFIX = 'JOBPILOT_SECRET_';
+export const envSecretName = (name: string): string => {
+  checkName(name);
+  return `${ENV_SECRET_PREFIX}${name.replace(/[.-]/g, '_').toUpperCase()}`;
+};
+
+/** Hosted mode (spec §3.4): secrets come from the job's environment, read-only. */
+export function envSecrets(env: NodeJS.ProcessEnv = process.env): Secrets {
+  const get = (n: string): string | undefined => {
+    const v = env[envSecretName(n)];
+    return v === undefined || v === '' ? undefined : v;
+  };
+  const refuse = (): never => {
+    throw new Error('hosted mode stores no secrets');
+  };
+  return { get, has: (n) => get(n) !== undefined, set: refuse, delete: refuse };
+}
+
+export const secretsFor = (env: RunEnv, run: SecretsRunner = realSecretsRunner): Secrets => (env === 'hosted' ? envSecrets() : keychain(run));
