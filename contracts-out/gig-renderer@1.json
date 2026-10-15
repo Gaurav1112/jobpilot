@@ -1,5 +1,5 @@
 {
-  "hash": "181225f5264dae4f0fdde15483b1c5169b021102a34f833d73844e0cebc9ffd9",
+  "hash": "1df406e9c6b8afdd7b9efcfcc6a68c7a5479bd0ab737a742a76ca7c512871ec3",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -74,7 +74,12 @@
                       "breezy",
                       "pinpoint",
                       "rippling",
-                      "gem"
+                      "gem",
+                      "jazzhr",
+                      "zohorecruit",
+                      "manatal",
+                      "freshteam",
+                      "freehire"
                     ],
                     "type": "string"
                   },
@@ -249,7 +254,12 @@
                                   "breezy",
                                   "pinpoint",
                                   "rippling",
-                                  "gem"
+                                  "gem",
+                                  "jazzhr",
+                                  "zohorecruit",
+                                  "manatal",
+                                  "freshteam",
+                                  "freehire"
                                 ],
                                 "type": "string"
                               },
@@ -793,7 +803,12 @@
                   "breezy",
                   "pinpoint",
                   "rippling",
-                  "gem"
+                  "gem",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "freehire"
                 ],
                 "type": "string"
               },
@@ -968,7 +983,12 @@
                               "breezy",
                               "pinpoint",
                               "rippling",
-                              "gem"
+                              "gem",
+                              "jazzhr",
+                              "zohorecruit",
+                              "manatal",
+                              "freshteam",
+                              "freehire"
                             ],
                             "type": "string"
                           },
@@ -1972,7 +1992,12 @@
                           "breezy",
                           "pinpoint",
                           "rippling",
-                          "gem"
+                          "gem",
+                          "jazzhr",
+                          "zohorecruit",
+                          "manatal",
+                          "freshteam",
+                          "freehire"
                         ],
                         "type": "string"
                       },
@@ -2147,7 +2172,12 @@
                                       "breezy",
                                       "pinpoint",
                                       "rippling",
-                                      "gem"
+                                      "gem",
+                                      "jazzhr",
+                                      "zohorecruit",
+                                      "manatal",
+                                      "freshteam",
+                                      "freehire"
                                     ],
                                     "type": "string"
                                   },
@@ -2691,7 +2721,12 @@
                       "breezy",
                       "pinpoint",
                       "rippling",
-                      "gem"
+                      "gem",
+                      "jazzhr",
+                      "zohorecruit",
+                      "manatal",
+                      "freshteam",
+                      "freehire"
                     ],
                     "type": "string"
                   },
@@ -2866,7 +2901,12 @@
                                   "breezy",
                                   "pinpoint",
                                   "rippling",
-                                  "gem"
+                                  "gem",
+                                  "jazzhr",
+                                  "zohorecruit",
+                                  "manatal",
+                                  "freshteam",
+                                  "freehire"
                                 ],
                                 "type": "string"
                               },
@@ -3775,6 +3815,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.7.0"
+    "version": "1.8.0"
   }
 }

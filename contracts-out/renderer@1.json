@@ -1,5 +1,5 @@
 {
-  "hash": "15ddd5e415afca23ecf9dae646dad4d90e63fe158ffd1d3b819d4892561f2c63",
+  "hash": "b6d084c3ea059046ca31214feddf42409fa4a930effb53f7c8f3b9f5f6d41790",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -71,7 +71,12 @@
                   "breezy",
                   "pinpoint",
                   "rippling",
-                  "gem"
+                  "gem",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "freehire"
                 ],
                 "type": "string"
               },
@@ -246,7 +251,12 @@
                               "breezy",
                               "pinpoint",
                               "rippling",
-                              "gem"
+                              "gem",
+                              "jazzhr",
+                              "zohorecruit",
+                              "manatal",
+                              "freshteam",
+                              "freehire"
                             ],
                             "type": "string"
                           },
@@ -741,7 +751,12 @@
                       "breezy",
                       "pinpoint",
                       "rippling",
-                      "gem"
+                      "gem",
+                      "jazzhr",
+                      "zohorecruit",
+                      "manatal",
+                      "freshteam",
+                      "freehire"
                     ],
                     "type": "string"
                   },
@@ -916,7 +931,12 @@
                                   "breezy",
                                   "pinpoint",
                                   "rippling",
-                                  "gem"
+                                  "gem",
+                                  "jazzhr",
+                                  "zohorecruit",
+                                  "manatal",
+                                  "freshteam",
+                                  "freehire"
                                 ],
                                 "type": "string"
                               },
@@ -1320,6 +1340,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.6.0"
+    "version": "1.7.0"
   }
 }

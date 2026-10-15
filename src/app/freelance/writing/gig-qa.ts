@@ -34,7 +34,7 @@ import { hasNonAsciiPunct } from './phrases.js';
  */
 export const gigQaContract = defineContract({
   id: 'gig-qa',
-  version: '1.7.0',
+  version: '1.8.0',
   description: 'Checks the rendered documents of one gig against its plan',
   skills: ['gig-document-qa'],
   team: 'writing',

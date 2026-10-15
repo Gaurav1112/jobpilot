@@ -6,11 +6,13 @@ import { IsoDate } from '../types.js';
 export const Platform = z.enum([
   'workday', 'eightfold', 'oracle', 'icims', 'successfactors', 'smartrecruiters', 'workable', 'recruitee', 'teamtailor', 'personio',
   'bamboohr', 'breezy', 'pinpoint', 'rippling', 'gem', 'greenhouse', 'lever', 'ashby', 'jsonld-sitemap',
+  // sources-x Task 1
+  'jazzhr', 'zohorecruit', 'manatal', 'freshteam', 'ukg',
 ]);
 export type Platform = z.infer<typeof Platform>;
 
 /** Where a candidate company came from; `pick` (the user's own `companies.yaml`) has the highest priority. */
-export const CandidateSource = z.enum(['pick', 'remoteintech', 'yc', 'jobs']);
+export const CandidateSource = z.enum(['pick', 'remoteintech', 'yc', 'jobs', 'freehire', 'freehire-discovery']);
 export type CandidateSource = z.infer<typeof CandidateSource>;
 
 /**

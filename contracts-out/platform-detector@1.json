@@ -1,5 +1,5 @@
 {
-  "hash": "617d6241688cd7b3451b44e791589f655834021262bddfc40099afb101fea446",
+  "hash": "345d65e39dbdd1c19478993a975beaa650a1368a502b0b3b494906df15e6a15d",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -42,7 +42,9 @@
                   "pick",
                   "remoteintech",
                   "yc",
-                  "jobs"
+                  "jobs",
+                  "freehire",
+                  "freehire-discovery"
                 ],
                 "type": "string"
               },
@@ -161,7 +163,12 @@
                   "greenhouse",
                   "lever",
                   "ashby",
-                  "jsonld-sitemap"
+                  "jsonld-sitemap",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "ukg"
                 ],
                 "type": "string"
               },
@@ -211,7 +218,9 @@
                       "pick",
                       "remoteintech",
                       "yc",
-                      "jobs"
+                      "jobs",
+                      "freehire",
+                      "freehire-discovery"
                     ],
                     "type": "string"
                   },
@@ -296,6 +305,6 @@
     },
     "team": "coverage-detector",
     "timeoutMs": 120000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

@@ -976,7 +976,7 @@ export function normalize(raw: RawPosting): Posting {
 
 export const normalizerContract = defineContract({
   id: 'normalizer',
-  version: '1.5.0',
+  version: '1.6.0',
   description: 'Maps one raw posting to one normalised posting',
   skills: ['posting-normalisation'],
   team: 'understanding',

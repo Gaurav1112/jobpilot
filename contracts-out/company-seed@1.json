@@ -1,5 +1,5 @@
 {
-  "hash": "a1615e14b14722136437adfe3afc0f8a3815051b62b27befc28fcd6bd42043ba",
+  "hash": "69a53f11b5f7f9097e8e26fb67d09fe673587e4b70f016cc3db4ec771769bac8",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -90,7 +90,9 @@
               "pick",
               "remoteintech",
               "yc",
-              "jobs"
+              "jobs",
+              "freehire",
+              "freehire-discovery"
             ],
             "type": "string"
           },
@@ -126,6 +128,6 @@
     },
     "team": "coverage-seed",
     "timeoutMs": 60000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

@@ -53,7 +53,7 @@ const MAX_EVIDENCE = 24;
 
 export const platformDetectorContract = defineContract({
   id: 'platform-detector',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Identifies the ATS behind a careers page from its link, script or JSON-LD signatures; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['platform-detector'],
   team: 'coverage-detector',

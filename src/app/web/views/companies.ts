@@ -87,7 +87,7 @@ const PLATFORM_LABEL: Readonly<Record<string, string>> = {
 };
 export const companyPlatformName = (p: string): string => PLATFORM_LABEL[p] ?? p;
 
-const SOURCE_LABEL: Readonly<Record<string, string>> = { pick: 'your pick', remoteintech: 'remote-jobs list', yc: 'YC hiring list', jobs: 'from your jobs' };
+const SOURCE_LABEL: Readonly<Record<string, string>> = { pick: 'your pick', remoteintech: 'remote-jobs list', yc: 'YC hiring list', jobs: 'from your jobs', freehire: 'freehire catalogue', 'freehire-discovery': 'freehire discovery' };
 
 /** A host's disable reason in words (gate.ts reasons), the code kept beside it. */
 export function deferWhy(why: string): string {

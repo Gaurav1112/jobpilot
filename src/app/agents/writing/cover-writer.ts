@@ -13,7 +13,7 @@ import { failLoud, planCover, writingPackOf } from './grounded.js';
  */
 export const coverWriterContract = defineContract({
   id: 'cover-writer',
-  version: '1.6.0',
+  version: '1.7.0',
   description: 'Writes one grounded cover letter plan from a resume plan',
   skills: ['cover-writing'],
   team: 'writing',

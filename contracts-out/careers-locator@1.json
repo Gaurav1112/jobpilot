@@ -1,5 +1,5 @@
 {
-  "hash": "26fe7be5b82c87227a17144a502e63e2a26c59a0ed8b63ce77e77a1220890033",
+  "hash": "369138231b743a62f1fa627bd51473437518093a94fdaa0a62afba5db074d039",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -39,7 +39,9 @@
               "pick",
               "remoteintech",
               "yc",
-              "jobs"
+              "jobs",
+              "freehire",
+              "freehire-discovery"
             ],
             "type": "string"
           },
@@ -112,7 +114,9 @@
                   "pick",
                   "remoteintech",
                   "yc",
-                  "jobs"
+                  "jobs",
+                  "freehire",
+                  "freehire-discovery"
                 ],
                 "type": "string"
               },
@@ -179,6 +183,6 @@
     },
     "team": "coverage-locator",
     "timeoutMs": 120000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

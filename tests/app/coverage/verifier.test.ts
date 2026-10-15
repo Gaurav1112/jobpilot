@@ -558,3 +558,11 @@ describe('board-verifier: the page platforms (Task 8: strict robots, a JobPostin
     expect(v.reasons[0]).toMatch(/^board name 'HCL Technologies Limited' ≈ 'HCLTech', please confirm$/);
   });
 });
+
+it('a UKG guess is Proposed with the robots reason, nothing fetched', async () => {
+  const { fetch, calls } = serve({});
+  const v = await verify(guess(cand('acme.com', 'Acme'), 'ukg', 'recruiting.ultipro.com/acme1/10653576-f6a1-4d69-8a9c-a0a96124abda'), fetch);
+  expect(v.status).toBe('proposed');
+  expect(v.reasons[0]).toMatch(/^ukg: not read: robots\.txt disallows \*\/JobBoardView/);
+  expect(calls).toEqual([]);
+});

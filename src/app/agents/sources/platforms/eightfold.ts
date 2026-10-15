@@ -503,7 +503,7 @@ export function eightfoldScopes(api: EightfoldApi, page: EightfoldListPage): Eig
 
 export const srcEightfoldContract = defineContract({
   id: 'src-eightfold',
-  version: '1.2.0',
+  version: '1.3.0',
   description: 'Reads one verified Eightfold company\'s India-located or remote job lists, with job details for the titles the pre-filter passes, within a per-company request budget, honouring robots.txt per host',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead Eightfold tenant never opens a breaker for another platform or the ATS sources.

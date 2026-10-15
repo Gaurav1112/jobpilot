@@ -2,6 +2,7 @@ import { defineAgent, type AgentContext } from '../../kernel/agent.js';
 import type { EgressSets } from '../../kernel/broker.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
+import { skippedWhy } from '../agents/sources/platforms/skipped.js';
 import { BoardRefused, platformClient, type BoardRead, type PlatformClient } from '../agents/sources/platforms/client.js';
 import { HostDisabled, RobotsDenied, type PlatformHosts } from '../agents/sources/platforms/shared.js';
 import { gateOf, HOST_DISABLED, REFUSALS, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
@@ -45,7 +46,7 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
 export const boardVerifierContract = defineContract({
   id: 'board-verifier',
   // 2.0.0: capabilities.httpPost (Workday's CXS list is read with a POST), a security field, so a major version
-  version: '2.0.0',
+  version: '2.1.0',
   description: 'Reads a detected job board once to confirm its company name, its shape, its open jobs; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['board-verifier'],
   team: 'coverage-verifier',
@@ -135,6 +136,8 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
     jobsSeen: read === undefined ? null : read.jobs.length,
   });
   if (g.platform === null) return noPlatformVerdict(g);
+  const skipped = skippedWhy(g.platform);
+  if (skipped !== null) return verdict('proposed', [skipped, `detected: ${g.platform} ${g.slug ?? '(no slug)'}`]);
   const client = platformClient(g.platform);
   if (client === null) return verdict('proposed', [`adapter not built yet: ${g.platform}`, `detected: ${g.platform} ${g.slug ?? '(no slug)'}`]);
   if (g.slug === null || g.slug.trim() === '') return verdict('proposed', [`no board slug for ${g.platform}`]);

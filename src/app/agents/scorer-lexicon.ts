@@ -91,7 +91,7 @@ export function packOf(pack: unknown): ScorerPack {
 
 export const scorerLexiconContract = defineContract({
   id: 'scorer-lexicon',
-  version: '1.5.0',
+  version: '1.6.0',
   description: 'Scores one eligible posting against the lexicon',
   skills: ['lexicon-scoring'],
   team: 'evaluation',
