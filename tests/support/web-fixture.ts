@@ -53,6 +53,7 @@ export const GOLDEN_ROUTES: readonly (readonly [name: string, path: string, stat
   ['gig-proposal', `/freelance/${GIG.proposal}`, 200],
   ['gig-contract', `/freelance/${GIG.contract}`, 200],
   ['companies', '/companies', 200],
+  ['companies-skipped', '/companies/skipped', 200],
   ['not-found', '/nope', 404],
 ];
 

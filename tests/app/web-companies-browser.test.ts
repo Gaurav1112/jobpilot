@@ -61,7 +61,7 @@ describe.skipIf(browser === undefined)('companies tab in Chromium', () => {
   it('no page of the tab scrolls sideways at 400 px', async () => {
     const ctx = await (browser as Browser).newContext({ viewport: { width: 400, height: 800 } });
     const page = await ctx.newPage();
-    for (const p of ['/companies', '/companies?done=approved&key=acme.example', '/?companyKey=acme.example&band=rejected&band=disclosed']) {
+    for (const p of ['/companies', '/companies/skipped', '/companies?done=approved&key=acme.example', '/?companyKey=acme.example&band=rejected&band=disclosed']) {
       await page.goto(`${base}${p}`, { waitUntil: 'networkidle' });
       const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
       expect(w.scroll, p).toBeLessThanOrEqual(w.client);

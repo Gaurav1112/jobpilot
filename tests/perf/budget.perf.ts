@@ -57,9 +57,7 @@ export const PAGE_HEAP_MB = 64;
  * Routes over 150 ms when the gate first covered them (UX upgrade A0), with the task that fixes each. That task deletes
  * the entry first (its failing test). A route that is over budget and not listed here fails the gate.
  */
-export const KNOWN_SLOW: Readonly<Record<string, { readonly ms: number; readonly fixedIn: string }>> = {
-  '/companies': { ms: 1100, fixedIn: 'Task 20 (A9: skipped hosts summarised and paged)' },
-};
+export const KNOWN_SLOW: Readonly<Record<string, { readonly ms: number; readonly fixedIn: string }>> = {};
 const budgetOf = (route: string): number => KNOWN_SLOW[route]?.ms ?? PAGE_MS;
 const WARM_N = 20;
 /** A fresh-connection time is the best of this many fresh dashboards (one sample is at the mercy of the machine). */
@@ -213,6 +211,9 @@ describe('every page within budget (UX upgrade A0)', () => {
   it('GET /companies (1,500 companies, 781 skipped hosts)', async () => {
     await gate('/companies', (b) => expect(b).toMatch(/data-company="/));
   });
+  it('GET /companies/skipped (781 hosts, page 1)', async () => {
+    await gate('/companies/skipped', (b) => expect((b.match(/data-host="/g) ?? []).length).toBe(50));
+  });
   it('GET /facts', async () => {
     await gate('/facts', (b) => expect(b).toMatch(/<ol class="facts"/));
   });
@@ -223,7 +224,7 @@ describe('every page within budget (UX upgrade A0)', () => {
     await gate(`/freelance/${REVIEW_GIG_KEY}`, (b) => expect(b).toMatch(/Before you bid/));
   });
   it('KNOWN_SLOW names only routes this gate times', () => {
-    const timedRoutes = ['/freelance?tab=review', '/companies', '/facts', '/', '/runs', '/freelance'];
+    const timedRoutes = ['/freelance?tab=review', '/companies', '/companies/skipped', '/facts', '/', '/runs', '/freelance'];
     expect(Object.keys(KNOWN_SLOW).filter((r) => !timedRoutes.includes(r))).toEqual([]);
   });
 });
@@ -236,7 +237,7 @@ function coldFirst(route: string): { status: number; ms: number; warmMs: number 
 }
 
 describe('fresh means a cold process (amendment 2)', () => {
-  for (const route of ['/', '/facts', '/freelance', '/freelance?tab=review', '/companies', '/runs']) {
+  for (const route of ['/', '/facts', '/freelance', '/freelance?tab=review', '/companies', '/companies/skipped', '/runs']) {
     it(`GET ${route}: the first request of a new, warmed-up process`, () => {
       const r = coldFirst(route);
       expect(r.status).toBe(200);
