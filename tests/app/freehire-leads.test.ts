@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { decideEligibility, REASON_FREEHIRE_LEAD } from '../../src/app/agents/eligibility.js';
+import { decideEligibility, NOTE_REMOTE_UNCLEAR, REASON_FREEHIRE_LEAD } from '../../src/app/agents/eligibility.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { LEADS_MAX_PER_DAY, makeSrcFreehireLeads } from '../../src/app/agents/sources/freehire-leads.js';
 import { PLATFORM_NOTE_PREFIXES } from '../../src/app/agents/sources/platforms/shared.js';
@@ -129,6 +129,23 @@ describe('the normalizer and eligibility for a lead', () => {
     const unclear = await posted({ location: 'Remote' });
     expect(decideEligibility(unclear, pack).verdict).toBe('review');
     expect(decideEligibility(unclear, pack).reasons).not.toContain(REASON_FREEHIRE_LEAD);
+  });
+
+  it('uncertain -> review: a lead whose location states neither remote nor onsite is review, never rejected as onsite on missing evidence', async () => {
+    for (const location of ['India', 'Bangalore, India', 'Gurugram, Haryana, India']) {
+      const p = await posted({ title: 'Senior ML Engineer - India', location });
+      // the same posting read directly (a description jobpilot could read) is onsite by absence
+      expect(decideEligibility({ ...p, ats: 'greenhouse' }, pack)).toMatchObject({ verdict: 'rejected', reasons: ['onsite'] });
+      const v = decideEligibility(p, pack);
+      expect(v.verdict).toBe('review');
+      expect(v.reasons).toEqual(['remote-unclear', REASON_FREEHIRE_LEAD]);
+      expect(v.notes).toContain(NOTE_REMOTE_UNCLEAR);
+    }
+  });
+
+  it('a lead that states onsite or hybrid in its title or location stays rejected (stated evidence)', async () => {
+    expect(decideEligibility(await posted({ location: 'Onsite - Bangalore, India' }), pack)).toMatchObject({ verdict: 'rejected', reasons: ['onsite'] });
+    expect(decideEligibility(await posted({ location: 'Hybrid - Gurugram, India' }), pack)).toMatchObject({ verdict: 'rejected', reasons: ['hybrid'] });
   });
 
   it('the dashboard reads the reason in words', () => {
