@@ -17,6 +17,7 @@ import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
 import { AppStore } from '../store/app-store.js';
+import { discoveryQueries } from './discovery.js';
 import { boardKey, CATALOGUE_PER_WEEK, catalogueGuesses, freehireGuesses, loadCatalogue, type CatalogueEntry } from './catalogue.js';
 import { makeRunGate } from './gate.js';
 import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, storedVerdicts, type CoverageStagesOutcome, type StageId } from './pipeline.js';
@@ -34,6 +35,8 @@ const PAUSED = 'coverage.paused';
 const CLOSED = 'coverage.closed';
 /** The event recording the catalogue boards a run sent to the verifier (once per run; a resume reads it back, the registry may have changed). */
 const CATALOGUE_SELECTED = 'coverage.catalogue';
+/** The event recording that a run's discovery leads reached the store (once per run, so a resume never stores them twice). */
+const LEADS_RECORDED = 'coverage.leads';
 
 /**
  * The incomplete coverage run of this coverage week with this policy, if any (the newest): a paused or crashed run is
@@ -134,7 +137,7 @@ export interface CoverageRunOptions {
   /**
    * Sources-x: the freehire sources of this run. Absent: neither (every existing caller). `catalogue` is the path of the
    * vendored seed (null: none), `perWeek` the catalogue's weekly limit (default CATALOGUE_PER_WEEK; checks only),
-   * `discovery` whether the weekly freehire discovery runs (a later task; ignored until it exists).
+   * `discovery` whether the weekly freehire discovery runs (`src-freehire-discovery`: its boards go to the verifier, its leads to the store).
    */
   readonly freehire?: { readonly catalogue: string | null; readonly perWeek?: number; readonly discovery: boolean };
 }
@@ -146,6 +149,15 @@ export interface CatalogueSummary {
   readonly proposed: number;
   readonly left: number;
 }
+
+/** What the discovery did this run: boards sent to the verifier, how many verified, and the leads stored for review. */
+export interface DiscoverySummary {
+  readonly boards: number;
+  readonly verified: number;
+  readonly leads: number;
+}
+
+export const discoveryLine = (d: DiscoverySummary): string => `Discovery: ${d.boards} boards (${d.verified} verified) · ${d.leads} leads for review`;
 
 export const catalogueLine = (c: CatalogueSummary): string => `Catalogue: ${c.checked} checked (${c.verified} verified, ${c.proposed} proposed) · ${c.left} left for later weeks`;
 
@@ -252,6 +264,8 @@ export interface CoverageSummary {
   readonly registry: RegistryCounts;
   /** Present only when the run had a freehire catalogue. */
   readonly catalogue?: CatalogueSummary;
+  /** Present only when the run had the freehire discovery. */
+  readonly discovery?: DiscoverySummary;
   readonly problems: readonly Problem[];
   readonly notification: string;
   readonly notified: boolean;
@@ -273,6 +287,12 @@ function catalogueSummary(outcome: CoverageStagesOutcome, left: number): Catalog
   const mine = outcome.verdicts.filter((v) => v.guess.site.candidate.source === 'freehire');
   const verified = mine.filter((v) => v.status === 'verified').length;
   return { checked: mine.length, verified, proposed: mine.length - verified, left };
+}
+
+/** The discovery's boards sent to the verifier, how many of them verified, and the leads it stored. */
+function discoverySummary(outcome: CoverageStagesOutcome): DiscoverySummary {
+  const verified = outcome.verdicts.filter((v) => v.guess.site.candidate.source === 'freehire-discovery' && v.status === 'verified').length;
+  return { boards: outcome.discoveryBoards.length, verified, leads: outcome.leads.length };
 }
 
 const METHODS: readonly CareersSite['method'][] = ['listed', 'homepage-link', 'path', 'subdomain', 'sitemap', 'none'];
@@ -405,6 +425,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         online,
         ...(o.awake !== undefined ? { awake: o.awake } : {}),
         ...(o.freehire !== undefined ? { freehireGuesses: freehireInputs } : {}),
+        ...(o.freehire?.discovery === true ? { discovery: { week, queries: discoveryQueries(week, loaded.pack.eligibility.officeCities ?? []), known: () => app.registryBoardKeys() } } : {}),
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id
@@ -418,6 +439,14 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       for (const n of outcome.denied) warnings.push(n);
       if (o.limit !== undefined && outcome.selected.length < outcome.merged.length - outcome.denied.length) {
         warnings.push(`--limit ${o.limit}: ${outcome.selected.length} of ${outcome.merged.length} candidates were located this run (every pick plus the first ${o.limit} others); the rest were left out`);
+      }
+
+      // the discovery's leads reach the store once per run (a resume reads the same findings back and finds the event)
+      if (o.freehire?.discovery === true && !app.kernel.events(runId).some((e) => e.kind === LEADS_RECORDED)) {
+        app.tx(() => {
+          const added = app.recordFreehireLeads(week, outcome.leads, now);
+          app.kernel.appendEvent(runId, now, LEADS_RECORDED, { leads: outcome.leads.length, added }, pHash);
+        });
       }
 
       const deferredSites = new Set(outcome.stages.locate.deferred.map((d) => (d.input as { companyKey: string }).companyKey));
@@ -458,7 +487,11 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
             : fullAudit(app, auditAt);
       if (audit.status === 'deferred') app.setSetting(AUDIT_PENDING_KEY, runId);
       const catalogue: CatalogueSummary | undefined = o.freehire !== undefined && o.freehire.catalogue !== null ? catalogueSummary(outcome, catalogueLeft) : undefined;
-      const notification = [...(audit.status === 'broken' ? [brokenLine(audit)] : []), coverageNotification({ ...registry, newVerified: projection.newVerified }, [...(catalogue !== undefined ? [catalogueLine(catalogue)] : []), ...deferral])].join(' · ');
+      const discovery: DiscoverySummary | undefined = o.freehire?.discovery === true ? discoverySummary(outcome) : undefined;
+      const notification = [
+        ...(audit.status === 'broken' ? [brokenLine(audit)] : []),
+        coverageNotification({ ...registry, newVerified: projection.newVerified }, [...(catalogue !== undefined ? [catalogueLine(catalogue)] : []), ...(discovery !== undefined ? [discoveryLine(discovery)] : []), ...deferral]),
+      ].join(' · ');
       const problems = [...(audit.status === 'broken' ? [auditProblem(audit)] : []), ...STAGES.flatMap((s) => runProblems(app.kernel, outcome.stages[s].runId, loaded.pack.naming))];
       let notified = false;
       if (o.notifier !== undefined) {
@@ -490,6 +523,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         projection,
         registry,
         ...(catalogue !== undefined ? { catalogue } : {}),
+        ...(discovery !== undefined ? { discovery } : {}),
         problems,
         notification,
         notified,
@@ -537,6 +571,7 @@ export function formatCoverageSummary(s: CoverageResult): string {
     `deferred by a disabled host: ${s.deferred.total} (${kv(s.deferred.byStage)}), behind ${s.deferred.hosts.length} host(s); hosts disabled in the run: ${s.deferred.disabledHosts}`,
     `left failed for a transient reason (asked again next run): ${s.deferred.transient}`,
     ...(s.catalogue !== undefined ? [catalogueLine(s.catalogue)] : []),
+    ...(s.discovery !== undefined ? [discoveryLine(s.discovery)] : []),
     `registry: verified ${s.registry.verified}, proposed ${s.registry.proposed}, failing ${s.registry.failing}, failed ${s.registry.failed}, rejected ${s.registry.rejected}`,
   ];
   if (s.problems.length > 0) {

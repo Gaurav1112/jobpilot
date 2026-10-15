@@ -178,7 +178,7 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
     };
     const s = await run(home, W1, fetch);
     expect(s.exitCode).toBe(0);
-    expect(s.deferred).toEqual({ byStage: { seed: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1, transient: 0 });
+    expect(s.deferred).toEqual({ byStage: { seed: 0, discover: 0, locate: 0, detect: 0, verify: 2 }, total: 2, hosts: [['boards-api.greenhouse.io', 'http-429']], disabledHosts: 1, transient: 0 });
     expect(calls.filter((u) => u.startsWith('https://boards-api.greenhouse.io/v1/'))).toHaveLength(1);
     expect(s.notification).toBe('Coverage: 1 verified (+1 new) · 0 proposed · 0 failing · not verified this week: 2, host-disabled boards-api.greenhouse.io (http-429)');
     expect(s.problems.map((p) => p.kind)).toEqual(['deferred', 'deferred']);
@@ -336,6 +336,151 @@ describe('coverage e2e: the freehire catalogue seed goes straight to the verifie
     const s = await run(home, W1, net().fetch);
     expect(s.catalogue).toBeUndefined();
     expect(s.notification).toBe('Coverage: 2 verified (+2 new) · 1 proposed · 0 failing');
+  });
+});
+
+const DISCOVERY_PAGE = readFileSync(join(root, 'tests/fixtures/sx/freehire/discovery/e2e.json'), 'utf8');
+const EMPTY_PAGE = JSON.stringify({ data: [], meta: { limit: 100, offset: 0, total: 0 } });
+const QUILL_BOARD = 'https://boards-api.greenhouse.io/v1/boards/quillworks/jobs?content=true&pay_transparency=true';
+const FH_SEARCH = 'https://freehire.me/api/v1/jobs/search?';
+
+describe('coverage e2e: the weekly freehire discovery stage (sources-x Task 8)', () => {
+  /** The recorded network plus freehire: the `"senior backend india"` query (q3) answers the e2e page, every other one an empty page. */
+  function netWithFreehire(over?: { status: number; body: string }) {
+    const n = net();
+    const fh: string[] = [];
+    const fetch: FetchLike = async (url, init) => {
+      if (!url.startsWith(FH_SEARCH)) return n.fetch(url, init);
+      n.calls.push(url);
+      fh.push(url);
+      if (over !== undefined) return { status: over.status, text: async () => over.body };
+      const body = decodeURIComponent(url).includes('"senior backend india"') ? DISCOVERY_PAGE : EMPTY_PAGE;
+      return { status: 200, text: async () => body };
+    };
+    return { fetch, calls: n.calls, freehire: fh };
+  }
+  const withDiscovery = (home: string, now: string, fetch: FetchLike, freehire: { catalogue: string | null; perWeek?: number; discovery: boolean } = { catalogue: null, discovery: true }, extra: { afterStep?: (n: number) => void } = {}) =>
+    runCoverage({ home, clock: { now: () => now }, fetch, sleep: async () => {}, codeHash: 'e2e', yieldCheck: () => null, freehire, ...extra });
+  const leadsOf = (home: string, since = '2026-10-11') => {
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      return app.freehireLeads(since);
+    } finally {
+      app.close();
+    }
+  };
+  const eventCount = (home: string, runId: string, kind: string): number => {
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      return app.kernel.events(runId).filter((e) => e.kind === kind).length;
+    } finally {
+      app.close();
+    }
+  };
+
+  it('a discovered board is verified into the registry (source freehire-discovery), a lead is stored, the weekly line says both', async () => {
+    const home = newHome();
+    const n = netWithFreehire();
+    const s = done(await withDiscovery(home, W1, n.fetch));
+    expect(s.exitCode).toBe(0);
+    expect(n.freehire).toHaveLength(7);
+    expect(registry(home)[keyOf('greenhouse', 'quillworks')]).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'quillworks', source: 'freehire-discovery' });
+    expect(n.calls.filter((u) => u === QUILL_BOARD)).toHaveLength(1);
+    expect(s.discovery).toEqual({ boards: 1, verified: 1, leads: 1 });
+    expect(s.notification).toBe('Coverage: 3 verified (+3 new) · 1 proposed · 0 failing · Discovery: 1 boards (1 verified) · 1 leads for review');
+    expect(leadsOf(home)).toEqual([
+      { leadKey: 'remotedotcom::senior-backend-engineer-zz1', source: 'remotedotcom', url: 'https://remote.example/jobs/senior-backend-engineer-zz1', title: 'Senior Backend Engineer', company: 'Example Labs', location: 'India', postedAt: '2026-10-13', evidence: 'india', firstWeek: '2026-10-11', lastWeek: '2026-10-11', queryId: 'q3' },
+    ]);
+    // the lead is data for the review lane only: no registry row, no board read for it
+    expect(Object.keys(registry(home)).filter((k) => k.endsWith('.freehire'))).toEqual([keyOf('greenhouse', 'quillworks')]);
+    expect(n.calls.filter((u) => u.includes('remote.example'))).toEqual([]);
+  });
+
+  it('the discover stage is its own run, between seed and locate; its pace is 2 s or more', async () => {
+    const home = newHome();
+    const n = netWithFreehire();
+    const times: number[] = [];
+    let t = Date.parse(W1);
+    const clock = { now: () => new Date(t).toISOString() };
+    const sleeps: number[] = [];
+    done(await runCoverage({ home, clock, fetch: async (u, i) => { if (u.startsWith(FH_SEARCH)) times.push(t); return n.fetch(u, i); }, sleep: async (ms) => { sleeps.push(ms); t += ms; }, codeHash: 'e2e', yieldCheck: () => null, freehire: { catalogue: null, discovery: true } }));
+    expect(times).toHaveLength(7);
+    for (let i = 1; i < times.length; i++) expect((times[i] as number) - (times[i - 1] as number)).toBeGreaterThanOrEqual(2000);
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      expect(app.kernel.getRun('coverage-2026-10-11.discover')?.status).toBe('completed');
+    } finally {
+      app.close();
+    }
+  });
+
+  it('a resume does not store the lead twice, asks no query again and sends the board once', async () => {
+    const home = newHome();
+    let steps = 0;
+    const first = netWithFreehire();
+    await expect(withDiscovery(home, W1, first.fetch, undefined, { afterStep: () => { if (++steps === 14) throw new Error('crash'); } })).rejects.toThrow('crash');
+    const resumed = netWithFreehire();
+    const s = done(await withDiscovery(home, W1, resumed.fetch));
+    expect(s.resumed).toBe(true);
+    expect(s.discovery).toEqual({ boards: 1, verified: 1, leads: 1 });
+    expect(first.freehire.length + resumed.freehire.length).toBe(7);
+    expect(first.calls.filter((u) => u === QUILL_BOARD).length + resumed.calls.filter((u) => u === QUILL_BOARD).length).toBe(1);
+    expect(leadsOf(home)).toHaveLength(1);
+    expect(eventCount(home, 'coverage-2026-10-11', 'coverage.leads')).toBe(1);
+    // a second run of the same week (completed run -> new run id) finds the lead again and keeps one row
+    const again = done(await withDiscovery(home, W1_TUE, netWithFreehire().fetch));
+    expect(again.discovery?.boards).toBe(0);
+    expect(leadsOf(home)).toHaveLength(1);
+  });
+
+  it('next week: the board the registry holds is not sent again, the lead keeps its first week and takes the new last week', async () => {
+    const home = newHome();
+    await withDiscovery(home, W1, netWithFreehire().fetch);
+    const later = netWithFreehire();
+    const s = done(await withDiscovery(home, W2, later.fetch));
+    expect(s.discovery).toEqual({ boards: 0, verified: 0, leads: 1 });
+    expect(later.calls.filter((u) => u === QUILL_BOARD)).toEqual([]);
+    expect(leadsOf(home, '2026-10-11').map((l) => [l.firstWeek, l.lastWeek])).toEqual([['2026-10-11', '2026-10-18']]);
+    expect(leadsOf(home, '2026-10-18')).toHaveLength(1);
+    expect(leadsOf(home, '2026-10-25')).toHaveLength(0);
+  });
+
+  it('discovery boards go before the catalogue and the catalogue skips them: one verify step, source freehire-discovery', async () => {
+    const home = newHome();
+    const seed = join(home, 'seed.jsonl');
+    const quill = { platform: 'greenhouse', ref: 'quillworks', boardUrl: QUILL_BOARD, company: 'Quill Catalogue Name', board: 'quillworks', evidence: 9, example: { title: 'Engineer', location: 'India', url: 'https://example.test/j' } };
+    writeFileSync(seed, readFileSync(SEED, 'utf8') + JSON.stringify(quill) + '\n');
+    const n = netWithFreehire();
+    const s = done(await withDiscovery(home, W1, n.fetch, { catalogue: seed, discovery: true }));
+    expect(n.calls.filter((u) => u === QUILL_BOARD)).toHaveLength(1);
+    expect(registry(home)[keyOf('greenhouse', 'quillworks')]).toMatchObject({ source: 'freehire-discovery', status: 'verified' });
+    expect(Object.keys(registry(home)).filter((k) => k.endsWith('.freehire'))).toHaveLength(4);
+    // the catalogue keeps its own three entries; the fourth was taken by the discovery
+    expect(s.catalogue).toEqual({ checked: 3, verified: 1, proposed: 2, left: 0 });
+    expect(s.discovery).toEqual({ boards: 1, verified: 1, leads: 1 });
+    expect(s.notification).toContain('Catalogue: 3 checked (1 verified, 2 proposed) · 0 left for later weeks · Discovery: 1 boards (1 verified) · 1 leads for review');
+  });
+
+  it('freehire down (429): no findings, no registry row, no lead, the other stages run; the outage is a named note', async () => {
+    const home = newHome();
+    const n = netWithFreehire({ status: 429, body: 'slow down' });
+    const s = done(await withDiscovery(home, W1, n.fetch));
+    expect(n.freehire).toHaveLength(1);
+    expect(s.discovery).toEqual({ boards: 0, verified: 0, leads: 0 });
+    expect(s.verdicts).toEqual({ verified: 2, proposed: 1, failed: 1 });
+    expect(leadsOf(home)).toEqual([]);
+    expect(s.exitCode).toBe(0);
+    expect(s.notification).toContain('Discovery: 0 boards (0 verified) · 0 leads for review');
+  });
+
+  it('without discovery nothing about it appears, and no freehire request is made', async () => {
+    const home = newHome();
+    const n = netWithFreehire();
+    const s = done(await withDiscovery(home, W1, n.fetch, { catalogue: SEED, discovery: false }));
+    expect(n.freehire).toEqual([]);
+    expect(s.discovery).toBeUndefined();
+    expect(s.notification).not.toContain('Discovery');
+    expect(leadsOf(home)).toEqual([]);
   });
 });
 

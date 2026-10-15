@@ -111,3 +111,42 @@ export type NamePair = z.infer<typeof NamePair.schema>;
 
 export const NameMatch = defineType('NameMatch', 1, z.object({ same: z.boolean() }).strict());
 export type NameMatch = z.infer<typeof NameMatch.schema>;
+
+/** Sources-x Task 8: one weekly freehire search (`queryId` q1..q9, `url` the exact API request). */
+export const FreehireQuery = defineType('FreehireQuery', 1, z.object({ week: IsoDate, queryId: z.string().regex(/^q[0-9]{1,2}$/u), url: z.string().url() }).strict());
+export type FreehireQuery = z.infer<typeof FreehireQuery.schema>;
+
+/** What a search found: a board for the verifier, or a posting on a platform jobpilot cannot read (a lead for review). */
+export const FreehireFinding = defineType(
+  'FreehireFinding',
+  1,
+  z.discriminatedUnion('kind', [
+    z
+      .object({
+        kind: z.literal('board'),
+        platform: Platform,
+        ref: z.string(),
+        boardUrl: z.string(),
+        company: z.string(),
+        evidence: z.enum(['india', 'worldwide']),
+        example: z.object({ title: z.string(), location: z.string().nullable(), url: z.string() }).strict(),
+        queryId: z.string(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('lead'),
+        leadKey: z.string(),
+        source: z.string(),
+        url: z.string(),
+        title: z.string(),
+        company: z.string().nullable(),
+        location: z.string().nullable(),
+        postedAt: z.string().nullable(),
+        evidence: z.enum(['india', 'worldwide']),
+        queryId: z.string(),
+      })
+      .strict(),
+  ]),
+);
+export type FreehireFinding = z.infer<typeof FreehireFinding.schema>;

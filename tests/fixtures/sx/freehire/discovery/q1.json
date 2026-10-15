@@ -1,0 +1,45 @@
+{
+ "data": [
+  {
+   "posted_at": "2026-10-14T08:00:00Z",
+   "created_at": "2026-10-14T08:00:00Z",
+   "last_seen_at": "2026-10-14T20:00:00Z",
+   "closed_at": null,
+   "source": "ashby",
+   "external_id": "puneworks:p1",
+   "url": "https://jobs.ashbyhq.com/puneworks/p1?utm_source=freehire.me",
+   "title": "Senior Backend Engineer",
+   "company": "Pune Works",
+   "location": "Pune, Maharashtra, India"
+  },
+  {
+   "source": "greenhouse",
+   "external_id": "twilio:8236865",
+   "url": "https://job-boards.greenhouse.io/twilio/jobs/8236865?utm_source=freehire.me",
+   "title": "Staff Software Engineer (L4)",
+   "company": "Twilio",
+   "location": "Remote - India",
+   "posted_at": "2026-10-14T17:12:38Z",
+   "created_at": "2026-10-06T06:13:21Z",
+   "last_seen_at": "2026-10-14T19:53:19Z",
+   "closed_at": null
+  },
+  {
+   "source": "lever",
+   "external_id": "jobgether:994b085d-7a99-4f46-809f-ceb8304320ec",
+   "url": "https://jobs.lever.co/jobgether/994b085d-7a99-4f46-809f-ceb8304320ec?utm_source=freehire.me",
+   "title": "Senior Software Engineer 1 (Java Fullstack)",
+   "company": "jobgether",
+   "location": "India",
+   "posted_at": "2026-10-14T01:28:01Z",
+   "created_at": "2026-10-14T05:17:35Z",
+   "last_seen_at": "2026-10-14T05:17:35Z",
+   "closed_at": null
+  }
+ ],
+ "meta": {
+  "limit": 100,
+  "offset": 0,
+  "total": 3
+ }
+}

@@ -41,6 +41,6 @@ const WITH_PLATFORMS = [
  * check`, part of `node --run verify`): the demo agents, every agent of the daily pipeline (sources, src-workday, src-eightfold, src-oracle, the Task 8 page adapters, normalizer,
  * eligibility, scorer and the writing team) and every agent of the freelance pipeline (`freelanceAgents`: the gig
  * sources, gig normalizer, rate normalizer, gig eligibility, gig risk, gig scorer and the gig writing team) and every
- * agent of the weekly coverage pipeline (company-seed, careers-locator, platform-detector, board-verifier).
+ * agent of the weekly coverage pipeline (company-seed, src-freehire-discovery, careers-locator, platform-detector, board-verifier).
  */
 export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS, WITH_PLATFORMS), ...freelanceAgents(), ...coverageExportAgents()] as const;

@@ -1594,6 +1594,37 @@ export class AppStore {
     return new Set(rows.map((r) => `${r.platform} ${r.platform_slug.toLowerCase()}`));
   }
 
+  /**
+   * Sources-x Task 8: records the weekly discovery's leads (postings on platforms jobpilot cannot read). An upsert by
+   * `lead_key`: the first week is kept, everything else comes from the latest finding. Returns how many leads were new.
+   */
+  recordFreehireLeads(week: string, leads: readonly FreehireLeadIn[], _at: string): number {
+    return this.tx(() => {
+      const st = this.db.prepare(
+        `INSERT INTO freehire_leads (lead_key, source, url, title, company, location, posted_at, evidence, first_week, last_week, query_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (lead_key) DO UPDATE SET source = excluded.source, url = excluded.url, title = excluded.title, company = excluded.company,
+           location = excluded.location, posted_at = excluded.posted_at, evidence = excluded.evidence, last_week = excluded.last_week, query_id = excluded.query_id`,
+      );
+      const had = this.db.prepare(`SELECT 1 FROM freehire_leads WHERE lead_key = ?`);
+      let added = 0;
+      for (const l of leads) {
+        if (had.get(l.leadKey) === undefined) added++;
+        st.run(l.leadKey, l.source, l.url, l.title, l.company, l.location, l.postedAt, l.evidence, week, week, l.queryId);
+      }
+      return added;
+    });
+  }
+
+  /** The leads last seen in `sinceWeek` or later, by lead key. */
+  freehireLeads(sinceWeek: string): FreehireLead[] {
+    const rows = this.db.prepare(`SELECT * FROM freehire_leads WHERE last_week >= ? ORDER BY lead_key`).all(sinceWeek) as {
+      lead_key: string; source: string; url: string; title: string; company: string | null; location: string | null; posted_at: string | null;
+      evidence: 'india' | 'worldwide'; first_week: string; last_week: string; query_id: string;
+    }[];
+    return rows.map((r) => ({ leadKey: r.lead_key, source: r.source, url: r.url, title: r.title, company: r.company, location: r.location, postedAt: r.posted_at, evidence: r.evidence, firstWeek: r.first_week, lastWeek: r.last_week, queryId: r.query_id }));
+  }
+
   /** One registry row, or undefined. */
   getCompany(companyKey: string): Company | undefined {
     const r = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(companyKey) as CompanyRowDb | undefined;
@@ -1687,6 +1718,23 @@ interface CompanyRowDb {
 }
 
 /** One registry row. */
+/** A posting the weekly freehire discovery found on a platform jobpilot cannot read (sources-x Task 8). */
+export interface FreehireLeadIn {
+  readonly leadKey: string;
+  readonly source: string;
+  readonly url: string;
+  readonly title: string;
+  readonly company: string | null;
+  readonly location: string | null;
+  readonly postedAt: string | null;
+  readonly evidence: 'india' | 'worldwide';
+  readonly queryId: string;
+}
+export interface FreehireLead extends FreehireLeadIn {
+  readonly firstWeek: string;
+  readonly lastWeek: string;
+}
+
 export interface Company {
   readonly companyKey: string;
   readonly name: string;

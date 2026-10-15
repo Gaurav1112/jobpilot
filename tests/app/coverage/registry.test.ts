@@ -84,12 +84,12 @@ describe('migration 9: the companies registry', () => {
     const before = dumpHash(db, ['gig_docs', 'gig_snapshots']);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toBeUndefined();
     const s = AppStore.on(kernel);
-    expect(APP_MIGRATIONS.length).toBe(23);
-    expect(s.schemaVersion()).toBe(23);
+    expect(APP_MIGRATIONS.length).toBe(24);
+    expect(s.schemaVersion()).toBe(24);
     expect(db.prepare(`SELECT name FROM sqlite_master WHERE name = 'companies'`).get()).toEqual({ name: 'companies' });
     // dashboard-perf migrations 16-22 add indexes only (tests/app/indexes.test.ts): skipped by name, their tables' rows still compared;
     // migration 23 rebuilds gig_docs and gig_snapshots for the cover letter (rows proven unchanged in tests/app/migration-gig-cover.test.ts)
-    expect(dumpHash(db, ['gig_docs', 'gig_snapshots', 'companies', 'coverage_host_state', 'platform_pages', 'job_ats', 'job_board_ids', 'jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done', 'envelopes_posting_by_job', 'envelopes_gig_by_key', 'envelopes_gig_rendered_by_key'])).toBe(before);
+    expect(dumpHash(db, ['gig_docs', 'gig_snapshots', 'companies', 'coverage_host_state', 'platform_pages', 'job_ats', 'job_board_ids', 'jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done', 'envelopes_posting_by_job', 'envelopes_gig_by_key', 'envelopes_gig_rendered_by_key', 'freehire_leads', 'freehire_leads_by_week'])).toBe(before);
     expect(db.pragma('foreign_key_check')).toEqual([]);
   });
 
@@ -111,7 +111,7 @@ describe('migration 9: the companies registry', () => {
 describe('migration 10: coverage host state', () => {
   it('adds coverage_host_state, keeps the earlier SQL, and round-trips a disabled host per run', () => {
     const s = AppStore.on(Store.open(':memory:'));
-    expect(s.schemaVersion()).toBe(23);
+    expect(s.schemaVersion()).toBe(24);
     const cols = (s.kernel.db.prepare(`PRAGMA table_info(coverage_host_state)`).all() as { name: string }[]).map((c) => c.name);
     expect(cols).toEqual(['run_key', 'host', 'reason', 'at']);
     s.disableCoverageHost('coverage-2026-10-13', 'a.test', 'http-429', '2026-10-13T01:00:00.000Z');
@@ -269,7 +269,7 @@ describe('migration 15: coverage_status (Task 11 fix round 1)', () => {
     ins.run('r.test', 'R', 'https://r.test', 'rejected', '[]', 'yc', 'rejected');
     ins.run('p.test', 'P', 'https://p.test', 'proposed', '["added by you, resolves on the next coverage run"]', 'pick', null);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(23);
+    expect(s.schemaVersion()).toBe(24);
     expect(Object.fromEntries(s.listCompanies().map((c) => [c.companyKey, c.coverageStatus]))).toEqual({ 'a.test': null, 'p.test': null, 'r.test': null, 'v.test': 'verified' });
   });
 });

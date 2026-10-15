@@ -1,0 +1,235 @@
+{
+  "hash": "4cc5be1eddf7eb1fae6e179902998e332f00c6610001a909dce6648f94905267",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "queryId": {
+            "pattern": "^q[0-9]{1,2}$",
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "type": "string"
+          },
+          "week": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "week",
+          "queryId",
+          "url"
+        ],
+        "type": "object"
+      },
+      "type": "FreehireQuery@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "freehire.me"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-freehire-discovery",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "boardUrl": {
+                "type": "string"
+              },
+              "company": {
+                "type": "string"
+              },
+              "evidence": {
+                "enum": [
+                  "india",
+                  "worldwide"
+                ],
+                "type": "string"
+              },
+              "example": {
+                "additionalProperties": false,
+                "properties": {
+                  "location": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "url": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "title",
+                  "location",
+                  "url"
+                ],
+                "type": "object"
+              },
+              "kind": {
+                "const": "board",
+                "type": "string"
+              },
+              "platform": {
+                "enum": [
+                  "workday",
+                  "eightfold",
+                  "oracle",
+                  "icims",
+                  "successfactors",
+                  "smartrecruiters",
+                  "workable",
+                  "recruitee",
+                  "teamtailor",
+                  "personio",
+                  "bamboohr",
+                  "breezy",
+                  "pinpoint",
+                  "rippling",
+                  "gem",
+                  "greenhouse",
+                  "lever",
+                  "ashby",
+                  "jsonld-sitemap",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "ukg"
+                ],
+                "type": "string"
+              },
+              "queryId": {
+                "type": "string"
+              },
+              "ref": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "platform",
+              "ref",
+              "boardUrl",
+              "company",
+              "evidence",
+              "example",
+              "queryId"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "company": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "evidence": {
+                "enum": [
+                  "india",
+                  "worldwide"
+                ],
+                "type": "string"
+              },
+              "kind": {
+                "const": "lead",
+                "type": "string"
+              },
+              "leadKey": {
+                "type": "string"
+              },
+              "location": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "postedAt": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "queryId": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "leadKey",
+              "source",
+              "url",
+              "title",
+              "company",
+              "location",
+              "postedAt",
+              "evidence",
+              "queryId"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "type": "FreehireFinding@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [],
+      "max": 0,
+      "on": []
+    },
+    "team": "coverage-freehire",
+    "timeoutMs": 60000,
+    "version": "1.0.0"
+  }
+}

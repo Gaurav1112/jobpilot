@@ -27,6 +27,7 @@ import type { AnyContract } from '../kernel/contract.js';
  *   `capabilities.httpStream` (the broker's `getStream` over the policy's response cap) only `src-successfactors`, for
  *   its `sitemal.xml` (50 MB cap);
  * - Task 9: `registry:<platform>-hosts` for each of the nine small platforms, only its own `src-<platform>`.
+ * - Sources expansion, Task 8: the literal egress `freehire.me` only for `src-freehire-discovery`.
  */
 export const CAPABILITY_ALLOW_LIST = {
   fullPack: ['renderer', 'gig-renderer'],
@@ -68,6 +69,8 @@ export const CAPABILITY_ALLOW_LIST = {
   zohorecruitEgress: ['src-zohorecruit'],
   /** Sources expansion, Task 4: the Manatal paged feed adapter. */
   manatalEgress: ['src-manatal'],
+  /** Sources expansion, Task 8: the freehire API host (`freehire.me`), contacted by the weekly discovery agent alone. */
+  freehireEgress: ['src-freehire-discovery'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -118,6 +121,9 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
       if (c.egress.includes(egress) && !allowed(CAPABILITY_ALLOW_LIST[key], c.id)) {
         problems.push(`${c.id} declares egress ${egress}; only ${CAPABILITY_ALLOW_LIST[key].join(', ')} may contact the registry's ${what} hosts`);
       }
+    }
+    if (c.egress.includes('freehire.me') && !allowed(CAPABILITY_ALLOW_LIST.freehireEgress, c.id)) {
+      problems.push(`${c.id} declares egress freehire.me; only ${CAPABILITY_ALLOW_LIST.freehireEgress.join(', ')} may contact freehire`);
     }
     if (c.capabilities.httpStream && !allowed(CAPABILITY_ALLOW_LIST.httpStream, c.id)) {
       problems.push(`${c.id} declares capabilities.httpStream; only ${CAPABILITY_ALLOW_LIST.httpStream.join(', ')} may stream past the response cap`);

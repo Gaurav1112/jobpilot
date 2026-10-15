@@ -460,4 +460,23 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   // freelance-v2: gig_docs and gig_snapshots allow the cover letter (kind cover, format html): a CHECK change, so a
   // table rebuild that keeps every row, index and trigger (`gigCoverMigration`).
   { foreignKeysOff: true, run: gigCoverMigration },
+  // sources-x Task 8: the postings the weekly freehire discovery found on platforms jobpilot cannot read (leads for the
+  // daily review lane). Additive; empty unless discovery ran. A literal; IF NOT EXISTS so an opener that lost a race, or a
+  // test that sets the version back, may re-run it.
+  `
+  CREATE TABLE IF NOT EXISTS freehire_leads (
+    lead_key TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    company TEXT,
+    location TEXT,
+    posted_at TEXT,
+    evidence TEXT NOT NULL CHECK (evidence IN ('india', 'worldwide')),
+    first_week TEXT NOT NULL,
+    last_week TEXT NOT NULL,
+    query_id TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS freehire_leads_by_week ON freehire_leads (last_week, lead_key);
+  `,
 ];
