@@ -19,20 +19,20 @@ export const sourceName = (id: string): string => SOURCE_NAME[id] ?? id;
 
 const titleCase = (s: string): string => s.replace(/\b[a-z]/g, (c) => c.toUpperCase());
 
-/** The remote verdict of a posting as a pill label, tone and the evidence behind it. */
-export function remoteText(remote: JobView['remote']): { label: string; tone: Tone; title?: string } {
+/** The remote verdict of a posting as a label and tone: India first (the user's country), then how many more. */
+export function remoteText(remote: JobView['remote']): { label: string; tone: Tone } {
   if (remote === null) return { label: 'Location unclear', tone: 'warn' };
-  const where = remote.countries.slice(0, 2).map(titleCase).join(', ');
-  const title = remote.signals.join(', ');
+  const cs = [...remote.countries].sort((a, b) => Number(b === 'india') - Number(a === 'india'));
+  const where = cs.length === 0 ? '' : `${titleCase(cs[0] as string)}${cs.length > 1 ? ` +${cs.length - 1}` : ''}`;
   switch (remote.structured) {
     case 'remote':
-      return { label: where === '' ? 'Remote' : `Remote · ${where}`, tone: 'good', title };
+      return { label: where === '' ? 'Remote' : `Remote · ${where}`, tone: 'good' };
     case 'hybrid':
-      return { label: 'Hybrid', tone: 'warn', title };
+      return { label: 'Hybrid', tone: 'warn' };
     case 'onsite':
-      return { label: 'On-site', tone: 'critical', title };
+      return { label: 'On-site', tone: 'critical' };
     default:
-      return { label: where === '' ? 'Remote unclear' : `Remote? · ${where}`, tone: 'warn', title };
+      return { label: where === '' ? 'Remote unclear' : `Remote? · ${where}`, tone: 'warn' };
   }
 }
 

@@ -50,7 +50,7 @@ export const docsPill = (d: DocsState): Html => pill(DOCS_LABEL[d], DOCS_TONE[d]
 /** "Remote · India", "Hybrid", "Remote unclear", from the posting's structured field and countries. */
 export function remotePill(remote: JobView['remote']): Html {
   const r = remoteText(remote);
-  return pill(r.label, r.tone, r.title);
+  return pill(r.label, r.tone);
 }
 
 export function compCell(j: Pick<JobView, 'comp' | 'compMinInr' | 'compMaxInr'>): Html {
@@ -81,3 +81,29 @@ export function meta(parts: readonly (Html | string | null | undefined | false)[
 /** The raw codes behind a verdict, for whoever wants them: closed by default, never the first thing read. */
 export const techDetail = (codes: readonly string[]): Html | '' =>
   codes.length === 0 ? '' : html`<details class="tech"><summary>Technical detail</summary><ul class="plain">${codes.map((c) => html`<li><code>${c}</code></li>`)}</ul></details>`;
+
+export interface Exception {
+  readonly label: string;
+  readonly tone: Tone;
+}
+
+/**
+ * A5: the one non-default state a list row shows, first match wins (plan decision 11). A missing pill means "normal":
+ * To do, documents ready and pay at or above the minimum never get one. Colours (amendment 6): blocked is critical,
+ * "you decide" is warn, everything else neutral or muted.
+ */
+export function rowException(j: Pick<JobView, 'docsState' | 'verdict' | 'notes' | 'band'>): Exception | null {
+  if (j.docsState === 'blocked') return { label: 'Documents blocked', tone: 'critical' };
+  if (j.docsState === 'stale') return { label: 'Documents out of date', tone: 'warn' };
+  if (j.docsState === 'missing') return { label: 'Documents missing', tone: 'warn' };
+  if (j.verdict === 'review') return { label: 'Check before applying', tone: 'warn' };
+  if (j.notes.includes(NOTE_B2B)) return { label: 'Contract (B2B)', tone: 'neutral' };
+  const office = j.notes.find((n) => n.startsWith(NOTE_OFFICE_PREFIX));
+  if (office !== undefined) return { label: 'Office: ' + office.slice(NOTE_OFFICE_PREFIX.length), tone: 'neutral' };
+  if (j.band === 'undisclosed') return { label: 'Pay not listed', tone: 'neutral' };
+  if (j.band === 'below-floor') return { label: 'Pay under your minimum', tone: 'muted' };
+  if (j.band === 'rejected') return { label: 'Not a match', tone: 'muted' };
+  return null;
+}
+
+export const exceptionPill = (e: Exception | null): Html | '' => (e === null ? '' : html`<span class="pill pill-${e.tone}" data-exception="1">${e.label}</span>`);

@@ -1,8 +1,8 @@
 import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
-import { reasonText, sourceName } from '../copy.js';
-import { meta, b2bPill, officePill, BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { reasonText, remoteText, sourceName } from '../copy.js';
+import { meta, BAND_LABEL, compCell, exceptionPill, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -69,20 +69,21 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
 
 function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): Html {
   return html`<li class="job" data-job="${j.jobKey}">
-<div class="job-comp">${compCell(j)}<span class="job-band">${bandPill(j.band)}</span></div>
-<div class="job-score num" title="Fit score">${j.score === null ? '–' : scoreText(j.score)}</div>
+<div class="job-comp">${compCell(j)}</div>
+<div class="job-score num"><span class="visually-hidden">Fit score </span>${j.score === null ? '–' : scoreText(j.score)}</div>
 <div class="job-main">
 <h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="/jobs/${j.jobKey}">${j.title}</a></h2>
 <p class="job-sub">${meta([
     j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
-    j.location,
+    remoteText(j.remote).label,
+    j.remote?.structured === 'remote' ? null : j.location,
     j.alsoListedOn.length > 0 ? html`<span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : null,
   ])}</p>
-<p class="job-pills">${remotePill(j.remote)}${b2bPill(j.notes)}${officePill(j.notes)}${docsPill(j.docsState)}</p>
+<p class="job-pills">${exceptionPill(rowException(j))}</p>
 ${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${[...new Set(j.reasons.map(reasonText))].join('; ')}</p>` : ''}
 ${historyLine(j, istDay)}
 </div>
-<div class="job-status">${statusPill(j.status)}</div>
+<div class="job-status">${j.status === 'new' ? '' : statusPill(j.status)}</div>
 </li>`;
 }
 

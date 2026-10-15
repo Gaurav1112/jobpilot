@@ -17,7 +17,7 @@ describe('the fixture home', () => {
   it('holds the cases Phase A changes: an applied job, a blocked one, a B2B note, a review gig, a skipped host', async () => {
     const jobs = await (await fixtureApp(w.home).request('/')).text();
     expect(textOf(rowOf(jobs, 'data-job', JOB.blocked))).toContain('Backend Engineer');
-    expect(textOf(rowOf(jobs, 'data-job', JOB.b2b))).toContain('B2B contractor: no PF/benefits');
+    expect(textOf(rowOf(jobs, 'data-job', JOB.b2b))).toContain('Contract (B2B)');
     expect(textOf(await (await fixtureApp(w.home).request('/freelance?tab=review')).text())).toContain('Hourly in CAD');
     expect(textOf(await (await fixtureApp(w.home).request('/companies')).text())).toContain('robots.txt refused');
     expect(textOf(await (await fixtureApp(w.home).request(`/freelance/${GIG.proposal}`)).text())).toContain('Your proposal');

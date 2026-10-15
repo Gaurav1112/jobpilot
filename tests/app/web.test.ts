@@ -264,26 +264,33 @@ describe('dashboard: jobs list', () => {
     expect(f).toContain('name="q" value="x"');
   });
 
-  it('shows pills for remote, status, documents and band, and the Desk history of imported rows', async () => {
+  it('A5: one exception pill at most, none for To do, Documents ready or Pay at or above the minimum; remote as text', async () => {
     const { body } = await get('/');
-    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Remote · India');
-    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Documents ready');
-    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Pay ≥ floor');
+    const k1 = rowOf(body, 'data-job', K1);
+    expect(textOf(k1)).toContain('Remote · India');
+    for (const s of ['Documents ready', 'Pay ≥ floor', 'Not started']) expect(textOf(k1), s).not.toContain(s);
+    expect(elementsWith(k1, 'data-exception')).toEqual([]);
+    expect(k1).not.toMatch(/\stitle="/);
+    for (const k of order(body)) expect(elementsWith(rowOf(body, 'data-job', k), 'data-exception').length, k).toBeLessThanOrEqual(1);
+    const pillOf = (k: string): string => textOf(elementsWith(rowOf(body, 'data-job', k), 'data-exception')[0] ?? '');
+    expect(pillOf(K10)).toBe('Documents blocked');
+    expect(pillOf(K4)).toBe('Check before applying');
+    expect(pillOf(K11)).toBe('Contract (B2B)'); // beats "Pay not listed"
+    expect(pillOf(K2)).toBe('Office: Pune'); // beats nothing: its pay is listed
+    expect(pillOf(K3)).toBe('Pay not listed');
     expect(textOf(rowOf(body, 'data-job', K9))).toContain('From your Application Desk: Applied on 12 Sep 2026');
+    expect(order(body)).not.toContain(K6); // below the minimum: hidden by default, so no row and no pill
+    expect(textOf(elementsWith(rowOf((await get('/?band=below-floor')).body, 'data-job', K6), 'data-exception')[0] ?? '')).toBe('Pay under your minimum');
   });
 
-  it('shows the B2B contractor badge on the row and on the job page, only where the note is set', async () => {
-    const list = (await get('/')).body;
-    expect(order(list).filter((k) => textOf(rowOf(list, 'data-job', k)).includes('B2B contractor: no PF/benefits'))).toEqual([K11]);
+  it('A5: remote shows India first, then how many more', async () => {
+    withStore((s) => s.upsertJob(row('c5c5c5c5c5c5c5c5', 25, { title: 'Worldwide role', score: 61, remote: { structured: 'remote', countries: ['united states', 'canada', 'india'], signals: [] } })));
+    expect(textOf(rowOf((await get('/')).body, 'data-job', 'c5c5c5c5c5c5c5c5'))).toContain('Remote · India +2');
+  });
+
+  it('the B2B and office notes stay in full on the job page', async () => {
     expect(textOf((await get(`/jobs/${K11}`)).body)).toContain('B2B contractor: no PF/benefits');
-    expect(textOf((await get(`/jobs/${K1}`)).body)).not.toContain('B2B contractor: no PF/benefits');
-  });
-
-  it('shows the office-city badge on the row and on the job page, only where the note is set', async () => {
-    const list = (await get('/')).body;
-    expect(order(list).filter((k) => textOf(rowOf(list, 'data-job', k)).includes('office/hybrid: Pune'))).toEqual([K2]);
     expect(textOf((await get(`/jobs/${K2}`)).body)).toContain('office/hybrid: Pune');
-    expect(textOf((await get(`/jobs/${K1}`)).body)).not.toContain('office/hybrid:');
   });
 
   it('A4: "new" is said once in the lede, and new rows get a dot, only when some but not all rows are new', async () => {
@@ -966,7 +973,7 @@ describe('dashboard: fix round 1', () => {
     const { body } = await get('/');
     const k3 = rowOf(body, 'data-job', K3);
     expect(k3.match(/>New</g) ?? []).toHaveLength(0);
-    expect(textOf(k3)).toContain('Not started');
+    expect(textOf(k3)).not.toContain('Not started'); // A5: To do has no pill
     expect(textOf(k3)).not.toContain('New since your last visit');
   });
 });

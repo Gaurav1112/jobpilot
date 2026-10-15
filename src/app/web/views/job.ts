@@ -116,7 +116,7 @@ function documents(d: JobPageData): Html {
 <div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}${preview(j, 'resume')}</div>
 <div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}${preview(j, 'cover')}</div>
 </div>`;
-  return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Documents you can send ${docsPill(j.docsState)}</h2>
+  return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Documents you can send ${j.docsState === 'ready' ? '' : docsPill(j.docsState)}</h2>
 ${body}
 ${terms(j, d.display)}
 </section>`;
