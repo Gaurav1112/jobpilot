@@ -47,6 +47,7 @@ export const GOLDEN_ROUTES: readonly (readonly [name: string, path: string, stat
   ['freelance', '/freelance', 200],
   ['freelance-gigs', '/freelance?tab=gigs', 200],
   ['freelance-review', '/freelance?tab=review', 200],
+  ['freelance-hidden', '/freelance?tab=gigs&show=hidden', 200],
   ['freelance-networks', '/freelance/networks', 200],
   ['freelance-sources', '/freelance/sources', 200],
   ['gig-proposal', `/freelance/${GIG.proposal}`, 200],

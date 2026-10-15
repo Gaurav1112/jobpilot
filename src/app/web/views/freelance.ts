@@ -3,7 +3,7 @@ import { GIG_STATUSES, NETWORK_STATUSES } from '../../store/schema.js';
 import { countText, dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { gigReasonText, platformName } from '../copy.js';
-import { csrfField, fitChip, meta, pill, techDetail, type Tone } from './common.js';
+import { csrfField, fitChip, meta, pager, pill, techDetail, type Tone } from './common.js';
 
 /**
  * The freelance tab (Task 10, spec §8): Contracts, Gigs, Review, Networks and Sources, one gig's page, and the fragments
@@ -16,7 +16,7 @@ export const GIG_TABS = ['contracts', 'gigs', 'review'] as const;
 
 const TAB_LABEL: Readonly<Record<FreelanceTab, string>> = { contracts: 'Contracts', gigs: 'Gigs', review: 'Review', networks: 'Networks', sources: 'Sources' };
 const TAB_HREF: Readonly<Record<FreelanceTab, string>> = {
-  contracts: '/freelance', gigs: '/freelance?tab=gigs', review: '/freelance?tab=review', networks: '/freelance/networks', sources: '/freelance/sources',
+  contracts: '/freelance?tab=contracts', gigs: '/freelance?tab=gigs', review: '/freelance?tab=review', networks: '/freelance/networks', sources: '/freelance/sources',
 };
 
 export const GIG_STATUS_LABEL: Readonly<Record<GigStatus, string>> = {
@@ -138,6 +138,14 @@ export interface GigListData {
   readonly hidden: string | null;
   readonly fitFloor: number;
   readonly lastRun: string | null;
+  /** A3: the page shown, of how many (Review and "show them" lists are paged at 50), and the link to a page. */
+  readonly page: number;
+  readonly pages: number;
+  readonly pageHref: (n: number) => string;
+  /** A3: this list shows the gigs the tab leaves out (`?show=hidden`). */
+  readonly showHidden: boolean;
+  /** A3: how many gigs the tab leaves out. */
+  readonly hiddenCount: number;
 }
 
 const LEDE: Readonly<Record<GigListData['tab'], string>> = {
@@ -186,12 +194,30 @@ ${d.rows.length === 0 ? html`<p class="empty">No contract role from an employer 
 </section>`;
 }
 
+const EMPTY_NAME: Readonly<Record<GigListData['tab'], string>> = { contracts: 'contract roles', gigs: 'gigs', review: 'gigs to check' };
+
+function emptyState(d: GigListData): Html {
+  if (d.lastRun === null) return html`<p class="empty">No freelance run yet. The first run fills this list.</p>`;
+  if (d.tab === 'review') return html`<p class="empty">Nothing to check from the last run (${d.lastRun}).</p>`;
+  return html`<p class="empty">No ${EMPTY_NAME[d.tab]} passed your rules in the last run (${d.lastRun}).${
+    d.hiddenCount > 0
+      ? html` <span class="num">${countText(d.hiddenCount)}</span> ${d.hiddenCount === 1 ? 'was' : 'were'} not shown: <a href="/freelance?tab=${d.tab}&amp;show=hidden">show them</a>.`
+      : ''
+  }</p>`;
+}
+
 export function gigListBody(d: GigListData): Html {
   const lede = html`${LEDE[d.tab]}${d.tab === 'review' ? '' : html` Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.`}${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
   return html`${head(d.tab, d.counts, lede)}
 ${d.roles !== undefined ? contractRolesSection(d.roles) : ''}
-${d.hidden !== null ? html`<p class="note">${d.hidden}</p>` : ''}
-${d.rows.length === 0 ? html`<p class="empty">Nothing here yet. The next freelance run fills this list.</p>` : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>`}
+${
+  d.showHidden
+    ? html`<p class="note">Not shown by default: below your fit floor, not a match, or not scored. <a href="${TAB_HREF[d.tab]}">Back to ${TAB_LABEL[d.tab]}</a></p>`
+    : d.hidden !== null
+      ? html`<p class="note">${d.hidden} <a href="/freelance?tab=${d.tab}&amp;show=hidden">Show them</a></p>`
+      : ''
+}
+${d.rows.length === 0 ? emptyState(d) : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>${pager({ page: d.page, pages: d.pages, href: d.pageHref })}`}
 <p class="hint">jobpilot never bids or applies for you: open the posting, paste the text, and mark the status here.</p>`;
 }
 

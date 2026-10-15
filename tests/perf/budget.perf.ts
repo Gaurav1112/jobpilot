@@ -58,7 +58,6 @@ export const PAGE_HEAP_MB = 64;
  * the entry first (its failing test). A route that is over budget and not listed here fails the gate.
  */
 export const KNOWN_SLOW: Readonly<Record<string, { readonly ms: number; readonly fixedIn: string }>> = {
-  '/freelance?tab=review': { ms: 600, fixedIn: 'Task 19 (A3: Review paged at 50)' },
   '/companies': { ms: 1100, fixedIn: 'Task 20 (A9: skipped hosts summarised and paged)' },
 };
 const budgetOf = (route: string): number => KNOWN_SLOW[route]?.ms ?? PAGE_MS;
@@ -209,7 +208,7 @@ async function gate(route: string, check: (body: string) => void): Promise<void>
 
 describe('every page within budget (UX upgrade A0)', () => {
   it('GET /freelance?tab=review (354 review gigs)', async () => {
-    await gate('/freelance?tab=review', (b) => expect((b.match(/data-gig="e/g) ?? []).length).toBeGreaterThanOrEqual(50));
+    await gate('/freelance?tab=review', (b) => expect((b.match(/data-gig="e/g) ?? []).length).toBe(50));
   });
   it('GET /companies (1,500 companies, 781 skipped hosts)', async () => {
     await gate('/companies', (b) => expect(b).toMatch(/data-company="/));

@@ -2,7 +2,7 @@ import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-sto
 import { countText, dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { reasonText, remoteText, sourceName } from '../copy.js';
-import { meta, BAND_LABEL, compCell, exceptionPill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { meta, pager, BAND_LABEL, compCell, exceptionPill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -99,15 +99,6 @@ ${historyLine(j, istDay)}
 </li>`;
 }
 
-function pager(d: JobsPageData): Html | '' {
-  if (d.pages <= 1) return '';
-  return html`<nav class="pager" aria-label="Pages">${
-    d.page > 1 ? html`<a class="btn" href="${d.pageHref(d.page - 1)}" rel="prev">Previous</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Previous</span>`
-  }<span class="num">Page ${countText(d.page)} of ${countText(d.pages)}</span>${
-    d.page < d.pages ? html`<a class="btn" href="${d.pageHref(d.page + 1)}" rel="next">Next</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Next</span>`
-  }</nav>`;
-}
-
 export function jobsBody(d: JobsPageData): Html {
   const markNew = d.newCount > 0 && d.newCount < d.total;
   return html`<div class="page-head">
@@ -124,6 +115,6 @@ ${filterForm(d.filter, d.defaultBands, d.defaultStatuses)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(j, d.istDay, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager(d)}`
+    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(j, d.istDay, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager({ page: d.page, pages: d.pages, href: d.pageHref })}`
 }`;
 }

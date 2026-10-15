@@ -576,3 +576,55 @@ describe('A7: gig rows label their fit and lead with the title', () => {
     expect(textOf(r)).toContain('fit Fit score 70 out of 100');
   });
 });
+
+describe('A3: Review is paged, Freelance opens where the work is, empty states tell the truth', () => {
+  const current = async (path: string): Promise<string | undefined> =>
+    linksOf(elementsWith((await get(path)).body, 'aria-label', 'Freelance')[0] ?? '').find((l) => l.attrs['aria-current'] === 'page')?.text;
+  const setList = (keys: readonly string[], list: string | null): void =>
+    withStore((s) => {
+      for (const k of keys) s.kernel.db.prepare(`UPDATE gigs SET list = ? WHERE gig_key = ?`).run(list, k);
+    });
+
+  it('Review shows 50 a page, with the pager', async () => {
+    withStore((s) => {
+      for (let i = 0; i < 60; i++) {
+        const k = (0xd000000000000000n + BigInt(i)).toString(16);
+        upsert(s, gigOf(k, { title: `Review ${i}`, sourceId: `rv${i}` }), { list: 'review', verdict: 'review', reasons: ['rate-unclear'], fit: 50 });
+      }
+    });
+    const p1 = await get('/freelance?tab=review');
+    expect(order(p1.body)).toHaveLength(50);
+    expect(textOf(p1.body)).toContain('Page 1 of 2');
+    expect(linksOf(p1.body).find((l) => l.attrs['rel'] === 'next')?.href).toBe('/freelance?tab=review&page=2');
+    expect(order((await get('/freelance?tab=review&page=2')).body)).toHaveLength(11); // 60 + R5
+    expect(order((await get('/freelance?tab=review&page=99')).body)).toHaveLength(11);
+    expect(order((await get('/freelance?tab=gigs')).body)).toEqual([G3, G4, G2]); // other tabs are not paged
+  });
+
+  it('without tab=, opens the first tab that has something', async () => {
+    expect(await current('/freelance')).toMatch(/^Contracts/);
+    setList([C1], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Gigs/);
+    setList([G2, G3, G4], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Review/);
+    setList([R5], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Contracts/);
+    expect(await current('/freelance?tab=gigs')).toMatch(/^Gigs/); // an explicit tab always wins
+  });
+
+  it('an empty tab says what the last run found and links to what it left out', async () => {
+    setList([C1], 'below-floor');
+    const body = (await get('/freelance?tab=contracts')).body;
+    expect(textOf(body)).toContain('No contract roles passed your rules in the last run (12 Oct 2026, 19:30 IST). 1 was not shown: show them.');
+    expect(textOf(body)).not.toContain('The next freelance run fills this list');
+    expect(linksOf(body).find((l) => l.text === 'show them')?.href).toBe('/freelance?tab=contracts&show=hidden');
+    expect(order((await get('/freelance?tab=contracts&show=hidden')).body)).toEqual([C1]);
+    expect(order((await get('/freelance?tab=gigs&show=hidden')).body)).toEqual([F6, X7]);
+  });
+
+  it('before any freelance run, it says the first run fills the list', async () => {
+    withStore((s) => s.kernel.db.prepare('DELETE FROM gig_runs_summary').run());
+    setList([C1], 'below-floor');
+    expect(textOf((await get('/freelance?tab=contracts')).body)).toContain('No freelance run yet. The first run fills this list.');
+  });
+});

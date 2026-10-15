@@ -1,6 +1,6 @@
 import type { Band, DocsState, JobStatus, JobView } from '../../store/app-store.js';
 import { JOB_STATUSES } from '../../store/schema.js';
-import { compText, scoreText } from '../format.js';
+import { compText, countText, scoreText } from '../format.js';
 import { remoteText } from '../copy.js';
 import { Html, html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
@@ -113,4 +113,14 @@ export function fitChip(score: number | null): Html {
   return score === null
     ? html`<span class="fit-chip"><span class="fit-num" aria-hidden="true">–</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Not scored</span></span>`
     : html`<span class="fit-chip"><span class="fit-num num" aria-hidden="true">${scoreText(score)}</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score ${scoreText(score)} out of 100</span></span>`;
+}
+
+/** The Previous / Page N of M / Next navigation under a paged list; nothing when there is one page or none. */
+export function pager(d: { readonly page: number; readonly pages: number; readonly href: (n: number) => string }): Html | '' {
+  if (d.pages <= 1) return '';
+  return html`<nav class="pager" aria-label="Pages">${
+    d.page > 1 ? html`<a class="btn" href="${d.href(d.page - 1)}" rel="prev">Previous</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Previous</span>`
+  }<span class="num">Page ${countText(d.page)} of ${countText(d.pages)}</span>${
+    d.page < d.pages ? html`<a class="btn" href="${d.href(d.page + 1)}" rel="next">Next</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Next</span>`
+  }</nav>`;
 }
