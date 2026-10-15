@@ -95,8 +95,9 @@ export async function verifyGeneration(gh: GitHubClient, rec: GenRecord, key: Bu
     }
     checks.decrypt = true;
     const r = checkState(home, now);
+    // an audit failure means quick_check had already passed
+    if (r.ok || r.code === 'audit') checks.quickCheck = true;
     if (!r.ok) return done(r.code);
-    checks.quickCheck = true;
     checks.audit = true;
     return done(null);
   } finally {

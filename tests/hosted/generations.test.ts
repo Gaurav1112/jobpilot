@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, openSync, writeSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { checkState, sealFiles, stateFiles, StateError } from '../../src/app/hosted/bundle.js';
@@ -18,9 +19,14 @@ const key = randomBytes(32);
 let n = 0;
 const fresh = (): string => join(d, `w${n++}`);
 
-async function sealed(corrupt = false): Promise<{ file: string; s: Awaited<ReturnType<typeof sealFiles>> }> {
+async function sealed(corrupt = false, tamper = false): Promise<{ file: string; s: Awaited<ReturnType<typeof sealFiles>> }> {
   const home = fresh();
   buildHostedHome(home, NOW);
+  if (tamper) {
+    const db = new Database(join(home, 'jobpilot.db'));
+    db.prepare(`UPDATE events SET data = '{"n":99}' WHERE seq = 1`).run();
+    db.close();
+  }
   if (corrupt) {
     const fd = openSync(join(home, 'jobpilot.db'), 'r+');
     writeSync(fd, Buffer.alloc(4096), 0, 4096, 8192);
@@ -149,6 +155,13 @@ describe('verifyGeneration', () => {
     expect(v.ok).toBe(false);
     expect(v.checks).toMatchObject({ sha256: true, decrypt: true, quickCheck: false });
     expect(v.code).toBe('quick-check');
+  });
+  it('an audit-broken but quick_check-clean DB records quickCheck true, audit false', async () => {
+    const { file, s } = await sealed(false, true);
+    const gh = await ghOf();
+    await publishGeneration(gh, tagOf(1), file, assetOf(1), s, d);
+    const v = await verifyGeneration(gh, recOf(1, s), key, d, NOW);
+    expect(v).toEqual({ v: 1, gen: 1, ok: false, checks: { sha256: true, decrypt: true, quickCheck: true, audit: false }, code: 'audit' });
   });
 });
 
