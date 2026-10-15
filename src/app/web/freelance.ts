@@ -101,6 +101,8 @@ const NOTICE: Readonly<Record<string, string>> = {
   keepbusy: "Status saved. Couldn't keep a copy of the documents just now; use 'Keep a copy' below.",
 };
 
+/** Code-unit order (locale independent, as every sort in the app). */
+const codeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
@@ -196,7 +198,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
   const contractRoles = (gigs: readonly GigView[], fitFloor: number): GigView[] =>
     gigs
       .filter((g) => g.list === 'review' && g.kind === 'contract' && COVER_PLATFORMS.includes(g.platform as Platform) && g.fit !== null && g.fit >= fitFloor)
-      .sort((a, b) => (b.fit as number) - (a.fit as number) || (b.postedAt ?? '').localeCompare(a.postedAt ?? '') || a.gigKey.localeCompare(b.gigKey));
+      .sort((a, b) => (b.fit as number) - (a.fit as number) || codeUnits(b.postedAt ?? '', a.postedAt ?? '') || codeUnits(a.gigKey, b.gigKey));
 
   /** One Contract roles row, in the user's words (redacted by the caller). */
   const roleView = (g: GigView, x: Extras, docs: readonly GigDoc[], pack: Pack | undefined, now: string, text: (s: string) => string): ContractRoleView => {
