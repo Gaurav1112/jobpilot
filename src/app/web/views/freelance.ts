@@ -49,15 +49,20 @@ export interface GigRowView {
   readonly client: readonly string[];
   readonly age: string | null;
   readonly bids: number | null;
+  /** freelance-v2: also listed in "Contract roles matching your stack" (a Review row only). */
+  readonly alsoInRoles?: boolean;
 }
 
-function tabsNav(here: FreelanceTab, counts: Partial<Record<FreelanceTab, number>>): Html {
+/** The tab counts, plus (freelance-v2) the Contract roles count, a link to the section at the top of the Freelance tab. */
+export type TabCounts = Partial<Record<FreelanceTab | 'roles', number>>;
+
+function tabsNav(here: FreelanceTab, counts: TabCounts): Html {
   return html`<nav class="tabs" aria-label="Freelance">${(Object.keys(TAB_LABEL) as FreelanceTab[]).map(
     (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${counts[t]}</span>` : ''}</a>`,
-  )}</nav>`;
+  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${counts.roles}</span></a>` : ''}</nav>`;
 }
 
-function head(here: FreelanceTab, counts: Partial<Record<FreelanceTab, number>>, lede: Html | string): Html {
+function head(here: FreelanceTab, counts: TabCounts, lede: Html | string): Html {
   return html`<div class="page-head">
 <h1>Freelance</h1>
 <p class="lede">${lede}</p>
@@ -93,15 +98,40 @@ ${factsLine(v)}
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
+${v.alsoInRoles === true ? html`<p class="gig-also"><a class="pill pill-accent" href="/freelance#contract-roles">Also in Contract roles</a></p>` : ''}
 </div>
 <div class="gig-status">${gigStatusPill(g.status)}</div>
 </li>`;
 }
 
+/** One row of "Contract roles matching your stack" (freelance-v2): every text already in the user's words. */
+export interface ContractRoleView {
+  readonly gig: GigView;
+  readonly company: string | null;
+  /** Where it may be worked from (`scopeText`). */
+  readonly scope: string;
+  /** The first matched skills the user's facts back (the plan's covered terms, by display), or [] with no plan on record. */
+  readonly skills: readonly string[];
+  /** What to ask before applying (`askText`). */
+  readonly ask: string;
+  readonly age: string | null;
+  /** The recorded documents when they are ready, else []. */
+  readonly files: readonly GigDoc[];
+  /** Why there are no documents, when there are none. */
+  readonly docsReason: string | null;
+}
+
+export interface ContractRolesData {
+  readonly rows: readonly ContractRoleView[];
+  readonly fitFloor: number;
+}
+
 export interface GigListData {
+  /** freelance-v2: the Contract roles section, shown at the top of the Contracts tab (the Freelance landing tab). */
+  readonly roles?: ContractRolesData;
   readonly tab: (typeof GIG_TABS)[number];
   readonly rows: readonly GigRowView[];
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
   /** "1 below the fit floor and 1 not eligible are not shown", or null. */
   readonly hidden: string | null;
   readonly fitFloor: number;
@@ -114,9 +144,50 @@ const LEDE: Readonly<Record<GigListData['tab'], string>> = {
   review: 'Review holds gigs that need your judgement; the fit floor applies to Contracts and Gigs only.',
 };
 
+const ROLE_FILE_LABEL = (d: Pick<GigDoc, 'kind' | 'format'>): string => (d.kind === 'resume' ? (d.format === 'docx' ? 'CV (Word, DOCX)' : 'CV (PDF)') : FILE_LABEL(d));
+/** The order the documents are offered in a role row: the CV, the cover letter, then the pitch; never the HTML preview. */
+const ROLE_FILE_ORDER = ['resume.pdf', 'resume.docx', 'cover.pdf', 'cover.docx', 'cover.txt', 'pitch.txt', 'proposal.txt'];
+
+function roleRow(r: ContractRoleView): Html {
+  const g = r.gig;
+  const files = ROLE_FILE_ORDER.flatMap((n) => r.files.filter((f) => f.kind + '.' + f.format === n));
+  const sub: Html[] = [
+    html`<span>${r.company ?? html`<span class="muted">company not stated</span>`}</span>`,
+    html`<span>${r.scope}</span>`,
+    html`<span>${platformName(g.platform)}</span>`,
+    ...(r.age !== null ? [html`<span>${r.age}</span>`] : []),
+  ];
+  const url = externalUrl(g.url);
+  return html`<li class="role" data-role="${g.gigKey}">
+<div class="gig-fit num" title="Fit">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
+<div class="gig-main">
+<h3 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h3>
+<p class="gig-sub">${sub.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>
+<p class="role-skills">${r.skills.length > 0 ? html`Matches your facts: ${r.skills.join(', ')}` : html`<span class="muted">Matched skills not on record yet</span>`}</p>
+<p class="role-ask">${pill(r.ask, 'warn', 'The posting does not state these: ask the employer before you apply')}</p>
+${files.length > 0 ? html`<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${ROLE_FILE_LABEL(f)}</a>`)}</div>` : html`<p class="muted">${r.docsReason ?? 'No documents yet.'}</p>`}
+${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}
+</div>
+</li>`;
+}
+
+/**
+ * "Contract roles matching your stack" (freelance-v2, Feature 1; UI only, no rule change): the Review contracts from
+ * employer job boards at or above the fit floor, best fit first, then newest. They stay review items (pay or hours not
+ * stated); the Review list still shows each, marked "Also in Contract roles".
+ */
+export function contractRolesSection(d: ContractRolesData): Html {
+  return html`<section class="card wide roles" id="contract-roles" aria-labelledby="roles-h">
+<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${d.rows.length}</span></h2>
+<p class="hint">Contract roles from employer job boards (Himalayas and the daily boards) with fit <span class="num">${scoreText(d.fitFloor)}</span> or more. Their pay or hours are not stated, so they stay in Review: ask before you apply. Best fit first, then newest.</p>
+${d.rows.length === 0 ? html`<p class="empty">No contract role from an employer job board is at or above your fit floor yet.</p>` : html`<ol class="roles-list" aria-label="Contract roles">${d.rows.map(roleRow)}</ol>`}
+</section>`;
+}
+
 export function gigListBody(d: GigListData): Html {
   const lede = html`${LEDE[d.tab]}${d.tab === 'review' ? '' : html` Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.`}${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
   return html`${head(d.tab, d.counts, lede)}
+${d.roles !== undefined ? contractRolesSection(d.roles) : ''}
 ${d.hidden !== null ? html`<p class="note">${d.hidden}</p>` : ''}
 ${d.rows.length === 0 ? html`<p class="empty">Nothing here yet. The next freelance run fills this list.</p>` : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>`}
 <p class="hint">jobpilot never bids or applies for you: open the posting, paste the text, and mark the status here.</p>`;
@@ -148,6 +219,8 @@ export interface GigPageData {
   /** The paste-ready text, or why it is not shown. */
   readonly paste: PasteDoc | null;
   readonly pasteProblem: string | null;
+  /** freelance-v2: the cover letter's paste text (`cover.txt`) or why it is not shown, and its files; null without a cover. */
+  readonly cover?: { readonly text: string | null; readonly problem: string | null; readonly files: readonly GigDoc[] } | null;
   readonly files: readonly GigDoc[];
   readonly docsReason: string | null;
   readonly history: readonly GigHistoryEntry[];
@@ -160,7 +233,28 @@ export interface GigPageData {
 }
 
 const FILE_LABEL = (d: Pick<GigDoc, 'kind' | 'format'>): string =>
-  d.format === 'txt' ? (d.kind === 'pitch' ? 'Pitch (.txt)' : 'Proposal (.txt)') : d.format === 'pdf' ? 'Contract CV (PDF)' : 'Contract CV (Word, DOCX)';
+  d.kind === 'cover'
+    ? d.format === 'txt' ? 'Cover letter (.txt)' : d.format === 'pdf' ? 'Cover letter (PDF)' : d.format === 'docx' ? 'Cover letter (Word, DOCX)' : 'Cover letter (web page, HTML)'
+    : d.format === 'txt' ? (d.kind === 'pitch' ? 'Pitch (.txt)' : 'Proposal (.txt)') : d.format === 'pdf' ? 'Contract CV (PDF)' : 'Contract CV (Word, DOCX)';
+
+/** freelance-v2: the cover letter card, with Copy (the exact `cover.txt`) and its downloads (PDF, DOCX, .txt). */
+function coverSection(d: GigPageData): Html | '' {
+  const c = d.cover;
+  if (c === undefined || c === null) return '';
+  const g = d.row.gig;
+  const files = ['pdf', 'docx', 'txt'].flatMap((f) => c.files.filter((x) => x.kind === 'cover' && x.format === f));
+  if (c.text === null) return html`<section class="card wide" aria-labelledby="cover-h"><h2 id="cover-h">Your cover letter</h2><p class="blocked">${c.problem ?? 'No cover letter yet.'}</p></section>`;
+  return html`<section class="card wide" aria-labelledby="cover-h">
+<h2 id="cover-h">Your cover letter</h2>
+<div class="paste-bar">
+<button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/${g.gigKey}/files/cover.txt" data-copy-target="cover-text" hidden>Copy</button>
+<span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+<pre class="paste" id="cover-text">${c.text}</pre>
+<p class="hint">Built only from your verified facts, for the employer's own application form. Copy pastes exactly the .txt file; the letter never states pay or hours.</p>
+<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
+</section>`;
+}
 
 function pasteSection(d: GigPageData): Html {
   const g = d.row.gig;
@@ -170,7 +264,7 @@ function pasteSection(d: GigPageData): Html {
     return html`<section class="card wide" aria-labelledby="paste-h"><h2 id="paste-h">${title}</h2><p class="blocked">${d.pasteProblem ?? d.docsReason ?? 'No documents yet.'}</p></section>`;
   }
   const over = p.max !== null && p.chars > p.max;
-  const txt = d.files.find((f) => f.format === 'txt');
+  const txt = d.files.find((f) => f.format === 'txt' && f.kind !== 'cover');
   return html`<section class="card wide" aria-labelledby="paste-h">
 <h2 id="paste-h">${title}</h2>
 <div class="paste-bar">
@@ -180,7 +274,7 @@ function pasteSection(d: GigPageData): Html {
 </div>
 <pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
 <p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
-<div class="downloads">${d.files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
+<div class="downloads">${d.files.filter((f) => f.kind !== 'cover').map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
 </section>`;
 }
 
@@ -261,6 +355,7 @@ ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 ${d.duplicateOf !== null ? html`<p class="note">This is another listing of <a href="/freelance/${d.duplicateOf}">the same gig</a>.</p>` : ''}
 <div class="job-grid">
 ${pasteSection(d)}
+${coverSection(d)}
 ${gigSentSection(d.sent)}
 ${checksSection(d)}
 ${gigStatusSection(g, d.history, d.csrf, d.istDay, d.flash)}
@@ -377,7 +472,7 @@ export interface NetworksData {
   /** The date the catalogue's facts were checked (NETWORKS_CHECKED). */
   readonly checked: string;
   readonly cards: readonly NetworkCard[];
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
   readonly csrf: string;
   readonly istDay: (iso: string) => string;
   readonly packError: string | null;
@@ -404,7 +499,7 @@ export interface SourcesData {
   readonly disabled: readonly { readonly platform: string; readonly reason: string }[];
   readonly problems: readonly { readonly kind: string; readonly line: string }[];
   readonly lastRun: string | null;
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
 }
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {

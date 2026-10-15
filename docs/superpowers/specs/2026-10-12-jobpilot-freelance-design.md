@@ -393,3 +393,26 @@ Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/fr
   Himalayas pay needs both ends for a stated range (max only: ceiling; min only: no rate); a figure the text gives per
   task/day/week/month or as a total/flat/fixed sum, the currency before or after it, voids the hourly label. A Freelancer
   hourly project with only a maximum is a ceiling. IST in Himalayas time zones means +5.5 exactly.
+
+## 15. freelance-v2 (2026-10-15, user-approved scope)
+
+Research: `.superpowers/sdd/freelance-v2-research.md` (§1, §5); report: `.superpowers/sdd/fv2-report.md`.
+
+- **Contract roles matching your stack (UI only, no rule change).** The top of the Freelance tab (the Contracts tab, the
+  landing page) lists the Review contracts from employer job boards (`boards`, the routed daily contract postings, and
+  `himalayas`) with fit at or above `freelance.fitFloor`, best fit first, then newest posted. Each row: title (link to
+  the gig page), company, remote scope, fit and the first matched skills the user's facts back, what to ask ("Ask pay &
+  hours", "Ask pay", "Ask hours"), the documents (CV, cover letter, pitch) and "Apply on the posting". The rows stay
+  review items: verdicts, lists and eligibility are unchanged, and the Review list still shows each one with an "Also
+  in Contract roles" link (kept complete rather than filtered, so Review stays the whole review queue). The tab bar
+  counts them ("Contract roles N").
+- **Cover letters for contract roles.** A contract from an employer job board also gets the daily cover letter
+  (`planCover`) of its posting named for the real company (title without pictographs), at the compact CV budget, its
+  availability paragraph contract wording from `freelance.yaml` (`maxHoursPerWeek`, `istWindow`, "alongside my current
+  role" only with an ongoing role, `{city}` from contact.yaml). Never pay or hours of the role. Grounded by G-GROUND
+  (re-derivation), G-FILL (the city fill) and G-NAMING; rendered `cover.txt/.pdf/.docx/.html` like the job letters;
+  gig-qa checks them; `gig_docs` and `gig_snapshots` allow kind `cover` and format `html` (app migration 23, a table
+  rebuild that keeps every row). No letter when the gig names no company, its title or company cannot go into a
+  template slot, or no fact backs it. Gate: the `gig-cover-grounding` eval (fictional fixtures, exactMatch 1.000).
+- **Routing (review of freelance-boost).** A stored daily job whose structured employment type is full-time only is
+  never routed to freelance, whatever title label gave its `employment:*` reason.

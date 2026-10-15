@@ -381,6 +381,20 @@ pre.paste, pre.checklist {
 }
 .stack { display: grid; gap: var(--space-3); }
 .warn-note { color: var(--warn); font-weight: 600; }
+/* freelance-v2: "Contract roles matching your stack" at the top of the Freelance tab, and the Review row's link to it */
+.roles { margin: var(--space-3) 0 var(--space-4); }
+.roles-list { list-style: none; margin: 0; padding: 0; }
+.role { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: var(--space-1) var(--space-3); padding: var(--space-3) 0; border-top: 1px solid var(--border); align-items: start; }
+.role:first-child { border-top: 0; }
+.role .gig-fit, .role .gig-main { grid-area: auto; }
+.role-skills, .role-ask { font-size: var(--fs-sm); margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
+.role-ask .pill { white-space: normal; }
+.gig-also { margin: var(--space-1) 0 0; }
+.gig-also .pill { text-decoration: none; }
+@media (max-width: 720px) {
+  .role { grid-template-columns: minmax(0, 1fr); }
+  .role .gig-fit { text-align: left; }
+}
 
 /* --- companies (career-sites Task 11) ------------------------------------------------------------------------- */
 input[type="url"], input[type="text"] {

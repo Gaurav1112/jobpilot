@@ -1201,6 +1201,19 @@ export class AppStore {
     return { ...gigView(row), docs };
   }
 
+  /** The recorded documents of each of `gigKeys` (kind, format order), in batches of at most 500 keys; a gig with none maps to []. */
+  gigDocsFor(gigKeys: readonly string[]): Record<string, GigDoc[]> {
+    const out: Record<string, GigDoc[]> = Object.fromEntries(gigKeys.map((k) => [k, []]));
+    for (let i = 0; i < gigKeys.length; i += POSTING_BATCH) {
+      const batch = gigKeys.slice(i, i + POSTING_BATCH);
+      const rows = this.db
+        .prepare(`SELECT gig_key, kind, format, path, sha256, pages FROM gig_docs WHERE gig_key IN (${batch.map(() => '?').join(', ')}) ORDER BY gig_key, kind, format`)
+        .all(...batch) as (GigDoc & { gig_key: string })[];
+      for (const { gig_key, ...d } of rows) (out[gig_key] as GigDoc[]).push(d);
+    }
+    return out;
+  }
+
   /** Every gig by gig key; duplicate listings only with `duplicates`. */
   listGigs(o: { readonly duplicates?: boolean } = {}): GigView[] {
     const rows = this.db.prepare(`SELECT * FROM gigs ${o.duplicates === true ? '' : 'WHERE duplicate_of IS NULL'} ORDER BY gig_key`).all() as GigRowDb[];

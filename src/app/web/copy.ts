@@ -230,6 +230,34 @@ export function hoursText(h: { readonly min: number | null; readonly max: number
   return `${num1((h.max ?? h.min) as number)} h/week`;
 }
 
+/**
+ * Where a contract role may be worked from, from the stored Gig@1 `location` (freelance-v2, Contract roles): the
+ * posting's own text when it names remote work ("Remote - India"), else "Remote: <text>", "Remote, worldwide", or
+ * "Remote: <countries>"; "remote scope not stated" when nothing is on record. Never guessed.
+ */
+export function scopeText(location: unknown): string {
+  if (typeof location !== 'object' || location === null) return 'remote scope not stated';
+  const l = location as { text?: unknown; worldwide?: unknown; countries?: unknown };
+  const t = typeof l.text === 'string' ? l.text.trim() : '';
+  if (t !== '') return /\bremote\b/i.test(t) ? t : `Remote: ${t}`;
+  if (l.worldwide === true) return 'Remote, worldwide';
+  const cs = Array.isArray(l.countries) ? l.countries.filter((c): c is string => typeof c === 'string' && c !== '' && c !== 'worldwide') : [];
+  return cs.length === 0 ? 'remote scope not stated' : `Remote: ${cs.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`;
+}
+
+/**
+ * What to ask before applying to a contract role whose terms are not stated (freelance-v2, Contract roles): pay when the
+ * verdict says `rate-unclear` or no rate is on record, hours when it says `hours-unclear` or no hours are stated.
+ * "Ask pay & hours", "Ask pay", "Ask hours", or "Ask before you apply" for any other review reason. Never a figure.
+ */
+export function askText(g: { readonly reasons: readonly string[]; readonly rate: unknown; readonly hours: unknown }): string {
+  const rate = typeof g.rate === 'object' && g.rate !== null ? (g.rate as { method?: unknown }).method : undefined;
+  const h = typeof g.hours === 'object' && g.hours !== null ? (g.hours as { min?: unknown; max?: unknown }) : {};
+  const pay = g.reasons.includes('rate-unclear') || rate === undefined || rate === 'unknown';
+  const hours = g.reasons.includes('hours-unclear') || ((h.min ?? null) === null && (h.max ?? null) === null);
+  return pay && hours ? 'Ask pay & hours' : pay ? 'Ask pay' : hours ? 'Ask hours' : 'Ask before you apply';
+}
+
 /** The client's signals, each only when the platform states it. */
 export function clientSignals(c: Record<string, unknown> | null): string[] {
   if (c === null) return [];
