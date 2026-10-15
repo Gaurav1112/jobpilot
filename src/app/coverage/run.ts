@@ -8,6 +8,7 @@ import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
+import { readFileSync } from 'node:fs';
 import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
 import { httpsOnline, pacedFetch } from '../net.js';
 import { homePaths } from '../pack/paths.js';
@@ -16,11 +17,12 @@ import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
 import { AppStore } from '../store/app-store.js';
+import { boardKey, CATALOGUE_PER_WEEK, catalogueGuesses, freehireGuesses, loadCatalogue, type CatalogueEntry } from './catalogue.js';
 import { makeRunGate } from './gate.js';
 import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, STAGES, storedCandidates, storedVerdicts, type CoverageStagesOutcome, type StageId } from './pipeline.js';
 import { coverageNotification, deferralHosts, deferralLine, projectCoverage, registryCounts, type CoverageProjection, type RegistryCounts } from './project.js';
 import { registryPickItems, seedItemsFromJobs } from './seed.js';
-import type { CandidateSource, CareersSite } from './types.js';
+import type { CandidateSource, CareersSite, PlatformGuess } from './types.js';
 
 /** The umbrella run's pipeline label in the `runs` table; each stage runs as `<runId>.<stage>` (see pipeline.ts). */
 const PIPELINE = COVERAGE_PIPELINE.id;
@@ -30,6 +32,8 @@ const PROJECTED = 'coverage.projected';
 const PAUSED = 'coverage.paused';
 /** The event closing an earlier week's unfinished run (week rollover). */
 const CLOSED = 'coverage.closed';
+/** The event recording the catalogue boards a run sent to the verifier (once per run; a resume reads it back, the registry may have changed). */
+const CATALOGUE_SELECTED = 'coverage.catalogue';
 
 /**
  * The incomplete coverage run of this coverage week with this policy, if any (the newest): a paused or crashed run is
@@ -127,7 +131,23 @@ export interface CoverageRunOptions {
   readonly hostPacer?: HostPacer;
   /** The supervisors' awake clock (step timeouts, wake detection); default the process's. Tests inject one on `manualTimers`. */
   readonly awake?: AwakeClock;
+  /**
+   * Sources-x: the freehire sources of this run. Absent: neither (every existing caller). `catalogue` is the path of the
+   * vendored seed (null: none), `perWeek` the catalogue's weekly limit (default CATALOGUE_PER_WEEK; checks only),
+   * `discovery` whether the weekly freehire discovery runs (a later task; ignored until it exists).
+   */
+  readonly freehire?: { readonly catalogue: string | null; readonly perWeek?: number; readonly discovery: boolean };
 }
+
+/** What the catalogue did this run: boards sent to the verifier, how they came out, and how many wait for later weeks. */
+export interface CatalogueSummary {
+  readonly checked: number;
+  readonly verified: number;
+  readonly proposed: number;
+  readonly left: number;
+}
+
+export const catalogueLine = (c: CatalogueSummary): string => `Catalogue: ${c.checked} checked (${c.verified} verified, ${c.proposed} proposed) · ${c.left} left for later weeks`;
 
 /**
  * The run's online check (re-check m5): `httpsOnline` with each probe request waiting on the run's own per-host pacer,
@@ -230,6 +250,8 @@ export interface CoverageSummary {
   };
   readonly projection: CoverageProjection;
   readonly registry: RegistryCounts;
+  /** Present only when the run had a freehire catalogue. */
+  readonly catalogue?: CatalogueSummary;
   readonly problems: readonly Problem[];
   readonly notification: string;
   readonly notified: boolean;
@@ -245,6 +267,13 @@ const count = <K extends string>(keys: readonly K[], values: readonly K[]): Reco
   for (const v of values) out[v] = (out[v] ?? 0) + 1;
   return out;
 };
+
+/** The catalogue's verdicts of this run: a board that failed to verify is counted proposed, as the projection records it (D3). */
+function catalogueSummary(outcome: CoverageStagesOutcome, left: number): CatalogueSummary {
+  const mine = outcome.verdicts.filter((v) => v.guess.site.candidate.source === 'freehire');
+  const verified = mine.filter((v) => v.status === 'verified').length;
+  return { checked: mine.length, verified, proposed: mine.length - verified, left };
+}
 
 const METHODS: readonly CareersSite['method'][] = ['listed', 'homepage-link', 'path', 'subdomain', 'sitemap', 'none'];
 const SOURCES: readonly CandidateSource[] = ['pick', 'remoteintech', 'yc', 'jobs'];
@@ -338,6 +367,25 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         if (gate.offline()) return 'offline';
         return yieldCheck(at) ?? (stepsThisSlice > 0 && Date.parse(at) >= sliceEnd ? 'slice limit' : null);
       };
+      // the catalogue's weekly selection: made once per run, recorded before the verify stage, read back by a resume
+      let catalogueLeft = 0;
+      let catalogueText: string | undefined;
+      const freehireInputs = (taken: ReadonlySet<string>): PlatformGuess[] => {
+        const path = o.freehire?.catalogue ?? null;
+        if (path === null) return [];
+        catalogueText ??= readFileSync(path, 'utf8');
+        const entries: CatalogueEntry[] = loadCatalogue(catalogueText);
+        const recorded = app.kernel.events(runId).find((e) => e.kind === CATALOGUE_SELECTED);
+        if (recorded !== undefined) {
+          const d = JSON.parse(recorded.data) as { keys: string[]; left: number };
+          catalogueLeft = d.left;
+          return freehireGuesses(entries, d.keys, week);
+        }
+        const { guesses, left } = catalogueGuesses(entries, new Set([...app.registryBoardKeys(), ...taken]), week, o.freehire?.perWeek ?? CATALOGUE_PER_WEEK);
+        catalogueLeft = left;
+        app.kernel.appendEvent(runId, o.clock.now(), CATALOGUE_SELECTED, { keys: guesses.map((g) => boardKey(g.platform as string, g.slug ?? '')), left }, pHash);
+        return guesses;
+      };
       const outcome = await runCoverageStages({
         store: app.kernel,
         runId,
@@ -356,6 +404,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         hostPacer,
         online,
         ...(o.awake !== undefined ? { awake: o.awake } : {}),
+        ...(o.freehire !== undefined ? { freehireGuesses: freehireInputs } : {}),
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id
@@ -408,7 +457,8 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
             ? { status: 'deferred' }
             : fullAudit(app, auditAt);
       if (audit.status === 'deferred') app.setSetting(AUDIT_PENDING_KEY, runId);
-      const notification = [...(audit.status === 'broken' ? [brokenLine(audit)] : []), coverageNotification({ ...registry, newVerified: projection.newVerified }, deferral)].join(' · ');
+      const catalogue: CatalogueSummary | undefined = o.freehire !== undefined && o.freehire.catalogue !== null ? catalogueSummary(outcome, catalogueLeft) : undefined;
+      const notification = [...(audit.status === 'broken' ? [brokenLine(audit)] : []), coverageNotification({ ...registry, newVerified: projection.newVerified }, [...(catalogue !== undefined ? [catalogueLine(catalogue)] : []), ...deferral])].join(' · ');
       const problems = [...(audit.status === 'broken' ? [auditProblem(audit)] : []), ...STAGES.flatMap((s) => runProblems(app.kernel, outcome.stages[s].runId, loaded.pack.naming))];
       let notified = false;
       if (o.notifier !== undefined) {
@@ -439,6 +489,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         deferred: { byStage, total: totalDeferred, hosts, disabledHosts, transient },
         projection,
         registry,
+        ...(catalogue !== undefined ? { catalogue } : {}),
         problems,
         notification,
         notified,
@@ -485,6 +536,7 @@ export function formatCoverageSummary(s: CoverageResult): string {
     `not located: ${s.projection.unlocated.counted} (seed lists, counted only); picks not located (proposed): ${s.projection.unlocated.proposed}; live companies not located (a failed week): ${s.projection.unlocated.failed}`,
     `deferred by a disabled host: ${s.deferred.total} (${kv(s.deferred.byStage)}), behind ${s.deferred.hosts.length} host(s); hosts disabled in the run: ${s.deferred.disabledHosts}`,
     `left failed for a transient reason (asked again next run): ${s.deferred.transient}`,
+    ...(s.catalogue !== undefined ? [catalogueLine(s.catalogue)] : []),
     `registry: verified ${s.registry.verified}, proposed ${s.registry.proposed}, failing ${s.registry.failing}, failed ${s.registry.failed}, rejected ${s.registry.rejected}`,
   ];
   if (s.problems.length > 0) {

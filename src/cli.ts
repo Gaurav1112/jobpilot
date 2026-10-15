@@ -323,7 +323,13 @@ program
     return n;
   })
   .option('--no-yield', 'for checks only: never pause for an owed daily or freelance run (the slice limit still applies)')
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number; yield: boolean }) => {
+  .option('--no-freehire', 'leave out the freehire sources of this run (the vendored board catalogue, 300 new boards a week, sent straight to the verifier)')
+  .option('--catalogue-limit <n>', 'for checks only: send at most <n> catalogue boards to the verifier this week instead of 300', (v: string) => {
+    const n = Number(v);
+    if (!Number.isSafeInteger(n) || n < 0) throw new InvalidArgumentError(`--catalogue-limit must be a whole number, not ${v}`);
+    return n;
+  })
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number; yield: boolean; freehire: boolean; catalogueLimit?: number }) => {
     process.exitCode = await runCoverageCommand(
       {
         ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}),
@@ -331,6 +337,8 @@ program
         ...(o.ifDue ? { ifDue: true } : {}),
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
         ...(o.sliceMinutes !== undefined ? { sliceMs: Math.round(o.sliceMinutes * 60_000) } : {}),
+        freehire: o.freehire,
+        ...(o.catalogueLimit !== undefined ? { catalogueLimit: o.catalogueLimit } : {}),
       },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), ...(o.yield ? {} : { yieldCheck: () => null }) },
     );

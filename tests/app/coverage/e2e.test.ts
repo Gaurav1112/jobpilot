@@ -1,7 +1,8 @@
-import { copyFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { freehireCompanyKey } from '../../../src/app/coverage/freehire-boards.js';
 import { runCoverage, type CoverageResult, type CoverageSummary } from '../../../src/app/coverage/run.js';
 import { offlineProviders } from '../../../src/app/offline.js';
 import { AppStore, type Company } from '../../../src/app/store/app-store.js';
@@ -221,6 +222,120 @@ describe('coverage e2e: a pick plus the seed lists fill the registry', () => {
       app.close();
     }
     expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified' });
+  });
+});
+
+const SEED = join(FIX, 'catalogue-seed.jsonl');
+const DELTA_BOARD = 'https://boards-api.greenhouse.io/v1/boards/deltaworks/jobs?content=true&pay_transparency=true';
+const keyOf = (platform: 'greenhouse' | 'lever' | 'ashby', ref: string): string => freehireCompanyKey(platform, ref);
+
+describe('coverage e2e: the freehire catalogue seed goes straight to the verifier (Task 7)', () => {
+  const withSeed = (home: string, now: string, fetch: FetchLike, freehire: { catalogue: string | null; perWeek?: number; discovery: boolean }, extra: { afterStep?: (n: number) => void } = {}) =>
+    runCoverage({ home, clock: { now: () => now }, fetch, sleep: async () => {}, codeHash: 'e2e', yieldCheck: () => null, freehire, ...extra });
+
+  it('verifies a matching board, proposes a slug mismatch and a 404 board, all sourced freehire', async () => {
+    const home = newHome();
+    const n = net();
+    const s = done(await withSeed(home, W1, n.fetch, { catalogue: SEED, discovery: false }));
+    expect(s.exitCode).toBe(0);
+    const r = registry(home);
+    expect(r[keyOf('greenhouse', 'deltaworks')]).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'deltaworks', source: 'freehire' });
+    expect(r[keyOf('lever', 'zq-board')]).toMatchObject({ status: 'proposed', platform: 'lever', source: 'freehire' });
+    expect(r[keyOf('lever', 'zq-board')]?.reasons).toContain("is neither 'Zeta Quick'");
+    expect(r[keyOf('ashby', 'ghostboard')]).toMatchObject({ status: 'proposed', platform: 'ashby', platformSlug: 'ghostboard', source: 'freehire' });
+    expect(r[keyOf('ashby', 'ghostboard')]?.reasons).toMatch(/^not verified: board not found \(404\)/);
+    expect(s.notification).toBe('Coverage: 3 verified (+3 new) · 3 proposed · 0 failing · Catalogue: 3 checked (1 verified, 2 proposed) · 0 left for later weeks');
+    expect(s.catalogue).toEqual({ checked: 3, verified: 1, proposed: 2, left: 0 });
+    // the dashboard's Companies tab labels the source from the registry row
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      expect(app.listCompanies({ source: 'freehire' })).toHaveLength(3);
+      expect(app.kernel.events('coverage-2026-10-11').filter((e) => e.kind === 'coverage.catalogue')).toHaveLength(1);
+    } finally {
+      app.close();
+    }
+    expect(n.calls.filter((u) => u === DELTA_BOARD)).toHaveLength(1);
+  });
+
+  it('a second run the same week replays at $0 and selects nothing new; the next week skips all three (registry)', async () => {
+    const home = newHome();
+    await withSeed(home, W1, net().fetch, { catalogue: SEED, discovery: false });
+    const again = net();
+    const s2 = done(await withSeed(home, W1_TUE, again.fetch, { catalogue: SEED, discovery: false }));
+    expect(again.calls).toEqual([]);
+    expect(s2.catalogue).toEqual({ checked: 0, verified: 0, proposed: 0, left: 0 });
+    const later = net();
+    const s3 = done(await withSeed(home, W2, later.fetch, { catalogue: SEED, discovery: false }));
+    expect(later.calls.filter((u) => u === DELTA_BOARD || u.includes('zq-board') || u.includes('ghostboard'))).toEqual([]);
+    expect(s3.catalogue).toEqual({ checked: 0, verified: 0, proposed: 0, left: 0 });
+    expect(Object.keys(registry(home)).filter((k) => k.endsWith('.freehire'))).toHaveLength(3);
+  });
+
+  it('a rejected catalogue board (any status) is skipped in later weeks', async () => {
+    const home = newHome();
+    await withSeed(home, W1, net().fetch, { catalogue: SEED, discovery: false });
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      expect(app.setCompanyOverride(keyOf('lever', 'zq-board'), 'rejected', W1_TUE)).toBe(true);
+    } finally {
+      app.close();
+    }
+    const later = net();
+    await withSeed(home, W2, later.fetch, { catalogue: SEED, discovery: false });
+    expect(later.calls.filter((u) => u.includes('zq-board'))).toEqual([]);
+    expect(registry(home)[keyOf('lever', 'zq-board')]).toMatchObject({ status: 'rejected' });
+  });
+
+  it('the per-week limit takes the strongest evidence first and says how many are left', async () => {
+    const home = newHome();
+    const n = net();
+    const s = done(await withSeed(home, W1, n.fetch, { catalogue: SEED, perWeek: 2, discovery: false }));
+    expect(s.catalogue).toEqual({ checked: 2, verified: 1, proposed: 1, left: 1 });
+    expect(s.notification).toContain('Catalogue: 2 checked (1 verified, 1 proposed) · 1 left for later weeks');
+    expect(Object.keys(registry(home))).not.toContain(keyOf('ashby', 'ghostboard'));
+    // next week the third is picked up
+    const s2 = done(await withSeed(home, W2, net().fetch, { catalogue: SEED, perWeek: 2, discovery: false }));
+    expect(s2.catalogue).toEqual({ checked: 1, verified: 0, proposed: 1, left: 0 });
+  });
+
+  it('a detector guess and a catalogue entry for the same board: one verify step, the detector\'s candidate wins', async () => {
+    const home = newHome();
+    const seed = join(home, 'seed.jsonl');
+    writeFileSync(
+      seed,
+      JSON.stringify({ platform: 'greenhouse', ref: 'AlphaRobotics', boardUrl: ALPHA_BOARD, company: 'Alpha Catalogue Name', board: 'alpharobotics', evidence: 9, example: { title: 'Engineer', location: 'India', url: 'https://example.test/j' } }) + '\n',
+    );
+    const n = net();
+    const s = done(await withSeed(home, W1, n.fetch, { catalogue: seed, discovery: false }));
+    expect(n.calls.filter((u) => u === ALPHA_BOARD)).toHaveLength(1);
+    expect(registry(home)['alpha.test']).toMatchObject({ status: 'verified', source: 'pick' });
+    expect(Object.keys(registry(home)).filter((k) => k.endsWith('.freehire'))).toEqual([]);
+    expect(s.catalogue).toEqual({ checked: 0, verified: 0, proposed: 0, left: 0 });
+  });
+
+  it('a crash in the verify stage is resumed with the recorded selection: one record, every board read once', async () => {
+    const home = newHome();
+    let steps = 0;
+    const first = net();
+    await expect(withSeed(home, W1, first.fetch, { catalogue: SEED, discovery: false }, { afterStep: () => { if (++steps === 15) throw new Error('crash'); } })).rejects.toThrow('crash');
+    const resumed = net();
+    const s = done(await withSeed(home, W1, resumed.fetch, { catalogue: SEED, discovery: false }));
+    expect(s.resumed).toBe(true);
+    expect(s.catalogue).toEqual({ checked: 3, verified: 1, proposed: 2, left: 0 });
+    expect(first.calls.filter((u) => u === DELTA_BOARD).length + resumed.calls.filter((u) => u === DELTA_BOARD).length).toBe(1);
+    const app = AppStore.open(join(home, 'jobpilot.db'));
+    try {
+      expect(app.kernel.events('coverage-2026-10-11').filter((e) => e.kind === 'coverage.catalogue')).toHaveLength(1);
+    } finally {
+      app.close();
+    }
+  });
+
+  it('without the freehire option nothing about the catalogue appears', async () => {
+    const home = newHome();
+    const s = await run(home, W1, net().fetch);
+    expect(s.catalogue).toBeUndefined();
+    expect(s.notification).toBe('Coverage: 2 verified (+2 new) · 1 proposed · 0 failing');
   });
 });
 

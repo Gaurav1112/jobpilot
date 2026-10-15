@@ -1585,6 +1585,15 @@ export class AppStore {
     return rows.map(companyOf);
   }
 
+  /**
+   * Sources-x Task 7: every board the registry holds, any status (rejected and failed included), as
+   * `<platform> <slug lower-cased>` (the coverage run's `boardKey`): the catalogue never offers one of them again.
+   */
+  registryBoardKeys(): Set<string> {
+    const rows = this.db.prepare(`SELECT platform, platform_slug FROM companies WHERE platform IS NOT NULL AND platform_slug IS NOT NULL`).all() as { platform: string; platform_slug: string }[];
+    return new Set(rows.map((r) => `${r.platform} ${r.platform_slug.toLowerCase()}`));
+  }
+
   /** One registry row, or undefined. */
   getCompany(companyKey: string): Company | undefined {
     const r = this.db.prepare(`SELECT * FROM companies WHERE company_key = ?`).get(companyKey) as CompanyRowDb | undefined;

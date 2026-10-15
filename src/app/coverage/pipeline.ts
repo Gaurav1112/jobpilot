@@ -14,6 +14,7 @@ import type { Pack } from '../pack/schema.js';
 import { compileDaily } from '../pipeline.js';
 import { detectorEgressSets, makePlatformDetector } from './detector.js';
 import { TRANSIENT_CODES } from '../net.js';
+import { boardKey, dedupeGuesses } from './catalogue.js';
 import { asHttps } from './gate.js';
 import { makeRunGate, memoryHostStateStore, type RunGate } from './gate.js';
 import { locatorEgressSets, makeCareersLocator } from './locator.js';
@@ -204,6 +205,12 @@ export interface CoverageStagesOptions {
   readonly online?: () => Promise<boolean>;
   /** The supervisors' awake clock; default the process's. */
   readonly awake?: AwakeClock;
+  /**
+   * Sources-x Task 7: the freehire boards (discovery's, then the catalogue's) that go to the verifier besides the
+   * detector's guesses. Asked once, when the verify stage's input is computed, with the board keys of the detector's
+   * guesses; the caller has already left out the boards the registry holds and records its selection for a resume.
+   */
+  readonly freehireGuesses?: (taken: ReadonlySet<string>) => PlatformGuess[];
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -430,7 +437,11 @@ async function stagesOf(o: CoverageStagesOptions, run: (stage: StageId, seeds: r
 
   const detect = await run('detect', located, detectorEgressSets(located));
   const guesses = detect.outputs.map((x) => PlatformGuess.schema.parse(x));
-  const withPlatform = guesses.filter((g) => g.platform !== null);
+  const fromDetector = guesses.filter((g) => g.platform !== null);
+  // the detector's guesses first and untouched; a freehire board is added only when no earlier input names the same board
+  const taken = new Set(fromDetector.map((g) => boardKey(g.platform as string, g.slug ?? '')));
+  const fromFreehire = o.freehireGuesses?.(taken) ?? [];
+  const withPlatform = [...fromDetector, ...dedupeGuesses(fromFreehire).filter((g) => !taken.has(boardKey(g.platform as string, g.slug ?? '')))];
 
   const verify = await run('verify', withPlatform, verifierEgressSets(withPlatform));
   const verdicts = [...verify.outputs.map((x) => CompanyVerdict.schema.parse(x)), ...guesses.filter((g) => g.platform === null).map(noPlatformVerdict)];
