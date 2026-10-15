@@ -151,6 +151,8 @@ describe('doctor', () => {
     spawnSync('mkdir', ['-p', data, join(root, 'doctor-gh')]);
     writeFileSync(join(data, 'hosted.yaml'), yaml);
     writeFileSync(join(data, 'code.lock'), `${SHA}\n`);
+    spawnSync('mkdir', ['-p', join(data, '.github/workflows')]);
+    writeFileSync(join(data, '.github/workflows/daily.yml'), readFileSync(join(repoRoot, 'examples/hosted/daily.yml'), 'utf8'));
   });
 
   it('passes a good setup, warns on absent Gmail secrets and prints the two reminders', async () => {
@@ -160,6 +162,23 @@ describe('doctor', () => {
     expect(r.lines.filter((l) => l.startsWith('FAIL'))).toEqual([]);
     expect(r.lines.filter((l) => l.startsWith('WARN')).length).toBe(3);
     expect(r.lines.filter((l) => l.startsWith('REMINDER')).length).toBe(2);
+  });
+
+  it('lints <data>/.github/workflows/daily.yml and fails on a push trigger', async () => {
+    facts({ private: true, defaultWorkflowPermissions: 'read', secretNames: ['STATE_KEY', 'PACK_KEY'] });
+    const example = readFileSync(join(repoRoot, 'examples/hosted/daily.yml'), 'utf8');
+    const wf = join(data, '.github/workflows');
+    try {
+      const good = await doctor({ gh: dirGitHub(join(root, 'doctor-gh')), data, root: repoRoot, git });
+      expect(good.failed).toBe(false);
+      expect(good.lines).toContain('PASS workflow lint');
+      writeFileSync(join(wf, 'daily.yml'), example.replace('  workflow_dispatch: {}\n', '  workflow_dispatch: {}\n  push: {}\n'));
+      const bad = await doctor({ gh: dirGitHub(join(root, 'doctor-gh')), data, root: repoRoot, git });
+      expect(bad.failed).toBe(true);
+      expect(bad.lines.filter((l) => l.startsWith('FAIL')).join('\n')).toMatch(/workflow lint: .*push/);
+    } finally {
+      writeFileSync(join(wf, 'daily.yml'), example);
+    }
   });
 
   it('fails a public repo, write permissions, a missing key secret and a non-ancestor code.lock', async () => {

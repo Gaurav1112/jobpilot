@@ -29,11 +29,11 @@ describe('forbidden terms never appear in the repo', () => {
     it.skip(`skipped: no ${namingPath} (the real pack is not installed on this machine)`, () => {});
     return;
   }
-  it('src, tests, docs and evals are clean', () => {
+  it('src, tests, docs, evals and examples are clean', () => {
     const terms = termsFromPack().map((t) => t.toLowerCase());
     expect(terms.length, 'naming.yaml has no forbiddenTerms').toBeGreaterThan(0);
     const hits: string[] = [];
-    for (const top of ['src', 'tests', 'docs', 'evals']) {
+    for (const top of ['src', 'tests', 'docs', 'evals', 'examples']) {
       const dir = join(root, top);
       if (!existsSync(dir)) continue;
       for (const file of walk(dir)) {

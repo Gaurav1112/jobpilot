@@ -19,6 +19,7 @@ import { seedAndPublish } from './seed.js';
 import { spawnPipeline } from './spawn.js';
 import { rollbackTo } from './state.js';
 import { laptopHolder, pullHome, pushHome, type PublishOutcome } from './sync.js';
+import { lintWorkflow } from './workflow-lint.js';
 import { runHosted } from './wrapper.js';
 
 const repoRoot = join(import.meta.dirname, '../../..');
@@ -209,6 +210,13 @@ export async function doctor(o: { gh: GitHubClient; data: string; root: string; 
     check(o.git(['merge-base', '--is-ancestor', sha, 'origin/main'], o.root).status === 0, 'code.lock is an ancestor of origin/main', `${sha.slice(0, 12)} is not (fetch origin, or run: hosted bump)`);
   } catch (e) {
     check(false, 'code.lock is valid', e instanceof Error ? e.message : 'unreadable');
+  }
+  try {
+    const problems = lintWorkflow(readFileSync(join(o.data, '.github', 'workflows', 'daily.yml'), 'utf8'));
+    if (problems.length === 0) check(true, 'workflow lint', '');
+    else for (const p of problems) check(false, 'workflow lint', p);
+  } catch {
+    check(false, 'workflow lint', 'cannot read .github/workflows/daily.yml in the data repo (copy examples/hosted/daily.yml)');
   }
   lines.push('REMINDER by hand: Settings > Actions > General: run workflows from fork pull requests is off');
   lines.push('REMINDER by hand: Billing: no payment method on the account, or a $0 spending limit');

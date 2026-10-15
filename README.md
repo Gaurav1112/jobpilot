@@ -83,6 +83,8 @@ At 07:00 the run fetches sources, filters, scores, builds documents and posts a 
 that says how many new jobs are worth a look. Open the dashboard and work from the top.
 Running again the same day replays the stored results; add `--refresh` to fetch again.
 
+Hosted mode (GitHub Actions, encrypted state): see docs/hosted.md.
+
 ## Opening the dashboard
 
 Go to http://127.0.0.1:4317. It listens on this machine only. Pages: today's jobs, each job
