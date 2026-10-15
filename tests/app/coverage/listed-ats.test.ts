@@ -36,12 +36,15 @@ function newHome(): string {
   return home;
 }
 
-function net(dead: readonly string[] = []) {
+/** The recorded fixtures; `dead` URLs answer 404, `bodies` URLs answer 200 with that body instead. */
+function net(dead: readonly string[] = [], bodies: Readonly<Record<string, string>> = {}) {
   const offline = offlineProviders(FIX).fetch;
   const calls: string[] = [];
   const fetch: FetchLike = async (url, init) => {
     calls.push(url);
     if (dead.includes(url)) return { status: 404, text: async () => 'Not Found' };
+    const body = bodies[url];
+    if (body !== undefined) return { status: 200, text: async () => body };
     return offline(url, init);
   };
   return { fetch, calls };
@@ -102,6 +105,16 @@ describe('coverage: a listed careersUrl that is an ATS board redirecting to a ma
     expect(r['acme.test']?.reasons).toContain('listed careersUrl is a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection');
     expect(r['bravo.test']).toMatchObject({ status: 'proposed', platform: 'rippling', platformSlug: 'bravo' });
     expect(r['bravo.test']?.reasons).toMatch(/board not found \(404\): rippling bravo/);
+  });
+
+  it('a listed board whose API answers in the wrong shape stays Proposed with the reason', async () => {
+    const home = newHome();
+    const s = await run(home, net([RIPPLING_API], { [GH_API]: '{"not":"a board"}' }).fetch);
+    expect(s.verdicts).toEqual({ verified: 0, proposed: 2, failed: 0 });
+    const r = registry(home);
+    expect(r['acme.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'acmecloud' });
+    expect(r['acme.test']?.reasons).toMatch(/^greenhouse board acmecloud: /);
+    expect(r['acme.test']?.reasons).toContain('listed careersUrl is a greenhouse board (acmecloud)');
   });
 });
 

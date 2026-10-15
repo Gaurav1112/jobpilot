@@ -73,7 +73,10 @@ export const PlatformGuess = defineType(
       /** The tenant, site or board id. */
       slug: z.string().nullable(),
       boardUrl: z.string().nullable(),
-      /** The signal that decided the platform, `<platform>:<where>` (e.g. `workday:inline`); null when no platform was decided. */
+      /**
+       * The signal that decided the platform, `<platform>:<where>` (e.g. `workday:inline`; `greenhouse:listed` for the
+       * board a listed careersUrl names as written, its redirect off the platform not followed); null when no platform was decided.
+       */
       signature: z.string().nullable(),
       /** The front-end that was routed through to the back-end ATS: `phenom`, or `jsonld` (a company page with JobPosting JSON-LD). */
       routedFrom: z.string().nullable(),
