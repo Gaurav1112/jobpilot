@@ -11,6 +11,7 @@ import { GMAIL_LABEL, GMAIL_MAX_INTERVAL_MS, GMAIL_MAX_REQUESTS } from './mail/g
 import { rateNormalizer } from './rate.js';
 import { makeSrcDraftdev } from './sources/draftdev.js';
 import { makeGithubHosts } from './sources/github.js';
+import { makeSrcPrimeIntellect } from './sources/prime-intellect.js';
 import { makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { gigSources } from './sources/index.js';
 import { REMOTIVE_OFF } from './sources/remotive.js';
@@ -42,7 +43,7 @@ export function freelanceAgents(): AnyAgent[] {
   const github = makeGithubHosts();
   return [
     // The Himalayas source holds the run's host state (robots.txt once, a disabled host): a fresh one per wiring.
-    ...gigSources.map((a) => (a.contract.id === 'src-himalayas-gigs' ? makeSrcHimalayasGigs() : a.contract.id === 'src-draftdev' ? makeSrcDraftdev(github) : a)),
+    ...gigSources.map((a) => (a.contract.id === 'src-himalayas-gigs' ? makeSrcHimalayasGigs() : a.contract.id === 'src-draftdev' ? makeSrcDraftdev(github) : a.contract.id === 'src-prime-intellect' ? makeSrcPrimeIntellect(github) : a)),
     gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa,
   ];
 }
@@ -110,8 +111,8 @@ export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
   'fractional-jobs': 'src-fractional-jobs',
 };
 
-/** Platforms planned in this plan whose source agent does not exist yet (Tasks 11 and 12 remove them): never seeded. */
-const NO_SOURCE_YET: ReadonlySet<Platform> = new Set<Platform>(['prime-intellect', 'fractional-jobs']);
+/** Platforms planned in this plan whose source agent does not exist yet (Task 12 removes it): never seeded. */
+const NO_SOURCE_YET: ReadonlySet<Platform> = new Set<Platform>(['fractional-jobs']);
 
 /**
  * The run's seeds, all dated `runDate` and `half`, in this order: Freelancer one request per pack query (each query

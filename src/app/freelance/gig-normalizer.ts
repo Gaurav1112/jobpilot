@@ -3,6 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { htmlToText } from '../text/html.js';
 import { countriesIn, postedAtOf } from '../text/norm.js';
+import { bountyAmount } from './sources/prime-intellect.js';
 import { Posting } from '../types.js';
 import { gigDedupeKey, gigKey } from './keys.js';
 import { Gig, RawGig } from './types.js';
@@ -35,6 +36,11 @@ import { Gig, RawGig } from './types.js';
  *   "Remote (Global|Worldwide|Anywhere)" in the summary is worldwide; a README bullet is worldwide only when the README
  *   says "remote, global team"; else the countries the summary names, nothing: not stated (review). Client Draft.dev,
  *   `postedAt` null (the API gives no date).
+ * - prime-intellect (sources-expansion, `src-prime-intellect`): an open bounty issue of the PrimeIntellect-ai org. `kind` is
+ *   `bounty`. Budget: a fixed budget of exactly the one distinct amount the title/body states next to the word bounty
+ *   (`bountyAmount`: min = max, USD, `from: 'description'`), else `unknown`. Hours are never stated (unknown). Location:
+ *   worldwide only when the issue text says anyone, open access, worldwide or anywhere (the program's own words), else not
+ *   stated (review). Client Prime Intellect, `postedAt` the issue's `created_at` date.
  * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
  *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
  *   read from `pay` and the description by the same rule.
@@ -361,6 +367,31 @@ function draftdev(r: RawGig, o: Rec): Draft {
   };
 }
 
+const PI_OPEN_TO_ALL = /\b(?:anyone|open access|worldwide|anywhere)\b/i;
+
+function primeIntellect(r: RawGig, o: Rec): Draft {
+  const title = collapse(nonBlank(o.title) ?? '');
+  if (title === '') throw fail(r, 'missing title');
+  const url = nonBlank(o.url);
+  if (url === null) throw fail(r, 'missing url');
+  const body = typeof o.body === 'string' ? o.body : '';
+  const amount = bountyAmount(`${title}\n${body}`);
+  const open = PI_OPEN_TO_ALL.test(`${title}\n${body.slice(0, 64_000)}`);
+  return {
+    url,
+    title,
+    description: collapse(`${title}. ${body}`),
+    clientName: 'Prime Intellect',
+    kind: 'bounty',
+    budget: amount === null ? UNKNOWN_BUDGET : { type: 'fixed', min: amount, max: amount, currency: 'USD', usdPerUnit: null, from: 'description' },
+    location: open ? { countries: [], worldwide: true, text: 'Open to anyone (issue text)' } : { countries: [], worldwide: false, text: null },
+    skills: [],
+    postedAt: typeof o.created_at === 'string' ? postedAtOf(o.created_at.slice(0, 10)) : null,
+    bids: null,
+    hours: { min: null, max: null, source: null },
+  };
+}
+
 const GMAIL_KINDS: readonly string[] = ['contract', 'gig', 'network-alert'];
 
 function gmail(r: RawGig, o: Rec): Draft {
@@ -463,7 +494,7 @@ const fmtZone = (z: number): string => `${z >= 0 ? '+' : '−'}${Math.floor(Math
 
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */
 export function normalizeGig(r: RawGig): Gig {
-  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas' && r.platform !== 'draftdev') {
+  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas' && r.platform !== 'draftdev' && r.platform !== 'prime-intellect') {
     throw new KernelError('invalid_output', `gig-normalizer: unsupported platform ${r.platform}`);
   }
   if (r.platform !== 'boards' && !isRec(r.raw)) throw fail(r, 'raw is not an object');
@@ -475,6 +506,7 @@ export function normalizeGig(r: RawGig): Gig {
     : r.platform === 'gmail' ? gmail(r, o)
     : r.platform === 'himalayas' ? himalayas(r, o)
     : r.platform === 'draftdev' ? draftdev(r, o)
+    : r.platform === 'prime-intellect' ? primeIntellect(r, o)
     : hn(r, o);
   const text = `${d.title}\n${d.description}`;
   return {
