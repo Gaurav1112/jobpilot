@@ -13,6 +13,8 @@ export interface Counts {
 }
 export interface SourceRow extends Counts {
   readonly source: string;
+  /** How many of the Mac's eligible keys are among this source's Mac postings (the C3 share). */
+  readonly macEligible: number;
   readonly problems: { readonly mac: readonly string[]; readonly hosted: readonly string[] };
 }
 export interface DayRow {
@@ -47,8 +49,10 @@ export function compareDay(
   const { mac, hosted } = d;
   const why: DayRow['why'] = mac === undefined ? 'mac-missing' : hosted === undefined ? 'hosted-missing' : mac.packHash !== hosted.packHash ? 'pack-differs' : null;
   const ids = [...new Set([...Object.keys(mac?.sources ?? {}), ...Object.keys(hosted?.sources ?? {})])].sort(byCode);
+  const macEligible = new Set(mac?.eligible ?? []);
   const sources = ids.map((source): SourceRow => ({
     source,
+    macEligible: (mac?.sources[source]?.postings ?? []).filter((k) => macEligible.has(k)).length,
     ...counts(mac?.sources[source]?.postings ?? [], hosted?.sources[source]?.postings ?? []),
     problems: { mac: [...(mac?.sources[source]?.problems ?? [])].sort(byCode), hosted: [...(hosted?.sources[source]?.problems ?? [])].sort(byCode) },
   }));
