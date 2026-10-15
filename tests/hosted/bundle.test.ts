@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync, openSync, writeSync, closeSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, existsSync, openSync, writeSync, closeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -111,17 +111,18 @@ describe('hosted bundles', () => {
     expect(names(fs)).toContain('facts.yaml');
   });
 
-  it('streams a 9 MB file without buffering it whole', async () => {
+  it('streams a 128 MB file without buffering it whole', async () => {
     const big = join(d, 'big.bin');
-    writeFileSync(big, randomBytes(9 * 1024 * 1024));
-    copyFileSync(big, join(d, 'big2.bin'));
+    writeFileSync(big, randomBytes(128 * 1024 * 1024));
     const before = process.memoryUsage().arrayBuffers;
     let peak = 0;
     const t = setInterval(() => (peak = Math.max(peak, process.memoryUsage().arrayBuffers)), 2);
     const s = await sealFiles([{ name: 'big.bin', path: big }], join(d, 'big.jpst'), key, { chunk: 65536, codec: 'gzip', level: 1 });
     clearInterval(t);
-    expect(s.bytes).toBeGreaterThan(9 * 1024 * 1024);
-    expect(peak - before).toBeLessThan(32 * 1024 * 1024);
+    expect(s.bytes).toBeGreaterThan(128 * 1024 * 1024);
+    // arrayBuffers is process-wide and V8 collects external garbage lazily (~64 MB), so streaming can peak near that;
+    // buffering the whole file would add at least its 128 MB. The 96 MB line separates the two without GC timing.
+    expect(peak - before).toBeLessThan(96 * 1024 * 1024);
     const out = fresh();
     await openInto(join(d, 'big.jpst'), key, out, s);
     expect(listAll(out)).toEqual(['big.bin']);

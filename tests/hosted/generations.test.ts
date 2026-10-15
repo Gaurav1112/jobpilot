@@ -264,3 +264,16 @@ describe('prunePlan', () => {
     expect(del).toContain(tagOf(2));
   });
 });
+
+describe('prunePlan after a rollback (final review)', () => {
+  const rec = (gen: number, at: string) => ({ gen, tag: tagOf(gen, 'ab'), asset: 'a', sha256: '0'.repeat(64), bytes: 1, schema: { kernel: 1, app: 1 }, codeSha: '0'.repeat(40), packHash: 'p', lastDone: { daily: null, freelance: null, coverage: null }, at });
+  it('keeps every release a history record names above the pointer, whatever its age, so the rollback can be undone', () => {
+    const hist = [10, 9, 8, 7, 6].map((g) => rec(g, `2026-10-${String(g).padStart(2, '0')}T01:00:00.000Z`));
+    const k = hist.find((h) => h.gen === 7)!;
+    const pointer = { v: 1 as const, gen: 7, current: k, lease: null, budget: null, sizeHard: false, history: hist };
+    const releases = hist.map((h) => ({ tag: h.tag, createdAt: h.at, assets: [] }));
+    const plan = prunePlan(releases, pointer, '2026-10-30T01:00:00.000Z', { generations: 2, weekly: 0, archiveDays: 30 });
+    for (const g of [10, 9, 8, 7]) expect(plan).not.toContain(tagOf(g, 'ab'));
+    expect(plan).toEqual([]); // keep 2 at or below the pointer: 7 and 6
+  });
+});

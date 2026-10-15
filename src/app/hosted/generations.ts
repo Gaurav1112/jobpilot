@@ -146,6 +146,9 @@ export function prunePlan(
   const kept = new Set<string>();
   if (pointer.current !== null) kept.add(pointer.current.tag);
   for (const r of committed.slice(0, Math.max(0, keep.generations))) kept.add(r.tag);
+  // after a rollback the history still names the generations above the pointer: they are how the rollback is undone,
+  // so they stay whatever their age (the next commit drops those records, and normal pruning resumes)
+  for (const h of pointer.history) if (h.gen > pointer.gen) kept.add(h.tag);
 
   // the newest committed generation of each of the last `weekly` IST weeks (this week and the ones before it)
   const thisWeek = Date.parse(`${coverageWeek(now)}T00:00:00Z`);
