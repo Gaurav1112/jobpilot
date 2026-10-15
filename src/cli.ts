@@ -24,7 +24,8 @@ import { osascriptNotifier } from './app/notify.js';
 import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
-import { homePaths, jobpilotHome } from './app/pack/paths.js';
+import { homePaths, jobpilotHome, selectProfile } from './app/pack/paths.js';
+import { ProfileError } from './app/profiles/root.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -742,5 +743,20 @@ schedule
       console.log(f ? 'it runs only when the window is owed; "jobpilot run-freelance" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'freelance.log') : 'it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
+
+const PROFILE_HELP = 'the profile to use (default: the active one, see "jobpilot profile use"); not together with JOBPILOT_HOME';
+const leafCommands = (c: Command): Command[] => (c.commands.length === 0 ? [c] : c.commands.flatMap(leafCommands));
+for (const c of program.commands.filter((c) => c.name() !== 'profile').flatMap(leafCommands)) c.option('--profile <id>', PROFILE_HELP);
+program.hook('preAction', (_program, action) => {
+  const id = action.opts()['profile'] as string | undefined;
+  selectProfile(id);
+  try {
+    jobpilotHome(); // resolve now, so a bad profile stops the command before it starts
+  } catch (e) {
+    if (!(e instanceof ProfileError)) throw e;
+    console.error(`error: ${e.message}`);
+    process.exit(2);
+  }
+});
 
 await program.parseAsync();
