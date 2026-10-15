@@ -23,7 +23,7 @@ import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
 import { diskDocCheck } from '../docs-check.js';
 import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
-import { AppStore, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
+import { AppStore, DEFAULT_BANDS, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
 import { toDecideFrom } from '../triage.js';
 import { dateText, daysBetween, istTimeText } from './format.js';
@@ -127,6 +127,12 @@ function leavesList(from: string, to: JobStatus): boolean {
   const q = new URLSearchParams(from.includes('?') ? from.slice(from.indexOf('?') + 1) : '');
   const asked = q.getAll('status').filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s));
   return !(asked.length > 0 ? asked : DEFAULT_STATUSES).includes(to);
+}
+/** The same members, regardless of order or repeats. */
+function sameSet<T>(a: readonly T[], b: readonly T[]): boolean {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((v) => y.has(v));
 }
 const PAGE_SIZE = 100;
 
@@ -397,6 +403,9 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const statuses = asked.length > 0 ? asked : DEFAULT_STATUSES;
     const ALL: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
     const bands = c.req.queries('band')?.filter((b): b is Band => (ALL as readonly string[]).includes(b)) ?? [];
+    // A8/A1: "default" means the set equals the default one, not "absent": the form sends its ticked defaults back
+    const statusesDefault = sameSet(asked, DEFAULT_STATUSES) || asked.length === 0;
+    const bandsDefault = bands.length === 0 || sameSet(bands, DEFAULT_BANDS);
     const minRaw = c.req.query('min')?.trim() ?? '';
     const min = /^\d{1,3}(\.\d+)?$/.test(minRaw) ? Number(minRaw) : undefined;
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
@@ -435,7 +444,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return {
         // rereview R6: the list never shows the description, so it is dropped before the (strict, per-string) redaction
         jobs: p.jobs.map((j): ListedJob => ({ ...j, jdText: '', isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
-        hidden: bands.length === 0 ? p.hiddenCount : 0,
+        hidden: bandsDefault ? p.hiddenCount : 0,
         overrides: s.factOverrides(),
         total: p.total,
         newCount: p.newCount,
@@ -457,7 +466,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, defaultStatuses: asked.length === 0, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bandsDefault, defaultStatuses: statusesDefault, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
       page: pageNo, pages, total, newCount, toDecide, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
@@ -543,7 +552,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const from = safeFrom(typeof body['from'] === 'string' ? body['from'] : undefined);
     const next = typeof body['next'] === 'string' && JOB_KEY.test(body['next']) ? body['next'] : undefined;
     if (!isHx(c)) {
-      if (from !== undefined && leavesList(from, to as JobStatus)) return c.redirect(`${from}${next !== undefined ? `#job-${next}` : '#jobs'}`, 303);
+      // A notice (no documents kept, or Keep a copy) is only told on the job page: it never yields to the next row.
+      if (from !== undefined && result.notice === undefined && leavesList(from, to as JobStatus)) return c.redirect(`${from}${next !== undefined ? `#job-${next}` : '#jobs'}`, 303);
       const qs = new URLSearchParams();
       if (from !== undefined) qs.set('from', from);
       if (from !== undefined && next !== undefined) qs.set('next', next);

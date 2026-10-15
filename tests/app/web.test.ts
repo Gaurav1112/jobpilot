@@ -357,6 +357,22 @@ describe('A8: filters fold away; a job remembers its list and the next row', () 
     expect(elementsWith(closed, 'name', 'q')).toEqual([]); // search and Apply stay outside
   });
 
+  it('a search submitted exactly as the form renders keeps the filters closed and the hidden-row notes', async () => {
+    const form = elementsWith((await get('/')).body, 'class', 'filters')[0] as string;
+    const qs = new URLSearchParams({ q: 'engineer' });
+    for (const m of form.matchAll(/<input type="checkbox" name="(\w+)" value="([\w-]+)" checked>/g)) qs.append(m[1] as string, m[2] as string);
+    expect(qs.getAll('status')).toEqual(['new', 'approved', 'applied', 'interview', 'offer']);
+    expect(qs.getAll('band')).toEqual(['disclosed', 'undisclosed', 'review']);
+    const body = (await get(`/?${qs.toString()}`)).body;
+    expect(elementsWith(body, 'class', 'filter-more')[0]).toMatch(/^<details class="filter-more">/);
+    expect(textOf(body)).toContain('Not for me and Not selected are hidden: show them.');
+    expect(textOf((await get('/?band=review&band=disclosed&band=undisclosed&band=review')).body)).toContain('2 not-eligible or below-floor jobs are hidden');
+    // a set that differs from the default still counts as a filter
+    const one = (await get('/?status=new&band=disclosed')).body;
+    expect(textOf(elementsWith(one, 'class', 'filter-more')[0] ?? '')).toMatch(/^Filters · 2 active/);
+    expect(textOf(one)).not.toContain('are hidden');
+  });
+
   it('a row links to its job with from= and next=, and is its own anchor', async () => {
     const body = (await get('/?q=engineer')).body;
     const [a, b] = order(body) as [string, string];
@@ -384,6 +400,16 @@ describe('A8: filters fold away; a job remembers its list and the next row', () 
     expect(last.headers.get('location')).toBe('/#jobs');
     const bad = await post(`/jobs/${K7}/status`, { _csrf: token, to: 'skipped', from: '//evil.example', next: 'zz' }, nojs(`/jobs/${K7}`));
     expect(bad.headers.get('location')).toBe(`/jobs/${K7}#status`);
+  });
+
+  it('without JS, Mark applied with a notice stays on the job page even when it leaves the list', async () => {
+    const nodocs = await post(`/jobs/${K4}/status`, { _csrf: token, to: 'applied', from: '/?status=new', next: K1 }, nojs(`/jobs/${K4}`));
+    expect(nodocs.status).toBe(303);
+    expect(nodocs.headers.get('location')).toBe(`/jobs/${K4}?from=%2F%3Fstatus%3Dnew&next=${K1}&notice=nodocs#status`);
+    withStore((s) => s.setStatus(K3, 'approved', 'user', NOW));
+    const shortlisted = await post(`/jobs/${K3}/status`, { _csrf: token, to: 'applied', from: '/?status=approved', next: K2 }, nojs(`/jobs/${K3}`));
+    expect(shortlisted.headers.get('location')).toBe(`/jobs/${K3}?from=%2F%3Fstatus%3Dapproved&next=${K2}&notice=nodocs#status`);
+    expect(textOf((await get(new URL(shortlisted.headers.get('location') as string, 'http://localhost').pathname + '?notice=nodocs')).body)).toContain('No documents were kept');
   });
 
   it('the status form carries from and next, so the plain POST knows them', async () => {
