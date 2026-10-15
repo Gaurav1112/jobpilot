@@ -3,7 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { defineType } from '../../kernel/types.js';
 import { namesIndia } from '../agents/sources/platforms/shared.js';
-import { countriesIn } from '../text/norm.js';
+import { countriesIn, excludedPlaces } from '../text/norm.js';
 import { refOfFreehireBoard } from './freehire-boards.js';
 import type { Platform } from './types.js';
 
@@ -116,7 +116,7 @@ export const WORLDWIDE_REMOTE = /\b(?:anywhere|worldwide|world\s*wide|global(?:l
 export function evidenceOf(row: Pick<FreehireRow, 'title' | 'location'>): 'india' | 'worldwide' | null {
   if (row.location === null || !TECH_TITLE.test(row.title)) return null;
   if (namesIndia(row.location)) return 'india';
-  if (WORLDWIDE_REMOTE.test(row.location) && countriesIn(row.location).every((c) => c === 'india' || c === 'worldwide')) return 'worldwide';
+  if (WORLDWIDE_REMOTE.test(row.location) && !excludedPlaces(row.location).includes('india') && countriesIn(row.location).every((c) => c === 'india' || c === 'worldwide')) return 'worldwide';
   return null;
 }
 

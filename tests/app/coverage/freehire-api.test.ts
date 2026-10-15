@@ -60,6 +60,9 @@ it.each([
   [{ title: 'Senior Systems Engineer', location: 'In-Office' }, null],
   [{ title: 'Software Engineer', location: 'Indianapolis, IN' }, null],
   [{ title: 'Software Engineer', location: null }, null],
+  [{ title: 'Software Engineer', location: 'Worldwide (excluding India)' }, null],
+  [{ title: 'Software Engineer', location: 'Remote - Anywhere except India' }, null],
+  [{ title: 'Software Engineer', location: 'Global (excl. India)' }, null],
 ])('evidenceOf(%o) = %s', (row, want) => expect(evidenceOf(row)).toBe(want));
 
 it.each([
