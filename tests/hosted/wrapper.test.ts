@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -164,6 +164,8 @@ const ledger = async (s: Setup): Promise<ReturnType<typeof parseLedger>> => pars
 const issueTitles = (s: Setup): string[] => (existsSync(join(s.ghDir, 'issues.json')) ? (JSON.parse(readFileSync(join(s.ghDir, 'issues.json'), 'utf8')) as { title: string }[]).map((i) => i.title) : []);
 const hasAlert = (s: Setup, kind: keyof typeof ALERTS): boolean => issueTitles(s).includes(ALERTS[kind]);
 const releases = async (s: Setup): Promise<string[]> => (await s.gh.listReleases()).map((r) => r.tag);
+/** Release tags of generation 2 (state or archive, any attempt). */
+const gen2 = async (s: Setup): Promise<string[]> => (await releases(s)).filter((t) => /^(?:state|archive)-g000002(?:-|$)/.test(t)).sort();
 async function patchPointer(s: Setup, f: (p: Pointer) => Pointer): Promise<void> {
   await appendStateFiles(s.gh, async (head) => ({ 'pointer.json': pointerJson(f(head.pointer)) }), 'test patch');
 }
@@ -233,7 +235,7 @@ describe('runHosted: failures leave the pointer at G', () => {
       expect(p.lease).toBeNull();
       expect(hasAlert(s, 'state-failure')).toBe(true);
       expect(await lastOutcome(s)).toBe('failed');
-      expect(await releases(s)).not.toContain('state-g000002');
+      expect(await gen2(s)).toEqual([]);
       for (const line of s.out) expect(isTemplateLine(line) || line.startsWith('::add-mask::'), line).toBe(true);
     });
   }
@@ -244,10 +246,18 @@ describe('runHosted: failures leave the pointer at G', () => {
     const p = await pointer(s);
     expect(p.gen).toBe(1);
     expect(p.lease).toBeNull();
-    expect(await releases(s)).not.toContain('state-g000002');
-    expect(await releases(s)).not.toContain('archive-g000002');
+    expect(await gen2(s)).toEqual([]);
     expect(hasAlert(s, 'state-failure')).toBe(true);
     expect(await lastOutcome(s)).toBe('failed');
+  });
+
+  it('releases this run did not create (an abandoned line after a rollback) survive a failed publish', async () => {
+    const s = setup({ fault: (x) => { if (x === 'commit') throw new Error('boom'); } });
+    // generation 2 of a line a rollback abandoned, named as an older build named it
+    for (const t of ['state-g000002', 'archive-g000002']) await s.gh.createRelease(t);
+    expect(await run(s)).toBe(1);
+    expect((await pointer(s)).gen).toBe(1);
+    expect(await gen2(s)).toEqual(['archive-g000002', 'state-g000002']);
   });
 
   it('a CAS rejected by another writer: conflict alert, generation not ours, releases removed', async () => {
@@ -258,7 +268,7 @@ describe('runHosted: failures leave the pointer at G', () => {
       beforeCas: async () => {
         if (moved) return;
         const head = await dirGitHub(s.ghDir).readState();
-        if (head?.pointer.current && head.pointer.lease?.holder === 'actions:4242' && existsSync(join(s.ghDir, 'releases', 'state-g000002'))) {
+        if (head?.pointer.current && head.pointer.lease?.holder === 'actions:4242' && existsSync(join(s.ghDir, 'releases')) && readdirSync(join(s.ghDir, 'releases')).some((t) => t.startsWith('state-g000002'))) {
           moved = true;
           // a second writer moves the pointer: our lease is gone
           const p = { ...head.pointer, lease: null };
@@ -271,7 +281,7 @@ describe('runHosted: failures leave the pointer at G', () => {
     expect(await run(sw)).toBe(1);
     expect(moved).toBe(true);
     expect((await pointer(sw)).gen).toBe(1);
-    expect(await releases(sw)).not.toContain('state-g000002');
+    expect(await gen2(sw)).toEqual([]);
     expect(hasAlert(sw, 'conflict')).toBe(true);
   });
 
@@ -297,7 +307,7 @@ describe('runHosted: failures leave the pointer at G', () => {
     const p = await pointer(s);
     expect(p.gen).toBe(1);
     expect(p.lease).toBeNull();
-    expect(await releases(s)).not.toContain('state-g000002');
+    expect(await gen2(s)).toEqual([]);
     expect(hasAlert(s, 'killed')).toBe(true);
     expect(await lastOutcome(s)).toBe('killed');
     expect(s.out.some((x) => /^daily: killed 60 s after the deadline stop; nothing is uploaded$/.test(x))).toBe(true);

@@ -28,7 +28,7 @@ export interface PublishInput {
   readonly files?: Readonly<Record<string, string>>;
   readonly state: HostedConfig['state'];
   readonly budget: Pointer['budget'];
-  /** File names inside `<home>/archive/` to upload as the release archive-g<G+1>. */
+  /** File names inside `<home>/archive/` to upload as the release archive-g<G+1>-<nonce>. */
   readonly archiveSegments?: readonly string[];
 }
 export type PublishOutcome =
@@ -94,11 +94,21 @@ export function lastDoneOf(db: string): LastDone {
 
 const scratchName = (): string => randomBytes(6).toString('hex');
 
-/** checkpoint → stateFiles → seal → publish release G+1 (+ archive) → commitGeneration; on CAS conflict deletes the new releases. */
+/** True while the pointer still sits at our base with our lease on it (a stale holder must not publish). */
+async function stillOurs(i: PublishInput): Promise<boolean> {
+  const head = await i.gh.readState();
+  return head !== null && head.pointer.gen === i.base.pointer.gen && head.pointer.lease?.holder === i.holder;
+}
+
+/**
+ * checkpoint → stateFiles → seal → publish release G+1 (+ archive) → commitGeneration; on CAS conflict deletes the new
+ * releases. The tags carry a per-attempt nonce, so a failure here only ever deletes releases this call created.
+ */
 export async function publishHome(i: PublishInput): Promise<PublishOutcome> {
   const gen = i.base.pointer.gen + 1;
-  const tag = tagOf(gen);
-  const archiveTag = archiveTagOf(gen);
+  const nonce = randomBytes(4).toString('hex');
+  const tag = tagOf(gen, nonce);
+  const archiveTag = archiveTagOf(gen, nonce);
   mkdirSync(i.tmpDir, { recursive: true, mode: 0o700 });
   const bundle = join(i.tmpDir, `${assetOf(gen)}.${scratchName()}`);
   let sealed: Sealed;
@@ -129,6 +139,7 @@ export async function publishHome(i: PublishInput): Promise<PublishOutcome> {
     return { ok: false, reason: 'bundle' };
   }
   try {
+    if (!(await stillOurs(i))) return { ok: false, reason: 'cas' };
     const pub = await publishGeneration(i.gh, tag, bundle, assetOf(gen), sealed, i.tmpDir);
     if (!pub.ok) return pub;
   } finally {
@@ -142,6 +153,11 @@ export async function publishHome(i: PublishInput): Promise<PublishOutcome> {
   if (segments.length > 0) {
     try {
       await i.gh.createRelease(archiveTag);
+    } catch {
+      await i.gh.deleteRelease(tag).catch(() => undefined); // the archive tag is not known to be ours
+      return { ok: false, reason: 'upload' };
+    }
+    try {
       for (const name of segments) await i.gh.uploadAsset(archiveTag, join(i.home, 'archive', name), name);
     } catch {
       await dropAll();

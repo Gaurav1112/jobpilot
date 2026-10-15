@@ -59,6 +59,10 @@ describe('tags', () => {
     expect(assetOf(7)).toBe('state-g000007.jpst');
     expect(archiveTagOf(12)).toBe('archive-g000012');
   });
+  it('a per-attempt nonce makes each publish its own tag', () => {
+    expect(tagOf(7, '0a1b2c3d')).toBe('state-g000007-0a1b2c3d');
+    expect(archiveTagOf(12, '0a1b2c3d')).toBe('archive-g000012-0a1b2c3d');
+  });
 });
 
 describe('publishGeneration', () => {
@@ -106,6 +110,14 @@ describe('publishGeneration', () => {
     const gh = await ghOf({ ...base, uploadAsset: async () => { throw new Error('boom'); } });
     expect(await publishGeneration(gh, tagOf(1), file, assetOf(1), s, d)).toEqual({ ok: false, reason: 'upload' });
     expect(await base.release(tagOf(1))).toBeNull();
+  });
+  it('a createRelease failure (the tag exists, another writer owns it) leaves that release alone', async () => {
+    const { file, s } = await sealed();
+    const gh = await ghOf();
+    // another writer's release of the same tag, already verified
+    expect(await publishGeneration(gh, tagOf(1), file, assetOf(1), s, d)).toEqual({ ok: true });
+    expect(await publishGeneration(gh, tagOf(1), file, assetOf(1), s, d)).toEqual({ ok: false, reason: 'upload' });
+    expect((await gh.release(tagOf(1)))?.assets.map((a) => a.name)).toEqual([assetOf(1)]);
   });
 });
 
@@ -185,6 +197,23 @@ describe('prunePlan', () => {
     expect(del).not.toContain(archiveTagOf(2));
     expect(del).not.toContain('v1.0');
     expect(del).toEqual([...del].sort());
+  });
+  it('reads the generation of a nonce tag; prunes nonce archives by age', () => {
+    const rels: Release[] = [];
+    for (let g = 1; g <= 10; g++) rels.push(rel(tagOf(g, `0000000${g % 10}`), 10 - g));
+    rels.push(rel(archiveTagOf(1, 'aaaaaaaa'), 31), rel(archiveTagOf(2, 'bbbbbbbb'), 29));
+    const del = prunePlan(rels, { ...EMPTY_POINTER, gen: 10 }, now, { generations: 3, weekly: 0, archiveDays: 30 });
+    expect(del).toContain(tagOf(1, '00000001'));
+    expect(del).not.toContain(tagOf(8, '00000008'));
+    expect(del).toContain(archiveTagOf(1, 'aaaaaaaa'));
+    expect(del).not.toContain(archiveTagOf(2, 'bbbbbbbb'));
+  });
+  it('an orphan attempt of a committed generation goes; the attempt above the pointer (in flight) stays', () => {
+    const recs = [3, 2, 1].map((g) => ({ ...recOf(g, { sha256: 'a'.repeat(64), bytes: 1 }), tag: tagOf(g, `${g}`.repeat(8)) }));
+    const pointer: Pointer = { ...EMPTY_POINTER, gen: 3, current: recs[0]!, history: recs };
+    const rels = [...recs.map((r) => rel(r.tag, 1)), rel(tagOf(2, 'dead0000'), 1), rel(tagOf(4, 'eeeeeeee'), 0)];
+    const del = prunePlan(rels, pointer, now, { generations: 7, weekly: 4, archiveDays: 30 });
+    expect(del).toEqual([tagOf(2, 'dead0000')]);
   });
   it('never deletes the newest generation of an older schema', () => {
     const rels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => rel(tagOf(g), 10 - g));

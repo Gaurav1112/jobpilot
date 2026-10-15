@@ -12,7 +12,7 @@ import type { GitHubClient } from '../../src/app/hosted/github.js';
 import { DefaultHomeError } from '../../src/app/hosted/home-guard.js';
 import { pointerJson } from '../../src/app/hosted/pointer.js';
 import { seedAndPublish, seedHome } from '../../src/app/hosted/seed.js';
-import { acquireLease, StateBusy } from '../../src/app/hosted/state.js';
+import { acquireLease, rollbackTo, StateBusy } from '../../src/app/hosted/state.js';
 import { lastDoneOf, packHashOf, publishHome, pullHome, pushHome, schemaOf, sizeLevelOf } from '../../src/app/hosted/sync.js';
 import { schemaState } from '../../src/app/store/app-store.js';
 import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
@@ -49,6 +49,8 @@ function macHome(): string {
   return home;
 }
 const newGh = (hooks = {}): GitHubClient => dirGitHub(fresh(), hooks);
+/** Release tags of generation `gen` (state or archive, any attempt). */
+const tagsOfGen = (tags: readonly string[], gen: number): string[] => tags.filter((t) => new RegExp(`^(?:state|archive)-g${String(gen).padStart(6, '0')}(?:-|$)`).test(t));
 
 describe('helpers', () => {
   it('schemaOf, packHashOf, lastDoneOf read a migrated home', async () => {
@@ -117,8 +119,10 @@ describe('seedAndPublish, pull, push', () => {
     expect(head?.pointer.lease).toBeNull();
     expect(head?.pointer.current?.lastDone).toEqual({ daily: '2026-10-04', freelance: '2026-10-04', coverage: null });
     expect(head?.pointer.current?.schema).toEqual({ kernel: MIGRATIONS.length, app: APP_MIGRATIONS.length });
-    expect((await gh.release('state-g000001'))?.assets[0]?.name).toBe('state-g000001.jpst');
-    expect((await gh.release('archive-g000001'))?.assets.length).toBeGreaterThan(0);
+    const tag = head!.pointer.current!.tag;
+    expect(tag).toMatch(/^state-g000001-[0-9a-f]{8}$/);
+    expect((await gh.release(tag))?.assets[0]?.name).toBe('state-g000001.jpst');
+    expect((await gh.release(tag.replace(/^state-/, 'archive-')))?.assets.length).toBeGreaterThan(0);
     const v = await verifyGeneration(gh, head!.pointer.current!, key, root, NOW);
     expect(v.ok).toBe(true);
     await expect(seedAndPublish({ gh, key, from: mac, work: fresh(), now: HISTORY_NOW, codeSha: SHA, state: STATE })).rejects.toThrow(/state exists/);
@@ -196,9 +200,8 @@ describe('publishHome failures', () => {
     const out = await publishHome(input(s));
     expect(out).toEqual({ ok: false, reason: 'upload' });
     const tags = (await s.raw.listReleases()).map((r) => r.tag);
-    expect(tags).toEqual(['archive-g000001', 'state-g000001'].sort().filter((t) => tags.includes(t)));
-    expect(tags).not.toContain('state-g000002');
-    expect(tags).not.toContain('archive-g000002');
+    expect(tagsOfGen(tags, 1)).toHaveLength(2);
+    expect(tagsOfGen(tags, 2)).toEqual([]);
     expect(pointerJson((await s.raw.readState())!.pointer)).toBe(before);
   });
 
@@ -208,8 +211,7 @@ describe('publishHome failures', () => {
     const out = await publishHome({ ...input(s), gh });
     expect(out).toEqual({ ok: false, reason: 'upload' });
     const tags = (await s.raw.listReleases()).map((r) => r.tag);
-    expect(tags).not.toContain('state-g000002');
-    expect(tags).not.toContain('archive-g000002');
+    expect(tagsOfGen(tags, 2)).toEqual([]);
   });
 
   it('a racing writer that takes the lease: reason cas, both new releases deleted', async () => {
@@ -229,10 +231,60 @@ describe('publishHome failures', () => {
     const out = await publishHome({ ...input(s), gh });
     expect(out).toEqual({ ok: false, reason: 'cas' });
     const tags = (await s.raw.listReleases()).map((r) => r.tag);
-    expect(tags).not.toContain('state-g000002');
-    expect(tags).not.toContain('archive-g000002');
+    expect(tagsOfGen(tags, 2)).toEqual([]);
     const p = (await s.raw.readState())!.pointer;
     expect(p.gen).toBe(1);
     expect(p.lease?.holder).toBe('actions:42');
+  });
+});
+
+/** A home pulled from `gh` with one more completed daily run (`day`), so a push has something new. */
+async function changedHome(gh: GitHubClient, day: string): Promise<string> {
+  const home = fresh();
+  await pullHome({ gh, key, to: home, tmpDir: root, defaultHome: fresh() });
+  const d = new Database(join(home, 'jobpilot.db'));
+  d.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES (?, 'jobpilot-daily@1.0.0', 'p', ?, ?, 'completed')`).run(`daily-${day}`, `${day}T01:30:00.000Z`, `${day}T02:00:00.000Z`);
+  d.close();
+  return home;
+}
+
+describe('two writers and rollbacks never destroy a generation', () => {
+  it('a stale lease holder that wakes after a takeover leaves the new current generation readable', async () => {
+    const gh = newGh();
+    await seedAndPublish({ gh, key, from: macHome(), work: fresh(), now: HISTORY_NOW, codeSha: SHA, state: STATE });
+    const laptopHome = await changedHome(gh, '2026-10-05');
+    const actionsHome = await changedHome(gh, '2026-10-06');
+    // the laptop takes the lease at generation 1, then sleeps past its expiry
+    const laptop = 'laptop:abcdef12' as const;
+    const stale = await acquireLease(gh, laptop, NOW, '2026-10-15T02:30:00.000Z');
+    const later = '2026-10-15T04:00:00.000Z';
+    const base = await acquireLease(gh, 'actions:99', later, '2026-10-15T06:00:00.000Z');
+    const common = { gh, key, tmpDir: root, now: later, codeSha: SHA, lastDone: { daily: null, freelance: null, coverage: null }, state: STATE, budget: null };
+    const won = await publishHome({ ...common, home: actionsHome, base, holder: 'actions:99' });
+    expect(won.ok).toBe(true);
+    // the laptop wakes and publishes on its stale base
+    const lost = await publishHome({ ...common, home: laptopHome, base: stale, holder: laptop });
+    expect(lost).toEqual({ ok: false, reason: 'cas' });
+    const p = (await gh.readState())!.pointer;
+    expect(p.gen).toBe(2);
+    expect((await verifyGeneration(gh, p.current!, key, root, NOW)).ok).toBe(true);
+    expect(tagsOfGen((await gh.listReleases()).map((r) => r.tag), 2)).toEqual([p.current!.tag]);
+  });
+
+  it('after a rollback every push commits, and history keeps only readable generations', async () => {
+    const gh = newGh();
+    await seedAndPublish({ gh, key, from: macHome(), work: fresh(), now: HISTORY_NOW, codeSha: SHA, state: STATE });
+    const holder = 'laptop:abcdef12' as const;
+    const push = async (day: string) => pushHome({ gh, key, from: await changedHome(gh, day), tmpDir: root, now: NOW, codeSha: SHA, state: STATE, holder, defaultHome: fresh() });
+    expect((await push('2026-10-05')).ok).toBe(true);
+    expect((await push('2026-10-06')).ok).toBe(true);
+    await rollbackTo(gh, 1, NOW, {});
+    for (const [i, day] of ['2026-10-07', '2026-10-08', '2026-10-09'].entries()) {
+      const out = await push(day);
+      expect(out.ok, day).toBe(true);
+      const p = (await gh.readState())!.pointer;
+      expect(p.gen).toBe(2 + i);
+      for (const h of p.history) expect((await verifyGeneration(gh, h, key, root, NOW)).ok, `gen ${h.gen}`).toBe(true);
+    }
   });
 });

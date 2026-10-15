@@ -152,6 +152,8 @@ class HostedRun {
   private readonly summaries = new Map<string, number>();
   private newSegments: string[] = [];
   private killedLine = '';
+  /** The release tags this run created (the only ones a failure may delete). */
+  private readonly created: string[] = [];
 
   constructor(private readonly o: HostedRunOptions, private readonly d: HostedDeps) {
     this.gw = createGateway({ out: d.out, ...(d.summaryFile !== undefined ? { summaryFile: d.summaryFile } : {}) });
@@ -248,18 +250,19 @@ class HostedRun {
     await this.alert(code === 'cas' ? 'conflict' : 'state-failure', [l]);
   }
 
-  /** After an unexpected exception in the publish step: if the pointer did not move past G, the new releases go. */
+  /**
+   * After an unexpected exception in the publish step: the releases THIS run created go, unless the pointer names one
+   * (the commit landed). A release this run did not create (another writer's, an abandoned line's) is never touched.
+   */
   private async cleanupUnpublished(): Promise<void> {
-    if (this.head === undefined || this.step === 'ledger') return;
-    if (!['bundle', 'upload', 'commit'].includes(this.step)) return;
+    if (this.head === undefined || this.step === 'ledger' || this.created.length === 0) return;
     try {
       const now = await this.d.gh.readState();
-      if (now !== null && now.pointer.gen === this.head.pointer.gen) {
-        const g = this.head.pointer.gen + 1;
-        const pad = String(g).padStart(6, '0');
-        await this.d.gh.deleteRelease(`state-g${pad}`);
-        await this.d.gh.deleteRelease(`archive-g${pad}`);
-      }
+      if (now === null) return;
+      const named = new Set([...now.pointer.history, ...(now.pointer.current ? [now.pointer.current] : [])].map((h) => h.tag));
+      const committed = this.created.some((t) => named.has(t));
+      if (committed) return;
+      for (const t of this.created) await this.d.gh.deleteRelease(t);
     } catch (e) {
       this.log(`cleanup failed: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -577,6 +580,10 @@ class HostedRun {
     // the fault hooks of the upload and the CAS fire inside the shared publish
     const gh: GitHubClient = {
       ...d.gh,
+      createRelease: async (tag) => {
+        await d.gh.createRelease(tag);
+        this.created.push(tag);
+      },
       uploadAsset: async (tag, file, name) => {
         this.at('upload');
         return d.gh.uploadAsset(tag, file, name);

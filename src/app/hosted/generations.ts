@@ -6,9 +6,14 @@ import type { GitHubClient, Release } from './github.js';
 import type { GenRecord, Pointer } from './pointer.js';
 
 const pad = (gen: number): string => String(gen).padStart(6, '0');
-export const tagOf = (gen: number): string => `state-g${pad(gen)}`;
-export const assetOf = (gen: number): string => `${tagOf(gen)}.jpst`;
-export const archiveTagOf = (gen: number): string => `archive-g${pad(gen)}`;
+const suffix = (nonce?: string): string => (nonce === undefined ? '' : `-${nonce}`);
+/**
+ * The release tag of generation `gen`. Each publish attempt adds its own `nonce`, so two writers (a stale lease holder,
+ * a line abandoned by a rollback, a job killed mid-publish) never share a tag; the pointer's record names the tag.
+ */
+export const tagOf = (gen: number, nonce?: string): string => `state-g${pad(gen)}${suffix(nonce)}`;
+export const assetOf = (gen: number): string => `state-g${pad(gen)}.jpst`;
+export const archiveTagOf = (gen: number, nonce?: string): string => `archive-g${pad(gen)}${suffix(nonce)}`;
 
 export type PublishResult = { readonly ok: true } | { readonly ok: false; readonly reason: 'upload' | 'verify' };
 
@@ -17,7 +22,10 @@ const scratch = (tmpDir: string, prefix: string): string => {
   return mkdtempSync(join(tmpDir, prefix));
 };
 
-/** Creates the release, uploads, then checks the API's size and `sha256:` digest (or downloads again and hashes). Deletes the release on any failure. */
+/**
+ * Creates the release, uploads, then checks the API's size and `sha256:` digest (or downloads again and hashes).
+ * Deletes the release on a later failure, but never when creating it failed: the tag may be another writer's.
+ */
 export async function publishGeneration(gh: GitHubClient, tag: string, file: string, name: string, sealed: Sealed, tmpDir: string): Promise<PublishResult> {
   const fail = async (reason: 'upload' | 'verify'): Promise<PublishResult> => {
     await gh.deleteRelease(tag).catch(() => undefined);
@@ -25,6 +33,10 @@ export async function publishGeneration(gh: GitHubClient, tag: string, file: str
   };
   try {
     await gh.createRelease(tag);
+  } catch {
+    return { ok: false, reason: 'upload' }; // not ours to delete (it exists, or creating it is in doubt; prune takes an orphan)
+  }
+  try {
     await gh.uploadAsset(tag, file, name);
   } catch {
     return fail('upload');
@@ -107,7 +119,7 @@ export async function verifyGeneration(gh: GitHubClient, rec: GenRecord, key: Bu
 
 const DAY_MS = 86_400_000;
 const genOf = (tag: string): number | null => {
-  const m = /^state-g(\d+)$/.exec(tag);
+  const m = /^state-g(\d+)(?:-[0-9a-f]+)?$/.exec(tag);
   return m === null ? null : Number(m[1]);
 };
 
@@ -145,8 +157,13 @@ export function prunePlan(
   }
   for (const [k, g] of newestBySchema) if (cur === undefined || k !== `${cur.kernel}.${cur.app}`) kept.add(g);
 
-  const out: string[] = states.filter((s) => !kept.has(s.gen)).map((s) => s.tag);
+  // a committed generation's release is the one its record names; another attempt at that number is an orphan
+  // (a failed or abandoned publish). Above the pointer nothing is committed yet: a writer may be publishing there.
+  const named = new Map<number, string>();
+  for (const h of [...pointer.history, ...(pointer.current ? [pointer.current] : [])]) if (h.gen <= pointer.gen) named.set(h.gen, h.tag);
+  const orphan = (s: { gen: number; tag: string }): boolean => s.gen <= pointer.gen && named.has(s.gen) && named.get(s.gen) !== s.tag;
+  const out: string[] = states.filter((s) => !kept.has(s.gen) || orphan(s)).map((s) => s.tag);
   const cutoff = Date.parse(now) - keep.archiveDays * DAY_MS;
-  for (const r of releases) if (/^archive-g\d+$/.test(r.tag) && Date.parse(r.createdAt) < cutoff) out.push(r.tag);
+  for (const r of releases) if (/^archive-g\d+(?:-[0-9a-f]+)?$/.test(r.tag) && Date.parse(r.createdAt) < cutoff) out.push(r.tag);
   return out.sort();
 }
