@@ -17,6 +17,7 @@ import { createDashboard, type DashboardDeps } from '../../src/app/web/server.js
 import { Sessions } from '../../src/app/web/security.js';
 import type { FetchLike } from '../../src/kernel/providers.js';
 import { jobRow } from '../support/app-fixtures.js';
+import { linksOf, textOf } from '../support/dom.js';
 
 /**
  * The Companies tab (career-sites Task 11, spec §5) through Hono's `app.request()`: a temp JOBPILOT_HOME with the
@@ -132,17 +133,15 @@ describe('companies: the lists', () => {
   it('the nav has Companies; every list renders with its count, ordered by company key', async () => {
     const { status, body } = await get('/companies');
     expect(status).toBe(200);
-    expect(body).toContain('<a href="/companies" aria-current="page">Companies</a>');
-    expect((await get('/')).body).toContain('<a href="/companies">Companies</a>');
+    expect(linksOf(body).find((l) => l.href === '/companies')?.attrs['aria-current']).toBe('page');
+    expect(linksOf((await get('/')).body).find((l) => l.href === '/companies')?.attrs['aria-current']).toBeUndefined();
     expect(keysIn(sectionOf(body, 'verified'))).toEqual(['acme.example']);
     expect(keysIn(sectionOf(body, 'proposed'))).toEqual(['bank.example', 'hooli.example']);
     expect(keysIn(sectionOf(body, 'failing'))).toEqual(['globodyne.example']);
     expect(keysIn(sectionOf(body, 'rejected'))).toEqual(['umbrella.example']);
     expect(keysIn(sectionOf(body, 'unverified'))).toEqual(['vandelay.example']);
     expect(sectionOf(body, 'unverified')).toContain('1 company from the seed lists did not pass either');
-    for (const [l, n] of [['Verified', 1], ['Proposed', 2], ['Failing', 1], ['Rejected', 1], ['Deferred this week', 0]] as const) {
-      expect(body).toContain(`>${l} <span class="num tab-count">${n}</span></a>`);
-    }
+    expect(linksOf(body).filter((l) => l.href.startsWith('#') && l.href !== '#main').map((l) => l.text)).toEqual(['Verified 1', 'Proposed 2', 'Failing 1', 'Rejected 1', 'Your picks not verified 1', 'Deferred this week 0']);
   });
 
   it('verified: platform, careers link (https, noopener noreferrer), open jobs, jobs passing your rules, last verified, read daily', async () => {
@@ -203,10 +202,10 @@ describe('companies: the lists', () => {
     });
     const { body } = await get('/companies');
     const d = sectionOf(body, 'deferred');
-    expect(d).toContain('<code>acme.example</code> rate-limited (HTTP 429) <span class="muted">(http-429)</span>');
-    expect(d).toContain('Acme Robotics');
+    expect(textOf(d)).toContain('acme.example rate-limited (HTTP 429) (http-429)');
+    expect(textOf(d)).toContain('Acme Robotics');
     expect(d).not.toContain('hooli.example');
-    expect(body).toContain('>Deferred this week <span class="num tab-count">1</span></a>');
+    expect(linksOf(body).find((l) => l.href === '#deferred-h')?.text).toBe('Deferred this week 1');
   });
 });
 

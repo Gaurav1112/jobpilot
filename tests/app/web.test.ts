@@ -13,6 +13,7 @@ import { Sessions } from '../../src/app/web/security.js';
 import * as htmlModule from '../../src/app/web/html.js';
 import Database from 'better-sqlite3';
 import { jobRow } from '../support/app-fixtures.js';
+import { attrsOf, elementsWith, linksOf, rowOf, textOf } from '../support/dom.js';
 import { coverPlanOf, fullPack, posting } from '../support/render-fixtures.js';
 import { fillCover } from '../../src/app/render/fill.js';
 import { coverNoteShort } from '../../src/app/agents/writing/grounded.js';
@@ -236,8 +237,8 @@ describe('dashboard: jobs list', () => {
     const { status, body } = await get('/');
     expect(status).toBe(200);
     expect(order(body)).toEqual([K2, K1, K3, K10, K9, K7, K11, K4]);
-    expect(body).toContain('also listed on Himalayas');
-    expect(body).toMatch(/2<\/span> not-eligible or below-floor jobs are hidden/);
+    expect(textOf(rowOf(body, 'data-job', K1))).toContain('also listed on Himalayas');
+    expect(textOf(body)).toContain('2 not-eligible or below-floor jobs are hidden');
   });
 
   it('formats pay in lakh and crore, foreign pay with its INR equivalent', async () => {
@@ -265,26 +266,24 @@ describe('dashboard: jobs list', () => {
 
   it('shows pills for remote, status, documents and band, and the Desk history of imported rows', async () => {
     const { body } = await get('/');
-    expect(body).toContain('Remote · India');
-    expect(body).toContain('Documents ready');
-    expect(body).toContain('Pay ≥ floor');
-    expect(body).toContain('From your Application Desk: Applied on 12 Sep 2026');
+    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Remote · India');
+    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Documents ready');
+    expect(textOf(rowOf(body, 'data-job', K1))).toContain('Pay ≥ floor');
+    expect(textOf(rowOf(body, 'data-job', K9))).toContain('From your Application Desk: Applied on 12 Sep 2026');
   });
 
   it('shows the B2B contractor badge on the row and on the job page, only where the note is set', async () => {
     const list = (await get('/')).body;
-    expect(list).toContain('<span class="pill pill-accent">B2B contractor: no PF/benefits</span>');
-    expect(list.match(/B2B contractor: no PF\/benefits<\/span>/g)?.length).toBe(1);
-    expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor: no PF/benefits</span>');
-    expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor: no PF/benefits</span>');
+    expect(order(list).filter((k) => textOf(rowOf(list, 'data-job', k)).includes('B2B contractor: no PF/benefits'))).toEqual([K11]);
+    expect(textOf((await get(`/jobs/${K11}`)).body)).toContain('B2B contractor: no PF/benefits');
+    expect(textOf((await get(`/jobs/${K1}`)).body)).not.toContain('B2B contractor: no PF/benefits');
   });
 
   it('shows the office-city badge on the row and on the job page, only where the note is set', async () => {
     const list = (await get('/')).body;
-    expect(list).toContain('<span class="pill pill-accent">office/hybrid: Pune</span>');
-    expect(list.match(/office\/hybrid: Pune<\/span>/g)?.length).toBe(1);
-    expect((await get(`/jobs/${K2}`)).body).toContain('>office/hybrid: Pune</span>');
-    expect((await get(`/jobs/${K1}`)).body).not.toContain('office/hybrid:');
+    expect(order(list).filter((k) => textOf(rowOf(list, 'data-job', k)).includes('office/hybrid: Pune'))).toEqual([K2]);
+    expect(textOf((await get(`/jobs/${K2}`)).body)).toContain('office/hybrid: Pune');
+    expect(textOf((await get(`/jobs/${K1}`)).body)).not.toContain('office/hybrid:');
   });
 
   it('marks rows first seen since the previous visit as new', async () => {
@@ -303,24 +302,16 @@ describe('dashboard: job page', () => {
   it('shows the header, why it matched, eligibility, documents, answers, status and note', async () => {
     const { status, body } = await get(`/jobs/${K1}`);
     expect(status).toBe(200);
-    expect(body).toContain('<h1>Senior Backend Engineer</h1>');
-    expect(body).toContain('href="https://boards.example.test/acme/jobs/1001" rel="noopener noreferrer"');
-    expect(body).toContain('Why it matched');
-    expect(body).toContain('Core skill: Java');
-    expect(body).toContain('Asks for PHP, which you don');
-    expect(body).toContain('Eligibility');
-    expect(body).toContain('Greenhouse reads PDF best');
-    expect(body).toMatch(/<iframe class="preview preview-resume" sandbox="" src="\/jobs\/1111111111111111\/files\/resume.html"/);
-    expect(body).toContain('href="/jobs/1111111111111111/files/resume.pdf" download>Download PDF <span class="rec">recommended</span>');
-    expect(body).toContain('href="/jobs/1111111111111111/files/resume.docx" download>Download Word (DOCX)');
-    expect(body).toContain('Missing terms are never added to your resume');
-    expect(body).toContain('<span class="term term-muted">distributed systems</span>');
-    expect(body).toContain('Screening answers');
-    expect(body).toContain('Notice period days');
-    expect(body).toContain('Also listed on Himalayas');
-    expect(body).toContain('via Greenhouse');
+    const t = textOf(body);
+    expect(elementsWith(body, 'id', 'main').length).toBe(1);
+    expect(textOf(body.slice(body.indexOf('<h1'), body.indexOf('</h1>') + 5))).toBe('Senior Backend Engineer');
+    expect(linksOf(body).find((l) => l.href === 'https://boards.example.test/acme/jobs/1001')?.attrs['rel']).toBe('noopener noreferrer');
+    for (const s of ['Why it matched', 'Core skill: Java', "Asks for PHP, which you don't list", 'Eligibility', 'Greenhouse reads PDF best', 'Missing terms are never added to your resume', 'distributed systems', 'Screening answers', 'Notice period days', 'Also listed on Himalayas', 'via Greenhouse']) expect(t).toContain(s);
+    expect(attrsOf(elementsWith(body, 'src', `/jobs/${K1}/files/resume.html`)[0] ?? '')).toMatchObject({ class: 'preview preview-resume', sandbox: '' });
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.pdf`).map((l) => l.text)).toEqual(['Download PDF recommended']);
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.docx`).map((l) => l.text)).toEqual(['Download Word (DOCX)']);
     expect(body).toMatch(/name="to" value="applied"/);
-    expect(body).toContain('<textarea id="note" name="note"');
+    expect(elementsWith(body, 'id', 'note')).toHaveLength(1);
   });
 
   it('warns about unplaced facts, with their ids', async () => {
@@ -675,7 +666,7 @@ describe('dashboard: runs', () => {
     expect(body).toContain('Quarantined');
     expect(body).toContain('Input rejected');
     expect(body).toContain('the notification could not be posted: osascript missing');
-    expect(body).toContain(`<code title="${'a'.repeat(64)}">${'a'.repeat(12)}</code>`);
+    expect(elementsWith(body, 'title', 'a'.repeat(64)).map(textOf)).toEqual(['a'.repeat(12)]);
     expect(body).toContain('Audit log intact');
     expect(body).toContain('9 Oct 2026, 07:00 IST');
   });
@@ -914,10 +905,10 @@ describe('dashboard: fix round 1', () => {
 
   it('names sources and ATSs properly and shows "New" once per row', async () => {
     const { body } = await get('/');
-    const k3 = body.slice(body.indexOf(`data-job="${K3}"`), body.indexOf('</li>', body.indexOf(`data-job="${K3}"`)));
+    const k3 = rowOf(body, 'data-job', K3);
     expect(k3.match(/>New</g) ?? []).toHaveLength(0);
-    expect(k3).toContain('Not started');
-    expect(k3).toContain('New since your last visit');
+    expect(textOf(k3)).toContain('Not started');
+    expect(textOf(k3)).toContain('New since your last visit');
   });
 });
 

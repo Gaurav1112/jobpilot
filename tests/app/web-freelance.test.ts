@@ -13,6 +13,7 @@ import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { NOTE_ONE_SKILL } from '../../src/app/freelance/project.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { Store as KernelStore } from '../../src/kernel/store/store.js';
+import { linksOf, rowOf, textOf } from '../support/dom.js';
 
 /**
  * The freelance tab (Task 10, spec §8) through Hono's `app.request()`: a temp JOBPILOT_HOME with the fictional pack,
@@ -214,7 +215,7 @@ describe('freelance tabs: the rows', () => {
     const { status, body } = await get('/freelance');
     expect(status).toBe(200);
     expect(order(body)).toEqual([C1]);
-    expect(body).toContain('aria-current="page">Freelance</a>');
+    expect(linksOf(body).find((l) => l.href === '/freelance' && l.attrs['aria-current'] === 'page')?.text).toBe('Freelance');
     const t = text(body);
     expect(t).toContain('$70/h stated');
     expect(t).toContain('15 h/week');
@@ -235,8 +236,8 @@ describe('freelance tabs: the rows', () => {
   it('review shows its rows with each note as a muted line', async () => {
     const { body } = await get('/freelance?tab=review');
     expect(order(body)).toEqual([R5]);
-    expect(body).toContain('<li class="gig-note muted">preset bracket - bids may exceed it</li>');
-    expect(body).toContain('<li class="gig-note muted">rate negotiable - verify</li>');
+    expect(textOf(rowOf(body, 'data-gig', R5))).toContain('preset bracket - bids may exceed it');
+    expect(textOf(rowOf(body, 'data-gig', R5))).toContain('rate negotiable - verify');
   });
 
   it('red flags are a red badge in plain words, amber flags amber', async () => {
@@ -554,8 +555,8 @@ describe('fix round 1', () => {
   it('a skill row the facts do not back says so; the one-skill note is amber', async () => {
     readyGig(G9, 'Short proposal.', { breakdown: { base: 30, 'strong:java': 4, 'medium:react': 1.5 }, notes: [NOTE_ONE_SKILL] }, { covered: ['java'], cited: true });
     const b = decode((await get(`/freelance/${G9}`)).body);
-    expect(b).toContain('<td>Skill: React (not backed by your facts)</td>');
-    expect(b).toContain('<td>Core skill: Java</td>');
+    expect(textOf(b)).toContain('Skill: React (not backed by your facts)');
+    expect(textOf(b)).toContain('Core skill: Java');
     expect(b).toContain(`<li class="gig-note warn-note">${NOTE_ONE_SKILL}</li>`);
   });
 
