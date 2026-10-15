@@ -273,9 +273,12 @@ Two additions to the weekly run, both on by default:
 - **The discovery stage.** Once a week jobpilot asks freehire's public API at most **10 fixed
   searches** (one page of 100 each, title and location text only, postings of the last 7 days,
   your office cities from `eligibility.yaml`). Boards on a platform jobpilot can read go to the
-  verifier; postings on a platform it cannot read are stored as **leads**. Leads appear on the
-  Jobs list in the **review** band under **Found through freehire**, never as eligible, until you
-  look at them.
+  verifier; postings on a platform it cannot read are stored as **leads** (never a Himalayas or
+  Jobicy posting: jobpilot reads those feeds itself, only when `feeds.yaml` enables them). Leads
+  appear on the Jobs list in the **review** band under **Found through freehire**, never as
+  eligible, until you look at them; a lead whose own title or location says onsite or hybrid, or
+  that fails your filters, is rejected as usual. A 401, 403, 429 or challenge from freehire.me
+  stops the searches for the rest of that coverage run, a resumed run included.
 
 `--no-freehire` leaves both out of a run. Nothing at run time reads freehire's catalogue from the
 network: only the discovery searches contact `freehire.me`, once a week.
