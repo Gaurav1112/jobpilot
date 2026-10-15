@@ -1710,8 +1710,9 @@ export interface GigSnapshot {
 }
 
 export interface GigDoc {
-  readonly kind: 'proposal' | 'pitch' | 'resume';
-  readonly format: 'txt' | 'pdf' | 'docx';
+  /** `cover` (`txt`, `pdf`, `docx`, `html`): the cover letter of a contract role on an employer job board (migration 23). */
+  readonly kind: 'proposal' | 'pitch' | 'resume' | 'cover';
+  readonly format: 'txt' | 'pdf' | 'docx' | 'html';
   readonly path: string;
   readonly sha256: string;
   readonly pages: number | null;

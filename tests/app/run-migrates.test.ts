@@ -18,8 +18,11 @@ import { jobRow } from '../support/app-fixtures.js';
  * other command refuse a behind schema, so without this the upgrade would never happen.
  */
 const root = join(import.meta.dirname, '../..');
-/** The index the last app migration creates: dropped (with the version set one back) to make a schema that is behind. */
-const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS.at(-1)))?.[1] as string;
+/** The index the last index migration creates: dropped (with the version set back before it) to make a schema that is behind. */
+const LAST_INDEX_AT = APP_MIGRATIONS.findLastIndex((m) => typeof m === 'string' && /CREATE INDEX IF NOT EXISTS/.test(m));
+const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS[LAST_INDEX_AT]))?.[1] as string;
+/** The version that leaves the last index migration and every later one (migration 23 re-runs as a no-op) pending. */
+const BEHIND_VERSION = LAST_INDEX_AT;
 const pdftotext = (() => {
   try {
     return resolvePdftotext();
@@ -44,7 +47,7 @@ function behindHome(): string {
   s.upsertJob(jobRow());
   s.close();
   const d = new Database(join(home, 'jobpilot.db'));
-  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
+  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${BEHIND_VERSION}`);
   d.close();
   return home;
 }
@@ -66,7 +69,7 @@ describe.skipIf(pdftotext === undefined)('runs migrate a behind schema under the
       pdftotext: pdftotext as string, codeHash: 'run-migrates',
       onLocked: () => {
         expect(liveHolder(home)).toMatchObject({ pid: process.pid, command: 'run' });
-        expect(version(home)).toBe(APP_MIGRATIONS.length - 1);
+        expect(version(home)).toBe(BEHIND_VERSION);
         locked = true;
       },
     });
@@ -83,7 +86,7 @@ describe.skipIf(pdftotext === undefined)('runs migrate a behind schema under the
       pdftotext: pdftotext as string, codeHash: 'run-migrates',
       onLocked: () => {
         expect(liveHolder(home)).toMatchObject({ pid: process.pid });
-        expect(version(home)).toBe(APP_MIGRATIONS.length - 1);
+        expect(version(home)).toBe(BEHIND_VERSION);
         locked = true;
       },
     });
