@@ -25,7 +25,9 @@ import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
 import { homePaths, jobpilotHome, selectedProfile, selectProfile } from './app/pack/paths.js';
-import { ProfileError, resolveHome } from './app/profiles/root.js';
+import { ProfileError, jobpilotRoot, profileHome, resolveHome } from './app/profiles/root.js';
+import { createProfile, removeProfile, useProfile } from './app/profiles/commands.js';
+import { listProfiles } from './app/profiles/meta.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -245,7 +247,13 @@ async function guarded(fn: () => Promise<void> | void): Promise<void> {
       return;
     }
     // final I9: every CLI error goes through the one redactor (`redactText`), with the home pack's forbidden terms
-    console.error(`error: ${redactedError(e, forbiddenTermsAt(homePaths(jobpilotHome()).pack))}`);
+    let terms: ReturnType<typeof forbiddenTermsAt> = [];
+    try {
+      terms = forbiddenTermsAt(homePaths(jobpilotHome()).pack);
+    } catch {
+      // no home resolves (the profile group works on the root): redact with no home terms
+    }
+    console.error(`error: ${redactedError(e, terms)}`);
     process.exitCode = 1;
   }
 }
@@ -749,10 +757,40 @@ schedule
     }),
   );
 
+const profileCmd = program.command('profile').description('Profiles: several people on one machine, each with a complete, separate home under ~/.jobpilot/profiles/<id>');
+profileCmd.command('list').description('The profiles; * marks the active one').action(() =>
+  guarded(() => {
+    const rows = listProfiles(jobpilotRoot());
+    if (rows.length === 0) console.log('no profiles: this is a single jobpilot home (jobpilot profile adopt <id> turns it into one)');
+    for (const r of rows) console.log(`${r.active ? '*' : ' '} ${r.id}${r.adopted ? '  (adopted)' : ''}${r.hasPack ? '' : '  (no pack yet)'}`);
+  }),
+);
+profileCmd.command('create <id>').description('Create an empty profile (or one from a pack folder); the first one becomes active').option('--from-pack <dir>', 'copy this pack folder into the new profile').action((id: string, o: { fromPack?: string }) =>
+  guarded(() => {
+    for (const l of createProfile({ root: jobpilotRoot(), id, clock: systemClock, ...(o.fromPack !== undefined ? { fromPack: o.fromPack } : {}) })) console.log(l);
+  }),
+);
+profileCmd.command('use <id>').description('Make <id> the active profile (the default for every command and the dashboard)').action((id: string) =>
+  guarded(() => {
+    for (const l of useProfile({ root: jobpilotRoot(), id })) console.log(l);
+  }),
+);
+profileCmd.command('remove <id>').description('Unload the profile\'s launchd jobs and archive it to ~/.jobpilot/removed/<id>-<time>; nothing is deleted').action((id: string) =>
+  guarded(() => {
+    const r = jobpilotRoot();
+    const unload = (pid: string): void => {
+      if (process.getuid === undefined) return;
+      uninstallSchedule({ node: process.execPath, repo: root, home: profileHome(r, pid), profile: { id: pid, root: r }, uid: process.getuid() });
+    };
+    for (const l of removeProfile({ root: r, id, clock: systemClock, unload })) console.log(l);
+  }),
+);
+
 const PROFILE_HELP = 'the profile to use (default: the active one, see "jobpilot profile use"); not together with JOBPILOT_HOME';
 const leafCommands = (c: Command): Command[] => (c.commands.length === 0 ? [c] : c.commands.flatMap(leafCommands));
 for (const c of program.commands.filter((c) => c.name() !== 'profile').flatMap(leafCommands)) c.option('--profile <id>', PROFILE_HELP);
 program.hook('preAction', (_program, action) => {
+  if (action.parent?.name() === 'profile') return; // the profile group works on the root, never on one home
   const id = action.opts()['profile'] as string | undefined;
   selectProfile(id);
   try {

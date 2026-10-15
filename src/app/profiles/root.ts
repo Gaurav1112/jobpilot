@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * `JOBPILOT_HOME` still names one home directly (tests, temp homes); `JOBPILOT_ROOT` names the root.
  */
 export const PROFILE_ID = /^[a-z][a-z0-9-]{1,31}$/;
-export const RESERVED_PROFILE_IDS: ReadonlySet<string> = new Set(['daily', 'freelance', 'coverage', 'dashboard', 'profiles', 'archive', 'backups', 'logs', 'root']);
+export const RESERVED_PROFILE_IDS: ReadonlySet<string> = new Set(['daily', 'freelance', 'coverage', 'dashboard', 'profiles', 'archive', 'backups', 'logs', 'root', 'removed']);
 export const PROFILES_DIR = 'profiles';
 export const ACTIVE_FILE = 'active-profile';
 
