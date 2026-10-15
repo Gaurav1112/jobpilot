@@ -6,7 +6,7 @@ import Database from 'better-sqlite3';
 import { afterAll, describe, expect, it } from 'vitest';
 import { checkState, stateFiles, StateError } from '../../src/app/hosted/bundle.js';
 import { HostedConfig } from '../../src/app/hosted/config.js';
-import { verifyGeneration } from '../../src/app/hosted/generations.js';
+import { prunePlan, verifyGeneration } from '../../src/app/hosted/generations.js';
 import { dirGitHub } from '../../src/app/hosted/github-dir.js';
 import type { GitHubClient } from '../../src/app/hosted/github.js';
 import { DefaultHomeError } from '../../src/app/hosted/home-guard.js';
@@ -269,6 +269,24 @@ describe('two writers and rollbacks never destroy a generation', () => {
     expect(p.gen).toBe(2);
     expect((await verifyGeneration(gh, p.current!, key, root, NOW)).ok).toBe(true);
     expect(tagsOfGen((await gh.listReleases()).map((r) => r.tag), 2)).toEqual([p.current!.tag]);
+  });
+
+  it('rollback, publish, prune: every history-named generation up to keep N stays; the abandoned line goes', async () => {
+    const gh = newGh({ now: () => NOW });
+    await seedAndPublish({ gh, key, from: macHome(), work: fresh(), now: HISTORY_NOW, codeSha: SHA, state: STATE });
+    const holder = 'laptop:abcdef12' as const;
+    const push = async (day: string) => pushHome({ gh, key, from: await changedHome(gh, day), tmpDir: root, now: NOW, codeSha: SHA, state: STATE, holder, defaultHome: fresh() });
+    for (const day of ['2026-10-05', '2026-10-06', '2026-10-07']) expect((await push(day)).ok, day).toBe(true);
+    const abandoned = (await gh.readState())!.pointer.history.filter((h) => h.gen > 2).map((h) => h.tag);
+    await rollbackTo(gh, 2, NOW, {});
+    for (const day of ['2026-10-08', '2026-10-09', '2026-10-10']) expect((await push(day)).ok, day).toBe(true);
+    const p = (await gh.readState())!.pointer;
+    expect(p.gen).toBe(5);
+    const del = prunePlan(await gh.listReleases(), p, NOW, { generations: 4, weekly: 0, archiveDays: 30 });
+    const kept = p.history.filter((h) => !del.includes(h.tag)).map((h) => h.gen);
+    expect(kept).toEqual([5, 4, 3, 2]);
+    for (const t of abandoned) expect(del).toContain(t);
+    expect(del).toContain(p.history.find((h) => h.gen === 1)!.tag);
   });
 
   it('after a rollback every push commits, and history keeps only readable generations', async () => {

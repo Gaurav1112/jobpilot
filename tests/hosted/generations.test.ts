@@ -5,7 +5,7 @@ import Database from 'better-sqlite3';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { checkState, sealFiles, stateFiles, StateError } from '../../src/app/hosted/bundle.js';
-import { archiveTagOf, assetOf, fetchGeneration, prunePlan, publishGeneration, tagOf, verifyGeneration } from '../../src/app/hosted/generations.js';
+import { archiveTagOf, assetOf, fetchGeneration, IN_FLIGHT_GRACE_MS, prunePlan, publishGeneration, tagOf, verifyGeneration } from '../../src/app/hosted/generations.js';
 import { dirGitHub } from '../../src/app/hosted/github-dir.js';
 import type { GitHubClient, Release } from '../../src/app/hosted/github.js';
 import { JpstError } from '../../src/app/hosted/jpst.js';
@@ -180,40 +180,79 @@ describe('verifyGeneration', () => {
 describe('prunePlan', () => {
   const DAY = 86_400_000;
   const now = '2030-01-21T06:00:00.000Z';
-  const rel = (tag: string, ageDays: number): Release => ({ tag, createdAt: new Date(Date.parse(now) - ageDays * DAY).toISOString(), assets: [] });
+  const ago = (days: number): string => new Date(Date.parse(now) - days * DAY).toISOString();
+  const rel = (tag: string, ageDays: number): Release => ({ tag, createdAt: ago(ageDays), assets: [] });
   const keep = { generations: 7, weekly: 4, archiveDays: 30 };
-  it('keeps the newest, one per recent week, pointer.gen; prunes archives; ignores foreign tags', () => {
-    const rels: Release[] = [];
-    for (let g = 1; g <= 20; g++) rels.push(rel(tagOf(g), 20 - g));
-    rels.push(rel(archiveTagOf(1), 31), rel(archiveTagOf(2), 29), rel('v1.0', 400));
-    const pointer: Pointer = { ...EMPTY_POINTER, gen: 3 };
-    const del = prunePlan(rels, pointer, now, keep);
-    const kept = rels.map((r) => r.tag).filter((t) => t.startsWith('state-') && !del.includes(t));
-    for (let g = 14; g <= 20; g++) expect(kept).toContain(tagOf(g));
-    expect(kept).toContain(tagOf(3));
-    expect(kept.length).toBeLessThanOrEqual(12);
+  /** A committed record of `gen` with its own nonce, committed `ageDays` ago. */
+  const rec = (gen: number, nonce: string, ageDays = 0): GenRecord => ({ ...recOf(gen, { sha256: 'a'.repeat(64), bytes: 1 }), tag: tagOf(gen, nonce), at: ago(ageDays) });
+  const nonce = (g: number): string => String(g % 10).repeat(8);
+  /** The pointer at the newest of `history` (newest first). */
+  const at = (history: GenRecord[]): Pointer => ({ ...EMPTY_POINTER, gen: history[0]!.gen, current: history[0]!, history });
+  const keptOf = (history: readonly GenRecord[], del: readonly string[]): number[] => history.filter((h) => !del.includes(h.tag)).map((h) => h.gen);
+
+  it('keeps the newest committed, one per recent week, the current; prunes archives; ignores foreign tags', () => {
+    const history = Array.from({ length: 20 }, (_, i) => rec(20 - i, nonce(20 - i), i));
+    const rels = [...history.map((h, i) => rel(h.tag, i)), rel(archiveTagOf(1), 31), rel(archiveTagOf(2), 29), rel('v1.0', 400)];
+    const del = prunePlan(rels, at(history), now, keep);
+    const kept = keptOf(history, del);
+    for (let g = 14; g <= 20; g++) expect(kept).toContain(g);
+    expect(kept.length).toBeLessThanOrEqual(11);
     expect(kept.length).toBeGreaterThanOrEqual(8);
     expect(del).toContain(archiveTagOf(1));
     expect(del).not.toContain(archiveTagOf(2));
     expect(del).not.toContain('v1.0');
     expect(del).toEqual([...del].sort());
   });
-  it('reads the generation of a nonce tag; prunes nonce archives by age', () => {
-    const rels: Release[] = [];
-    for (let g = 1; g <= 10; g++) rels.push(rel(tagOf(g, `0000000${g % 10}`), 10 - g));
-    rels.push(rel(archiveTagOf(1, 'aaaaaaaa'), 31), rel(archiveTagOf(2, 'bbbbbbbb'), 29));
-    const del = prunePlan(rels, { ...EMPTY_POINTER, gen: 10 }, now, { generations: 3, weekly: 0, archiveDays: 30 });
-    expect(del).toContain(tagOf(1, '00000001'));
-    expect(del).not.toContain(tagOf(8, '00000008'));
+  it('prunes nonce archives by age', () => {
+    const history = Array.from({ length: 10 }, (_, i) => rec(10 - i, nonce(10 - i), i));
+    const rels = [...history.map((h, i) => rel(h.tag, i)), rel(archiveTagOf(1, 'aaaaaaaa'), 31), rel(archiveTagOf(2, 'bbbbbbbb'), 29)];
+    const del = prunePlan(rels, at(history), now, { generations: 3, weekly: 0, archiveDays: 30 });
+    expect(keptOf(history, del)).toEqual([10, 9, 8]);
     expect(del).toContain(archiveTagOf(1, 'aaaaaaaa'));
     expect(del).not.toContain(archiveTagOf(2, 'bbbbbbbb'));
   });
-  it('an orphan attempt of a committed generation goes; the attempt above the pointer (in flight) stays', () => {
-    const recs = [3, 2, 1].map((g) => ({ ...recOf(g, { sha256: 'a'.repeat(64), bytes: 1 }), tag: tagOf(g, `${g}`.repeat(8)) }));
-    const pointer: Pointer = { ...EMPTY_POINTER, gen: 3, current: recs[0]!, history: recs };
+  it('an orphan attempt of a committed generation goes; a young attempt above the pointer (in flight) stays', () => {
+    const recs = [3, 2, 1].map((g) => rec(g, nonce(g), 1));
     const rels = [...recs.map((r) => rel(r.tag, 1)), rel(tagOf(2, 'dead0000'), 1), rel(tagOf(4, 'eeeeeeee'), 0)];
-    const del = prunePlan(rels, pointer, now, { generations: 7, weekly: 4, archiveDays: 30 });
+    const del = prunePlan(rels, at(recs), now, { generations: 7, weekly: 4, archiveDays: 30 });
     expect(del).toEqual([tagOf(2, 'dead0000')]);
+  });
+  it('orphan attempts at the newest generation never take a kept slot', () => {
+    const history = [5, 4, 3, 2, 1].map((g) => rec(g, nonce(g)));
+    const rels = [...history.map((h) => rel(h.tag, 0)), rel(tagOf(5, 'dead0001'), 0), rel(tagOf(5, 'dead0002'), 0)];
+    const del = prunePlan(rels, at(history), now, { generations: 3, weekly: 0, archiveDays: 30 });
+    expect(keptOf(history, del)).toEqual([5, 4, 3]);
+    expect(del).toEqual([history[4]!.tag, history[3]!.tag, tagOf(5, 'dead0001'), tagOf(5, 'dead0002')].sort());
+  });
+  it('after a rollback and a new commit, the abandoned line never takes a slot of the committed history', () => {
+    const line = [10, 9, 8, 7, 6, 5, 4, 3, 2, 1].map((g) => rec(g, nonce(g)));
+    const g8 = rec(8, 'abcdef01');
+    const history = [g8, ...line.filter((h) => h.gen < 8)];
+    const rels = [...line.map((h) => rel(h.tag, 2)), rel(g8.tag, 0)];
+    const del = prunePlan(rels, at(history), now, { generations: 7, weekly: 0, archiveDays: 30 });
+    expect(keptOf(history, del)).toEqual([8, 7, 6, 5, 4, 3, 2]);
+    // the abandoned g8 is an orphan of a committed number; g9 and g10 are above the pointer and two days old
+    for (const g of [8, 9, 10]) expect(del).toContain(tagOf(g, nonce(g)));
+  });
+  it('a weekly slot goes to a committed record, never to an abandoned or above-pointer release', () => {
+    const history = [3, 2, 1].map((g) => rec(g, nonce(g), 7 * (3 - g) + 1)); // g3 this week, g2 last week, g1 the week before
+    const rels = [...history.map((h) => rel(h.tag, 7 * (3 - h.gen) + 1)), rel(tagOf(2, 'dead0000'), 8), rel(tagOf(9, 'eeeeeeee'), 9)];
+    const del = prunePlan(rels, at(history), now, { generations: 1, weekly: 3, archiveDays: 30 });
+    expect(keptOf(history, del)).toEqual([3, 2, 1]);
+    expect(del).toEqual([tagOf(2, 'dead0000'), tagOf(9, 'eeeeeeee')]);
+  });
+  it('a release above the pointer is kept for the in-flight grace, then deleted', () => {
+    const history = [2, 1].map((g) => rec(g, nonce(g), 1));
+    const young = tagOf(3, 'aaaaaaaa');
+    const old = tagOf(4, 'bbbbbbbb');
+    const rels = [...history.map((h) => rel(h.tag, 1)), { tag: young, createdAt: new Date(Date.parse(now) - IN_FLIGHT_GRACE_MS + 60_000).toISOString(), assets: [] }, { tag: old, createdAt: new Date(Date.parse(now) - IN_FLIGHT_GRACE_MS - 60_000).toISOString(), assets: [] }];
+    const del = prunePlan(rels, at(history), now, keep);
+    expect(del).toEqual([old]);
+  });
+  it('never deletes the current record, even with keep 0', () => {
+    const history = [2, 1].map((g) => rec(g, nonce(g), 1));
+    const del = prunePlan(history.map((h) => rel(h.tag, 1)), at(history), now, { generations: 0, weekly: 0, archiveDays: 30 });
+    expect(del).toEqual([history[1]!.tag]);
   });
   it('never deletes the newest generation of an older schema', () => {
     const rels = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((g) => rel(tagOf(g), 10 - g));

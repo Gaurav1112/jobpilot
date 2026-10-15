@@ -123,47 +123,60 @@ const genOf = (tag: string): number | null => {
   return m === null ? null : Number(m[1]);
 };
 
-/** Pure: the release tags to delete. */
+/** How long a release above the pointer is left alone: a writer may still be publishing (or committing) it. */
+export const IN_FLIGHT_GRACE_MS = DAY_MS;
+
+/**
+ * Pure: the release tags to delete. What stays is chosen from the pointer's committed records only (history and
+ * current, gen ≤ pointer.gen), each by the tag its record names: the current record, the newest `generations`, the
+ * newest of each of the last `weekly` IST weeks, and the newest of every older schema. Every other state release is an
+ * orphan or an abandoned attempt and goes, except one above the pointer younger than IN_FLIGHT_GRACE_MS.
+ */
 export function prunePlan(
   releases: readonly Release[],
   pointer: Pointer,
   now: string,
   keep: { readonly generations: number; readonly weekly: number; readonly archiveDays: number },
 ): string[] {
-  const states = releases.flatMap((r) => {
-    const gen = genOf(r.tag);
-    return gen === null ? [] : [{ gen, tag: r.tag, createdAt: r.createdAt }];
-  });
-  const kept = new Set<number>();
-  for (const s of [...states].sort((a, b) => b.gen - a.gen).slice(0, keep.generations)) kept.add(s.gen);
+  const byGen = new Map<number, GenRecord>();
+  for (const h of pointer.history) if (h.gen <= pointer.gen) byGen.set(h.gen, h);
+  if (pointer.current !== null) byGen.set(pointer.current.gen, pointer.current);
+  const committed = [...byGen.values()].sort((a, b) => b.gen - a.gen); // newest first, one record per generation
 
-  // newest generation of each of the last `weekly` IST weeks (this week and the ones before it)
+  const kept = new Set<string>();
+  if (pointer.current !== null) kept.add(pointer.current.tag);
+  for (const r of committed.slice(0, Math.max(0, keep.generations))) kept.add(r.tag);
+
+  // the newest committed generation of each of the last `weekly` IST weeks (this week and the ones before it)
   const thisWeek = Date.parse(`${coverageWeek(now)}T00:00:00Z`);
-  const best = new Map<number, number>();
-  for (const s of states) {
-    const w = Math.round((thisWeek - Date.parse(`${coverageWeek(s.createdAt)}T00:00:00Z`)) / (7 * DAY_MS));
-    if (w < 0 || w >= keep.weekly) continue;
-    best.set(w, Math.max(best.get(w) ?? 0, s.gen));
+  const weeks = new Set<number>();
+  for (const r of committed) {
+    const w = Math.round((thisWeek - Date.parse(`${coverageWeek(r.at)}T00:00:00Z`)) / (7 * DAY_MS));
+    if (w < 0 || w >= keep.weekly || weeks.has(w)) continue;
+    weeks.add(w);
+    kept.add(r.tag);
   }
-  for (const g of best.values()) kept.add(g);
 
-  kept.add(pointer.gen);
-  // the newest generation of every older schema stays as a rollback target
+  // the newest committed generation of every older schema stays as a rollback target
   const cur = pointer.current?.schema;
-  const newestBySchema = new Map<string, number>();
-  for (const h of pointer.history) {
-    const k = `${h.schema.kernel}.${h.schema.app}`;
-    newestBySchema.set(k, Math.max(newestBySchema.get(k) ?? 0, h.gen));
+  const schemas = new Set<string>();
+  for (const r of committed) {
+    const k = `${r.schema.kernel}.${r.schema.app}`;
+    if (schemas.has(k)) continue;
+    schemas.add(k);
+    if (cur === undefined || k !== `${cur.kernel}.${cur.app}`) kept.add(r.tag);
   }
-  for (const [k, g] of newestBySchema) if (cur === undefined || k !== `${cur.kernel}.${cur.app}`) kept.add(g);
 
-  // a committed generation's release is the one its record names; another attempt at that number is an orphan
-  // (a failed or abandoned publish). Above the pointer nothing is committed yet: a writer may be publishing there.
-  const named = new Map<number, string>();
-  for (const h of [...pointer.history, ...(pointer.current ? [pointer.current] : [])]) if (h.gen <= pointer.gen) named.set(h.gen, h.tag);
-  const orphan = (s: { gen: number; tag: string }): boolean => s.gen <= pointer.gen && named.has(s.gen) && named.get(s.gen) !== s.tag;
-  const out: string[] = states.filter((s) => !kept.has(s.gen) || orphan(s)).map((s) => s.tag);
-  const cutoff = Date.parse(now) - keep.archiveDays * DAY_MS;
+  const out: string[] = [];
+  const nowMs = Date.parse(now);
+  for (const r of releases) {
+    const gen = genOf(r.tag);
+    if (gen === null || kept.has(r.tag)) continue;
+    // above the pointer nothing is committed yet: a writer may be publishing there, so only a stale one goes
+    if (gen > pointer.gen && !(nowMs - Date.parse(r.createdAt) >= IN_FLIGHT_GRACE_MS)) continue;
+    out.push(r.tag);
+  }
+  const cutoff = nowMs - keep.archiveDays * DAY_MS;
   for (const r of releases) if (/^archive-g\d+(?:-[0-9a-f]+)?$/.test(r.tag) && Date.parse(r.createdAt) < cutoff) out.push(r.tag);
   return out.sort();
 }
