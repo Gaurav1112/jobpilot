@@ -35,7 +35,10 @@ export interface GitHubClient {
   jobStartedAt(runId: string): Promise<string | null>;
   previousRunId(workflowFile: string, runId: string): Promise<string | null>;
   runLog(runId: string): Promise<string | null>;
+  /** `hosted doctor` only (the user's own login): listing secrets needs a permission GITHUB_TOKEN never has. */
   repoFacts(): Promise<RepoFacts>;
+  /** Whether the repository is private, from `repos/R` alone (readable by the workflow's GITHUB_TOKEN). */
+  repoPrivate(): Promise<boolean>;
 }
 
 export type GhRunner = (
@@ -207,6 +210,10 @@ export function ghCliClient(repo: string, run: GhRunner = realGhRunner): GitHubC
     },
     async runLog(runId) {
       return call(['run', 'view', runId, '--repo', repo, '--log'], { tolerate: () => true });
+    },
+    async repoPrivate() {
+      const info = (await json(['api', R])) as Json;
+      return info['private'] === true;
     },
     async repoFacts() {
       const info = (await json(['api', R])) as Json;

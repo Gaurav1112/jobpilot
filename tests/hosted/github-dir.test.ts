@@ -105,5 +105,6 @@ describe('dirGitHub issues, runs, facts', () => {
     expect(await gh.runLog('100')).toBe('log-100');
     expect(await gh.runLog('7')).toBeNull();
     expect(await gh.repoFacts()).toEqual({ private: true, defaultWorkflowPermissions: 'read', secretNames: [] });
+    expect(await gh.repoPrivate()).toBe(true);
   });
 });

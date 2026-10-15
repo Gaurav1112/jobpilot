@@ -50,6 +50,8 @@ export function dirGitHub(dir: string, hooks: DirHooks = {}): GitHubClient {
       .map((f) => ({ id: f.slice(0, -5), run: readJson<RunFile>(join(d, f), { workflow: '', startedAt: '', log: '' }) }));
   };
 
+  const facts = (): RepoFacts => readJson<RepoFacts>(join(dir, 'facts.json'), { private: true, defaultWorkflowPermissions: 'read', secretNames: [] });
+
   return {
     repo: 'dir/state',
     async readState(): Promise<StateHead | null> {
@@ -139,7 +141,10 @@ export function dirGitHub(dir: string, hooks: DirHooks = {}): GitHubClient {
       return runs().find((r) => r.id === runId)?.run.log ?? null;
     },
     async repoFacts(): Promise<RepoFacts> {
-      return readJson<RepoFacts>(join(dir, 'facts.json'), { private: true, defaultWorkflowPermissions: 'read', secretNames: [] });
+      return facts();
+    },
+    async repoPrivate() {
+      return facts().private;
     },
   };
 }

@@ -120,6 +120,17 @@ describe('ghCliClient argv', () => {
     for (const c of calls) for (const a of c.args) expect(a).not.toContain(TOKEN);
   });
 
+  it('repoPrivate reads only repos/R .private: no secret listing, which GITHUB_TOKEN cannot do (403)', async () => {
+    const { run, calls } = fake((a) =>
+      a[0] === 'secret' ? { status: 1, stderr: 'HTTP 403: Resource not accessible by integration' } : a.join(' ') === `api ${R}` ? { stdout: '{"private":true}' } : { status: 1 },
+    );
+    const gh = ghCliClient('example-user/example-data', run);
+    expect(await gh.repoPrivate()).toBe(true);
+    expect(calls.map((c) => c.args)).toEqual([['api', R]]);
+    const pub = ghCliClient('example-user/example-data', fake(() => ({ stdout: '{"private":false}' })).run);
+    expect(await pub.repoPrivate()).toBe(false);
+  });
+
   it('other failures say only "gh api failed (exit 1)"; deleteRelease tolerates a missing release', async () => {
     const { run } = fake((a) => (a[0] === 'release' ? { status: 1, stderr: 'release not found' } : { status: 1, stderr: 'SECRET-BODY-ECHO' }));
     const gh = ghCliClient('example-user/example-data', run);

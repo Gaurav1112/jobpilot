@@ -424,6 +424,20 @@ describe('runHosted: refusals', () => {
       expect(hasAlert(s, 'refused')).toBe(true);
     });
   }
+  it('the private check needs no secret listing: repoFacts failing (a 403 on secrets) still runs', async () => {
+    const s = setup();
+    const gh: GitHubClient = { ...s.gh, repoFacts: () => Promise.reject(new Error('gh secret list failed (exit 1)')) };
+    s.d = { ...s.d, gh };
+    expect(await run(s)).toBe(0);
+    expect((await pointer(s)).gen).toBe(2);
+  });
+  it('a failing private check is refused repo-public (fails closed)', async () => {
+    const s = setup();
+    const gh: GitHubClient = { ...s.gh, repoPrivate: () => Promise.reject(new Error('gh api failed (exit 1)')) };
+    s.d = { ...s.d, gh };
+    expect(await run(s)).toBe(1);
+    expect(s.out).toContain('hosted run daily: refused: repo-public');
+  });
   it('a missing key is refused (keys)', async () => {
     const s = setup();
     s.d = { ...s.d, env: { ...ENV, JOBPILOT_SECRET_HOSTED_PACK_KEY: '' } };

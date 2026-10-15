@@ -300,7 +300,8 @@ class HostedRun {
 
   private async configRepoAndCode(): Promise<void> {
     const { o, d } = this;
-    if (!(await d.gh.repoFacts().then((f) => f.private, () => false))) throw new Refused('repo-public');
+    // `.private` of repos/R only: a secret listing is refused to GITHUB_TOKEN (403). A failure still refuses.
+    if (!(await d.gh.repoPrivate().then((p) => p, () => false))) throw new Refused('repo-public');
     const head = d.git(['rev-parse', 'HEAD'], o.codeDir);
     if (head.status !== 0 || head.stdout.trim() !== this.lock) throw new Refused('code-lock-mismatch');
     if (o.fetchMain && d.git(['fetch', '--quiet', 'origin', 'main'], o.codeDir).status !== 0) throw new Refused('code-not-ancestor');
