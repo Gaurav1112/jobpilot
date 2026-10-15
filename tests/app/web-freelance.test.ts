@@ -297,7 +297,7 @@ describe('freelance: the gig page', () => {
     expect(body).toMatch(/<pre class="paste" id="paste">/);
     expect(body).toContain(`data-copy-src="/freelance/${G2}/files/proposal.txt"`);
     expect(body).toContain('1,214 / 1,500 characters');
-    expect(body).toContain(`<span class="fact-src" data-fact="f-nw-01" title="Fact f-nw-01">${EVIDENCE}</span>`);
+    expect(body).toContain(`<span class="fact-src" data-fact="f-nw-01">${EVIDENCE}</span>`);
     for (const f of ['proposal.txt', 'resume.pdf', 'resume.docx']) expect(body).toContain(`href="/freelance/${G2}/files/${f}"`);
     // the <pre> holds exactly the file text
     const pre = /<pre class="paste" id="paste">([\s\S]*?)<\/pre>/.exec(body)?.[1] ?? '';
@@ -545,12 +545,13 @@ describe('fix round 1', () => {
     expect(page.body).not.toContain('Initech on payments');
   });
 
-  it('the hover hint shows only when a line cites a fact', async () => {
-    expect((await get(`/freelance/${G2}`)).body).toContain('Hover an underlined line');
+  it('says which fact each underlined line comes from, without hover', async () => {
+    const b = (await get(`/freelance/${G2}`)).body;
+    expect(textOf(b)).not.toMatch(/\bhover\b/i);
+    expect(b).not.toMatch(/class="fact-src"[^>]*\stitle=/);
+    expect(textOf(elementsWith(b, 'class', 'cited')[0] ?? '')).toContain('Which fact each underlined line comes from f-nw-01 At Contoso Retail I built the payments reconciliation service in Java.');
     readyGig(G9, 'A proposal with no cited line.', {}, { covered: ['java', 'kafka'], cited: false });
-    const b = (await get(`/freelance/${G9}`)).body;
-    expect(b).toContain('Copy pastes exactly the .txt file.');
-    expect(b).not.toContain('Hover an underlined line');
+    expect(elementsWith((await get(`/freelance/${G9}`)).body, 'class', 'cited')).toEqual([]);
   });
 
   it('a skill row the facts do not back says so; the one-skill note is amber', async () => {

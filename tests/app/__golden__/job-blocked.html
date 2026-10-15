@@ -21,6 +21,7 @@
 </header>
 <main id="main">
 <p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
 
 <header class="job-head">
 <p class="crumbs"><a href="/#job-aaaaaaaaaaaaaaaa">← Jobs</a></p>
@@ -36,13 +37,13 @@
 </header>
 
 <div class="job-grid">
-<section id="status" class="card" aria-labelledby="status-h">
+<section id="status" class="card" data-live="Status set to Not started." aria-labelledby="status-h">
 <h2 id="status-h">Your status <span class="pill pill-neutral">Not started</span></h2>
 
-<form class="status-form" method="post" action="/jobs/aaaaaaaaaaaaaaaa/status" hx-post="/jobs/aaaaaaaaaaaaaaaa/status" hx-target="#status" hx-swap="outerHTML">
+<form class="status-form" method="post" action="/jobs/aaaaaaaaaaaaaaaa/status" hx-post="/jobs/aaaaaaaaaaaaaaaa/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
 <input type="hidden" name="_csrf" value="x">
 
-<div class="btn-row"><button class="btn btn-current" name="to" value="new" aria-pressed="true">Not started</button><button class="btn" name="to" value="approved" aria-pressed="false">Shortlisted</button><button class="btn" name="to" value="applied" aria-pressed="false">Applied</button><button class="btn" name="to" value="interview" aria-pressed="false">Interviewing</button><button class="btn" name="to" value="offer" aria-pressed="false">Offer</button><button class="btn" name="to" value="rejected" aria-pressed="false">Not selected</button><button class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
+<div class="btn-row"><button id="status-to-new" class="btn btn-current" name="to" value="new" aria-pressed="true">Not started</button><button id="status-to-approved" class="btn" name="to" value="approved" aria-pressed="false">Shortlisted</button><button id="status-to-applied" class="btn" name="to" value="applied" aria-pressed="false">Applied</button><button id="status-to-interview" class="btn" name="to" value="interview" aria-pressed="false">Interviewing</button><button id="status-to-offer" class="btn" name="to" value="offer" aria-pressed="false">Offer</button><button id="status-to-rejected" class="btn" name="to" value="rejected" aria-pressed="false">Not selected</button><button id="status-to-skipped" class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
 </form>
 
 
@@ -66,17 +67,17 @@
 <p class="muted">Nothing to flag.</p>
 </section>
 
-<section id="sent" class="card wide" aria-labelledby="sent-h" hidden>
+<section id="sent" class="card wide" data-live="A copy of your documents is kept." aria-labelledby="sent-h" hidden>
 <h2 id="sent-h">Documents you sent</h2>
 
 
 </section>
 <section class="card" aria-labelledby="note-h"><h2 id="note-h">Your note</h2>
-<form method="post" action="/jobs/aaaaaaaaaaaaaaaa/note" hx-post="/jobs/aaaaaaaaaaaaaaaa/note" hx-target="#note-saved" hx-swap="innerHTML">
+<form method="post" action="/jobs/aaaaaaaaaaaaaaaa/note" hx-post="/jobs/aaaaaaaaaaaaaaaa/note" hx-target="#note-saved" hx-swap="innerHTML" hx-disabled-elt="find button">
 <input type="hidden" name="_csrf" value="x">
 <label class="visually-hidden" for="note">Note</label>
 <textarea id="note" name="note" rows="4" maxlength="4000"></textarea>
-<div class="btn-row"><button class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
+<div class="btn-row"><button id="note-save" class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
 </form></section>
 <section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>
 <details><summary>Show the full text</summary><div class="jd">Build services.</div></details></section>

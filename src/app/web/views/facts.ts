@@ -35,8 +35,8 @@ export function factRow(f: FactRow, csrf: string, flash?: string): Html {
   const unverified = f.status === 'derived-unverified';
   const id = encodeURIComponent(f.id);
   const action = (verb: 'verify' | 'reject', label: string, primary: boolean, danger = false) =>
-    html`<form method="post" action="/facts/${id}/${verb}" hx-post="/facts/${id}/${verb}" hx-target="closest li" hx-swap="outerHTML">${csrfField(csrf)}<button class="btn${primary ? ' btn-primary' : ''}${danger ? ' btn-danger' : ''}">${label}</button></form>`;
-  return html`<li class="fact${unverified ? ' fact-unverified' : ''}${used(f.status) ? '' : ' fact-unused'}" id="fact-${f.idShown ? f.id : ''}">
+    html`<form method="post" action="/facts/${id}/${verb}" hx-post="/facts/${id}/${verb}" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(csrf)}<button id="fact-${f.id}-${verb}" class="btn${primary ? ' btn-primary' : ''}${danger ? ' btn-danger' : ''}">${label}</button></form>`;
+  return html`<li class="fact${unverified ? ' fact-unverified' : ''}${used(f.status) ? '' : ' fact-unused'}" id="fact-${f.idShown ? f.id : ''}" data-live="Saved: ${factStatusLabel(f.status)}.">
 <p class="fact-claim">${f.claim}</p>
 <p class="fact-sub">${meta([f.kind, f.employer, html`<span class="num">${periodText(f.period)}</span>`, html`<code class="fact-id">${f.idShown ? f.id : '[hidden]'}</code>`])}</p>
 <p class="fact-state">${statusPill(f.status)}${f.packStatus !== null ? html` <span class="muted">your change (facts.yaml says ${factStatusLabel(f.packStatus)})</span>` : ''}</p>

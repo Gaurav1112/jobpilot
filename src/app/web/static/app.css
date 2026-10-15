@@ -379,7 +379,7 @@ pre.paste, pre.checklist {
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); margin: 0 0 var(--space-2);
   max-height: 36rem; overflow: auto;
 }
-.fact-src { text-decoration: underline dotted var(--accent); text-underline-offset: 3px; cursor: help; }
+.fact-src { text-decoration: underline dotted var(--accent); text-underline-offset: 3px; }
 .net-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 22rem), 1fr)); gap: var(--space-3); }
 .net h3 { margin-top: var(--space-3); }
 /* freelance-boost: the catalogue facts and the one-click "Mark applied" on each network card */

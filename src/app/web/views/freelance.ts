@@ -284,6 +284,8 @@ function coverSection(d: GigPageData): Html | '' {
 </section>`;
 }
 
+const clip = (t: string): string => (t.length > 100 ? t.slice(0, 99) + '…' : t);
+
 function pasteSection(d: GigPageData): Html {
   const g = d.row.gig;
   const p = d.paste;
@@ -293,6 +295,7 @@ function pasteSection(d: GigPageData): Html {
   }
   const over = p.max !== null && p.chars > p.max;
   const txt = d.files.find((f) => f.format === 'txt' && f.kind !== 'cover');
+  const cited = p.segments.filter((s) => s.facts !== null);
   return html`<section class="card wide" aria-labelledby="paste-h">
 <h2 id="paste-h">${title}</h2>
 <div class="paste-bar">
@@ -300,19 +303,20 @@ function pasteSection(d: GigPageData): Html {
 <span class="copy-status" role="status" aria-live="polite"></span>
 <span class="char-count num${over ? ' over' : ''}">${countText(p.chars)}${p.max !== null ? html` / ${countText(p.max)}` : ''} characters</span>
 </div>
-<pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
-<p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
+<pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}">${s.text}</span>`))}</pre>
+<p class="hint">Copy pastes exactly the .txt file. Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
+${cited.length === 0 ? '' : html`<details class="cited"><summary>Which fact each underlined line comes from</summary><ul class="plain">${cited.map((s) => html`<li><code class="fact-id">${(s.facts as readonly string[]).join(', ')}</code> ${clip(s.text)}</li>`)}</ul></details>`}
 <div class="downloads">${d.files.filter((f) => f.kind !== 'cover').map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
 </section>`;
 }
 
 export function gigSentSection(d: GigSentData, oob = false): Html {
-  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 || d.canKeep ? '' : html` hidden`}>
+  return html`<section id="sent" class="card wide" data-live="A copy of your documents is kept."${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 || d.canKeep ? '' : html` hidden`}>
 <h2 id="sent-h">Documents you sent</h2>
 ${
   d.canKeep
     ? html`<p class="hint">You marked this gig applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
-<form method="post" action="/freelance/${d.gigKey}/keep" hx-post="/freelance/${d.gigKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
+<form method="post" action="/freelance/${d.gigKey}/keep" hx-post="/freelance/${d.gigKey}/keep" hx-target="#sent" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(d.csrf)}<button id="keep-copy" class="btn btn-primary">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
@@ -325,13 +329,13 @@ ${d.snapshots.map(
 /** The status block: a button per status in flow order, and the last change. Returned alone to htmx. */
 export function gigStatusSection(g: Pick<GigView, 'gigKey' | 'status' | 'appliedAt'>, history: readonly GigHistoryEntry[], csrf: string, istDay: (iso: string) => string, flash?: string): Html {
   const last = history.at(-1);
-  return html`<section id="status" class="card" aria-labelledby="status-h">
+  return html`<section id="status" class="card" data-live="Status set to ${GIG_STATUS_LABEL[g.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${gigStatusPill(g.status)}</h2>
 ${g.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(g.appliedAt))}</p>` : ''}
-<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML">
+<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
 ${csrfField(csrf)}
 <div class="btn-row">${GIG_STATUSES.map(
-    (s) => html`<button class="btn${s === g.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === g.status ? 'true' : 'false'}">${GIG_STATUS_LABEL[s]}</button>`,
+    (s) => html`<button id="gig-to-${s}" class="btn${s === g.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === g.status ? 'true' : 'false'}">${GIG_STATUS_LABEL[s]}</button>`,
   )}</div>
 </form>
 <p class="hint">New → Shortlisted → Applied → Replied → Interviewing → Won, Lost or Not for me. Applied keeps a read-only copy of what you sent.</p>
@@ -439,14 +443,14 @@ export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updat
     : '';
   const action = "/freelance/networks/" + n.id + "/status";
   const quick = n.status === 'todo' && n.notOpen !== true
-    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">
-${csrfField(csrf)}<button class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
+    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="find button">
+${csrfField(csrf)}<button id="net-${n.id}-quick" class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
     : '';
-  return html`<div class="net-status" id="net-status-${n.id}">
+  return html`<div class="net-status" id="net-status-${n.id}" data-live="Network status set to ${NETWORK_LABEL[n.status]}.">
 <p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${since}</p>
 ${quick}
-<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
-<div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
+<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(csrf)}
+<div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button id="net-${n.id}-to-${s}" class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
 </form></div>`;
 }
 

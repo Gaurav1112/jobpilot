@@ -173,12 +173,12 @@ export interface SentData {
 /** The applied snapshots: the exact files the user sent. An htmx status change swaps it out of band. */
 export function sentSection(d: SentData, oob = false): Html {
   const shown = d.snapshots.length > 0 || d.canKeep;
-  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${shown ? '' : html` hidden`}>
+  return html`<section id="sent" class="card wide" data-live="A copy of your documents is kept."${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${shown ? '' : html` hidden`}>
 <h2 id="sent-h">Documents you sent</h2>
 ${
   d.canKeep
     ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
-<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn">Keep a copy of these documents now</button></form>`
+<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(d.csrf)}<button id="keep-copy" class="btn">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
@@ -203,14 +203,14 @@ ${d.snapshots.map(
 /** The status block: the current status, a button per status, and any message. Returned alone to htmx. */
 export function statusSection(j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history'>, csrf: string, istDay: (iso: string) => string, flash?: string, back?: JobPageData['back']): Html {
   const last = j.history.at(-1);
-  return html`<section id="status" class="card" aria-labelledby="status-h">
+  return html`<section id="status" class="card" data-live="Status set to ${STATUS_LABEL[j.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${statusPill(j.status)}</h2>
 ${j.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(j.appliedAt))}</p>` : ''}
-<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML">
+<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
 ${csrfField(csrf)}
 ${back !== undefined ? html`<input type="hidden" name="from" value="${back.from}">${back.next !== undefined ? html`<input type="hidden" name="next" value="${back.next}">` : ''}` : ''}
 <div class="btn-row">${STATUSES.map(
-    (s: JobStatus) => html`<button class="btn${s === j.status ? ' btn-current' : ''}" name="to" value="${s}"${s === j.status ? html` aria-pressed="true"` : html` aria-pressed="false"`}>${STATUS_LABEL[s]}</button>`,
+    (s: JobStatus) => html`<button id="status-to-${s}" class="btn${s === j.status ? ' btn-current' : ''}" name="to" value="${s}"${s === j.status ? html` aria-pressed="true"` : html` aria-pressed="false"`}>${STATUS_LABEL[s]}</button>`,
   )}</div>
 </form>
 ${flash !== undefined ? html`<p class="flash" role="status">${flash}</p>` : ''}
@@ -220,11 +220,11 @@ ${last !== undefined ? html`<p class="hint">Last change: ${last.from === null ? 
 
 export function noteSection(j: Pick<JobDetail, 'jobKey' | 'note'>, csrf: string): Html {
   return html`<section class="card" aria-labelledby="note-h"><h2 id="note-h">Your note</h2>
-<form method="post" action="/jobs/${j.jobKey}/note" hx-post="/jobs/${j.jobKey}/note" hx-target="#note-saved" hx-swap="innerHTML">
+<form method="post" action="/jobs/${j.jobKey}/note" hx-post="/jobs/${j.jobKey}/note" hx-target="#note-saved" hx-swap="innerHTML" hx-disabled-elt="find button">
 ${csrfField(csrf)}
 <label class="visually-hidden" for="note">Note</label>
 <textarea id="note" name="note" rows="4" maxlength="4000">${j.note}</textarea>
-<div class="btn-row"><button class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
+<div class="btn-row"><button id="note-save" class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
 </form></section>`;
 }
 

@@ -583,7 +583,7 @@ describe('dashboard: applied snapshots', () => {
     const r = await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
     expect(r.status).toBe(200);
     const fragment = await r.text();
-    expect(fragment).toContain('<section id="sent" class="card wide" hx-swap-oob="true"');
+    expect(fragment).toContain('<section id="sent" class="card wide" data-live="A copy of your documents is kept." hx-swap-oob="true"');
     const dir = join(out, K1, `applied-${DAY}`);
     expect(readdirSync(dir).sort()).toEqual(['cover.docx', 'cover.html', 'cover.pdf', 'resume.docx', 'resume.html', 'resume.pdf']);
     for (const f of readdirSync(dir)) {
@@ -1333,5 +1333,25 @@ describe('A10: facts waiting for you come first, the claim leads, Reject is a da
     expect(row.indexOf('class="fact-claim"')).toBeLessThan(row.indexOf('class="fact-id"'));
     expect(textOf(row)).toMatch(/^Led the design of an event-driven order pipeline/);
     expect(elementsWith(row, 'class', 'btn btn-danger').map(textOf)).toEqual(['Reject']);
+  });
+});
+
+describe('A12: the interactive layer for keyboards and screen readers', () => {
+  it('status buttons keep stable ids; htmx forms disable their buttons while busy; the fragment says what changed', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    for (const s of ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped']) expect(elementsWith(body, 'id', `status-to-${s}`), s).toHaveLength(1);
+    for (const f of elementsWith(body, 'hx-post')) expect(attrsOf(f)['hx-disabled-elt'], attrsOf(f)['hx-post']).toBe('find button');
+    const frag = await (await post(`/jobs/${K1}/status`, { _csrf: token, to: 'approved' }, hx)).text();
+    expect(attrsOf(frag)['data-live']).toBe('Status set to Shortlisted.');
+    expect(elementsWith(frag, 'id', 'status-to-approved')).toHaveLength(1);
+  });
+  it('one polite live region on every page; only critical banners are alerts', async () => {
+    for (const p of ['/', `/jobs/${K1}`, '/facts', '/runs', '/freelance', '/companies']) {
+      const b = (await get(p)).body;
+      expect(elementsWith(b, 'id', 'live').map(attrsOf), p).toEqual([{ id: 'live', class: 'visually-hidden', role: 'status', 'aria-live': 'polite' }]);
+    }
+    writeFileSync(join(home, 'pack/fx.yaml'), 'asOf: "2026-08-01"\ntoINR: { USD: 83.5, EUR: 90.2, GBP: 106.4, INR: 1 }\n');
+    const warn = elementsWith((await get('/')).body, 'class', 'banner banner-warn')[0] as string;
+    expect(attrsOf(warn)['role']).toBe('status');
   });
 });
