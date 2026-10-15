@@ -248,7 +248,7 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
 .term { font-size: var(--fs-sm); padding: 0 var(--space-2); border-radius: var(--radius); border: 1px solid var(--border); }
 .term-good { color: var(--good); background: var(--good-soft); border-color: transparent; }
 .term-muted { color: var(--text-2); }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow-x: auto; position: relative; } /* contains the absolutely placed .visually-hidden cell text */
 table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
 th, td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
 th.num, td.num { text-align: right; }
@@ -289,7 +289,9 @@ details summary { cursor: pointer; color: var(--accent); }
 .chain-bad { color: var(--critical); background: var(--critical-soft); }
 .run { margin-bottom: var(--space-3); }
 .run-meta { color: var(--text-3); font-size: var(--fs-sm); overflow-wrap: anywhere; }
-.counts { max-width: 56rem; }
+.counts .agent { white-space: nowrap; }
+.audit { margin-top: var(--space-2); }
+.audit > summary { font-size: var(--fs-sm); }
 .problems { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .problems li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 2px var(--space-2); font-size: var(--fs-sm); align-items: baseline; }
 .problem-kind { font-weight: 700; color: var(--critical); }

@@ -66,17 +66,17 @@ function counts(c: unknown): Html {
   if (agents.length === 0) return html`<p class="muted">No steps recorded.</p>`;
   const totals = isObj(c) && isObj(c['totals']) ? c['totals'] : {};
   const COLUMNS = 'deferred' in totals ? [...BASE_COLUMNS, DEFERRED_COLUMN] : BASE_COLUMNS;
+  const cell = (v: number, k: string): Html =>
+    v === 0
+      ? html`<td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td>`
+      : html`<td class="num${k === 'failed' || k === 'quarantined' ? ' bad' : ''}">${countText(v)}</td>`;
   return html`<div class="table-wrap"><table class="counts">
 <thead><tr><th scope="col">Agent</th>${COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}</tr></thead>
 <tbody>${agents.map((a) => {
     const r = isObj(by[a]) ? (by[a] as Record<string, unknown>) : {};
-    return html`<tr><th scope="row"><code>${a}</code></th>${COLUMNS.map(([k]) => {
-      const v = n(r[k]);
-      const bad = v > 0 && (k === 'failed' || k === 'quarantined');
-      return html`<td class="num${v === 0 ? ' zero' : ''}${bad ? ' bad' : ''}">${countText(v)}</td>`;
-    })}</tr>`;
+    return html`<tr><th scope="row" class="agent"><code>${a}</code></th>${COLUMNS.map(([k]) => cell(n(r[k]), k))}</tr>`;
   })}</tbody>
-<tfoot><tr><th scope="row">Total</th>${COLUMNS.map(([k]) => html`<td class="num">${countText(n(totals[k]))}</td>`)}</tr></tfoot>
+<tfoot><tr><th scope="row">Total</th>${COLUMNS.map(([k]) => cell(n(totals[k]), k))}</tr></tfoot>
 </table></div>`;
 }
 
@@ -105,8 +105,7 @@ export function runsBody(d: RunsPageData): Html {
   return html`<div class="page-head">
 <h1>Runs</h1>
 <p class="lede">The last ${countText(d.runs.length)} run${d.runs.length === 1 ? '' : 's'}, newest first.</p>
-<p class="${d.chain.ok ? 'chain chain-ok' : 'chain chain-bad'}" role="status">${
-chainLine(d)}</p>
+<details class="audit"><summary>Audit log: ${d.chain.ok ? 'intact' : 'broken'}</summary><p class="${d.chain.ok ? 'chain chain-ok' : 'chain chain-bad'}">${chainLine(d)}</p></details>
 </div>
 ${d.runs.length === 0 ? html`<p class="empty">No runs yet. Run "jobpilot run" to fetch today's jobs.</p>` : d.runs.map((r) => run(r, d.istTime))}`;
 }

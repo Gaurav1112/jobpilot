@@ -780,6 +780,26 @@ describe('dashboard: runs', () => {
   });
 });
 
+describe('A11: runs read at a glance', () => {
+  it('zeros are a dash read as 0, agent names keep whole, the audit text is folded', async () => {
+    const body = (await get('/runs')).body;
+    expect(elementsWith(body, 'class', 'num zero')[0]).toBe('<td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td>');
+    expect(elementsWith(body, 'class', 'agent').map(textOf)).toEqual(['evidence-matcher', 'normalizer']);
+    const audit = elementsWith(body, 'class', 'audit')[0] as string;
+    expect(audit).toMatch(/^<details class="audit"><summary>Audit log: intact<\/summary>/);
+    expect(textOf(audit)).toContain('every one chained to the last');
+  });
+  it('a broken chain is never folded away: the critical banner stays', async () => {
+    withStore((s) => {
+      s.kernel.appendEvent('r1', NOW, 'run_started', { n: 1 }, 'h');
+      s.kernel.db.prepare(`UPDATE events SET data = '{"n":99}' WHERE seq = 1`).run();
+    });
+    const body = (await get('/runs')).body;
+    expect(textOf(elementsWith(body, 'role', 'alert').join(' '))).toContain('The audit log is broken');
+    expect(elementsWith(body, 'class', 'audit')[0]).toMatch(/<summary>Audit log: broken<\/summary>/);
+  });
+});
+
 describe('dashboard: runs, audit chain checkpoint (dashboard-perf fix 1)', () => {
   const T_FULL = '2026-10-08T03:30:00.000Z'; // 9:00 IST
   const append = (n: number): void => withStore((s) => {
