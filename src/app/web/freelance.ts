@@ -423,10 +423,17 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
    * freelance-v2: the cover letter card's data: null when the gig has no cover file; else the recorded `cover.txt`
    * (sha256 checked; a text naming a forbidden term is not shown), or why not, and the gig's cover files.
    */
-  const coverOf = (g: GigView & { docs: GigDoc[] }, text: (s: string) => string): NonNullable<GigPageData['cover']> | null => {
+  const coverOf = (g: GigView & { docs: GigDoc[] }, x: Extras, text: (s: string) => string): NonNullable<GigPageData['cover']> | null => {
     const files = g.docs.filter((f) => f.kind === 'cover');
     const txt = files.find((f) => f.format === 'txt');
-    if (txt === undefined) return null;
+    if (txt === undefined) {
+      // review: say why a contract from an employer board has no letter (the renderer's block, or the planner's note)
+      const blocked = x.rendered?.coverBlocked;
+      const note = x.rendered?.plan?.coverNote;
+      if (typeof blocked === 'string') return { text: null, problem: text(`Cover letter blocked: ${blocked}`), files: [] };
+      if (typeof note === 'string') return { text: null, problem: text(`No cover letter: ${note}`), files: [] };
+      return null;
+    }
     if (g.docsState !== 'ready') return { text: null, problem: gigDocsReason(g.docsState, g.docsDetail, g.list), files: [] };
     const read = readRecorded(d.paths.out, txt.path, txt.sha256);
     if (!read.ok) return { text: null, problem: read.why === 'changed' ? 'The cover letter file changed on disk after it was made, so it is not shown. The next run makes it again.' : 'The cover letter file is not on disk. The next run makes it again.', files: [] };
@@ -461,7 +468,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
     const body = gigBody({
-      row, csrf: d.csrf(c), paste, pasteProblem: problem, cover: coverOf(data.g, r.text), files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
+      row, csrf: d.csrf(c), paste, pasteProblem: problem, cover: coverOf(data.g, data.extras, r.text), files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
       history: data.history, sent: data.sent, reasons: g.reasons, duplicateOf: g.duplicateOf, istDay: istDate,
       breakdown: Object.entries(g.breakdown ?? {}).map(([k, p]) => ({ label: SHOWN_ONLY[k] ?? rowLabel(k, display, coveredOf(data.extras)), points: p, shown: Object.hasOwn(SHOWN_ONLY, k) })),
       ...(flash !== undefined ? { flash } : {}),

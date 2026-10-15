@@ -237,12 +237,12 @@ const FILE_LABEL = (d: Pick<GigDoc, 'kind' | 'format'>): string =>
     ? d.format === 'txt' ? 'Cover letter (.txt)' : d.format === 'pdf' ? 'Cover letter (PDF)' : d.format === 'docx' ? 'Cover letter (Word, DOCX)' : 'Cover letter (web page, HTML)'
     : d.format === 'txt' ? (d.kind === 'pitch' ? 'Pitch (.txt)' : 'Proposal (.txt)') : d.format === 'pdf' ? 'Contract CV (PDF)' : 'Contract CV (Word, DOCX)';
 
-/** freelance-v2: the cover letter card, with Copy (the exact `cover.txt`) and its downloads (PDF, DOCX, .txt). */
+/** freelance-v2: the cover letter card, with Copy (the exact `cover.txt`) and its downloads (PDF, DOCX, .txt, HTML). */
 function coverSection(d: GigPageData): Html | '' {
   const c = d.cover;
   if (c === undefined || c === null) return '';
   const g = d.row.gig;
-  const files = ['pdf', 'docx', 'txt'].flatMap((f) => c.files.filter((x) => x.kind === 'cover' && x.format === f));
+  const files = ['pdf', 'docx', 'txt', 'html'].flatMap((f) => c.files.filter((x) => x.kind === 'cover' && x.format === f));
   if (c.text === null) return html`<section class="card wide" aria-labelledby="cover-h"><h2 id="cover-h">Your cover letter</h2><p class="blocked">${c.problem ?? 'No cover letter yet.'}</p></section>`;
   return html`<section class="card wide" aria-labelledby="cover-h">
 <h2 id="cover-h">Your cover letter</h2>

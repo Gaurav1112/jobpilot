@@ -229,6 +229,54 @@ describe('Contract roles matching your stack (top of the Freelance tab)', () => 
   });
 });
 
+describe('review minors: fit at the floor, a cover.txt naming a forbidden term, the HTML link, why there is no letter', () => {
+  it('a role with fit exactly at the fit floor (45) is listed', async () => {
+    withStore((s) => s.kernel.db.prepare(`UPDATE gigs SET fit = 45 WHERE gig_key = ?`).run(H2));
+    expect(rolesOf(sectionOf((await get('/freelance')).body))).toContain(H2);
+    withStore((s) => s.kernel.db.prepare(`UPDATE gigs SET fit = 44.9 WHERE gig_key = ?`).run(H2));
+    expect(rolesOf(sectionOf((await get('/freelance')).body))).not.toContain(H2);
+  });
+
+  it('the card hides a cover.txt that names a forbidden term: no text, no Copy, and its files are refused', async () => {
+    const named = `${COVER}\nInitech\n`;
+    writeFileSync(join(out, 'gigs', B1, 'cover.txt'), named);
+    withStore((s) => s.putGigDocs(B1, s.getGig(B1)!.docs.map((d) => (d.path.endsWith('cover.txt') ? { ...d, sha256: sha(named) } : d))));
+    const { body } = await get(`/freelance/${B1}`);
+    const card = /<section class="card wide" aria-labelledby="cover-h">[\s\S]*?<\/section>/.exec(body)?.[0] ?? '';
+    expect(text(card)).toContain('The cover letter names a forbidden term');
+    expect(card).not.toContain('id="cover-text"');
+    expect(card).not.toContain('data-copy-src');
+    expect(body).not.toContain('Initech');
+    expect((await get(`/freelance/${B1}/files/cover.pdf`)).status).toBe(403);
+  });
+
+  it('the card links the HTML letter as well as PDF, DOCX and .txt', async () => {
+    const card = /<section class="card wide" aria-labelledby="cover-h">[\s\S]*?<\/section>/.exec((await get(`/freelance/${B1}`)).body)?.[0] ?? '';
+    expect(card).toContain(`href="/freelance/${B1}/files/cover.html"`);
+    expect(text(card)).toContain('Cover letter (web page, HTML)');
+  });
+
+  it('a gig with no letter says why: the planner note, or the reason the renderer blocked it', async () => {
+    const h2Docs = withStore((s) => {
+      mkdirSync(join(out, 'gigs', H2), { recursive: true });
+      const files: GigDoc[] = (['pitch.txt', 'resume.pdf'] as const).map((f) => {
+        writeFileSync(join(out, 'gigs', H2, f), `${f}\n`);
+        const [kind, format] = f.split('.') as [GigDoc['kind'], GigDoc['format']];
+        return { kind, format, path: `gigs/${H2}/${f}`, sha256: sha(`${f}\n`), pages: format === 'pdf' ? 1 : null };
+      });
+      s.putGigDocs(H2, files);
+      s.kernel.db.prepare(`UPDATE gigs SET docs_state = 'ready' WHERE gig_key = ?`).run(H2);
+      return files;
+    });
+    seedEnvelope('GigRendered@1', { gigKey: H2, files: h2Docs, plan: { gigKey: H2, platform: 'himalayas', proposal: null, pitch: { lines: [] }, covered: [], missing: [], coverNote: 'title states pay or hours' }, text: { proposal: null, pitch: 'pitch.txt', resume: '' } });
+    expect(text((await get(`/freelance/${H2}`)).body)).toContain('No cover letter: title states pay or hours');
+    const docs = withStore((s) => s.getGig(B1)!.docs.filter((d) => d.kind !== 'cover'));
+    withStore((s) => s.putGigDocs(B1, docs));
+    seedEnvelope('GigRendered@1', { gigKey: B1, files: docs, plan: { gigKey: B1, platform: 'boards', proposal: null, pitch: { lines: [] }, covered: ['java'], missing: [], cover: {} }, text: { proposal: null, pitch: PITCH, resume: '' }, coverBlocked: 'the cover letter has 2 pages, the limit is 1' });
+    expect(text((await get(`/freelance/${B1}`)).body)).toContain('Cover letter blocked: the cover letter has 2 pages, the limit is 1');
+  });
+});
+
 describe('the gig page: the cover letter card', () => {
   it('shows the letter in a <pre> with Copy (cover.txt) and downloads; the pitch card keeps the pitch and CV files', async () => {
     const { body } = await get(`/freelance/${B1}`);
