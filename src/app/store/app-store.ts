@@ -8,6 +8,7 @@ import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
 import type { CompanyVerdict, Platform } from '../coverage/types.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
+import { boardKey } from '../coverage/catalogue.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
@@ -1587,11 +1588,12 @@ export class AppStore {
 
   /**
    * Sources-x Task 7: every board the registry holds, any status (rejected and failed included), as
-   * `<platform> <slug lower-cased>` (the coverage run's `boardKey`): the catalogue never offers one of them again.
+   * the coverage run's `boardKey` (`<platform> <slug lower-cased>`, an Eightfold slug without its stored API-variant
+   * prefix): the catalogue never offers one of them again.
    */
   registryBoardKeys(): Set<string> {
     const rows = this.db.prepare(`SELECT platform, platform_slug FROM companies WHERE platform IS NOT NULL AND platform_slug IS NOT NULL`).all() as { platform: string; platform_slug: string }[];
-    return new Set(rows.map((r) => `${r.platform} ${r.platform_slug.toLowerCase()}`));
+    return new Set(rows.map((r) => boardKey(r.platform, r.platform_slug)));
   }
 
   /**

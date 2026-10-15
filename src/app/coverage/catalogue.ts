@@ -43,8 +43,15 @@ export function loadCatalogue(text: string): CatalogueEntry[] {
   return out;
 }
 
-/** `<platform> <ref lower-cased>`: the registry/verify dedupe key. */
-export const boardKey = (platform: string, ref: string): string => `${platform} ${ref.toLowerCase()}`;
+/** The API-variant prefix the verifier stores in an Eightfold slug (`v2:` / `pcsx:`, eightfold.ts `eightfoldRef`): not part of the board. */
+const EIGHTFOLD_VARIANT = /^(?:v2|pcsx):/iu;
+
+/**
+ * `<platform> <ref lower-cased>`: the registry/verify dedupe key. An Eightfold ref is keyed without its API-variant
+ * prefix: the registry stores `v2:<host>/<domain>` or `pcsx:<host>/<domain>` once verified, the catalogue and the
+ * discovery name the same board `<host>/<domain>`.
+ */
+export const boardKey = (platform: string, ref: string): string => `${platform} ${(platform === 'eightfold' ? ref.replace(EIGHTFOLD_VARIANT, '') : ref).toLowerCase()}`;
 
 /** The PlatformGuess of one freehire-sourced board (catalogue or discovery), D3. */
 export function freehireGuess(o: { platform: Platform; ref: string; boardUrl: string; company: string; source: 'freehire' | 'freehire-discovery'; week: string; why: string; signature: string }): PlatformGuess {
