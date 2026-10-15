@@ -1,0 +1,137 @@
+{
+  "hash": "da32e9826709060078a1afc57ec23fe0b011b81bb33f6ac194f93d6d8e610799",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "half": {
+            "enum": [
+              "am",
+              "pm"
+            ],
+            "type": "string"
+          },
+          "item": {},
+          "platform": {
+            "enum": [
+              "freelancer",
+              "remotive",
+              "hn-freelancer",
+              "hn-hiring",
+              "boards",
+              "gmail",
+              "upwork",
+              "reddit",
+              "himalayas",
+              "draftdev",
+              "prime-intellect",
+              "fractional-jobs"
+            ],
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "query",
+          "runDate",
+          "half"
+        ],
+        "type": "object"
+      },
+      "type": "GigRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "api.github.com"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-draftdev",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "platform": {
+            "enum": [
+              "freelancer",
+              "remotive",
+              "hn-freelancer",
+              "hn-hiring",
+              "boards",
+              "gmail",
+              "upwork",
+              "reddit",
+              "himalayas",
+              "draftdev",
+              "prime-intellect",
+              "fractional-jobs"
+            ],
+            "type": "string"
+          },
+          "raw": {},
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "sourceId",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawGig@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [
+        8000
+      ],
+      "max": 1,
+      "on": [
+        "network",
+        "overloaded",
+        "timeout"
+      ]
+    },
+    "team": "sourcing-draftdev",
+    "timeoutMs": 60000,
+    "version": "1.0.0"
+  }
+}

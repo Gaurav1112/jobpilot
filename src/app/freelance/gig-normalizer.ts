@@ -28,6 +28,13 @@ import { Gig, RawGig } from './types.js';
  *   labelled `from: 'platform'` (`himalayasPay`; a figure the text states per task or project voids it), else the text
  *   by PAY, labelled `from: 'description'`. Location: `locationRestrictions` names (none: worldwide), and time zones
  *   that leave out IST make it not worldwide, said in `location.text`.
+ * - draftdev (sources-expansion, `src-draftdev`): a Draft.dev writer role from its public GitHub repo. `kind` is `gig` for
+ *   per-post/per-article pay, else `contract`. Pay: "$300+ per blog post" is a fixed budget (min 300, no max, USD,
+ *   `from: 'description'`; no hours, so no rate: review); a yearly salary is `unknown`; else the text by PAY. Hours: "<n>[+]
+ *   hours/week" (`min` n, `max` null), "no monthly minimums" is unknown, else the text by HOURS_PER_WEEK. Location:
+ *   "Remote (Global|Worldwide|Anywhere)" in the summary is worldwide; a README bullet is worldwide only when the README
+ *   says "remote, global team"; else the countries the summary names, nothing: not stated (review). Client Draft.dev,
+ *   `postedAt` null (the API gives no date).
  * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
  *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
  *   read from `pay` and the description by the same rule.
@@ -195,6 +202,8 @@ interface Draft {
   readonly skills: string[];
   readonly postedAt: string | null;
   readonly bids: number | null;
+  /** A source's structured hours; absent: `hoursOf(text)`. */
+  readonly hours?: Gig['hoursPerWeek'];
 }
 
 function freelancer(r: RawGig, o: Rec): Draft {
@@ -302,6 +311,56 @@ function boards(r: RawGig, o: unknown): Draft {
   };
 }
 
+const DRAFTDEV_PER_POST = /\$\s?(\d[\d,]*(?:\.\d+)?)\s?\+?\s?(?:USD\s?)?(?:\/|per\s)\s?(?:blog\s+)?(?:post|article)\b/i;
+const DRAFTDEV_ANY_PER_POST = /per\s+(?:blog\s+)?(?:post|article)/i;
+const YEARLY = /(?:\/\s?(?:year|yr)\b|per\s+(?:year|annum)\b|\bannual(?:ly)?\b|\ba\s+year\b)/i;
+const DRAFTDEV_HOURS = /\b(\d{1,3})\s?\+?\s?(?:hours?|hrs?)\s?(?:\/|per|a)\s?(?:week|wk)\b/i;
+const NO_MINIMUMS = /\bno\s+monthly\s+minimums?\b/i;
+const REMOTE_GLOBAL = /\bremote\s*\((?:global|worldwide|anywhere)\)/i;
+
+function draftdev(r: RawGig, o: Rec): Draft {
+  const title = collapse(nonBlank(o.title) ?? '');
+  if (title === '') throw fail(r, 'missing title');
+  const url = nonBlank(o.url);
+  if (url === null) throw fail(r, 'missing url');
+  const summary = nonBlank(o.summary) === null ? null : collapse(String(o.summary));
+  const text = collapse(typeof o.text === 'string' ? o.text : '');
+  // The role file's H1 (the title again) and its quote line (the terms) are replaced by one labelled terms sentence, so the
+  // hours rule reads "Commitment and pay: ..., 40+ hours/week, ..." as a stated requirement, once.
+  const body = typeof o.text === 'string' ? o.text.split('\n').filter((l) => !l.startsWith('# ') && !(summary !== null && collapse(l.replace(/^>\s*/, '')) === summary)).join('\n').replace(/\*\*/g, '').replace(/^#+\s*/gm, '') : '';
+  const description = collapse(`${summary === null ? '' : `Commitment and pay: ${summary}.`} ${body}`);
+  const stated = `${summary ?? ''}\n${text}`;
+  const perPost = DRAFTDEV_PER_POST.exec(summary ?? '') ?? DRAFTDEV_PER_POST.exec(text);
+  const budget: Budget = perPost
+    ? { type: 'fixed', min: Number((perPost[1] ?? '').replace(/,/g, '')), max: null, currency: 'USD', usdPerUnit: null, from: 'description' }
+    : YEARLY.test(stated)
+      ? UNKNOWN_BUDGET
+      : fromText(payOf(stated));
+  const h = DRAFTDEV_HOURS.exec(stated);
+  const hours: Gig['hoursPerWeek'] | undefined = h ? { min: Number(h[1]), max: null, source: 'text' } : NO_MINIMUMS.test(stated) ? { min: null, max: null, source: null } : undefined;
+  const readme = r.sourceId.startsWith('readme:');
+  const globalNote = REMOTE_GLOBAL.exec(summary ?? '');
+  const where = placesOf(summary);
+  const location: Gig['location'] = globalNote
+    ? { countries: [], worldwide: true, text: 'Remote (Global)' }
+    : readme && o.readmeRemoteGlobal === true
+      ? { countries: [], worldwide: true, text: 'Remote, global team (README)' }
+      : { ...where, text: readme || summary === null ? null : summary };
+  return {
+    url,
+    title,
+    description,
+    clientName: 'Draft.dev',
+    kind: DRAFTDEV_ANY_PER_POST.test(stated) ? 'gig' : 'contract',
+    budget,
+    location,
+    skills: [],
+    postedAt: null,
+    bids: null,
+    ...(hours === undefined ? {} : { hours }),
+  };
+}
+
 const GMAIL_KINDS: readonly string[] = ['contract', 'gig', 'network-alert'];
 
 function gmail(r: RawGig, o: Rec): Draft {
@@ -404,7 +463,7 @@ const fmtZone = (z: number): string => `${z >= 0 ? '+' : '−'}${Math.floor(Math
 
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */
 export function normalizeGig(r: RawGig): Gig {
-  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas') {
+  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas' && r.platform !== 'draftdev') {
     throw new KernelError('invalid_output', `gig-normalizer: unsupported platform ${r.platform}`);
   }
   if (r.platform !== 'boards' && !isRec(r.raw)) throw fail(r, 'raw is not an object');
@@ -415,6 +474,7 @@ export function normalizeGig(r: RawGig): Gig {
     : r.platform === 'boards' ? boards(r, r.raw)
     : r.platform === 'gmail' ? gmail(r, o)
     : r.platform === 'himalayas' ? himalayas(r, o)
+    : r.platform === 'draftdev' ? draftdev(r, o)
     : hn(r, o);
   const text = `${d.title}\n${d.description}`;
   return {
@@ -428,7 +488,7 @@ export function normalizeGig(r: RawGig): Gig {
     client: { name: d.clientName, country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null },
     kind: d.kind,
     budget: d.budget,
-    hoursPerWeek: hoursOf(text),
+    hoursPerWeek: d.hours ?? hoursOf(text),
     duration: durationOf(text),
     timezone: { required: null, overlapText: null },
     location: d.location,

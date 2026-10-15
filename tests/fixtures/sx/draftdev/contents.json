@@ -1,0 +1,50 @@
+[
+ {
+  "name": "README.md",
+  "path": "README.md",
+  "sha": "83484aecce85693f90de54014e6d7743061039ad",
+  "size": 1172,
+  "url": "https://api.github.com/repos/draftdev/jobs/contents/README.md?ref=main",
+  "html_url": "https://github.com/draftdev/jobs/blob/main/README.md",
+  "git_url": "https://api.github.com/repos/draftdev/jobs/git/blobs/83484aecce85693f90de54014e6d7743061039ad",
+  "download_url": "https://raw.githubusercontent.com/draftdev/jobs/main/README.md",
+  "type": "file",
+  "_links": {
+   "self": "https://api.github.com/repos/draftdev/jobs/contents/README.md?ref=main",
+   "git": "https://api.github.com/repos/draftdev/jobs/git/blobs/83484aecce85693f90de54014e6d7743061039ad",
+   "html": "https://github.com/draftdev/jobs/blob/main/README.md"
+  }
+ },
+ {
+  "name": "archive",
+  "path": "archive",
+  "sha": "de3d2028acb32894d1d731fd5ba5a745eb633f0d",
+  "size": 0,
+  "url": "https://api.github.com/repos/draftdev/jobs/contents/archive?ref=main",
+  "html_url": "https://github.com/draftdev/jobs/tree/main/archive",
+  "git_url": "https://api.github.com/repos/draftdev/jobs/git/trees/de3d2028acb32894d1d731fd5ba5a745eb633f0d",
+  "download_url": null,
+  "type": "dir",
+  "_links": {
+   "self": "https://api.github.com/repos/draftdev/jobs/contents/archive?ref=main",
+   "git": "https://api.github.com/repos/draftdev/jobs/git/trees/de3d2028acb32894d1d731fd5ba5a745eb633f0d",
+   "html": "https://github.com/draftdev/jobs/tree/main/archive"
+  }
+ },
+ {
+  "name": "content-strategist.md",
+  "path": "content-strategist.md",
+  "sha": "e9c06672ff0c660283670c0c78ac47b410922a5d",
+  "size": 4412,
+  "url": "https://api.github.com/repos/draftdev/jobs/contents/content-strategist.md?ref=main",
+  "html_url": "https://github.com/draftdev/jobs/blob/main/content-strategist.md",
+  "git_url": "https://api.github.com/repos/draftdev/jobs/git/blobs/e9c06672ff0c660283670c0c78ac47b410922a5d",
+  "download_url": "https://raw.githubusercontent.com/draftdev/jobs/main/content-strategist.md",
+  "type": "file",
+  "_links": {
+   "self": "https://api.github.com/repos/draftdev/jobs/contents/content-strategist.md?ref=main",
+   "git": "https://api.github.com/repos/draftdev/jobs/git/blobs/e9c06672ff0c660283670c0c78ac47b410922a5d",
+   "html": "https://github.com/draftdev/jobs/blob/main/content-strategist.md"
+  }
+ }
+]

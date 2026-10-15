@@ -93,6 +93,9 @@ const PLATFORM_NAME: Readonly<Record<Platform, string>> = {
   upwork: 'Upwork',
   reddit: 'Reddit',
   himalayas: 'Himalayas',
+  draftdev: 'Draft.dev',
+  'prime-intellect': 'Prime Intellect',
+  'fractional-jobs': 'Fractional Jobs',
 };
 
 const TITLE_MAX = 40;

@@ -557,7 +557,7 @@ describe('not connected: the source is disabled, never failed', () => {
   const onlyGmail = (home: string): void => {
     cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
     const off = { enabled: false, queries: [] };
-    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': off, 'hn-hiring': off, boards: off, himalayas: off, gmail: { enabled: true, queries: [] } } })}\n`);
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': off, 'hn-hiring': off, boards: off, himalayas: off, draftdev: off, 'prime-intellect': off, 'fractional-jobs': off, gmail: { enabled: true, queries: [] } } })}\n`);
   };
   const connectedTo = (fake: FetchLike): (() => GmailRunAccess) => () => ({ connected: true, reason: null, wrap: () => fake });
   const noNet: FetchLike = async () => {
@@ -634,7 +634,7 @@ describe('not connected: the source is disabled, never failed', () => {
     const home = tempHome();
     cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
     const off = { enabled: false, queries: [] };
-    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': { enabled: true, queries: [] }, 'hn-hiring': off, boards: off, himalayas: off, gmail: { enabled: true, queries: [] } } })}\n`);
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': { enabled: true, queries: [] }, 'hn-hiring': off, boards: off, himalayas: off, draftdev: off, 'prime-intellect': off, 'fractional-jobs': off, gmail: { enabled: true, queries: [] } } })}\n`);
     const locked: SecretsRunner = () => ({ status: 36, stdout: '', stderr: 'security: SecKeychainSearchCopyNext: User interaction is not allowed.' });
     const fetched: string[] = [];
     const fetch: FetchLike = async (url) => {
@@ -653,7 +653,7 @@ describe('not connected: the source is disabled, never failed', () => {
   it('with gmail turned off the Keychain is never asked', async () => {
     const home = tempHome();
     onlyGmail(home);
-    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: { enabled: false, queries: [] }, remotive: { enabled: false, queries: [] }, 'hn-freelancer': { enabled: false, queries: [] }, 'hn-hiring': { enabled: false, queries: [] }, boards: { enabled: false, queries: [] }, himalayas: { enabled: false, queries: [] }, gmail: { enabled: false, queries: [] } } })}\n`);
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: { enabled: false, queries: [] }, remotive: { enabled: false, queries: [] }, 'hn-freelancer': { enabled: false, queries: [] }, 'hn-hiring': { enabled: false, queries: [] }, boards: { enabled: false, queries: [] }, himalayas: { enabled: false, queries: [] }, draftdev: { enabled: false, queries: [] }, 'prime-intellect': { enabled: false, queries: [] }, 'fractional-jobs': { enabled: false, queries: [] }, gmail: { enabled: false, queries: [] } } })}\n`);
     let asked = 0;
     const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch: noNet, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: () => (asked++, gmailRunAccess(keychain(() => ({ status: 36, stdout: '', stderr: '' })))) });
     expect(asked).toBe(0);

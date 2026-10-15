@@ -20,3 +20,8 @@ platforms:
   # Off in the fixture pack (the shipped default is on, with the default freelance keywords): the offline run fixtures
   # predate the source. tests/app/freelance/himalayas-gigs.test.ts runs it against its own recordings.
   himalayas: { enabled: false, queries: [] }
+  # Off in the fixture pack (the shipped default is on): the offline run fixtures predate the sources;
+  # tests/app/freelance/freelance-identity.test.ts pins the run without them. Each has its own tests and recordings.
+  draftdev: { enabled: false, queries: [] }
+  prime-intellect: { enabled: false, queries: [] }
+  fractional-jobs: { enabled: false, queries: [] }

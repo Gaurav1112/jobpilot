@@ -23,6 +23,10 @@ const DEFAULT_PLATFORMS: Record<Platform, PlatformConfig> = {
   upwork: { enabled: false, queries: [] },
   reddit: { enabled: false, queries: [] },
   himalayas: { enabled: true, queries: [...FREELANCE_KEYWORDS] },
+  // One request each (no query): Draft.dev and Prime Intellect read GitHub's API, Fractional Jobs its public page.
+  draftdev: { enabled: true, queries: [] },
+  'prime-intellect': { enabled: true, queries: [] },
+  'fractional-jobs': { enabled: true, queries: [] },
 };
 
 /** One entry per platform; a platform the file leaves out takes its default; one it names is replaced whole (platform config) or merged over the defaults (platform rules). */
@@ -106,6 +110,10 @@ const DEFAULT_RULES: Record<Platform, PlatformRule> = {
   reddit: PLAIN_DEFAULTS,
   // src-himalayas-gigs: at least 2 s between requests to himalayas.app (the brief's politeness floor).
   himalayas: { ...PLAIN_DEFAULTS, minIntervalMs: 2000 },
+  // The sources-expansion gig sources: at least 2 s between requests to one host (api.github.com, fractionaljobs.io).
+  draftdev: { ...PLAIN_DEFAULTS, minIntervalMs: 2000 },
+  'prime-intellect': { ...PLAIN_DEFAULTS, minIntervalMs: 2000 },
+  'fractional-jobs': { ...PLAIN_DEFAULTS, minIntervalMs: 2000 },
 };
 
 /** A user-written entry MERGES over the platform's defaults: every field it leaves out keeps the default (an explicit `presetBrackets: []` stays empty). */
