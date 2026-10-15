@@ -27,6 +27,7 @@ import { formatImportReport, importPack, planImport } from './app/pack/import.js
 import { homePaths, jobpilotHome, selectedProfile, selectProfile } from './app/pack/paths.js';
 import { ProfileError, jobpilotRoot, profileHome, resolveHome } from './app/profiles/root.js';
 import { createProfile, removeProfile, useProfile } from './app/profiles/commands.js';
+import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
 import { listProfiles } from './app/profiles/meta.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
@@ -784,6 +785,20 @@ profileCmd.command('remove <id>').description('Unload the profile\'s launchd job
       uninstallSchedule({ node: process.execPath, repo: root, home: profileHome(r, pid), profile: { id: pid, root: r }, uid: process.getuid() });
     };
     for (const l of removeProfile({ root: r, id, clock: systemClock, unload })) console.log(l);
+  }),
+);
+
+// Task 7 replaces these with the real launchd wiring.
+const cliAdoptLaunchd = (): typeof NO_LAUNCHD => NO_LAUNCHD;
+const cliUnadoptLaunchd = (): typeof NO_UNADOPT_LAUNCHD => NO_UNADOPT_LAUNCHD;
+profileCmd.command('adopt <id>').description('Turn this single jobpilot home into profile <id>: back up, then move everything into ~/.jobpilot/profiles/<id> under the run lock; reversible with "profile unadopt"').action((id: string) =>
+  guarded(async () => {
+    for (const l of (await adoptProfile({ root: jobpilotRoot(), id, clock: systemClock, launchd: cliAdoptLaunchd() })).lines) console.log(l);
+  }),
+);
+profileCmd.command('unadopt').description('Undo "profile adopt": move the adopted profile back to a single home (only while it is the only profile)').action(() =>
+  guarded(async () => {
+    for (const l of await unadoptProfile({ root: jobpilotRoot(), clock: systemClock, launchd: cliUnadoptLaunchd() })) console.log(l);
   }),
 );
 
