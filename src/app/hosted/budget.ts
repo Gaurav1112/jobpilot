@@ -118,5 +118,5 @@ export function levelRose(prev: { readonly month: string; readonly level: Level 
   return Number(level.slice(1)) > Number(prev.level.slice(1));
 }
 
-/** Billed minutes of a finished job: ceil((end − startedAt) / 1 min) + 1 for teardown (spec §4). */
-export const billedMinutes = (startedAt: string, end: string): number => Math.ceil((Date.parse(end) - Date.parse(startedAt)) / 60_000) + 1;
+/** Billed minutes of a finished job: ceil((end − startedAt) / 1 min) + 1 for teardown (spec §4); never below 0. */
+export const billedMinutes = (startedAt: string, end: string): number => Math.max(0, Math.ceil((Date.parse(end) - Date.parse(startedAt)) / 60_000) + 1);

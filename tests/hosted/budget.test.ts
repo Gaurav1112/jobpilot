@@ -79,6 +79,9 @@ describe('helpers', () => {
   it('billedMinutes', () => {
     expect(billedMinutes('2026-11-01T02:00:00Z', '2026-11-01T02:41:10Z')).toBe(43);
   });
+  it('billedMinutes is never negative (a clock that stepped back)', () => {
+    expect(billedMinutes('2026-11-01T02:10:00Z', '2026-11-01T02:00:00Z')).toBe(0);
+  });
   it('levelRose', () => {
     expect(levelRose(null, '2026-11', 'L0')).toBe(false);
     expect(levelRose({ month: '2026-11', level: 'L0' }, '2026-11', 'L2')).toBe(true);
