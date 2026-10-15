@@ -12,7 +12,7 @@ describe('contracts-out', () => {
     for (const a of exportedAgents) r.register(a);
     expect(r.list().map((a) => a.contract.id)).toEqual([
       'board-verifier', 'careers-locator', 'company-seed', 'cover-writer', 'demo-scorer', 'demo-source', 'eligibility', 'evidence-matcher', 'gig-eligibility', 'gig-normalizer', 'gig-qa', 'gig-renderer', 'gig-risk', 'gig-scorer', 'normalizer', 'platform-detector', 'proposal-planner', 'qa-gate', 'rate-normalizer', 'renderer', 'resume-planner',
-      'scorer-lexicon', 'src-ashby', 'src-bamboohr', 'src-board-contracts', 'src-breezy', 'src-careers-job', 'src-careers-list', 'src-eightfold', 'src-freelancer', 'src-freshteam', 'src-gem', 'src-gig-mail', 'src-greenhouse', 'src-himalayas', 'src-himalayas-gigs', 'src-hn', 'src-icims', 'src-jazzhr', 'src-jobicy', 'src-jsonld-sitemap', 'src-lever',
+      'scorer-lexicon', 'src-ashby', 'src-bamboohr', 'src-board-contracts', 'src-breezy', 'src-careers-job', 'src-careers-list', 'src-eightfold', 'src-freelancer', 'src-freshteam', 'src-gem', 'src-gig-mail', 'src-greenhouse', 'src-himalayas', 'src-himalayas-gigs', 'src-hn', 'src-icims', 'src-jazzhr', 'src-jobicy', 'src-jsonld-sitemap', 'src-lever', 'src-manatal',
       'src-oracle', 'src-personio', 'src-pinpoint', 'src-recruitee', 'src-remotive', 'src-rippling', 'src-smartrecruiters', 'src-successfactors', 'src-teamtailor', 'src-workable', 'src-workday', 'src-zohorecruit',
     ]);
     expect(checkDrift(r, join(import.meta.dirname, '../../contracts-out'))).toEqual([]);

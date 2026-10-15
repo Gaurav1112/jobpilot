@@ -450,7 +450,7 @@ function feedClient(fb: FeedBoard<string>): PlatformClient {
       const req = { company: ref, slug: ref };
       const page = await refused(async () => {
         try {
-          return await fb.fetchFeed(http, hosts, b, req, opts?.timeoutMs);
+          return await fb.fetchFeed(http, hosts, b, req, opts?.timeoutMs, { firstPageOnly: true });
         } catch (e) {
           // the daily run defers a deterministic per-tenant problem; the verifier records it as a failed board
           if (e instanceof KernelError && e.code === 'input_rejected') throw new KernelError('invalid_output', e.message);
@@ -461,7 +461,7 @@ function feedClient(fb: FeedBoard<string>): PlatformClient {
         boardName: page.names.length === 1 ? (page.names[0] as string) : null,
         boardNames: page.names.length > 1 ? page.names : [],
         jobs: finish(page.postings),
-        complete: page.total === null || page.total <= page.listed,
+        complete: page.more !== true && (page.total === null || page.total <= page.listed),
         url: s.urlOf(b),
         nameKey: page.names.length === 0 && s.nameKey !== undefined ? s.nameKey(b) : null,
       };

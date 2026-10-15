@@ -752,6 +752,7 @@ describe('capability allow-list', () => {
       jazzhrEgress: ['src-jazzhr'],
       freshteamEgress: ['src-freshteam'],
       zohorecruitEgress: ['src-zohorecruit'],
+      manatalEgress: ['src-manatal'],
     });
     const sneaky = defineContract({ ...base });
     const { emits: _e, ...noEmits } = base;

@@ -83,7 +83,7 @@ export interface CompaniesPageData {
 const PLATFORM_LABEL: Readonly<Record<string, string>> = {
   workday: 'Workday', eightfold: 'Eightfold', oracle: 'Oracle Recruiting', icims: 'iCIMS', successfactors: 'SuccessFactors', smartrecruiters: 'SmartRecruiters',
   workable: 'Workable', recruitee: 'Recruitee', teamtailor: 'Teamtailor', personio: 'Personio', bamboohr: 'BambooHR', breezy: 'Breezy', pinpoint: 'Pinpoint',
-  rippling: 'Rippling', gem: 'Gem', zohorecruit: 'Zoho Recruit', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', 'jsonld-sitemap': 'Job pages (JSON-LD)',
+  rippling: 'Rippling', gem: 'Gem', zohorecruit: 'Zoho Recruit', manatal: 'Manatal', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', 'jsonld-sitemap': 'Job pages (JSON-LD)',
 };
 export const companyPlatformName = (p: string): string => PLATFORM_LABEL[p] ?? p;
 

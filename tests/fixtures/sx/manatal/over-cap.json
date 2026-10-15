@@ -1,0 +1,52 @@
+{
+  "count": 2010,
+  "next": "https://open.api.manatal.com/open/v3/career-page/acme/jobs/?page=2",
+  "previous": null,
+  "results": [
+    {
+      "hash": "K3M9Q2XA",
+      "position_name": "Senior Backend Engineer",
+      "description": "<p>Build and run services.</p>",
+      "city": "Bengaluru",
+      "state": "Karnataka",
+      "country": "India",
+      "location_display": "Bengaluru, Karnataka, India",
+      "is_remote": false,
+      "contract_details": "full_time",
+      "salary_min": "3000000",
+      "salary_max": "4500000",
+      "currency_code": "INR",
+      "organization_name": "Platform"
+    },
+    {
+      "hash": "B7N4T8ZC",
+      "position_name": "Remote Platform Engineer",
+      "description": "<p>Build and run services.</p>",
+      "city": null,
+      "state": null,
+      "country": null,
+      "location_display": "Remote",
+      "is_remote": true,
+      "contract_details": "contract",
+      "salary_min": null,
+      "salary_max": null,
+      "currency_code": null,
+      "organization_name": "Platform"
+    },
+    {
+      "hash": "D2F6H1RP",
+      "position_name": "Data Analyst",
+      "description": "<p>Build and run services.</p>",
+      "city": "Pune",
+      "state": "Maharashtra",
+      "country": "India",
+      "location_display": null,
+      "is_remote": false,
+      "contract_details": "part_time",
+      "salary_min": null,
+      "salary_max": null,
+      "currency_code": null,
+      "organization_name": "Platform"
+    }
+  ]
+}

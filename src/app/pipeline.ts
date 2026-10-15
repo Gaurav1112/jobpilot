@@ -161,6 +161,8 @@ const REGISTRY_PLATFORMS = {
   gem: small('gem'),
   // Sources expansion, Task 3: Zoho Recruit, a strict-rule feed board
   zohorecruit: small('zohorecruit'),
+  // Sources expansion, Task 4: Manatal, a strict-rule paged feed board
+  manatal: small('manatal'),
   // Sources expansion, Task 2: the listing-pages adapters (an HTML listing and JSON-LD job pages)
   jazzhr: { ref: (url: string) => jazzhrBoardOfUrl(url), hosts: (ref: string) => one(mapNull(parseJazzhrRef(ref), jazzhrHost)), egress: JAZZHR_EGRESS },
   freshteam: { ref: (url: string) => freshteamBoardOfUrl(url), hosts: (ref: string) => one(mapNull(parseFreshteamRef(ref), freshteamHost)), egress: FRESHTEAM_EGRESS },

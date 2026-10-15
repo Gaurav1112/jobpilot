@@ -1,0 +1,52 @@
+{
+  "count": 13,
+  "next": null,
+  "previous": "https://open.api.manatal.com/open/v3/career-page/acme/jobs/?page=1",
+  "results": [
+    {
+      "hash": "A1B2C3D4",
+      "position_name": "Account Executive",
+      "description": "<p>Build and run services.</p>",
+      "city": "Delhi",
+      "state": null,
+      "country": "India",
+      "location_display": null,
+      "is_remote": false,
+      "contract_details": "full_time",
+      "salary_min": null,
+      "salary_max": null,
+      "currency_code": null,
+      "organization_name": "Platform"
+    },
+    {
+      "hash": "R8T2K5NX",
+      "position_name": "Technical Writer",
+      "description": "<p>Build and run services.</p>",
+      "city": null,
+      "state": null,
+      "country": null,
+      "location_display": "Remote",
+      "is_remote": true,
+      "contract_details": "full_time",
+      "salary_min": null,
+      "salary_max": null,
+      "currency_code": null,
+      "organization_name": "Platform"
+    },
+    {
+      "hash": "Y4E6P9GJ",
+      "position_name": "Release Engineer",
+      "description": "<p>Build and run services.</p>",
+      "city": "Noida",
+      "state": "Uttar Pradesh",
+      "country": "India",
+      "location_display": null,
+      "is_remote": false,
+      "contract_details": "full_time",
+      "salary_min": null,
+      "salary_max": null,
+      "currency_code": null,
+      "organization_name": "Platform"
+    }
+  ]
+}

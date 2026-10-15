@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { decideEligibility, type EligibilityPack } from '../../src/app/agents/eligibility.js';
 import { normalize } from '../../src/app/agents/normalizer.js';
 import { platformClient } from '../../src/app/agents/sources/platforms/client.js';
-import { documentedHosts, FEED_MAX_JOBS, FEED_MAX_PAGES, FEED_MAX_REQUESTS, FEED_MIN_INTERVAL_MS, FEED_TIMEOUT_MS, type FeedBoard } from '../../src/app/agents/sources/platforms/feed-board.js';
+import { manatal, manatalBoardOfUrl, MANATAL_HOST, parseManatal, parseManatalRef } from '../../src/app/agents/sources/platforms/manatal.js';
+import { documentedHosts, FEED_MAX_JOBS, FEED_MAX_JOBS_PAGED, FEED_MAX_PAGES, FEED_MAX_REQUESTS, FEED_MIN_INTERVAL_MS, FEED_TIMEOUT_MS, type FeedBoard } from '../../src/app/agents/sources/platforms/feed-board.js';
 import { SMALL_PLATFORMS } from '../../src/app/agents/sources/platforms/small.js';
 import { parseTeamtailor } from '../../src/app/agents/sources/platforms/teamtailor.js';
 import { parsePersonio } from '../../src/app/agents/sources/platforms/personio.js';
@@ -65,6 +66,10 @@ const ROWS: readonly Row[] = [
   // Sources expansion, Task 3: the careers page's embedded list (4 openings: 2 kept, 1 unpublished, 1 without an id)
   { fb: byName('zohorecruit'), ref: 'shurutech.zohorecruit.in', host: 'shurutech.zohorecruit.in', url: 'https://shurutech.zohorecruit.in/jobs/Careers', boardUrl: 'https://shurutech.zohorecruit.in/jobs/Careers', file: '../sx/zohorecruit/careers.html', n: 2, firstId: '100000000000000101', documented: false, name: null, robots: '../sx/zohorecruit/robots.txt', malformed: ['entry 3: id: no id'] },
 ];
+/** Manatal pages (Task 4), so it is not a ROWS entry (every ROWS test reads exactly one feed request); wired like the rest. */
+const MANATAL_BOARD = 'https://open.api.manatal.com/open/v3/career-page/acme/jobs/';
+const MROW = { fb: manatal, ref: 'acme', host: MANATAL_HOST, url: MANATAL_BOARD, boardUrl: MANATAL_BOARD, file: '', n: 10, firstId: '', documented: false, name: null } as unknown as Row;
+const WIRED: readonly Row[] = [...ROWS, MROW];
 const STRICT = ROWS.filter((r) => !r.documented);
 const DOCUMENTED = ROWS.filter((r) => r.documented);
 
@@ -643,12 +648,12 @@ describe('the verifier clients: one feed request, the daily adapter\'s own', () 
 // ---------------------------------------------------------------------------
 
 describe('wiring: teams, egress, pacing, and an empty registry changes nothing', () => {
-  const boards = registryBoards(ROWS.map((r) => ({ name: `Co ${r.fb.spec.platform}`, platform: r.fb.spec.platform, boardUrl: r.boardUrl })));
+  const boards = registryBoards(WIRED.map((r) => ({ name: `Co ${r.fb.spec.platform}`, platform: r.fb.spec.platform, boardUrl: r.boardUrl })));
 
   it('every stored board URL becomes a registry board, one per platform, in registry order; the seeds carry the ref', () => {
-    expect(boards.map((b) => `${b.platform} ${b.ref}`)).toEqual(ROWS.map((r) => `${r.fb.spec.platform} ${r.ref}`));
+    expect(boards.map((b) => `${b.platform} ${b.ref}`)).toEqual(WIRED.map((r) => `${r.fb.spec.platform} ${r.ref}`));
     const seeds = dailySeeds({ watchlist: [], feeds: { enabled: [] } }, '2026-10-14', undefined, boards);
-    expect(seeds.map((s) => `${s.ats} ${s.slug}`)).toEqual(ROWS.map((r) => `${r.fb.spec.platform} ${r.ref}`));
+    expect(seeds.map((s) => `${s.ats} ${s.slug}`)).toEqual(WIRED.map((r) => `${r.fb.spec.platform} ${r.ref}`));
   });
 
   it('with an empty registry no small-platform agent, team or edge exists: the pipeline is the same', () => {
@@ -656,7 +661,7 @@ describe('wiring: teams, egress, pacing, and an empty registry changes nothing',
     expect(none.some((a) => a.contract.id.startsWith('src-') && SMALL_PLATFORMS.some((f) => f.contract.id === a.contract.id))).toBe(false);
     const wiring = dailyPipeline(none);
     expect(wiring.teams.map((t) => t.id).filter((t) => SMALL_PLATFORMS.some((f) => f.spec.team === t))).toEqual([]);
-    expect(JSON.stringify(wiring.edges)).not.toMatch(/src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem|zohorecruit)/u);
+    expect(JSON.stringify(wiring.edges)).not.toMatch(/src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem|zohorecruit|manatal)/u);
     expect(registryEgressSets([])).toEqual({});
   });
 
@@ -670,9 +675,9 @@ describe('wiring: teams, egress, pacing, and an empty registry changes nothing',
       expect(fb.contract.egress).toEqual([fb.spec.egress]);
       expect(fb.contract.capabilities).toEqual({ http: true });
     }
-    expect(new Set(SMALL_PLATFORMS.map((f) => f.spec.team)).size).toBe(10);
+    expect(new Set(SMALL_PLATFORMS.map((f) => f.spec.team)).size).toBe(11);
     const sets = registryEgressSets(boards);
-    expect(sets).toEqual(Object.fromEntries(ROWS.map((r) => [r.fb.spec.egress, [r.host]])));
+    expect(sets).toEqual(Object.fromEntries(WIRED.map((r) => [r.fb.spec.egress, [r.host]])));
     // a dead tenant on one platform never touches another's host state: one fresh host state per agent
     expect(dailyAgents([], boards).find((a) => a.contract.id === 'src-gem')).not.toBe(agents.find((a) => a.contract.id === 'src-gem'));
   });
@@ -681,7 +686,7 @@ describe('wiring: teams, egress, pacing, and an empty registry changes nothing',
     const pack = { watchlist: [], feeds: { enabled: [] } };
     expect(pacingProblems({ minHostIntervalMs: 2000, minBrowserIntervalMs: 2000 }, pack, boards)).toEqual([]);
     const slow = pacingProblems({ minHostIntervalMs: 40_000, minBrowserIntervalMs: 2000 }, pack, boards);
-    expect(slow.filter((p) => /src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem|zohorecruit)/u.test(p))).toHaveLength(10);
+    expect(slow.filter((p) => /src-(?:workable|recruitee|teamtailor|personio|bamboohr|breezy|pinpoint|rippling|gem|zohorecruit|manatal)/u.test(p))).toHaveLength(11);
   });
 
   it('only the documented hosts skip robots.txt: dailyFeedHosts(true) never denies and still disables; dailyFeedHosts(false) is the strict page rule', async () => {
@@ -926,5 +931,113 @@ describe('zohorecruit: the careers page embeds the whole list as escaped JSON', 
     for (const bad of ['www.zohorecruit.com', 'zohorecruit.com', 'a.zohorecruit.org', 'a.b.zohorecruit.in', 'a.zohorecruit.in.evil.test']) expect(p.parseRef(bad), bad).toBeNull();
     expect(p.boardOfUrl('https://Shurutech.zohorecruit.in/jobs/Careers/')).toBe('shurutech.zohorecruit.in');
     expect(p.boardOfUrl('https://shurutech.zohorecruit.in/jobs/Careers/123')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sources expansion, Task 4: Manatal (a paged feed) and the paging in feed-board.ts
+// ---------------------------------------------------------------------------
+
+describe('manatal: a paged feed with a loud job cap', () => {
+  const sx = (name: string): string => readFileSync(join(root, 'tests/fixtures/sx/manatal', name), 'utf8');
+  const BASE = 'https://open.api.manatal.com/open/v3/career-page/acme/jobs/';
+  const ROBOTS = `https://${MANATAL_HOST}/robots.txt`;
+  const routes = (extra: Record<string, Route> = {}): Record<string, Route> => ({ [ROBOTS]: { status: 404, body: 'Not Found' }, [BASE]: { status: 200, body: sx('page1.json') }, [`${BASE}?page=2`]: { status: 200, body: sx('page2.json') }, ...extra });
+  const go = (r: Record<string, Route>) => {
+    const h = harness(MROW, r);
+    return { h, p: run(manatal.make({ hosts: dailyFeedHosts(false) }), req(MROW), h.ctx) };
+  };
+
+  it('page 1 + page 2: 13 postings sorted by hash, two feed requests 2 s apart after robots.txt', async () => {
+    const { h, p } = go(routes());
+    const out = await p;
+    expect(out).toHaveLength(13);
+    const ids = out.map((x) => x.sourceId);
+    expect(ids).toEqual([...ids].sort());
+    expect(h.calls).toEqual([ROBOTS, BASE, `${BASE}?page=2`]);
+    expect(h.slept.filter((ms) => ms >= 1500).length).toBeGreaterThanOrEqual(2);
+    expect(h.agents.every((a) => a === 'jobpilot/0.1 (+local)')).toBe(true);
+    expect(out.find((x) => x.sourceId === 'K3M9Q2XA')?.raw).toMatchObject({ title: 'Senior Backend Engineer', url: 'https://www.careers-page.com/acme/job/K3M9Q2XA', location: 'Bengaluru, Karnataka, India', remote: false, contract: 'full_time' });
+    expect(JSON.stringify(out)).not.toMatch(/salary|currency/u);
+  });
+
+  it('over the cap (count 2010): a job-cap refusal from page 1, exactly one feed request, nothing read', async () => {
+    const { h, p } = go(routes({ [BASE]: { status: 200, body: sx('over-cap.json') } }));
+    await expect(p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/job-cap Manatal acme: the feed lists 2010 jobs, over the cap of 100 \(10 pages\); nothing read, never truncated/u) });
+    expect(h.calls).toEqual([ROBOTS, BASE]);
+    expect(FEED_MAX_JOBS_PAGED).toBe(100);
+  });
+
+  it('the over-cap error is input_rejected through fetchFeed', async () => {
+    const h = harness(MROW, routes({ [BASE]: { status: 200, body: sx('over-cap.json') } }));
+    await expect(manatal.fetchFeed(h.ctx.http!, dailyFeedHosts(false), 'acme', REC())).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/^job-cap Manatal acme/u) });
+  });
+
+  it('a next URL off the board host (or not https) is input_rejected and page 2 is never asked', async () => {
+    for (const next of ['https://evil.example/open/v3/career-page/acme/jobs/?page=2', 'http://open.api.manatal.com/open/v3/career-page/acme/jobs/?page=2']) {
+      const body = JSON.stringify({ ...JSON.parse(sx('page1.json')), next });
+      const h = harness(MROW, routes({ [BASE]: { status: 200, body }, [next]: { status: 200, body: sx('page2.json') } }));
+      await expect(manatal.fetchFeed(h.ctx.http!, dailyFeedHosts(false), 'acme', REC())).rejects.toMatchObject({ code: 'input_rejected' });
+      expect(h.calls).not.toContain(next);
+      expect(h.calls).toEqual([ROBOTS, BASE]);
+    }
+  });
+
+  it('a page whose results all fail is schema drift (input_rejected); one failing entry is a named note', async () => {
+    const drift = JSON.stringify({ count: 1, next: null, results: [{ nope: 1 }, { hash: 'x' }] });
+    const a = go(routes({ [BASE]: { status: 200, body: drift } }));
+    await expect(a.p).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/all 2 entries are malformed/u) });
+    const p2 = JSON.parse(sx('page2.json')) as { results: Record<string, unknown>[] };
+    delete p2.results[2]?.['hash'];
+    const b = go(routes({ [`${BASE}?page=2`]: { status: 200, body: JSON.stringify(p2) } }));
+    expect(await b.p).toHaveLength(12);
+    expect(b.h.skipped).toEqual(['manatal Acme page 2 entry 2: hash: no hash']);
+  });
+
+  it('a next after the last allowed page is the same job-cap refusal, never a truncation', async () => {
+    const loop = (n: number): string => JSON.stringify({ count: 100, next: `${BASE}?page=${n + 1}`, results: [{ hash: `AAAA${String(n).padStart(4, '0')}`, position_name: `Job ${n}` }] });
+    const r: Record<string, Route> = { [ROBOTS]: { status: 404 }, [BASE]: { status: 200, body: loop(1) } };
+    for (let n = 2; n <= 12; n++) r[`${BASE}?page=${n}`] = { status: 200, body: loop(n) };
+    const h = harness(MROW, r);
+    await expect(manatal.fetchFeed(h.ctx.http!, dailyFeedHosts(false), 'acme', REC())).rejects.toMatchObject({ code: 'input_rejected', message: expect.stringMatching(/job-cap Manatal acme/u) });
+    expect(h.calls.length).toBeLessThanOrEqual(1 + FEED_MAX_PAGES);
+  });
+
+  it('the verifier client reads page 1 only: one feed request after robots.txt, complete: false', async () => {
+    const n = serve(routes());
+    const gp = guess(cand('acme.test', 'Acme'), 'manatal', 'acme', BASE);
+    const v = await makeBoardVerifier(fresh()).run(gp, vctx(n.fetch, [gp]));
+    expect(n.calls).toEqual([ROBOTS, BASE]);
+    expect(v[0]).toMatchObject({ status: 'verified', jobsSeen: 10 });
+    const c = platformClient('manatal');
+    expect(c?.refOf('acme', BASE)).toBe('acme');
+  });
+
+  it('refs and board URLs', () => {
+    for (const ok of ['acme', 'a', 'a-b-c', 'a1']) expect(parseManatalRef(ok), ok).toBe(ok);
+    for (const bad of ['', 'Acme', '-a', 'a-', 'a_b', 'a.b', 'a/b']) expect(parseManatalRef(bad), bad).toBeNull();
+    expect(manatalBoardOfUrl(`${BASE}?page=2`)).toBe('acme');
+    expect(manatalBoardOfUrl(BASE)).toBe('acme');
+    expect(manatalBoardOfUrl('https://open.api.manatal.com/open/v3/career-page/acme/jobs/1')).toBeNull();
+    expect(manatalBoardOfUrl('https://evil.example/open/v3/career-page/acme/jobs/')).toBeNull();
+    expect(manatalBoardOfUrl('http://open.api.manatal.com/open/v3/career-page/acme/jobs/')).toBeNull();
+  });
+
+  it('mapping: description from the HTML, contract types, remote from the flag only', () => {
+    const page = parseManatal(sx('page1.json'), 'acme', REC());
+    const by = (h: string) => normalize(page.postings.find((p) => p.sourceId === h) as RawPosting);
+    expect(by('K3M9Q2XA')).toMatchObject({ ats: 'manatal', descriptionText: 'Build and run services.', employmentType: 'full-time', remote: { structured: null } });
+    expect(by('B7N4T8ZC')).toMatchObject({ employmentType: 'contract', remote: { structured: 'remote' } });
+    expect(by('D2F6H1RP').employmentType).toBe('part-time');
+    expect(by('M8V3C5LW').employmentType).toBe('internship');
+    expect(by('T1Y7G4NB').employmentType).toBe('contract');
+    expect(by('W6S2J8EH').employmentType).toBe('contract');
+    expect(by('C9L5E1VM').employmentType).toBeNull();
+    // "Remote" in the text without the flag is not remote
+    expect(parseManatal(JSON.stringify({ count: 1, next: null, results: [{ hash: 'ABCD1234', position_name: 'X', location_display: 'Remote', is_remote: false }] }), 'acme', REC()).postings[0]?.raw).toMatchObject({ remote: false });
+  });
+
+  it('every other feed still makes exactly one feed request (no next)', () => {
+    for (const f of SMALL_PLATFORMS) if (f.spec.platform !== 'manatal') expect(f.spec.next).toBeUndefined();
   });
 });

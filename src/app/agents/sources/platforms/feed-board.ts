@@ -39,7 +39,10 @@ export function documentedHosts(): PlatformHosts<never> {
  *   feed request per company per run (FEED_MAX_REQUESTS bounds it with robots.txt, for the pacing arithmetic).
  * - **Caps, loud.** None of the nine feeds pages (each answers every job in one response); FEED_MAX_PAGES (10) is the
  *   most list pages a feed adapter may ever ask, which the pacing arithmetic assumes. A feed with more than
- *   FEED_MAX_JOBS jobs is `input_rejected` (`job-cap`), never truncated.
+ *   FEED_MAX_JOBS jobs is `input_rejected` (`job-cap`), never truncated. A PAGED feed (Manatal, sources expansion
+ *   Task 4: `spec.next`) is capped at FEED_MAX_JOBS_PAGED jobs from page 1's own total (`spec.totalOf`), checked before
+ *   page 2, and a `next` after page FEED_MAX_PAGES is the same refusal. Its `next` URL must be https on the board's own
+ *   host, else it is a page-level problem and is never asked; each page goes through `hostRequest` (the 2 s spacing).
  * - **Shapes.** A response that is not the feed it should be (not JSON or XML, a missing envelope or list) is a
  *   page-level problem: `input_rejected`, nothing read from it, never partially parsed. One entry missing a required
  *   field is skipped with the named note `<platform> <company> entry <i>: <why>`, unless every entry is (schema drift:
@@ -51,6 +54,8 @@ export function documentedHosts(): PlatformHosts<never> {
 export const FEED_MIN_INTERVAL_MS = 2000;
 export const FEED_MAX_PAGES = 10;
 export const FEED_MAX_JOBS = 5000;
+/** A paged feed's job cap: FEED_MAX_PAGES pages of the platform's page size (Manatal 10). */
+export const FEED_MAX_JOBS_PAGED = 100;
 /** robots.txt and the feed pages: the pacing check divides the step timeout by it. */
 export const FEED_MAX_REQUESTS = 1 + FEED_MAX_PAGES;
 export const FEED_TIMEOUT_MS = 300_000;
@@ -70,6 +75,8 @@ export interface FeedPage {
   readonly total: number | null;
   /** Named notes the parser records as they are (Rippling `rippling-uuid-conflict <uuid> …`); absent: none. */
   readonly notes?: string[];
+  /** A paged feed read to its first page only (the verifier): there is a next page. Absent: the feed was read whole. */
+  readonly more?: boolean;
 }
 
 export interface FeedSpec<B> {
@@ -95,6 +102,13 @@ export interface FeedSpec<B> {
   readonly accept?: 'application/rss+xml';
   /** Parses a 2xx body; throws `input_rejected` for a page-level shape problem. */
   readonly parse: (body: string, b: B, req: Pick<DiscoveryRequest, 'company' | 'slug'>) => FeedPage;
+  /**
+   * A paged feed (Manatal): the next page's URL from a parsed 2xx body (null: the last page), on the board's own host
+   * only (another host is a page-level problem). Absent: one request, as the nine Task 9 feeds.
+   */
+  readonly next?: (body: string, b: B) => string | null;
+  /** The platform's total from page 1, checked before page 2: over FEED_MAX_JOBS_PAGED the board is refused (`job-cap`). */
+  readonly totalOf?: (body: string) => number | null;
 }
 
 /** A page-level problem of a feed: `input_rejected`, nothing read. */
@@ -110,7 +124,7 @@ export interface FeedBoard<B> {
   readonly spec: FeedSpec<B>;
   readonly contract: Contract<DiscoveryRequest, RawPosting>;
   /** One feed request under the run's host rules, parsed; throws as the header says. */
-  fetchFeed(http: HttpTool, hosts: PlatformHosts, b: B, req: Pick<DiscoveryRequest, 'company' | 'slug'>, timeoutMs?: number): Promise<FeedPage>;
+  fetchFeed(http: HttpTool, hosts: PlatformHosts, b: B, req: Pick<DiscoveryRequest, 'company' | 'slug'>, timeoutMs?: number, o?: { readonly firstPageOnly?: boolean }): Promise<FeedPage>;
   /** Builds the agent for one run on the run's host state. */
   make(o: { readonly hosts: PlatformHosts }): Agent<DiscoveryRequest, RawPosting>;
 }
@@ -136,8 +150,8 @@ export function feedBoard<B>(spec: FeedSpec<B>): FeedBoard<B> {
     retry: { max: 1, on: ['overloaded', 'network'], backoffMs: [8000] },
   });
 
-  async function fetchFeed(http: HttpTool, hosts: PlatformHosts, b: B, req: Pick<DiscoveryRequest, 'company' | 'slug'>, timeoutMs?: number): Promise<FeedPage> {
-    const url = spec.urlOf(b);
+  /** One request under the run's host rules, status-mapped and parsed (no cap checks): the page and its raw body. */
+  async function readPage(http: HttpTool, hosts: PlatformHosts, b: B, url: string, req: Pick<DiscoveryRequest, 'company' | 'slug'>, timeoutMs?: number): Promise<{ page: FeedPage; body: string }> {
     const host = spec.hostOf(b);
     const ref = spec.refOf(b);
     const opts = { minIntervalMs: FEED_MIN_INTERVAL_MS, ...(timeoutMs === undefined ? {} : { timeoutMs }), ...(spec.accept === undefined ? {} : { accept: spec.accept }) };
@@ -172,9 +186,58 @@ export function feedBoard<B>(spec: FeedSpec<B>): FeedBoard<B> {
       }
       throw e;
     }
-    if (page.listed > FEED_MAX_JOBS) throw new KernelError('input_rejected', `job-cap ${spec.label} ${ref}: the feed lists ${page.listed} jobs, over the cap of ${FEED_MAX_JOBS}; nothing read, never truncated`);
-    if (page.listed > 0 && page.postings.length === 0) throw feedProblem(`${spec.label} ${ref}`, `all ${page.listed} entries are malformed (${page.malformed[0] ?? ''})`);
-    return page;
+    return { page, body: r.body };
+  }
+
+  const allMalformed = (page: FeedPage, ref: string, n: number | null): KernelError | null =>
+    page.listed > 0 && page.postings.length === 0 ? feedProblem(`${spec.label} ${ref}`, `all ${page.listed} entries are malformed (${n === null ? '' : `page ${n} `}${page.malformed[0] ?? ''})`) : null;
+
+  async function fetchFeed(http: HttpTool, hosts: PlatformHosts, b: B, req: Pick<DiscoveryRequest, 'company' | 'slug'>, timeoutMs?: number, o?: { readonly firstPageOnly?: boolean }): Promise<FeedPage> {
+    const ref = spec.refOf(b);
+    const first = await readPage(http, hosts, b, spec.urlOf(b), req, timeoutMs);
+    if (spec.next === undefined) {
+      const { page } = first;
+      if (page.listed > FEED_MAX_JOBS) throw new KernelError('input_rejected', `job-cap ${spec.label} ${ref}: the feed lists ${page.listed} jobs, over the cap of ${FEED_MAX_JOBS}; nothing read, never truncated`);
+      const bad = allMalformed(page, ref, null);
+      if (bad !== null) throw bad;
+      return page;
+    }
+    // A paged feed: the platform's total from page 1 is checked before page 2 is asked.
+    const over = (what: string): KernelError =>
+      new KernelError('input_rejected', `job-cap ${spec.label} ${ref}: ${what}, over the cap of ${FEED_MAX_JOBS_PAGED} (${FEED_MAX_PAGES} pages); nothing read, never truncated`);
+    const total = spec.totalOf === undefined ? null : spec.totalOf(first.body);
+    if (total !== null && total > FEED_MAX_JOBS_PAGED) throw over(`the feed lists ${total} jobs`);
+    const host = spec.hostOf(b);
+    const postings: RawPosting[] = [];
+    const malformed: string[] = [];
+    const names: (string | null)[] = [];
+    const notes: string[] = [];
+    let listed = 0;
+    let cur = first;
+    for (let n = 1; ; n++) {
+      const bad = allMalformed(cur.page, ref, n);
+      if (bad !== null) throw bad;
+      postings.push(...cur.page.postings);
+      malformed.push(...cur.page.malformed.map((m) => `page ${n} ${m}`));
+      names.push(...cur.page.names);
+      notes.push(...(cur.page.notes ?? []));
+      listed += cur.page.listed;
+      const next = spec.next(cur.body, b);
+      const done = (more: boolean): FeedPage => ({ postings, malformed, listed, names: sortedNames(names), total: null, ...(more ? { more } : {}), ...(notes.length > 0 ? { notes } : {}) });
+      if (next === null) return done(false);
+      let u: URL | null = null;
+      try {
+        u = new URL(next);
+      } catch {
+        u = null;
+      }
+      if (u === null || u.protocol !== 'https:' || u.hostname !== host || u.port !== '' || u.username !== '' || u.password !== '') {
+        throw feedProblem(`${spec.label} ${ref}`, `page ${n} names a next page off the board's host or not over https (${u === null ? 'not a URL' : u.hostname}); it is never asked`);
+      }
+      if (o?.firstPageOnly === true) return done(true);
+      if (n >= FEED_MAX_PAGES) throw over(`the feed has a next page after page ${FEED_MAX_PAGES}`);
+      cur = await readPage(http, hosts, b, u.href, req, timeoutMs);
+    }
   }
 
   async function runCompany(req: DiscoveryRequest, ctx: AgentContext, hosts: PlatformHosts): Promise<RawPosting[]> {

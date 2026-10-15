@@ -86,7 +86,7 @@ describe('platformClient', () => {
   it('reads Greenhouse, Lever, Ashby, Workday, Eightfold and Oracle with the daily adapters\' own URLs; every other platform is not built', () => {
     // Task 8 added the page platforms (their clients are tested in sources-pagesites.test.ts)
     // Task 9 added the nine small platforms (their clients are tested in sources-small.test.ts)
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'bamboohr', 'breezy', 'eightfold', 'freshteam', 'gem', 'greenhouse', 'icims', 'jazzhr', 'jsonld-sitemap', 'lever', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday', 'zohorecruit']);
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'bamboohr', 'breezy', 'eightfold', 'freshteam', 'gem', 'greenhouse', 'icims', 'jazzhr', 'jsonld-sitemap', 'lever', 'manatal', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday', 'zohorecruit']);
     // Task 7: Eightfold and Oracle read each tenant's own host; robots.txt governs both, Oracle's 403 is "unknown"
     const ef = platformClient('eightfold');
     expect(ef?.refOf('explore.jobs.netflix.net/netflix.com', 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com')).toBe('explore.jobs.netflix.net/netflix.com');
