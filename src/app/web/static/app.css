@@ -4,6 +4,7 @@
  * Tokens live in :root; dark mode overrides only tokens.
  */
 :root {
+  --paper: #ffffff;
   color-scheme: light dark;
   --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -229,13 +230,19 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
   padding: var(--space-2) var(--space-3); overflow-wrap: anywhere;
 }
 .doc-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.doc { min-width: 0; }
 .doc h3 { margin-top: 0; }
 .downloads { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
 .preview {
   display: block; width: 100%; height: 34rem; border: 1px solid var(--border-strong); border-radius: var(--radius);
-  background: var(--surface);
+  color-scheme: light; background: var(--paper);
 }
 .preview-cover { height: 28rem; }
+.preview-box { margin-top: var(--space-2); }
+.preview-box > summary { font-size: var(--fs-sm); }
+.preview-open { font-size: var(--fs-sm); margin: var(--space-2) 0; }
+.cited { margin-top: var(--space-3); font-size: var(--fs-sm); }
+.cited li { overflow-wrap: anywhere; }
 .terms { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); margin-top: var(--space-3); border-top: 1px solid var(--border); }
 .term-list { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .term { font-size: var(--fs-sm); padding: 0 var(--space-2); border-radius: var(--radius); border: 1px solid var(--border); }

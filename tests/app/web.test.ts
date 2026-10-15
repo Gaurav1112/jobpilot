@@ -694,7 +694,10 @@ describe('dashboard: file route', () => {
     expect(prev.headers.get('content-disposition')).toBe('inline');
     expect(prev.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(prev.headers.get('content-security-policy')).toContain('sandbox');
-    expect(await prev.text()).toContain('<li data-fact="f-nw-01" title="Fact f-nw-01">');
+    const served = await prev.text();
+    expect(served).toContain('<li data-fact="f-nw-01" title="Fact f-nw-01">');
+    expect(served).toContain('<meta name="color-scheme" content="light"><style>:root{color-scheme:light;--fg:#111;--bg:#fff;--muted:#444;--rule:#ccc}</style></head>');
+    expect(readFileSync(join(out, K1, 'resume.html'), 'utf8')).not.toContain('color-scheme:light');
   });
 
   it('rejects names not recorded in job_docs or job_snapshots for that job, traversal and other jobs\' files', async () => {
@@ -1270,5 +1273,32 @@ describe('A2: the job page follows the apply sequence', () => {
   });
   it('a job with blocked documents still says why, in the send card', async () => {
     expect(textOf(elementsWith((await get(`/jobs/${K10}`)).body, 'id', 'send')[0] ?? '')).toContain('documents blocked: unrenderable character U+5C71 in the company name');
+  });
+});
+
+describe('A2: previews are paper, fold away, and never change what is sent', () => {
+  it('PDF and DOCX are served byte for byte as on disk, with no preview-only marker', async () => {
+    for (const name of ['resume.pdf', 'resume.docx', 'cover.pdf', 'cover.docx']) {
+      const bytes = Buffer.from(await (await app.request(`/jobs/${K1}/files/${name}`, { headers: { cookie } })).arrayBuffer());
+      expect(bytes.equals(readFileSync(join(out, K1, name))), name).toBe(true);
+      expect(bytes.toString('latin1'), name).not.toMatch(/data-fact|title="Fact|color-scheme/);
+    }
+  });
+  it('previews sit closed in <details>, load lazily, and link to a full preview in a new tab', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    const boxes = elementsWith(body, 'class', 'preview-box');
+    expect(boxes).toHaveLength(2);
+    for (const b of boxes) {
+      expect(b).toMatch(/^<details class="preview-box">/);
+      expect(attrsOf(elementsWith(b, 'loading', 'lazy')[0] ?? '')).toMatchObject({ sandbox: '', referrerpolicy: 'no-referrer' });
+    }
+    expect(linksOf(boxes[0] as string).map((l) => [l.href, l.text, l.attrs['target']])).toEqual([[`/jobs/${K1}/files/resume.html`, 'Open full preview ↗ of the resume (opens in a new tab)', '_blank']]);
+  });
+  it('says where each line comes from without hover: the cited facts are listed', async () => {
+    withStore((s) => s.putDocs(K1, s.getJob(K1)?.docs ?? [], ['f-nw-01']));
+    const body = (await get(`/jobs/${K1}`)).body;
+    expect(textOf(body)).not.toMatch(/\bhover\b/i);
+    const cited = elementsWith(body, 'class', 'cited')[0] as string;
+    expect(textOf(cited)).toMatch(/^Facts these documents cite \(1\) f-nw-01 Led the design of an event-driven order pipeline/);
   });
 });

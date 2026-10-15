@@ -1,5 +1,5 @@
 import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
-import { dateText, scoreText } from '../format.js';
+import { countText, dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
 import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
@@ -26,6 +26,8 @@ export interface JobPageData {
   readonly flash?: string;
   /** A8: the list this job was opened from, and the row after it. */
   readonly back?: { readonly from: string; readonly next?: string };
+  /** A2: the facts the current documents cite, with their claims; null when unknown. */
+  readonly cited?: readonly { readonly id: string; readonly claim: string }[] | null;
 }
 
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
@@ -97,7 +99,19 @@ function downloads(j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Ht
 function preview(j: JobDetail, kind: 'resume' | 'cover'): Html {
   const h = j.docs.find((d) => d.kind === kind && d.format === 'html');
   if (!h) return html`<p class="muted">No preview for this document.</p>`;
-  return html`<iframe class="preview preview-${kind}" sandbox="" src="/jobs/${j.jobKey}/files/${h.kind}.${h.format}" title="${KIND_NAME[kind]} preview" referrerpolicy="no-referrer"></iframe>`;
+  const src = ['/jobs', j.jobKey, 'files', [h.kind, h.format].join('.')].join('/');
+  const name = kind === 'resume' ? 'resume' : 'cover letter';
+  // amendment 3: closed everywhere; a lazy frame inside a closed <details> loads when opened, on a phone too
+  return html`<details class="preview-box"><summary>Preview the ${name}</summary>
+<p class="preview-open"><a href="${src}" target="_blank" rel="noopener">Open full preview ↗<span class="visually-hidden"> of the ${name} (opens in a new tab)</span></a></p>
+<iframe class="preview preview-${kind}" sandbox="" src="${src}" title="${KIND_NAME[kind]} preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
+</details>`;
+}
+
+function citedFacts(c: JobPageData['cited']): Html | '' {
+  if (c === undefined || c === null || c.length === 0) return '';
+  return html`<details class="cited"><summary>Facts these documents cite (${countText(c.length)})</summary>
+<ul class="plain">${c.map((f) => html`<li><code class="fact-id">${f.id}</code> ${f.claim}</li>`)}</ul></details>`;
 }
 
 function terms(j: JobDetail, display: (k: string) => string): Html | '' {
@@ -131,11 +145,12 @@ function documents(d: JobPageData): Html | '' {
   return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Your documents</h2>
 ${
   previewable
-    ? html`<p class="hint">Hover a resume bullet to see the fact it comes from.</p>
+    ? html`<p class="hint">Every line comes from one of your facts, listed under “Facts these documents cite”.</p>
 <div class="doc-grid">
 <div class="doc"><h3>Resume</h3>${preview(j, 'resume')}</div>
 <div class="doc"><h3>Cover letter</h3>${preview(j, 'cover')}</div>
-</div>`
+</div>
+${citedFacts(d.cited)}`
     : ''
 }
 ${t}

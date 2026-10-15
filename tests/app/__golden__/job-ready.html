@@ -67,11 +67,19 @@
 <p class="muted">Nothing to flag.</p>
 </section>
 <section class="card wide" aria-labelledby="docs"><h2 id="docs">Your documents</h2>
-<p class="hint">Hover a resume bullet to see the fact it comes from.</p>
+<p class="hint">Every line comes from one of your facts, listed under “Facts these documents cite”.</p>
 <div class="doc-grid">
-<div class="doc"><h3>Resume</h3><iframe class="preview preview-resume" sandbox="" src="/jobs/1111111111111111/files/resume.html" title="Resume preview" referrerpolicy="no-referrer"></iframe></div>
-<div class="doc"><h3>Cover letter</h3><iframe class="preview preview-cover" sandbox="" src="/jobs/1111111111111111/files/cover.html" title="Cover letter preview" referrerpolicy="no-referrer"></iframe></div>
+<div class="doc"><h3>Resume</h3><details class="preview-box"><summary>Preview the resume</summary>
+<p class="preview-open"><a href="/jobs/1111111111111111/files/resume.html" target="_blank" rel="noopener">Open full preview ↗<span class="visually-hidden"> of the resume (opens in a new tab)</span></a></p>
+<iframe class="preview preview-resume" sandbox="" src="/jobs/1111111111111111/files/resume.html" title="Resume preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
+</details></div>
+<div class="doc"><h3>Cover letter</h3><details class="preview-box"><summary>Preview the cover letter</summary>
+<p class="preview-open"><a href="/jobs/1111111111111111/files/cover.html" target="_blank" rel="noopener">Open full preview ↗<span class="visually-hidden"> of the cover letter (opens in a new tab)</span></a></p>
+<iframe class="preview preview-cover" sandbox="" src="/jobs/1111111111111111/files/cover.html" title="Cover letter preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
+</details></div>
 </div>
+<details class="cited"><summary>Facts these documents cite (1)</summary>
+<ul class="plain"><li><code class="fact-id">f-nw-01</code> Led the design of an event-driven order pipeline on Kafka handling 40M events a day.</li></ul></details>
 <div class="terms">
 <div><h3>Covered by your facts</h3><p class="term-list"><span class="term term-good">Java</span><span class="term term-good">Kafka</span></p></div>
 <div><h3>Missing</h3><p class="term-list"><span class="term term-muted">distributed systems</span></p><p class="hint">Missing terms are never added to your resume. Only facts from your pack are used.</p></div>

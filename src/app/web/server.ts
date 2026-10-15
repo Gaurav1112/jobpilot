@@ -235,6 +235,13 @@ export function withFactTooltips(page: string): string {
     .replace(/<p data-facts="([^"<>]*)">/g, '<p data-facts="$1" title="Facts $1">');
 }
 
+/** A2 (amendment 5): a current preview looks like the paper the employer gets, in any theme; the file on disk is unchanged. */
+const PREVIEW_LIGHT = '<meta name="color-scheme" content="light"><style>:root{color-scheme:light;--fg:#111;--bg:#fff;--muted:#444;--rule:#ccc}</style>';
+export function withPreviewLight(page: string): string {
+  const i = page.indexOf('</head>');
+  return i < 0 ? page : `${page.slice(0, i)}${PREVIEW_LIGHT}${page.slice(i)}`;
+}
+
 const asciiSlug = (s: string): string =>
   s.normalize('NFKD').replace(/[^\x20-\x7E]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
@@ -494,7 +501,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const nextQ = c.req.query('next');
     const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
-    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
+    const cited = data.job.citedFacts === null ? null : data.job.citedFacts.map((id) => ({ id: r.text(id), claim: r.text(ps.pack?.facts.find((f) => f.id === id)?.claim ?? 'no longer in your fact list') }));
+    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -598,7 +606,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     if (ext === 'html') {
       headers['content-security-policy'] = PREVIEW_CSP;
       headers['content-disposition'] = 'inline';
-      return c.body(exact ? new Uint8Array(read.bytes) : withFactTooltips(Buffer.from(read.bytes).toString('utf8')), 200, headers);
+      return c.body(exact ? new Uint8Array(read.bytes) : withPreviewLight(withFactTooltips(Buffer.from(read.bytes).toString('utf8'))), 200, headers);
     }
     headers['content-security-policy'] = FILE_CSP;
     headers['content-disposition'] = `attachment; filename="${downloadName}"`;

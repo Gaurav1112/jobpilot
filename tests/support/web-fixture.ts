@@ -68,7 +68,7 @@ export const NARROW_ONLY: readonly (readonly [name: string, path: string])[] = [
 
 const sha = (b: string): string => createHash('sha256').update(b).digest('hex');
 const PREVIEW = (kind: string): string =>
-  `<!doctype html><html><head><style>body{}</style></head><body><main data-doc="${kind}"><ul><li data-fact="f-nw-01">• Led the order pipeline.</li></ul></main></body></html>\n`;
+  `<!doctype html><html><head><style>:root{color-scheme:light dark;--fg:#111;--bg:#fff}@media (prefers-color-scheme:dark){:root{--fg:#eee;--bg:#161616}}body{background:var(--bg);color:var(--fg)}</style></head><body><main data-doc="${kind}"><ul><li data-fact="f-nw-01">• Led the order pipeline.</li></ul></main></body></html>\n`;
 
 function withStore<T>(home: string, fn: (s: AppStore) => T): T {
   const s = AppStore.open(join(home, 'jobpilot.db'));

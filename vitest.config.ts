@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
  * flaked (final review), so they run in their own project, after every other file has finished (`groupOrder`), one
  * file at a time (`fileParallelism: false`).
  */
-const REAL_BROWSER = ['tests/app/careers.test.ts', 'tests/app/web-browser.test.ts', 'tests/app/web-freelance-browser.test.ts', 'tests/app/web-companies-browser.test.ts', 'tests/app/web-narrow-browser.test.ts'];
+const REAL_BROWSER = ['tests/app/careers.test.ts', 'tests/app/web-browser.test.ts', 'tests/app/web-freelance-browser.test.ts', 'tests/app/web-companies-browser.test.ts', 'tests/app/web-narrow-browser.test.ts', 'tests/app/web-preview-browser.test.ts'];
 
 export default defineConfig({
   test: {
