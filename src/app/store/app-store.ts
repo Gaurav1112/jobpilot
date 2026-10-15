@@ -11,6 +11,7 @@ import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
+import { routesToFreelance } from './contract-routes.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
@@ -1232,8 +1233,8 @@ export class AppStore {
   }
 
   /**
-   * The stored daily jobs that are contract, freelance or part-time (their reasons include `employment:contract`,
-   * `employment:freelance` or `employment:part-time`), seen at or after `since` (the run passes now minus
+   * The stored daily jobs whose reasons route them to the freelance run (`routesToFreelance`: the closed list of
+   * contract wordings, `contract-routes.ts`), seen at or after `since` (the run passes now minus
    * BOARD_SEED_DAYS), not skipped or rejected by the user, duplicate listings left out, by job key; each with the
    * Posting@1 the daily normalizer emitted for it: the newest stored Posting@1 envelope with that job key (same
    * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
@@ -1245,12 +1246,14 @@ export class AppStore {
     const keys = (
       this.db
         .prepare(
-          `SELECT job_key FROM jobs WHERE duplicate_of IS NULL AND last_seen >= ? AND status NOT IN ('skipped', 'rejected') AND EXISTS (
-             SELECT 1 FROM json_each(jobs.reasons) WHERE value IN ('employment:contract', 'employment:freelance', 'employment:part-time')
+          `SELECT job_key, reasons FROM jobs WHERE duplicate_of IS NULL AND last_seen >= ? AND status NOT IN ('skipped', 'rejected') AND EXISTS (
+             SELECT 1 FROM json_each(jobs.reasons) WHERE value LIKE 'employment:%'
            ) ORDER BY job_key`,
         )
-        .all(since) as { job_key: string }[]
-    ).map((r) => r.job_key);
+        .all(since) as { job_key: string; reasons: string }[]
+    )
+      .filter((r) => (JSON.parse(r.reasons) as string[]).some(routesToFreelance))
+      .map((r) => r.job_key);
     const bodies = new Map<string, string>();
     for (let i = 0; i < keys.length; i += POSTING_BATCH) {
       const batch = keys.slice(i, i + POSTING_BATCH);

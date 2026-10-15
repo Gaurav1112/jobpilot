@@ -12,6 +12,8 @@ import { issueContext } from '../../../src/kernel/broker.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import { Store } from '../../../src/kernel/store/store.js';
+import { CONTRACT_REASONS, routesToFreelance } from '../../../src/app/store/contract-routes.js';
+import { jobRow } from '../../support/app-fixtures.js';
 
 /** freelance-boost review round (2026-10-15): I1, I2, wide ranges and the minors. Fictional fixtures only. */
 
@@ -78,6 +80,20 @@ describe('mixed hour units with a per-week figure go to review (controller, 2026
     'We pay $80/hr. 10 h/week. You must also be online 8 hours a day.',
   ])('%s', (text) => {
     const d = decide(normalizeGig(hn(text)));
+    expect(d.verdict).toBe('review');
+    expect(d.notes).toContain(MIXED);
+  });
+
+  it('I6: a "10+ hours per week" figure meets the mixed-units check too', () => {
+    for (const raw of [hn('Pay $45/hr. 10+ hours per week, and 8 hours a day during launch.'), fl('Pay $45/hr. 10+ hours per week, and 8 hours a day during launch.')]) {
+      const d = decide(normalizeGig(raw));
+      expect(d.verdict).toBe('review');
+      expect(d.notes).toContain(MIXED);
+    }
+  });
+
+  it('X4: "18 h/week, 91 h/month" agree within 20% but the month is over the cap: review', () => {
+    const d = decide(normalizeGig(hn('We pay $80/hr. 18 hours per week, 91 hours per month.')));
     expect(d.verdict).toBe('review');
     expect(d.notes).toContain(MIXED);
   });
@@ -179,5 +195,33 @@ describe('minors', () => {
     app.upsertGig(row('himalayas', 'h1', '2026-10-14T13:00:00.000Z'));
     const shown = app.listGigs();
     expect(shown.map((g) => [g.sourceId, g.status, g.appliedAt])).toEqual([['h1', 'applied', '2026-10-13T10:00:00.000Z']]);
+  });
+});
+
+describe('routing: every contract wording the daily run rejects reaches the freelance run (closed allow-list)', () => {
+  it.each([
+    'employment:contract', 'employment:contractor', 'employment:freelance', 'employment:part-time', 'employment:temporary', 'employment:temp',
+    'employment:fixed-term', 'employment:fixed term', 'employment:contract-to-hire', 'employment:c2h', 'employment:6 months', 'employment:12-month contract',
+    'employment:3 month contract', 'Employment:Contractor',
+  ])('%s → freelance', (r) => expect(routesToFreelance(r)).toBe(true));
+
+  it.each(['employment:intern', 'employment:full-time', 'employment:hourly-ish', 'employment:6 monthly', 'employment:contract management', 'remote-excludes-india', 'company:contract', 'employment:', 'employment:999 months'])('%s → not routed', (r) =>
+    expect(routesToFreelance(r)).toBe(false),
+  );
+
+  it('the list is closed and exact', () => {
+    expect([...CONTRACT_REASONS]).toEqual(['contract', 'contractor', 'freelance', 'part-time', 'temporary', 'temp', 'fixed-term', 'contract-to-hire', 'c2h']);
+  });
+
+  it('contractPostings seeds exactly the routed jobs (no stored posting: listed as missing)', () => {
+    const app = AppStore.on(Store.open(':memory:'));
+    const reasons: [string, string[]][] = [
+      ['a000000000000001', ['employment:contract']], ['a000000000000002', ['employment:contractor']], ['a000000000000003', ['employment:fixed-term']],
+      ['a000000000000004', ['employment:contract-to-hire']], ['a000000000000005', ['employment:6 months']], ['a000000000000006', ['employment:temporary']],
+      ['a000000000000007', ['employment:intern']], ['a000000000000008', ['remote-excludes-india']], ['a000000000000009', []],
+    ];
+    reasons.forEach(([jobKey, r], i) => app.upsertJob(jobRow({ jobKey, dedupeKey: `d00000000000000${i}`, sourceId: String(i), verdict: r.length > 0 ? 'rejected' : 'eligible', reasons: r })));
+    const got = app.contractPostings('2000-01-01T00:00:00.000Z');
+    expect([...got.missing, ...got.postings.map((p) => p.jobKey)].sort()).toEqual(['a000000000000001', 'a000000000000002', 'a000000000000003', 'a000000000000004', 'a000000000000005', 'a000000000000006']);
   });
 });

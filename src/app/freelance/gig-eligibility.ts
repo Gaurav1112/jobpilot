@@ -407,10 +407,12 @@ export function convertedHours(text: string): { min: number; max: number; note: 
 }
 
 export const NOTE_MIXED_UNITS = 'hours stated in several ways; confirm';
-/** A per-week figure next to a per-month or per-day one that disagrees by over 20%, or either over the cap. */
-function mixedUnits(g: Gig, cap: number): boolean {
-  const week = g.hoursPerWeek.max ?? g.hoursPerWeek.min;
-  const others = convertedAll(g.description);
+/**
+ * A per-week figure (`week`: the resolved one, a "10+ hours per week" minimum included) next to a per-month or per-day
+ * one that disagrees by over 20%, or either over the cap.
+ */
+function mixedUnits(description: string, week: number | null, cap: number): boolean {
+  const others = convertedAll(description);
   if (week === null || others === null || others.length === 0) return false;
   return others.some((o) => week > cap || o.max > cap || Math.abs(o.max - week) > 0.2 * Math.max(o.max, week));
 }
@@ -427,7 +429,8 @@ export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
   }
   const ft = fullTime(text);
   // A per-week figure beside a per-month or per-day one that disagrees (controller decision 2026-10-15): review.
-  if (g.hoursPerWeek.min !== null && mixedUnits(g, cap)) return reviewOf('hours-unclear', NOTE_MIXED_UNITS);
+  // The resolved figure: the normalizer's per-week one, or a single "N+ hours per week" (re-review I6, 2026-10-15).
+  if (min !== null && mixedUnits(g.description, g.hoursPerWeek.max ?? min, cap)) return reviewOf('hours-unclear', NOTE_MIXED_UNITS);
   if (min !== null) {
     if (min > cap) {
       const status = figureStatus(g.description, min);
