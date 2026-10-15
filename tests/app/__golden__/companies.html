@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Companies · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance">Freelance</a><a href="/companies" aria-current="page">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+
+<div class="page-head">
+<h1>Companies</h1>
+<p class="lede">The companies whose own career sites jobpilot reads. The weekly coverage run finds and checks them; the daily run reads the verified ones (and the ones you approved).</p>
+<nav class="tabs" aria-label="Company lists"><a href="#verified-h">Verified <span class="num tab-count">1</span></a><a href="#proposed-h">Proposed <span class="num tab-count">1</span></a><a href="#failing-h">Failing <span class="num tab-count">1</span></a><a href="#rejected-h">Rejected <span class="num tab-count">0</span></a><a href="#unverified-h">Your picks not verified <span class="num tab-count">0</span></a><a href="#deferred-h">Deferred this week <span class="num tab-count">4</span></a></nav>
+</div>
+
+<div class="stack">
+<section class="card wide" aria-labelledby="proposed-h"><h2 id="proposed-h">Proposed <span class="num tab-count">1</span></h2>
+<p class="note">Found, but a check did not pass, so nothing is read until you approve. The reasons say what did not match.</p>
+<ul class="cos"><li class="co" id="co-bank-example" data-company="bank.example">
+<div class="co-head"><h3 class="co-name">Bank of Example</h3><span class="pill pill-warn">Proposed</span><span class="muted co-key">bank.example · remote-jobs list</span></div>
+<p class="co-found"><span>Oracle Recruiting <code>bank/External</code></span><span class="sep" aria-hidden="true">·</span><span>board <code>https://bank.example/board</code></span><span class="sep" aria-hidden="true">·</span><span>website <code>https://bank.example</code></span></p>
+<p class="co-links"><a class="src-link" href="https://bank.example/careers" rel="noopener noreferrer" target="_blank">Careers page<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+<p class="co-jobs"><span class="num">3</span> open on the board at the last check<span class="sep" aria-hidden="true">·</span><span class="muted">none in your lists yet</span></p>
+
+
+<ul class="plain co-reasons" aria-label="Why it is not verified"><li>board name &#39;Bank Careers&#39; ≈ &#39;bank&#39;, please confirm</li></ul>
+<p class="co-effect muted">Not read until you approve it.</p>
+<div class="btn-row"><form method="post" action="/companies/bank.example/approve"><input type="hidden" name="_csrf" value="x"><button class="btn btn-primary">Approve</button></form><form method="post" action="/companies/bank.example/reject"><input type="hidden" name="_csrf" value="x"><button class="btn">Reject</button></form></div>
+
+</li></ul>
+</section>
+<section class="card wide" aria-labelledby="verified-h"><h2 id="verified-h">Verified <span class="num tab-count">1</span></h2>
+<p class="note">Read by the daily run. Reject one to stop reading it from the next run.</p>
+<ul class="cos"><li class="co" id="co-acme-example" data-company="acme.example">
+<div class="co-head"><h3 class="co-name">Acme Robotics</h3><span class="pill pill-good">Verified</span><span class="muted co-key">acme.example · remote-jobs list</span></div>
+<p class="co-found"><span>Workday <code>acme/External</code></span><span class="sep" aria-hidden="true">·</span><span>board <code>https://acme.example/board</code></span><span class="sep" aria-hidden="true">·</span><span>website <code>https://acme.example</code></span></p>
+<p class="co-links"><a class="src-link" href="https://acme.example/careers" rel="noopener noreferrer" target="_blank">Careers page<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+<p class="co-jobs"><span class="num">3</span> open on the board at the last check<span class="sep" aria-hidden="true">·</span><a href="/?companyKey=acme.example&amp;band=disclosed&amp;band=undisclosed&amp;band=review&amp;band=below-floor&amp;band=rejected"><span class="num">1</span> passing your rules</a></p>
+<p class="hint">Last verified 11 Oct 2026</p>
+
+
+<p class="co-effect muted">Not read daily: no board is known for it yet (the next coverage run, or Resolve now, looks again).</p>
+<div class="btn-row"><form method="post" action="/companies/acme.example/reject"><input type="hidden" name="_csrf" value="x"><button class="btn">Reject</button></form></div>
+
+</li></ul>
+</section>
+<section class="card wide" aria-labelledby="failing-h"><h2 id="failing-h">Failing <span class="num tab-count">1</span></h2>
+<p class="note">Verified companies whose board stopped answering 3 weeks running. Still tried daily so they can recover; never removed without you.</p>
+<ul class="cos"><li class="co" id="co-globodyne-example" data-company="globodyne.example">
+<div class="co-head"><h3 class="co-name">Globodyne</h3><span class="pill pill-critical">Failing</span><span class="muted co-key">globodyne.example · remote-jobs list</span></div>
+<p class="co-found"><span>Workday <code>globodyne/External</code></span><span class="sep" aria-hidden="true">·</span><span>board <code>https://globodyne.example/board</code></span><span class="sep" aria-hidden="true">·</span><span>website <code>https://globodyne.example</code></span></p>
+<p class="co-links"><a class="src-link" href="https://globodyne.example/careers" rel="noopener noreferrer" target="_blank">Careers page<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+<p class="co-jobs"><span class="num">3</span> open on the board at the last check<span class="sep" aria-hidden="true">·</span><span class="muted">none in your lists yet</span></p>
+
+<p class="co-error"><strong>the board answered 404</strong> <span class="muted">failing since the week of 27 Sep 2026 (3 weeks)</span></p>
+
+<p class="co-effect muted">Not read daily: no board is known for it yet (the next coverage run, or Resolve now, looks again).</p>
+<div class="btn-row"><form method="post" action="/companies/globodyne.example/reject"><input type="hidden" name="_csrf" value="x"><button class="btn">Reject</button></form></div>
+
+</li></ul>
+</section>
+<section class="card wide" aria-labelledby="deferred-h"><h2 id="deferred-h">Deferred this week <span class="num tab-count">4</span></h2>
+<p class="note">Hosts this week's coverage run stopped asking (a refusal is never retried around). Their companies keep last week's state and are asked again next week.</p>
+<ul class="plain co-deferred"><li><code>careers.acme.example</code> rate-limited (HTTP 429) <span class="muted">(http-429)</span></li><li><code>jobs.hooli.example</code> answered with a bot challenge <span class="muted">(challenge)</span></li><li><code>umbrella.example</code> robots.txt refused <span class="muted">(robots-forbidden)</span></li><li><code>vandelay.example</code> robots.txt refused <span class="muted">(robots-forbidden)</span></li></ul>
+</section>
+<section class="card wide" aria-labelledby="rejected-h"><h2 id="rejected-h">Rejected <span class="num tab-count">0</span></h2>
+<p class="note">Never read and never verified again. Undo reject puts one back in Proposed; Approve makes it read daily.</p>
+<p class="muted">You have rejected none.</p>
+</section>
+<section class="card wide" aria-labelledby="unverified-h"><h2 id="unverified-h">Your picks not verified <span class="num tab-count">0</span></h2>
+<p class="note">Companies you picked whose board did not pass the check; the weekly run tries again.</p>
+<p class="muted">None.</p>
+</section>
+<section class="card wide" aria-labelledby="add-h" id="add"><h2 id="add-h">Add a company</h2>
+<p class="note">Give its website (https), and a name if you like. It is added to Proposed and found on the next coverage run, or now with Resolve now. Your companies.yaml is never edited.</p>
+
+<form class="filters co-add" method="post" action="/companies/add"><input type="hidden" name="_csrf" value="x">
+<div class="filter-row">
+<label class="field grow"><span>Website</span><input type="url" name="website" value="" placeholder="https://example.com" maxlength="300" inputmode="url"></label>
+<label class="field grow"><span>Name (optional)</span><input type="text" name="name" value="" placeholder="Example Co" maxlength="100"></label>
+<div class="filter-actions"><button class="btn btn-primary">Add</button></div>
+</div>
+</form>
+</section>
+</div>
+</main>
+</body>
+</html>

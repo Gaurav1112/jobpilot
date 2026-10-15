@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Data Engineer · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/" aria-current="page">Jobs</a><a href="/freelance">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+
+<header class="job-head">
+<p class="crumbs"><a href="/">Jobs</a></p>
+<h1>Data Engineer</h1>
+<p class="job-sub"><span class="job-company">Initrode</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span><span class="sep" aria-hidden="true">·</span><span>via Greenhouse</span></p>
+<div class="head-facts">
+<div class="fact-box"><span class="label">Pay</span><span class="comp-main num">Pay not disclosed</span></div>
+<div class="fact-box"><span class="label">Fit score</span><span class="big num">65</span></div>
+<div class="fact-box"><span class="label">Band</span><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></div>
+<div class="fact-box"><span class="label">Where</span><span class="pill pill-good" title="workplaceType:remote">Remote · India</span></div>
+</div>
+<p><a class="btn" href="https://boards.example.test/acme/jobs/1001" rel="noopener noreferrer" target="_blank">Open the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+</header>
+
+<div class="job-grid">
+<section class="card wide" aria-labelledby="docs"><h2 id="docs">Documents you can send <span class="pill pill-muted">No documents yet</span></h2>
+<p class="blocked">No documents yet: the next run makes them if this job qualifies.</p>
+
+</section>
+<section id="sent" class="card wide" aria-labelledby="sent-h" hidden>
+<h2 id="sent-h">Documents you sent</h2>
+
+
+</section>
+<section class="card" aria-labelledby="why"><h2 id="why">Why it matched</h2>
+<div class="table-wrap"><table class="breakdown">
+<thead><tr><th scope="col">What counted</th><th scope="col" class="num">Points</th></tr></thead>
+<tbody><tr><td>title</td><td class="num">+70</td></tr></tbody>
+<tfoot><tr><th scope="row">Score</th><td class="num">65</td></tr></tfoot>
+</table></div></section>
+<section class="card" aria-labelledby="elig"><h2 id="elig">Eligibility</h2>
+<p><span class="pill pill-good">Eligible</span></p>
+
+
+<p class="muted">Nothing to flag.</p>
+</section>
+<section id="status" class="card" aria-labelledby="status-h">
+<h2 id="status-h">Your status <span class="pill pill-good">Applied</span></h2>
+<p class="muted">Applied 12 Sep 2026</p>
+<form class="status-form" method="post" action="/jobs/9999999999999999/status" hx-post="/jobs/9999999999999999/status" hx-target="#status" hx-swap="outerHTML">
+<input type="hidden" name="_csrf" value="x">
+<div class="btn-row"><button class="btn" name="to" value="new" aria-pressed="false">Not started</button><button class="btn" name="to" value="approved" aria-pressed="false">Shortlisted</button><button class="btn btn-current" name="to" value="applied" aria-pressed="true">Applied</button><button class="btn" name="to" value="interview" aria-pressed="false">Interviewing</button><button class="btn" name="to" value="offer" aria-pressed="false">Offer</button><button class="btn" name="to" value="rejected" aria-pressed="false">Not selected</button><button class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
+</form>
+
+<p class="hint">Last change: Applied on 12 Sep 2026 (from your Application Desk)</p>
+</section>
+<section class="card" aria-labelledby="note-h"><h2 id="note-h">Your note</h2>
+<form method="post" action="/jobs/9999999999999999/note" hx-post="/jobs/9999999999999999/note" hx-target="#note-saved" hx-swap="innerHTML">
+<input type="hidden" name="_csrf" value="x">
+<label class="visually-hidden" for="note">Note</label>
+<textarea id="note" name="note" rows="4" maxlength="4000">from the desk</textarea>
+<div class="btn-row"><button class="btn">Save note</button><span id="note-saved" class="saved" role="status"></span></div>
+</form></section>
+<section class="card" aria-labelledby="ans"><h2 id="ans">Screening answers</h2>
+<p class="hint">From your answers.yaml, to copy into the application form; when this job has a cover letter, the short cover note is taken from it. Only the notice period goes into your documents.</p><dl class="answers"><div><dt>Notice period days</dt><dd>30</dd></div><div><dt>Work mode</dt><dd>remote</dd></div><div><dt>Open to relocation</dt><dd>No</dd></div><div><dt>Current ctc note</dt><dd>Prefer to discuss after the first round.</dd></div><div><dt>Available from</dt><dd>1 November 2026</dd></div><div><dt>Notice period</dt><dd>30 days</dd></div></dl>
+</section>
+<section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>
+<details><summary>Show the full text</summary><div class="jd">Build services.</div></details></section>
+</div>
+</main>
+</body>
+</html>

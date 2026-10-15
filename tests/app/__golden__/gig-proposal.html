@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Order service fixes · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance" aria-current="page">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+
+<header class="job-head">
+<p class="crumbs"><a href="/freelance">Freelance</a></p>
+<h1>Order service fixes</h1>
+<p class="job-sub"><span>Freelancer.com</span><span class="sep" aria-hidden="true">·</span><span>Gig</span><span class="sep" aria-hidden="true">·</span><span>posted 21 h ago</span><span class="sep" aria-hidden="true">·</span><span class="num">7 bids</span></p>
+<div class="head-facts">
+<div class="fact-box"><span class="label">Rate</span><span class="rate-label">$50/h from ~60 hours stated</span></div>
+<div class="fact-box"><span class="label">Hours</span><span>hours not stated</span></div>
+<div class="fact-box"><span class="label">IST overlap</span><span>not stated</span><span class="hint">your window 18:00–00:00 IST</span></div>
+<div class="fact-box"><span class="label">Fit</span><span class="big num" title="Starting points +30
+Core skill: Java +4
+Asks for php, which you don&#39;t list -4">70</span></div>
+</div>
+<p class="gig-coverage">covered 2/3 · missing: Kubernetes</p>
+<p><a class="src-link" href="https://www.freelancer.example/projects/a2a2a2a2a2a2a2a2" rel="noopener noreferrer" target="_blank">Open the original posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+</header>
+
+<div class="job-grid">
+<section class="card wide" aria-labelledby="paste-h">
+<h2 id="paste-h">Your proposal</h2>
+<div class="paste-bar">
+<button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/a2a2a2a2a2a2a2a2/files/proposal.txt" data-copy-target="paste" hidden>Copy</button>
+<span class="copy-status" role="status" aria-live="polite"></span>
+<span class="char-count num">96 / 1,500 characters</span>
+</div>
+<pre class="paste" id="paste">Your order service needs a careful hand.
+<span class="fact-src" data-fact="f-nw-01" title="Fact f-nw-01">At Contoso Retail I built the payments service in Java.</span>
+</pre>
+<p class="hint">Copy pastes exactly the .txt file. Hover an underlined line to see the fact it comes from. Paste it on Freelancer.com yourself: jobpilot never sends it.</p>
+<div class="downloads"><a class="btn" href="/freelance/a2a2a2a2a2a2a2a2/files/proposal.txt" download>Proposal (.txt)</a><a class="btn" href="/freelance/a2a2a2a2a2a2a2a2/files/resume.docx" download>Contract CV (Word, DOCX)</a><a class="btn" href="/freelance/a2a2a2a2a2a2a2a2/files/resume.pdf" download>Contract CV (PDF)</a></div>
+</section>
+
+<section id="sent" class="card wide" aria-labelledby="sent-h" hidden>
+<h2 id="sent-h">Documents you sent</h2>
+
+
+</section>
+<section class="card" aria-labelledby="checks-h"><h2 id="checks-h">Before you bid</h2>
+
+
+
+<p class="muted">Nothing to flag.</p>
+<p class="hint">The platform states nothing about the client.</p>
+</section>
+<section id="status" class="card" aria-labelledby="status-h">
+<h2 id="status-h">Your status <span class="pill pill-neutral">Not started</span></h2>
+
+<form class="status-form" method="post" action="/freelance/a2a2a2a2a2a2a2a2/status" hx-post="/freelance/a2a2a2a2a2a2a2a2/status" hx-target="#status" hx-swap="outerHTML">
+<input type="hidden" name="_csrf" value="x">
+<div class="btn-row"><button class="btn btn-current" name="to" value="new" aria-pressed="true">Not started</button><button class="btn" name="to" value="shortlisted" aria-pressed="false">Shortlisted</button><button class="btn" name="to" value="applied" aria-pressed="false">Applied</button><button class="btn" name="to" value="replied" aria-pressed="false">Replied</button><button class="btn" name="to" value="interviewing" aria-pressed="false">Interviewing</button><button class="btn" name="to" value="won" aria-pressed="false">Won</button><button class="btn" name="to" value="lost" aria-pressed="false">Lost</button><button class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
+</form>
+<p class="hint">New → Shortlisted → Applied → Replied → Interviewing → Won, Lost or Not for me. Applied keeps a read-only copy of what you sent.</p>
+
+
+</section>
+<section class="card" aria-labelledby="fit-h"><h2 id="fit-h">Fit <span class="num">70</span></h2>
+<div class="table-wrap"><table class="breakdown"><thead><tr><th scope="col">What counted</th><th scope="col" class="num">Points</th></tr></thead>
+<tbody><tr><td>Starting points</td><td class="num">+30</td></tr><tr><td>Core skill: Java</td><td class="num">+4</td></tr><tr class="neg"><td>Asks for php, which you don&#39;t list</td><td class="num">-4</td></tr></tbody></table></div>
+<p class="hint">Shown, not counted in the fit: Client signals 15, Hours since posted 5, Bids so far 7</p>
+</section>
+<section class="card wide" aria-labelledby="desc-h"><h2 id="desc-h">The posting</h2>
+<details><summary>Show the full text</summary><div class="jd">About 60 hours of work.</div></details></section>
+</div>
+</main>
+</body>
+</html>

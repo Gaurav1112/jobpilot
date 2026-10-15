@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Freelance sources · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance" aria-current="page">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+
+<div class="page-head">
+<h1>Freelance</h1>
+<p class="lede">What each source found in the last 8 weeks (IST weeks). Fetched, eligible, above floor and shortlisted are summed per run: a gig seen in two runs counts twice. Applied, replied and won count distinct gigs, from your own status changes.</p>
+<nav class="tabs" aria-label="Freelance"><a href="/freelance">Contracts <span class="num tab-count">1</span></a><a href="/freelance?tab=gigs">Gigs <span class="num tab-count">1</span></a><a href="/freelance?tab=review">Review <span class="num tab-count">2</span></a><a href="/freelance/networks">Networks <span class="num tab-count">8</span></a><a href="/freelance/sources" aria-current="page">Sources</a><a href="/freelance#contract-roles">Contract roles <span class="num tab-count">1</span></a></nav>
+</div>
+<div class="stack">
+<section class="card wide" aria-labelledby="disabled-h"><h2 id="disabled-h">Not fetched</h2>
+<ul class="plain"><li><strong>Remotive</strong> robots.txt disallows /api (2026-10-15)</li><li><strong>Gmail</strong> not connected - run jobpilot gmail connect</li><li><strong>Upwork</strong> API key pending approval</li><li><strong>Reddit</strong> needs your OAuth script app</li><li><strong>Himalayas</strong> turned off in your freelance.yaml</li></ul>
+</section>
+<section class="card wide" aria-labelledby="probs-h"><h2 id="probs-h">Problems in the last run <span class="hint">15 Oct 2026, 07:30 IST</span></h2>
+<ul class="plain problems-list"><li><span class="problem-kind">Failed</span> freelancer q1: http_error: 503</li></ul>
+</section>
+<section class="card wide" aria-labelledby="src-freelancer"><h2 id="src-freelancer">Freelancer.com</h2>
+<div class="table-wrap"><table class="counts"><thead><tr><td></td><th scope="colgroup" colspan="2">Runs</th><th scope="colgroup" colspan="4">Shortlisted and the rest: summed per run</th><th scope="colgroup" colspan="3">Applied and the rest: distinct gigs, from your status changes</th></tr>
+<tr><th scope="col">Week</th><th scope="col" class="num">Runs</th><th scope="col" class="num">Failed runs</th><th scope="col" class="num">Fetched</th><th scope="col" class="num">Eligible</th><th scope="col" class="num">Above floor</th><th scope="col" class="num">Shortlisted</th><th scope="col" class="num">Applied</th><th scope="col" class="num">Replied</th><th scope="col" class="num">Won</th></tr></thead>
+<tbody><tr><th scope="row" class="num">2026-W42</th><td class="num">1</td><td class="num zero">0</td><td class="num">46</td><td class="num">7</td><td class="num">5</td><td class="num">2</td><td class="num zero">0</td><td class="num zero">0</td><td class="num zero">0</td></tr></tbody></table></div></section>
+</div>
+</main>
+</body>
+</html>

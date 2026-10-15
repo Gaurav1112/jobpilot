@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Jobs · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/" aria-current="page">Jobs</a><a href="/freelance">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+
+<div class="page-head">
+<h1>Jobs</h1>
+<p class="lede"><span class="num">13</span> jobs shown, <span class="num">13</span> new since your last visit. Best pay first, then fit.</p>
+</div>
+<form class="filters" method="get" action="/" role="search" aria-label="Filter jobs">
+
+<div class="filter-row">
+<label class="field grow"><span>Search</span><input type="search" name="q" value="" placeholder="Company or title" maxlength="100"></label>
+<label class="field narrow"><span>Min score</span><input type="number" name="min" value="" min="0" max="200" step="1" inputmode="numeric"></label>
+<div class="filter-actions"><button class="btn btn-primary">Apply</button><a class="btn" href="/">Reset</a></div>
+</div>
+<fieldset><legend>Pay band</legend><label class="chip"><input type="checkbox" name="band" value="disclosed" checked><span>Pay at or above your floor</span></label><label class="chip"><input type="checkbox" name="band" value="undisclosed" checked><span>Pay not disclosed</span></label><label class="chip"><input type="checkbox" name="band" value="review" checked><span>Needs a look</span></label><label class="chip"><input type="checkbox" name="band" value="below-floor" checked><span>Below your floor</span></label><label class="chip"><input type="checkbox" name="band" value="rejected" checked><span>Not eligible</span></label></fieldset>
+<fieldset><legend>Status</legend><label class="chip"><input type="checkbox" name="status" value="new"><span>Not started</span></label><label class="chip"><input type="checkbox" name="status" value="approved"><span>Shortlisted</span></label><label class="chip"><input type="checkbox" name="status" value="applied"><span>Applied</span></label><label class="chip"><input type="checkbox" name="status" value="interview"><span>Interviewing</span></label><label class="chip"><input type="checkbox" name="status" value="offer"><span>Offer</span></label><label class="chip"><input type="checkbox" name="status" value="rejected"><span>Not selected</span></label><label class="chip"><input type="checkbox" name="status" value="skipped"><span>Not for me</span></label></fieldset>
+</form>
+<ol class="jobs" aria-label="Jobs"><li class="job" data-job="2222222222222222">
+<div class="job-comp"><span class="comp-main num">$125k–150k</span><span class="comp-inr num">≈ ₹1.04–1.25 Cr</span><span class="job-band"><span class="pill pill-good" title="Pay at or above your floor">Pay ≥ floor</span></span></div>
+<div class="job-score num" title="Fit score">70</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/2222222222222222">Staff Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Globex</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="">Remote · United States, Canada</span><span class="pill pill-accent">office/hybrid: Pune</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="1111111111111111">
+<div class="job-comp"><span class="comp-main num">₹70–90 LPA</span><span class="job-band"><span class="pill pill-good" title="Pay at or above your floor">Pay ≥ floor</span></span></div>
+<div class="job-score num" title="Fit score">80</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/1111111111111111">Senior Backend Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Acme Robotics</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span><span class="sep" aria-hidden="true">·</span><span class="muted">also listed on Himalayas</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-good">Documents ready</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="3333333333333333">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">90</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/3333333333333333">Platform Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Hooli</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="dddddddddddddddd">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">77</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/dddddddddddddddd">Go Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Cyberdyne</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-muted">Not for me</span></div>
+</li><li class="job" data-job="cccccccccccccccc">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">72</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/cccccccccccccccc">Java Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Massive Dynamic</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="eeeeeeeeeeeeeeee">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">68</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/eeeeeeeeeeeeeeee">Kotlin Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">GitLabs Example</span><span class="sep" aria-hidden="true">·</span><span></span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="aaaaaaaaaaaaaaaa">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">66</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/aaaaaaaaaaaaaaaa">Backend Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">山 Systems</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-critical">Documents blocked</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="9999999999999999">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">65</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/9999999999999999">Data Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Initrode</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+<p class="job-history">From your Application Desk: Applied on 12 Sep 2026</p>
+</div>
+<div class="job-status"><span class="pill pill-good">Applied</span></div>
+</li><li class="job" data-job="7777777777777777">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">60</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/7777777777777777">&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&quot; onmouseover=&quot;y</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">O&#39;Reilly &amp; Sons</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="bbbbbbbbbbbbbbbb">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-neutral" title="Pay not disclosed">Pay unknown</span></span></div>
+<div class="job-score num" title="Fit score">50</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/bbbbbbbbbbbbbbbb">Backend Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">[hidden: contains a forbidden term]</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-accent">B2B contractor: no PF/benefits</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="4444444444444444">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-warn" title="Needs a look">Needs a look</span></span></div>
+<div class="job-score num" title="Fit score">85</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/4444444444444444">Backend Developer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Vandelay</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="6666666666666666">
+<div class="job-comp"><span class="comp-main num">₹4–10 LPA</span><span class="job-band"><span class="pill pill-muted" title="Below your floor">Below floor</span></span></div>
+<div class="job-score num" title="Fit score">75</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/6666666666666666">Junior Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Soylent</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li><li class="job" data-job="5555555555555555">
+<div class="job-comp"><span class="comp-main num">Pay not disclosed</span><span class="job-band"><span class="pill pill-critical" title="Not eligible">Not eligible</span></span></div>
+<div class="job-score num" title="Fit score">–</div>
+<div class="job-main">
+<h2 class="job-title"><a href="/jobs/5555555555555555">Frontend Engineer</a> <span class="new">New since your last visit</span></h2>
+<p class="job-sub"><span class="job-company">Umbrella</span><span class="sep" aria-hidden="true">·</span><span>Remote, India</span></p>
+<p class="job-pills"><span class="pill pill-good" title="workplaceType:remote">Remote · India</span><span class="pill pill-muted">No documents yet</span></p>
+<p class="job-reasons">Not eligible: The title matches a role you filtered out <code>role:front[- ]?end</code>; onsite <code>onsite</code></p>
+
+</div>
+<div class="job-status"><span class="pill pill-neutral">Not started</span></div>
+</li></ol>
+</main>
+</body>
+</html>
