@@ -92,7 +92,12 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
   const backupRel = `${BACKUPS_DIR}/adopt-${stampOf(at)}`;
   const home = profileHome(o.root, o.id);
   return withLock(o.root, 'profile adopt', async () => {
-    const loaded = launchd.before();
+    let loaded: string[];
+    try {
+      loaded = launchd.before();
+    } catch (e) {
+      throw new AdoptError(`could not unload the scheduled jobs (${e instanceof Error ? e.message : String(e)}); nothing was moved; "jobpilot schedule install" reloads them`);
+    }
     checkpoint(o.root);
     const names = readdirSync(o.root).filter((n) => !isMachineEntry(n)).sort();
     await backup(o.root, names, join(o.root, backupRel));
@@ -131,6 +136,16 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
   }, o.probe ?? systemProbe);
 }
 
+/** The machine-level `logs/` (the dashboard log of a profiles root) folds into the home's own `logs/` so the home is whole again; a name taken there keeps the home's file and gets `.machine`. */
+function foldMachineLogs(root: string, home: string): void {
+  const from = join(root, 'logs');
+  if (!existsSync(from)) return;
+  const to = join(home, 'logs');
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  for (const n of readdirSync(from)) renameSync(join(from, n), join(to, existsSync(join(to, n)) ? `${n}.machine` : n));
+  rmdirSync(from);
+}
+
 export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: UnadoptLaunchd; probe?: ProcessProbe }): Promise<string[]> {
   let journal: AdoptJournal;
   try {
@@ -145,6 +160,7 @@ export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: 
   const backupRel = `${BACKUPS_DIR}/unadopt-${stampOf(o.clock.now())}`;
   await withLock(home, 'profile unadopt', async () => {
     launchd.before(journal.id);
+    foldMachineLogs(o.root, home);
     checkpoint(home);
     const names = readdirSync(home).filter((n) => n !== META_FILE && !n.startsWith('jobpilot.lock') && !TEMP.test(n)).sort();
     const clash = names.filter((n) => existsSync(join(o.root, n)));

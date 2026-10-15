@@ -27,6 +27,7 @@ import { formatImportReport, importPack, planImport } from './app/pack/import.js
 import { homePaths, jobpilotHome, selectedProfile, selectProfile } from './app/pack/paths.js';
 import { ProfileError, jobpilotRoot, profileHome, resolveHome } from './app/profiles/root.js';
 import { createProfile, removeProfile, useProfile } from './app/profiles/commands.js';
+import { adoptLaunchd, unadoptLaunchd } from './app/profiles/adopt-launchd.js';
 import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
 import { listProfiles } from './app/profiles/meta.js';
 import type { Fact } from './app/pack/schema.js';
@@ -788,17 +789,21 @@ profileCmd.command('remove <id>').description('Unload the profile\'s launchd job
   }),
 );
 
-// Task 7 replaces these with the real launchd wiring.
-const cliAdoptLaunchd = (): typeof NO_LAUNCHD => NO_LAUNCHD;
-const cliUnadoptLaunchd = (): typeof NO_UNADOPT_LAUNCHD => NO_UNADOPT_LAUNCHD;
-profileCmd.command('adopt <id>').description('Turn this single jobpilot home into profile <id>: back up, then move everything into ~/.jobpilot/profiles/<id> under the run lock; reversible with "profile unadopt"').action((id: string) =>
+const launchdTarget = () => {
+  if (process.getuid === undefined) throw new Error('profile adopt needs a POSIX user id (macOS)');
+  return { root: jobpilotRoot(), node: process.execPath, repo: root, uid: process.getuid() };
+};
+const cliAdoptLaunchd = (o: { launchd?: boolean }) => (o.launchd === false ? NO_LAUNCHD : adoptLaunchd(launchdTarget()));
+const cliUnadoptLaunchd = (o: { launchd?: boolean }) => (o.launchd === false ? NO_UNADOPT_LAUNCHD : unadoptLaunchd(launchdTarget()));
+const NO_LAUNCHD_HELP = 'leave the launchd jobs alone (rehearsals on a copy of a home: launchd labels are machine-wide)';
+profileCmd.command('adopt <id>').description('Turn this single jobpilot home into profile <id>: back up, then move everything into ~/.jobpilot/profiles/<id> under the run lock; reversible with "profile unadopt"').option('--no-launchd', NO_LAUNCHD_HELP).action((id: string, o: { launchd?: boolean }) =>
   guarded(async () => {
-    for (const l of (await adoptProfile({ root: jobpilotRoot(), id, clock: systemClock, launchd: cliAdoptLaunchd() })).lines) console.log(l);
+    for (const l of (await adoptProfile({ root: jobpilotRoot(), id, clock: systemClock, launchd: cliAdoptLaunchd(o) })).lines) console.log(l);
   }),
 );
-profileCmd.command('unadopt').description('Undo "profile adopt": move the adopted profile back to a single home (only while it is the only profile)').action(() =>
+profileCmd.command('unadopt').description('Undo "profile adopt": move the adopted profile back to a single home (only while it is the only profile)').option('--no-launchd', NO_LAUNCHD_HELP).action((o: { launchd?: boolean }) =>
   guarded(async () => {
-    for (const l of await unadoptProfile({ root: jobpilotRoot(), clock: systemClock, launchd: cliUnadoptLaunchd() })) console.log(l);
+    for (const l of await unadoptProfile({ root: jobpilotRoot(), clock: systemClock, launchd: cliUnadoptLaunchd(o) })) console.log(l);
   }),
 );
 
