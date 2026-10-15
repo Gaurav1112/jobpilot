@@ -13,6 +13,7 @@ import type { Envelope } from '../../../src/kernel/envelope.js';
 import { freezePack } from '../../../src/kernel/broker.js';
 import type { GuardrailContext } from '../../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
+import { FICTIONAL, gigCoverEvalCases, gigCoverEvalText } from '../../support/gig-cover-eval.js';
 import { boardRole, fixturePack, scoredGig } from '../../support/gig-fixtures.js';
 
 /**
@@ -175,6 +176,13 @@ describe('the gig-cover-grounding eval (fictional fixtures, gate exactMatch 1.00
     expect(new Set(withCover.map((c) => c.input.risked.verdict.rated.gig.platform))).toEqual(new Set(['boards', 'himalayas']));
     expect(cases.filter((c) => !c.expected.cover).length).toBeGreaterThanOrEqual(4);
     expect(cases.every((c) => c.expected.pass)).toBe(true);
+  });
+
+  it('is exactly what the committed generator gives (tests/support/gig-cover-eval.ts), descriptions fictional', async () => {
+    const cases = await gigCoverEvalCases();
+    expect(readFileSync(join(root, 'evals/datasets/gig-cover-grounding.jsonl'), 'utf8')).toBe(gigCoverEvalText(cases));
+    const fictional = new Set(FICTIONAL);
+    for (const c of cases.filter((x) => x.id.startsWith('himalayas-'))) expect(fictional.has(c.input.risked.verdict.rated.gig.description), c.id).toBe(true);
   });
 
   it('holds no personal data and no real pack value: fictional companies and the fixture pack only', () => {
