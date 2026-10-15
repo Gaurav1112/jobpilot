@@ -44,7 +44,7 @@ import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
 import { keychain, secretsFor } from './app/secrets.js';
-import { registerShadow } from './app/hosted/cli.js';
+import { registerHosted, registerShadow } from './app/hosted/cli.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -768,5 +768,6 @@ schedule
   );
 
 registerShadow(program);
+registerHosted(program);
 
 await program.parseAsync();
