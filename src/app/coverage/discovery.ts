@@ -7,6 +7,7 @@ import { isChallenge } from '../challenge.js';
 import { officeCity } from '../text/norm.js';
 import { boardOfRow, checkPage, evidenceOf, FREEHIRE_API, FREEHIRE_HOST, LEAD_SOURCE_DENY, stripTracking } from './freehire-api.js';
 import { isRealCompanyName, refOfFreehireBoard } from './freehire-boards.js';
+import type { RunGate } from './gate.js';
 import { FreehireFinding, FreehireQuery } from './types.js';
 
 /**
@@ -96,11 +97,20 @@ const postedDate = (v: string | null): string | null => (v !== null && /^\d{4}-\
 const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
- * The agent, with fresh host state (one flag: disabled for the rest of the run); the coverage run builds one per run
- * (`coverageAgents`), so a refusal never outlives it.
+ * The agent. Its host state (one flag: freehire.me disabled for the rest of the run) lives in the run's `gate` when one
+ * is given: the coverage run (`coverageAgents`) passes its persisted gate, so a refusal survives a pause, a slice limit
+ * or a crash and a resume under the same run id sends nothing more to freehire.me. The flag is read raw (never through
+ * `disabledWhy`, whose 429 expiry is for page crawling): a refusal here lasts the whole run. Without a gate (tests, the
+ * export) the flag lives in this agent only.
  */
-export function makeSrcFreehireDiscovery(): Agent<FreehireQuery, FreehireFinding> {
-  let disabled: string | undefined;
+export function makeSrcFreehireDiscovery(opts: { readonly gate?: RunGate } = {}): Agent<FreehireQuery, FreehireFinding> {
+  let local: string | undefined;
+  const { gate } = opts;
+  const disabledWhy = (): string | undefined => (gate !== undefined ? gate.state.disabled.get(FREEHIRE_HOST) : local);
+  const disable = (why: string, at: string): void => {
+    if (gate !== undefined) gate.disable(FREEHIRE_HOST, why, at);
+    else local ??= why;
+  };
   return defineAgent(srcFreehireDiscoveryContract(), async (q, ctx) => {
     if (!ctx.http) throw new KernelError('policy_denied', 'no http capability issued');
     if (!q.url.startsWith(`${FREEHIRE_API}/`)) throw new KernelError('input_rejected', `${q.queryId}: not a ${FREEHIRE_HOST} API request`);
@@ -108,9 +118,10 @@ export function makeSrcFreehireDiscovery(): Agent<FreehireQuery, FreehireFinding
       ctx.skipped([`freehire-outage ${q.queryId}: ${why}`]);
       return [];
     };
+    const disabled = disabledWhy();
     if (disabled !== undefined) return outage(`host-disabled:${disabled} on ${FREEHIRE_HOST}`);
     const refuse = (why: string, what: string): FreehireFinding[] => {
-      disabled ??= why;
+      disable(why, ctx.clock.now());
       return outage(`freehire ${what}; host-disabled:${why} on ${FREEHIRE_HOST} for the rest of the run, never retried`);
     };
 

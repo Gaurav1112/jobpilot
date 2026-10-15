@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CAPABILITY_ALLOW_LIST, capabilityProblems } from '../../../src/app/allow-list.js';
 import { DISCOVERY_MAX_QUERIES, discoveryQueries, makeSrcFreehireDiscovery, srcFreehireDiscoveryContract } from '../../../src/app/coverage/discovery.js';
+import { makeRunGate, memoryHostStateStore } from '../../../src/app/coverage/gate.js';
 import type { FreehireFinding, FreehireQuery } from '../../../src/app/coverage/types.js';
 import { issueContext, type HostPacer } from '../../../src/kernel/broker.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
@@ -232,7 +233,22 @@ describe('src-freehire-discovery: it fails closed', () => {
     expect(f.calls).toHaveLength(1);
   });
 
-  it('a fresh agent (the next run) starts with the host enabled', async () => {
+  it('a resume (a fresh agent on the same run gate) keeps the host disabled: q4 makes no request', async () => {
+    const store = memoryHostStateStore();
+    const f = freehire({ q3: { status: 429, body: 'x' } });
+    await makeSrcFreehireDiscovery({ gate: makeRunGate({ runKey: 'coverage-2026-10-18', store }) }).run(q('q3'), ctxFor(f));
+    expect(store.coverageHostState('coverage-2026-10-18').get('freehire.me')).toBe('http-429');
+    // the run paused; the next invocation builds a new gate from the store and a new agent
+    const c = ctxFor(f);
+    expect(await makeSrcFreehireDiscovery({ gate: makeRunGate({ runKey: 'coverage-2026-10-18', store }) }).run(q('q4'), c)).toEqual([]);
+    expect(c.skips()).toEqual(['freehire-outage q4: host-disabled:http-429 on freehire.me']);
+    expect(f.calls).toHaveLength(1);
+    // another run id (the next week's run) starts with the host enabled
+    const d = ctxFor(freehire());
+    expect((await makeSrcFreehireDiscovery({ gate: makeRunGate({ runKey: 'coverage-2026-10-25', store }) }).run(q('q4'), d)).length).toBeGreaterThan(0);
+  });
+
+  it('a fresh agent without a gate (the next run) starts with the host enabled', async () => {
     const f = freehire({ q3: { status: 429, body: 'x' } });
     await makeSrcFreehireDiscovery().run(q('q3'), ctxFor(f));
     const c = ctxFor(freehire());

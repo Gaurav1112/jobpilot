@@ -81,9 +81,9 @@ export function coveragePolicy(pack: Pick<Pack, 'policyUser'>): Policy {
 /** The policy hash of the coverage run (as the daily and freelance runs hash theirs): in every step key and the run row. */
 export const coveragePolicyHash = (pack: Pick<Pack, 'policyUser'>): string => policyHash(coveragePolicy(pack));
 
-/** The five agents of one coverage run, on its gate, in stage order (the discovery agent has fresh host state per run). */
+/** The five agents of one coverage run, on its gate, in stage order (every fetching agent keeps its host state in the run's persisted gate). */
 export function coverageAgents(gate: RunGate): Record<StageId, AnyAgent> {
-  return { seed: companySeed, discover: makeSrcFreehireDiscovery(), locate: makeCareersLocator({ gate }), detect: makePlatformDetector({ gate }), verify: makeBoardVerifier({ gate }) };
+  return { seed: companySeed, discover: makeSrcFreehireDiscovery({ gate }), locate: makeCareersLocator({ gate }), detect: makePlatformDetector({ gate }), verify: makeBoardVerifier({ gate }) };
 }
 
 /** The coverage agents for the contract export and the allow-list check (their contracts do not depend on a gate). */
