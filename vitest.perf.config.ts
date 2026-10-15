@@ -14,5 +14,7 @@ export default defineConfig({
     testTimeout: 300_000,
     hookTimeout: 300_000,
     setupFiles: ['tests/support/net-guard.ts'],
+    // one private temp root per run (TMPDIR), removed at the end: tests cannot leak into the real os.tmpdir()
+    globalSetup: ['tests/support/tmp-global-setup.ts'],
   },
 });
