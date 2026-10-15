@@ -2,6 +2,7 @@ import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
 import { appliedAgo, countText, dateText, scoreText } from '../format.js';
 import { isFollowUpDue } from '../../triage.js';
 import { externalUrl, html, type Html } from '../html.js';
+import { u } from '../paths.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
 import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
 
@@ -12,6 +13,7 @@ export interface Recommended {
 }
 
 export interface JobPageData {
+  readonly base: string;
   readonly job: JobDetail;
   readonly sent: SentData;
   readonly csrf: string;
@@ -43,11 +45,11 @@ function leadVia(j: JobDetail): string | null {
   return cut > 0 ? id.slice(0, cut) : null;
 }
 
-function header(j: JobDetail, back?: JobPageData['back']): Html {
+function header(base: string, j: JobDetail, back?: JobPageData['back']): Html {
   const url = externalUrl(j.url);
   const via = j.ats === 'freehire' ? leadVia(j) : null;
   return html`<header class="job-head">
-<p class="crumbs"><a href="${back?.from ?? '/'}#job-${j.jobKey}">← Jobs</a></p>
+<p class="crumbs"><a href="${u(base, back?.from ?? '/')}#job-${j.jobKey}">← Jobs</a></p>
 <h1>${j.title}</h1>
 <p class="job-sub">${meta([
   j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
@@ -65,9 +67,9 @@ ${url !== undefined ? html`<p><a class="btn btn-primary" href="${url}" rel="noop
 </header>`;
 }
 
-function duplicates(j: JobDetail, preferred: JobPageData['preferred']): Html | '' {
+function duplicates(base: string, j: JobDetail, preferred: JobPageData['preferred']): Html | '' {
   if (preferred !== null) {
-    return html`<p class="note">This is another listing of <a href="/jobs/${preferred.jobKey}">the same job on ${sourceName(preferred.source)}</a>; status and note are shared.</p>`;
+    return html`<p class="note">This is another listing of <a href="${u(base, '/jobs/' + preferred.jobKey)}">the same job on ${sourceName(preferred.source)}</a>; status and note are shared.</p>`;
   }
   if (j.alsoListedOn.length === 0) return '';
   return html`<p class="note">Also listed on ${j.alsoListedOn.map(sourceName).join(', ')}. Status and note are shared across the listings.</p>`;
@@ -97,18 +99,18 @@ ${j.reasons.length === 0 && j.notes.length === 0 ? html`<p class="muted">Nothing
 </section>`;
 }
 
-function downloads(j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Html {
+function downloads(base: string, j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Html {
   const files = j.docs.filter((d) => d.kind === kind && d.format !== 'html').sort((a, b) => Number(b.format === rec.format) - Number(a.format === rec.format));
   return html`<div class="downloads">${files.map((d) => {
     const isRec = d.format === rec.format;
-    return html`<a class="btn" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}<span class="visually-hidden"> of the ${kind === 'resume' ? 'resume' : 'cover letter'}</span>${isRec ? ' (recommended)' : ''}</a>`;
+    return html`<a class="btn" href="${u(base, '/jobs/' + j.jobKey + '/files/' + d.kind + '.' + d.format)}" download>Download ${FORMAT_NAME[d.format]}<span class="visually-hidden"> of the ${kind === 'resume' ? 'resume' : 'cover letter'}</span>${isRec ? ' (recommended)' : ''}</a>`;
   })}</div>`;
 }
 
-function preview(j: JobDetail, kind: 'resume' | 'cover'): Html {
+function preview(base: string, j: JobDetail, kind: 'resume' | 'cover'): Html {
   const h = j.docs.find((d) => d.kind === kind && d.format === 'html');
   if (!h) return html`<p class="muted">No preview for this document.</p>`;
-  const src = ['/jobs', j.jobKey, 'files', [h.kind, h.format].join('.')].join('/');
+  const src = u(base, ['/jobs', j.jobKey, 'files', [h.kind, h.format].join('.')].join('/'));
   const name = kind === 'resume' ? 'resume' : 'cover letter';
   // amendment 3: closed everywhere; a lazy frame inside a closed <details> loads when opened, on a phone too
   return html`<details class="preview-box"><summary>Preview the ${name}</summary>
@@ -141,7 +143,7 @@ ${
   reason !== null || j.docs.length === 0
     ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
     : html`<p class="hint">Recommended for ${d.recommended.for}: ${FORMAT_NAME[d.recommended.format]}.</p>
-<div class="doc-grid"><div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}</div><div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}</div></div>`
+<div class="doc-grid"><div class="doc"><h3>Resume</h3>${downloads(d.base, j, 'resume', d.recommended)}</div><div class="doc"><h3>Cover letter</h3>${downloads(d.base, j, 'cover', d.recommended)}</div></div>`
 }
 </section>`;
 }
@@ -156,8 +158,8 @@ ${
   previewable
     ? html`<p class="hint">Every line comes from one of your facts, listed under “Facts these documents cite”.</p>
 <div class="doc-grid">
-<div class="doc"><h3>Resume</h3>${preview(j, 'resume')}</div>
-<div class="doc"><h3>Cover letter</h3>${preview(j, 'cover')}</div>
+<div class="doc"><h3>Resume</h3>${preview(d.base, j, 'resume')}</div>
+<div class="doc"><h3>Cover letter</h3>${preview(d.base, j, 'cover')}</div>
 </div>
 ${citedFacts(d.cited)}`
     : ''
@@ -167,6 +169,7 @@ ${t}
 }
 
 export interface SentData {
+  readonly base: string;
   readonly jobKey: string;
   readonly snapshots: readonly Snapshot[];
   /** Per snapshot day: the date of the last download before it whose file differs from the kept copy, if any. */
@@ -187,7 +190,7 @@ export function sentSection(d: SentData, oob = false): Html {
 ${
   d.canKeep
     ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
-<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(d.csrf)}<button id="keep-copy" class="btn">Keep a copy of these documents now</button></form>`
+<form method="post" action="${u(d.base, '/jobs/' + d.jobKey + '/keep')}" hx-post="${u(d.base, '/jobs/' + d.jobKey + '/keep')}" hx-target="#sent" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(d.csrf)}<button id="keep-copy" class="btn">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
@@ -201,7 +204,7 @@ ${d.snapshots.map(
       : ''
   }<ul class="plain sent-files">${s.files.map(
     (f) =>
-      html`<li><a href="/jobs/${d.jobKey}/sent/${s.day}/${f.kind}.${f.format}"${f.format === 'html' ? '' : html` download`}>${KIND_NAME[f.kind]} · ${FORMAT_NAME[f.format]}</a>${
+      html`<li><a href="${u(d.base, '/jobs/' + d.jobKey + '/sent/' + s.day + '/' + f.kind + '.' + f.format)}"${f.format === 'html' ? '' : html` download`}>${KIND_NAME[f.kind]} · ${FORMAT_NAME[f.format]}</a>${
         f.format === 'html' ? html` <span class="muted">(preview)</span>` : ''
       }</li>`,
   )}</ul></div>`,
@@ -212,14 +215,14 @@ ${d.snapshots.map(
 /** The status block: the current status, a button per status, and any message. Returned alone to htmx. */
 export function statusSection(
   j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history' | 'company'>,
-  o: { csrf: string; istDay: (iso: string) => string; now: string; flash?: string; back?: JobPageData['back'] },
+  o: { base: string; csrf: string; istDay: (iso: string) => string; now: string; flash?: string; back?: JobPageData['back'] },
 ): Html {
   const { csrf, istDay, flash, back } = o;
   const last = j.history.at(-1);
   return html`<section id="status" class="card" data-live="Status set to ${STATUS_LABEL[j.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${statusPill(j.status)}</h2>
 ${j.appliedAt !== null ? html`<p class="muted">You applied to ${j.company} ${appliedAgo(j.appliedAt, o.now)} (${dateText(istDay(j.appliedAt))}).${j.status === 'applied' && isFollowUpDue(j.appliedAt, null, o.now) ? html` <strong>Follow-up due.</strong>` : ''}</p>` : ''}
-<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
+<form class="status-form" method="post" action="${u(o.base, '/jobs/' + j.jobKey + '/status')}" hx-post="${u(o.base, '/jobs/' + j.jobKey + '/status')}" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
 ${csrfField(csrf)}
 ${back !== undefined ? html`<input type="hidden" name="from" value="${back.from}">${back.next !== undefined ? html`<input type="hidden" name="next" value="${back.next}">` : ''}` : ''}
 <div class="btn-row">${STATUSES.map(
@@ -231,9 +234,9 @@ ${last !== undefined ? html`<p class="hint">Last change: ${last.from === null ? 
 </section>`;
 }
 
-export function noteSection(j: Pick<JobDetail, 'jobKey' | 'note'>, csrf: string): Html {
+export function noteSection(base: string, j: Pick<JobDetail, 'jobKey' | 'note'>, csrf: string): Html {
   return html`<section class="card" aria-labelledby="note-h"><h2 id="note-h">Your note</h2>
-<form method="post" action="/jobs/${j.jobKey}/note" hx-post="/jobs/${j.jobKey}/note" hx-target="#note-saved" hx-swap="innerHTML" hx-disabled-elt="find button">
+<form method="post" action="${u(base, '/jobs/' + j.jobKey + '/note')}" hx-post="${u(base, '/jobs/' + j.jobKey + '/note')}" hx-target="#note-saved" hx-swap="innerHTML" hx-disabled-elt="find button">
 ${csrfField(csrf)}
 <label class="visually-hidden" for="note">Note</label>
 <textarea id="note" name="note" rows="4" maxlength="4000">${j.note}</textarea>
@@ -255,17 +258,17 @@ ${
 
 export function jobBody(d: JobPageData): Html {
   const j = d.job;
-  return html`${header(j, d.back)}
-${duplicates(j, d.preferred)}
+  return html`${header(d.base, j, d.back)}
+${duplicates(d.base, j, d.preferred)}
 <div class="job-grid">
-${statusSection(j, { csrf: d.csrf, istDay: d.istDay, now: d.now, ...(d.flash !== undefined ? { flash: d.flash } : {}), ...(d.back !== undefined ? { back: d.back } : {}) })}
+${statusSection(j, { base: d.base, csrf: d.csrf, istDay: d.istDay, now: d.now, ...(d.flash !== undefined ? { flash: d.flash } : {}), ...(d.back !== undefined ? { back: d.back } : {}) })}
 ${sendCard(d)}
 ${answers(d.answers)}
 ${whyMatched(j, d.display)}
 ${eligibility(j)}
 ${documents(d)}
 ${sentSection(d.sent)}
-${noteSection(j, d.csrf)}
+${noteSection(d.base, j, d.csrf)}
 <section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>
 <details><summary>Show the full text</summary><div class="jd">${j.jdText}</div></details></section>
 </div>`;

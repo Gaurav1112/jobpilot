@@ -1,5 +1,6 @@
 import { countText, dateText } from '../format.js';
 import { html, type Html } from '../html.js';
+import { u } from '../paths.js';
 import { csrfField, meta, pager, pill, type Tone } from './common.js';
 
 /**
@@ -11,10 +12,10 @@ import { csrfField, meta, pager, pill, type Tone } from './common.js';
  */
 
 /** A URL from the web that may become a link out of the dashboard: https only, no credentials; else undefined (shown as text). */
-export function httpsUrl(u: string | null): string | undefined {
-  if (u === null) return undefined;
+export function httpsUrl(raw: string | null): string | undefined {
+  if (raw === null) return undefined;
   try {
-    const url = new URL(u);
+    const url = new URL(raw);
     return url.protocol === 'https:' && url.username === '' && url.password === '' ? url.href : undefined;
   } catch {
     return undefined;
@@ -69,6 +70,7 @@ export interface AddFormView {
 }
 
 export interface CompaniesPageData {
+  readonly base: string;
   readonly lists: Readonly<Record<CompanyList, readonly CompanyRowView[]>>;
   /** Companies from the seed lists whose board did not pass (not listed: the lists are long). */
   readonly hiddenFailed: number;
@@ -104,8 +106,8 @@ export function deferWhy(why: string): string {
 }
 
 const anchor = (key: string): string => 'co-' + key.replace(/[^a-z0-9-]/g, '-');
-const action = (key: string, verb: 'approve' | 'reject' | 'resolve' | 'undo', label: string, csrf: string, primary = false): Html =>
-  html`<form method="post" action="/companies/${encodeURIComponent(key)}/${verb}">${csrfField(csrf)}<button class="btn${primary ? ' btn-primary' : ''}">${label}</button></form>`;
+const action = (base: string, key: string, verb: 'approve' | 'reject' | 'resolve' | 'undo', label: string, csrf: string, primary = false): Html =>
+  html`<form method="post" action="${u(base, '/companies/' + encodeURIComponent(key) + '/' + verb)}">${csrfField(csrf)}<button class="btn${primary ? ' btn-primary' : ''}">${label}</button></form>`;
 
 function careersLink(c: CompanyRowView): Html {
   const url = httpsUrl(c.careersUrl);
@@ -113,13 +115,13 @@ function careersLink(c: CompanyRowView): Html {
   return c.careersUrl === null ? html`<span class="muted">no careers page found</span>` : html`<span class="muted">careers page (not https, not linked): <code>${c.careersUrl}</code></span>`;
 }
 
-function jobsLine(c: CompanyRowView): Html {
+function jobsLine(base: string, c: CompanyRowView): Html {
   const listed = c.jobs.passing + c.jobs.notEligible;
   const board = c.jobsSeen === null ? '' : html`<span class="num">${c.jobsSeen}</span> open on the board at the last check<span class="sep" aria-hidden="true">·</span>`;
   return html`<p class="co-jobs">${board}${
     listed === 0
       ? html`<span class="muted">none in your lists yet</span>`
-      : html`<a href="${c.jobsHref}"><span class="num">${c.jobs.passing}</span> passing your rules${c.jobs.notEligible > 0 ? html`, <span class="num">${c.jobs.notEligible}</span> not eligible` : ''}</a>`
+      : html`<a href="${u(base, c.jobsHref)}"><span class="num">${c.jobs.passing}</span> passing your rules${c.jobs.notEligible > 0 ? html`, <span class="num">${c.jobs.notEligible}</span> not eligible` : ''}</a>`
   }</p>`;
 }
 
@@ -140,17 +142,17 @@ function row(c: CompanyRowView, list: CompanyList, d: CompaniesPageData): Html {
   };
   const [label, tone] = status[list];
   const buttons: Html[] = [];
-  if (list === 'proposed' || list === 'rejected') buttons.push(action(c.key, 'approve', 'Approve', d.csrf, list === 'proposed'));
-  if (list !== 'rejected') buttons.push(action(c.key, 'reject', 'Reject', d.csrf));
+  if (list === 'proposed' || list === 'rejected') buttons.push(action(d.base, c.key, 'approve', 'Approve', d.csrf, list === 'proposed'));
+  if (list !== 'rejected') buttons.push(action(d.base, c.key, 'reject', 'Reject', d.csrf));
   // Undo clears your choice (it does not approve a rejected company): the status goes back to what coverage decided
-  if (c.userOverride !== null) buttons.push(action(c.key, 'undo', c.userOverride === 'approved' ? 'Undo approve' : 'Undo reject', d.csrf));
-  if (d.canResolve && list !== 'rejected' && list !== 'verified') buttons.push(action(c.key, 'resolve', 'Resolve now', d.csrf));
+  if (c.userOverride !== null) buttons.push(action(d.base, c.key, 'undo', c.userOverride === 'approved' ? 'Undo approve' : 'Undo reject', d.csrf));
+  if (d.canResolve && list !== 'rejected' && list !== 'verified') buttons.push(action(d.base, c.key, 'resolve', 'Resolve now', d.csrf));
   const flash = d.flash !== null && d.flash.key === c.key ? html`<p class="flash" role="status">${d.flash.text}</p>` : '';
   return html`<li class="co" id="${anchor(c.key)}" data-company="${c.key}">
 <div class="co-head"><h3 class="co-name">${c.name}</h3>${pill(label, tone)}${c.userOverride !== null ? pill(c.userOverride === 'approved' ? 'Approved by you' : 'Rejected by you', 'accent') : ''}<span class="muted co-key">${c.key} · ${SOURCE_LABEL[c.source] ?? c.source}</span></div>
 ${found(c)}
 <p class="co-links">${careersLink(c)}</p>
-${jobsLine(c)}
+${jobsLine(d.base, c)}
 ${list === 'verified' ? html`<p class="hint">Last verified ${c.lastVerified === null ? 'never (approved by you)' : dateText(c.lastVerified)}</p>` : ''}
 ${list === 'failing' ? html`<p class="co-error"><strong>${c.reasons[0] ?? 'the board stopped answering'}</strong> <span class="muted">failing since the week of ${c.failingSinceWeek === null ? '?' : dateText(c.failingSinceWeek)} (${c.failWeeks} weeks)</span></p>` : ''}
 ${list === 'failing' ? reasonsList(c.reasons.slice(1), 'More reasons') : reasonsList(list === 'verified' ? [] : c.reasons, 'Why it is not verified')}
@@ -176,14 +178,14 @@ ${
   n === 0
     ? html`<p class="muted">${d.skipped.run === null ? 'No coverage run this week yet.' : 'Nothing skipped this week.'}</p>`
     : html`<p>${meta(d.skipped.byReason.map(([why, k]) => html`<span><span class="num">${countText(k)}</span> ${why}</span>`))}</p>
-<p><a href="/companies/skipped">See the <span class="num">${countText(n)}</span> sites</a></p>`
+<p><a href="${u(d.base, '/companies/skipped')}">See the <span class="num">${countText(n)}</span> sites</a></p>`
 }
 </section>`;
 }
 
-export function skippedBody(d: { readonly hosts: readonly DeferredHost[]; readonly total: number; readonly page: number; readonly pages: number }): Html {
+export function skippedBody(d: { readonly base: string; readonly hosts: readonly DeferredHost[]; readonly total: number; readonly page: number; readonly pages: number }): Html {
   return html`<div class="page-head">
-<p class="crumbs"><a href="/companies#skipped-h">Companies</a></p>
+<p class="crumbs"><a href="${u(d.base, '/companies')}#skipped-h">Companies</a></p>
 <h1>Sites skipped this week</h1>
 <p class="lede"><span class="num">${countText(d.total)}</span> site${d.total === 1 ? '' : 's'} refused or blocked jobpilot this week. They're tried again next week.</p>
 </div>
@@ -192,7 +194,7 @@ ${
     ? html`<p class="empty">Nothing skipped this week.</p>`
     : html`<ul class="plain co-deferred">${d.hosts.map(
         (h) => html`<li data-host="${h.host}">${meta([html`<span><code>${h.host}</code> ${deferWhy(h.why)} <span class="muted">(${h.why})</span></span>`, h.companies.length > 0 ? h.companies.join(', ') : null])}</li>`,
-      )}</ul>${pager({ page: d.page, pages: d.pages, href: (k) => (k === 1 ? '/companies/skipped' : '/companies/skipped?page=' + String(k)) })}`
+      )}</ul>${pager({ page: d.page, pages: d.pages, href: (k) => u(d.base, k === 1 ? '/companies/skipped' : '/companies/skipped?page=' + String(k)) })}`
 }`;
 }
 
@@ -200,7 +202,7 @@ function addForm(d: CompaniesPageData): Html {
   return html`<section class="card wide" aria-labelledby="add-h" id="add"><h2 id="add-h">Add a company</h2>
 <p class="note">Give its website (https), and a name if you like. It is added to Proposed and found on the next coverage run, or now with Resolve now. Your companies.yaml is never edited.</p>
 ${d.add.error !== null ? html`<p class="blocked" role="alert">${d.add.error}</p>` : ''}
-<form class="filters co-add" method="post" action="/companies/add">${csrfField(d.csrf)}
+<form class="filters co-add" method="post" action="${u(d.base, '/companies/add')}">${csrfField(d.csrf)}
 <div class="filter-row">
 <label class="field grow"><span>Website</span><input type="url" name="website" value="${d.add.website}" placeholder="https://example.com" maxlength="300" inputmode="url"></label>
 <label class="field grow"><span>Name (optional)</span><input type="text" name="name" value="${d.add.name}" placeholder="Example Co" maxlength="100"></label>

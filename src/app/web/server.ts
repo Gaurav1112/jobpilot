@@ -33,6 +33,7 @@ import type { CompanyJobs } from '../coverage/company-jobs.js';
 import { liveHolder } from '../lock.js';
 import { SharedStore, UpgradePending } from './connection.js';
 import { mountFreelance } from './freelance.js';
+import { checkBase, u } from './paths.js';
 import { html, type Html } from './html.js';
 import { CSRF_FIELD, CSRF_HEADER, FILE_CSP, allowedHosts, PAGE_CSP, PREVIEW_CSP, sameOrigin, SESSION_COOKIE, Sessions } from './security.js';
 import { factRow, factsBody, type FactRow } from './views/facts.js';
@@ -61,6 +62,8 @@ import { FULL_CHECK_STALE_DAYS, runsBody } from './views/runs.js';
 export interface DashboardDeps {
   /** JOBPILOT_HOME: the pack, the DB and the documents. */
   readonly home: string;
+  /** '' (one home, the default) or /p/<profile id>: every link, form action and redirect goes under it (`paths.ts`). */
+  readonly basePath?: string;
   readonly clock: Clock;
   /** Default: the secret kept in app_settings (`dashboard.csrf_secret`), created on first start. */
   readonly sessions?: Sessions;
@@ -276,6 +279,7 @@ export function createDashboard(deps: DashboardDeps): Hono<Env> {
 /** @internal The dashboard with test hooks; production code calls `createDashboard`. */
 export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): Hono<Env> {
   const paths = homePaths(deps.home);
+  const base = checkBase(deps.basePath ?? '');
   const timeoutMs = deps.busyTimeoutMs ?? 10_000;
   const sessions = deps.sessions ?? new Sessions(keptSecret(paths.db, timeoutMs));
   const files = staticFiles();
@@ -290,7 +294,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const portOf = (): number | undefined => (typeof deps.port === 'function' ? deps.port() : deps.port);
 
   const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 400 | 403 | 404 | 409 | 500 | 503 = 200) =>
-    c.html(layout({ title, nav, banners, body }).value, status);
+    c.html(layout({ base, title, nav, banners, body }).value, status);
 
   // dashboard-perf fix 5: one long-lived connection per dashboard, never holding a transaction (`connection.ts`)
   const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer, () => liveHolder(deps.home) !== undefined);
@@ -374,7 +378,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       }
     }
     return {
-      jobKey: key, snapshots, changedSince, canKeep: job !== undefined && keepable(job, snapshots.length), csrf: csrf(c), istDay: istDate,
+      base, jobKey: key, snapshots, changedSince, canKeep: job !== undefined && keepable(job, snapshots.length), csrf: csrf(c), istDay: istDate,
       appliedDay: job?.appliedAt ? istDate(job.appliedAt) : null,
     };
   };
@@ -434,7 +438,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     let prev = Number(prevRaw);
     if (!Number.isFinite(prev) || !Number.isFinite(last) || prevRaw === '' || lastRaw === undefined) prev = 0;
     else if (nowMs - last > VISIT_GAP_MS) prev = last;
-    setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
+    setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: base === '' ? '/' : base, maxAge: 400 * 86_400 });
 
     // dashboard-perf fix 2: the page, its counts and the hidden count in SQL over the covering index (`listJobsPage`)
     const { jobs, hidden, overrides, total, newCount, toDecide, pageNo, pages, lastRun } = withStore((s) => {
@@ -466,14 +470,14 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bandsDefault, defaultStatuses: statusesDefault, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
+      base, jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bandsDefault, defaultStatuses: statusesDefault, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
       page: pageNo, pages, total, newCount, toDecide, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
   });
 
   // --- one job --------------------------------------------------------------------------------------------------------
-  const notFound = (c: Context<Env>, what: string) => page(c, 'jobs', 'Not found', [], html`<h1>Not found</h1><p>${what}</p><p><a href="/">Back to your jobs</a></p>`, 404);
+  const notFound = (c: Context<Env>, what: string) => page(c, 'jobs', 'Not found', [], html`<h1>Not found</h1><p>${what}</p><p><a href="${u(base, '/')}">Back to your jobs</a></p>`, 404);
 
   const NOTICE: Readonly<Record<string, string>> = {
     nodocs: 'Marked applied. No documents were kept: this job had no ready documents.',
@@ -512,7 +516,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
     const cited = data.job.citedFacts === null ? null : data.job.citedFacts.map((id) => ({ id: r.text(id), claim: r.text(ps.pack?.facts.find((f) => f.id === id)?.claim ?? 'no longer in your fact list') }));
-    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
+    const body = jobBody({ base, job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -553,17 +557,17 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const next = typeof body['next'] === 'string' && JOB_KEY.test(body['next']) ? body['next'] : undefined;
     if (!isHx(c)) {
       // A notice (no documents kept, or Keep a copy) is only told on the job page: it never yields to the next row.
-      if (from !== undefined && result.notice === undefined && leavesList(from, to as JobStatus)) return c.redirect(`${from}${next !== undefined ? `#job-${next}` : '#jobs'}`, 303);
+      if (from !== undefined && result.notice === undefined && leavesList(from, to as JobStatus)) return c.redirect(u(base, `${from}${next !== undefined ? `#job-${next}` : '#jobs'}`), 303);
       const qs = new URLSearchParams();
       if (from !== undefined) qs.set('from', from);
       if (from !== undefined && next !== undefined) qs.set('next', next);
       if (result.notice !== undefined) qs.set('notice', result.notice);
       const q = qs.toString();
-      return c.redirect(`/jobs/${key}${q === '' ? '' : `?${q}`}#status`, 303);
+      return c.redirect(u(base, `/jobs/${key}${q === '' ? '' : `?${q}`}#status`), 303);
     }
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
-    return c.html(html`${statusSection(result.job, { csrf: csrf(c), istDay: istDate, now: at, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) })}${sentSection(result.sent, true)}`.value);
+    return c.html(html`${statusSection(result.job, { base, csrf: csrf(c), istDay: istDate, now: at, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) })}${sentSection(result.sent, true)}`.value);
   });
 
   // "Keep a copy of these documents now": the snapshot an apply could not make (applied elsewhere, or a failed copy).
@@ -585,7 +589,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return { status: 200 as const, sent: sentData(s, c, key) };
     });
     if (result.status !== 200) return c.text(redactor(packState(deps.home, at).naming).text(result.text), result.status);
-    if (!isHx(c)) return c.redirect(`/jobs/${key}#sent-h`, 303);
+    if (!isHx(c)) return c.redirect(u(base, `/jobs/${key}#sent-h`), 303);
     return c.html(sentSection(result.sent).value);
   });
 
@@ -600,7 +604,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return true;
     });
     if (!ok) return c.text('No such job', 404);
-    if (!isHx(c)) return c.redirect(`/jobs/${key}#note-h`, 303);
+    if (!isHx(c)) return c.redirect(u(base, `/jobs/${key}#note-h`), 303);
     return c.html('Saved');
   });
 
@@ -709,7 +713,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const at = now();
     const ps = packState(deps.home, at);
     const overrides = withStore((s) => s.factOverrides());
-    const body = factsBody({ facts: factRows(ps, overrides), csrf: csrf(c), packError: ps.error ?? null });
+    const body = factsBody({ base, facts: factRows(ps, overrides), csrf: csrf(c), packError: ps.error ?? null });
     return page(c, 'facts', 'Your facts', commonBanners(ps, istDate(at), overrides), body);
   });
 
@@ -726,12 +730,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
         const changed = overrideFact(s, ps.pack?.facts ?? [], id, status, at, diskDocCheck(paths.out));
         return { overrides: s.factOverrides(), changed };
       });
-      if (!isHx(c)) return c.redirect(`/facts#fact-${encodeURIComponent(id)}`, 303);
+      if (!isHx(c)) return c.redirect(u(base, `/facts#fact-${encodeURIComponent(id)}`), 303);
       const row = factRows(ps, overrides).find((f) => f.id === id) as FactRow;
       const note = changed.stale.length > 0
         ? `Saved. The documents of ${changed.stale.length} ${changed.stale.length === 1 ? 'job cite' : 'jobs cite'} this fact; they are set aside now, and the next run makes them again.`
         : 'Saved. The next run makes the affected documents again.';
-      return c.html(factRow(row, csrf(c), note).value);
+      return c.html(factRow(base, row, csrf(c), note).value);
     });
   }
 
@@ -755,14 +759,14 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
 
   // --- freelance (Task 10): same middleware, same helpers ----------------------------------------------------------------
   mountFreelance(app, {
-    paths, now, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf, isHx, isBusy,
+    base, paths, now, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf, isHx, isBusy,
     ...(hooks.beforeSnapshot !== undefined ? { beforeSnapshot: hooks.beforeSnapshot } : {}),
     ...(deps.gmailConnected !== undefined ? { gmailConnected: deps.gmailConnected } : {}),
   });
 
   // --- companies (career-sites Task 11): same middleware, same helpers --------------------------------------------------
   mountCompanies(app, {
-    home: deps.home, now, clock: deps.clock, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf,
+    base, home: deps.home, now, clock: deps.clock, withStore, packState: (at) => packState(deps.home, at), redactor, page, csrf,
     ...(deps.resolve !== undefined ? { resolve: deps.resolve } : {}),
   });
 

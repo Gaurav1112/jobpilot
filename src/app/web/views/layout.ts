@@ -1,4 +1,5 @@
 import { html, type Html } from '../html.js';
+import { u } from '../paths.js';
 
 export type Nav = 'jobs' | 'freelance' | 'companies' | 'facts' | 'runs';
 
@@ -8,6 +9,7 @@ export interface Banner {
 }
 
 export interface LayoutData {
+  readonly base: string;
   readonly title: string;
   readonly nav: Nav;
   readonly banners: readonly Banner[];
@@ -31,16 +33,16 @@ export function layout(d: LayoutData): Html {
 <meta name="referrer" content="same-origin">
 <meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
 <title>${d.title} · jobpilot</title>
-<link rel="stylesheet" href="/static/app.css">
-<script src="/static/htmx.min.js" defer></script>
-<script src="/static/app.js" defer></script>
+<link rel="stylesheet" href="${u(d.base, '/static/app.css')}">
+<script src="${u(d.base, '/static/htmx.min.js')}" defer></script>
+<script src="${u(d.base, '/static/app.js')}" defer></script>
 </head>
 <body>
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
 <div class="top-inner">
-<a class="brand" href="/">jobpilot</a>
-<nav aria-label="Main">${navLink('/', 'Jobs', d.nav === 'jobs')}${navLink('/freelance', 'Freelance', d.nav === 'freelance')}${navLink('/companies', 'Companies', d.nav === 'companies')}${navLink('/facts', 'Your facts', d.nav === 'facts')}${navLink('/runs', 'Runs', d.nav === 'runs')}</nav>
+<a class="brand" href="${u(d.base, '/')}">jobpilot</a>
+<nav aria-label="Main">${navLink(u(d.base, '/'), 'Jobs', d.nav === 'jobs')}${navLink(u(d.base, '/freelance'), 'Freelance', d.nav === 'freelance')}${navLink(u(d.base, '/companies'), 'Companies', d.nav === 'companies')}${navLink(u(d.base, '/facts'), 'Your facts', d.nav === 'facts')}${navLink(u(d.base, '/runs'), 'Runs', d.nav === 'runs')}</nav>
 </div>
 </header>
 <main id="main">

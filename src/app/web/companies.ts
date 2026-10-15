@@ -13,6 +13,7 @@ import { istDate } from '../run.js';
 import type { AppStore, Band, Company } from '../store/app-store.js';
 import { companyKeys, jobKeys, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { Html } from './html.js';
+import { u } from './paths.js';
 import { companiesBody, companyPlatformName, deferWhy, skippedBody, type AddFormView, type CompaniesPageData, type CompanyRowView } from './views/companies.js';
 import type { Banner, Nav } from './views/layout.js';
 
@@ -51,6 +52,8 @@ export interface ResolveDeps {
 }
 
 export interface CompaniesDeps {
+  /** '' or /p/<profile id>: every link and redirect goes under it (`paths.ts`). */
+  readonly base: string;
   readonly home: string;
   readonly now: () => string;
   readonly clock: { now: () => string };
@@ -182,10 +185,10 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     });
   };
 
-  const hostOf = (u: string | null): string | null => {
-    if (u === null) return null;
+  const hostOf = (raw: string | null): string | null => {
+    if (raw === null) return null;
     try {
-      return new URL(u).hostname.toLowerCase();
+      return new URL(raw).hostname.toLowerCase();
     } catch {
       return null;
     }
@@ -230,6 +233,7 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     }
     const byReason = [...reasons].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     const body = companiesBody({
+      base: d.base,
       lists: {
         verified: by((c) => c.status === 'verified'),
         proposed: by((c) => c.status === 'proposed'),
@@ -264,10 +268,10 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     const hosts = data.hosts.slice((page - 1) * SKIPPED_PAGE_SIZE, page * SKIPPED_PAGE_SIZE).map(([host, why]) => ({
       host: r.text(host),
       why: r.text(why),
-      companies: data.companies.filter((co) => [co.careersUrl, co.boardUrl, co.website].some((u) => hostOf(u) === host)).map((co) => r.text(co.name)),
+      companies: data.companies.filter((co) => [co.careersUrl, co.boardUrl, co.website].some((x) => hostOf(x) === host)).map((co) => r.text(co.name)),
     }));
     const banners: Banner[] = ps.error !== undefined ? [{ tone: 'critical', text: `Your pack could not be read: ${ps.error}` }] : [];
-    return d.page(c, 'companies', 'Skipped sites', banners, skippedBody({ hosts, total: data.hosts.length, page, pages }));
+    return d.page(c, 'companies', 'Skipped sites', banners, skippedBody({ base: d.base, hosts, total: data.hosts.length, page, pages }));
   });
 
   const flashOf = (done: Done, key: string | null, run: string | null): CompaniesPageData['flash'] => {
@@ -326,7 +330,7 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     const qs = new URLSearchParams({ done });
     if (key !== undefined) qs.set('key', key);
     if (run !== undefined) qs.set('run', run);
-    return `/companies?${qs.toString()}${key !== undefined ? `#co-${key.replace(/[^a-z0-9-]/g, '-')}` : ''}`;
+    return u(d.base, `/companies?${qs.toString()}${key !== undefined ? `#co-${key.replace(/[^a-z0-9-]/g, '-')}` : ''}`);
   };
 
   for (const [verb, to] of [['approve', 'approved'], ['reject', 'rejected']] as const) {

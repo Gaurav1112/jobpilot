@@ -1,5 +1,6 @@
 import { countText, periodText } from '../format.js';
 import { html, type Html } from '../html.js';
+import { u } from '../paths.js';
 import { csrfField, meta, pill, type Tone } from './common.js';
 
 export interface FactRow {
@@ -31,11 +32,11 @@ export const factStatusLabel = (s: string): string => STATUS[s]?.label ?? s;
 
 const used = (s: string): boolean => s === 'verified' || s === 'user-stated';
 
-export function factRow(f: FactRow, csrf: string, flash?: string): Html {
+export function factRow(base: string, f: FactRow, csrf: string, flash?: string): Html {
   const unverified = f.status === 'derived-unverified';
   const id = encodeURIComponent(f.id);
   const action = (verb: 'verify' | 'reject', label: string, primary: boolean, danger = false) =>
-    html`<form method="post" action="/facts/${id}/${verb}" hx-post="/facts/${id}/${verb}" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(csrf)}<button id="fact-${f.id}-${verb}" class="btn${primary ? ' btn-primary' : ''}${danger ? ' btn-danger' : ''}">${label}</button></form>`;
+    html`<form method="post" action="${u(base, '/facts/' + id + '/' + verb)}" hx-post="${u(base, '/facts/' + id + '/' + verb)}" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(csrf)}<button id="fact-${f.id}-${verb}" class="btn${primary ? ' btn-primary' : ''}${danger ? ' btn-danger' : ''}">${label}</button></form>`;
   return html`<li class="fact${unverified ? ' fact-unverified' : ''}${used(f.status) ? '' : ' fact-unused'}" id="fact-${f.idShown ? f.id : ''}" data-live="Saved: ${factStatusLabel(f.status)}.">
 <p class="fact-claim">${f.claim}</p>
 <p class="fact-sub">${meta([f.kind, f.employer, html`<span class="num">${periodText(f.period)}</span>`, html`<code class="fact-id">${f.idShown ? f.id : '[hidden]'}</code>`])}</p>
@@ -52,6 +53,7 @@ ${flash !== undefined ? html`<p class="flash" role="status">${flash}</p>` : ''}
 }
 
 export interface FactsPageData {
+  readonly base: string;
   readonly facts: readonly FactRow[];
   readonly csrf: string;
   readonly packError: string | null;
@@ -71,6 +73,6 @@ export function factsBody(d: FactsPageData): Html {
 ${
   d.packError !== null
     ? html`<p class="blocked">Your pack could not be read: ${d.packError}</p>`
-    : html`<ol class="facts" aria-label="Facts">${ordered.map((f) => factRow(f, d.csrf))}</ol>`
+    : html`<ol class="facts" aria-label="Facts">${ordered.map((f) => factRow(d.base, f, d.csrf))}</ol>`
 }`;
 }

@@ -22,6 +22,7 @@ import { askText, breakdownText, clientSignals, coverageText, DISABLED_REASON, f
 import { readConfined, readRecorded, snapshotGigApplied, type ReadResult } from './files.js';
 import { ageText, istTimeText } from './format.js';
 import { html, type Html } from './html.js';
+import { u } from './paths.js';
 import { FILE_CSP } from './security.js';
 import {
   GIG_TABS,
@@ -66,6 +67,8 @@ import type { Banner, Nav } from './views/layout.js';
 type Env = { Variables: { sid: string } };
 
 export interface FreelanceDeps {
+  /** '' or /p/<profile id>: every link and redirect goes under it (`paths.ts`). */
+  readonly base: string;
   readonly paths: ReturnType<typeof homePaths>;
   readonly now: () => string;
   readonly withStore: <T>(fn: (s: AppStore) => T) => T;
@@ -291,9 +294,9 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const hidden = hiddenOf(data.gigs, list);
     const pageHref = (n: number): string => `/freelance?tab=${list}${data.showHidden ? '&show=hidden' : ''}${n > 1 ? `&page=${n}` : ''}`;
     const body = gigListBody({
-      tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hidden.text, hiddenCount: hidden.count, fitFloor, lastRun: data.lastRun,
+      base: d.base, tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hidden.text, hiddenCount: hidden.count, fitFloor, lastRun: data.lastRun,
       page: data.page, pages: data.pages, pageHref, showHidden: data.showHidden,
-      ...(list === 'contracts' ? { roles: { rows: roles, fitFloor } } : {}),
+      ...(list === 'contracts' ? { roles: { base: d.base, rows: roles, fitFloor } } : {}),
     });
     return d.page(c, 'freelance', 'Freelance', packBanner(ps), body);
   });
@@ -345,7 +348,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const { statuses, gigs, applied } = d.withStore((s) => ({ statuses: s.networkStatuses(), gigs: s.listGigs(), applied: appliedDates(s) }));
     const cards = networkCards(ps.pack, statuses, applied, r.text);
     const counts = { ...countsOf(gigs, rulesOf(ps.pack).fitFloor), networks: cards.length };
-    const body = networksBody({ checked: NETWORKS_CHECKED, cards, counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
+    const body = networksBody({ base: d.base, checked: NETWORKS_CHECKED, cards, counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
     return d.page(c, 'freelance', 'Freelance networks', packBanner(ps), body);
   };
   app.get('/freelance/networks', (c) => networksPage(c));
@@ -378,9 +381,9 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
         return { st: s.networkStatuses()[id], applied: appliedDates(s).get(id) ?? null };
       }),
     );
-    if (!d.isHx(c)) return c.redirect(`/freelance/networks#net-${id}`, 303);
+    if (!d.isHx(c)) return c.redirect(u(d.base, `/freelance/networks#net-${id}`), 303);
     const notOpen = catalogueEntry(id)?.india === 'not-open';
-    return c.html(networkStatusBlock({ id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null, appliedAt: applied, notOpen }, d.csrf(c), istDate).value);
+    return c.html(networkStatusBlock(d.base, { id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null, appliedAt: applied, notOpen }, d.csrf(c), istDate).value);
   });
 
   // --- sources ---------------------------------------------------------------------------------------------------------
@@ -416,13 +419,13 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     });
     const problems = collapseProblems(data.run?.problems ?? []).map((p) => ({ kind: p.kind, line: r.text(p.line) }));
     const counts = { ...countsOf(data.gigs, rules.fitFloor), networks: ps.pack?.networks.length ?? 0 };
-    const body = sourcesBody({ tables, disabled, problems, lastRun: data.run === undefined ? null : istTimeText(data.run.at), counts });
+    const body = sourcesBody({ base: d.base, tables, disabled, problems, lastRun: data.run === undefined ? null : istTimeText(data.run.at), counts });
     return d.page(c, 'freelance', 'Freelance sources', packBanner(ps), body);
   };
   app.get('/freelance/sources', (c) => sourcesPage(c));
 
   // --- one gig ---------------------------------------------------------------------------------------------------------
-  const notFound = (c: Context<Env>) => d.page(c, 'freelance', 'Not found', [], html`<h1>Not found</h1><p>No such gig.</p><p><a href="/freelance">Back to freelance</a></p>`, 404);
+  const notFound = (c: Context<Env>) => d.page(c, 'freelance', 'Not found', [], html`<h1>Not found</h1><p>No such gig.</p><p><a href="${u(d.base, '/freelance')}">Back to freelance</a></p>`, 404);
 
   /** The paste-ready text from the recorded `.txt` file, split where a line cites facts. */
   const pasteOf = (g: GigView & { docs: GigDoc[] }, x: Extras, pack: Pack | undefined, text: (s: string) => string): { paste: PasteDoc | null; problem: string | null } => {
@@ -475,7 +478,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
   const keepable = (g: GigView & { docs: GigDoc[] }, snapshots: number): boolean => g.status === 'applied' && snapshots === 0 && g.docsState === 'ready' && g.docs.length > 0;
   const sentOf = (s: AppStore, g: GigView & { docs: GigDoc[] }, c: Context<Env>) => {
     const snapshots = s.gigSnapshots(g.gigKey);
-    return { gigKey: g.gigKey, snapshots, appliedDay: g.appliedAt === null ? null : istDate(g.appliedAt), canKeep: keepable(g, snapshots.length), csrf: d.csrf(c) };
+    return { base: d.base, gigKey: g.gigKey, snapshots, appliedDay: g.appliedAt === null ? null : istDate(g.appliedAt), canKeep: keepable(g, snapshots.length), csrf: d.csrf(c) };
   };
 
   app.get('/freelance/:key', (c) => {
@@ -497,7 +500,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
     const body = gigBody({
-      row, csrf: d.csrf(c), paste, pasteProblem: problem, cover: coverOf(data.g, data.extras, r.text), files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
+      base: d.base, row, csrf: d.csrf(c), paste, pasteProblem: problem, cover: coverOf(data.g, data.extras, r.text), files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
       history: data.history, sent: data.sent, reasons: g.reasons, duplicateOf: g.duplicateOf, istDay: istDate,
       breakdown: Object.entries(g.breakdown ?? {}).map(([k, p]) => ({ label: SHOWN_ONLY[k] ?? rowLabel(k, display, coveredOf(data.extras)), points: p, shown: Object.hasOwn(SHOWN_ONLY, k) })),
       ...(flash !== undefined ? { flash } : {}),
@@ -535,9 +538,9 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       return { g, history: s.gigHistory(key), sent: sentOf(s, g, c), notice };
     });
     if (!result) return c.text('No such gig', 404);
-    if (!d.isHx(c)) return c.redirect(`/freelance/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`, 303);
+    if (!d.isHx(c)) return c.redirect(u(d.base, `/freelance/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`), 303);
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
-    return c.html(html`${gigStatusSection(result.g, result.history, d.csrf(c), istDate, flash)}${gigSentSection(result.sent, true)}`.value);
+    return c.html(html`${gigStatusSection(d.base, result.g, result.history, d.csrf(c), istDate, flash)}${gigSentSection(result.sent, true)}`.value);
   });
 
   // "Keep a copy of these documents now": the snapshot an apply could not make (a failed or busy copy). Same confined
@@ -559,7 +562,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       return { status: 200 as const, sent: sentOf(s, s.getGig(key) as GigView & { docs: GigDoc[] }, c) };
     });
     if (result.status !== 200) return c.text(d.redactor(d.packState(at).naming).text(result.text), result.status);
-    if (!d.isHx(c)) return c.redirect(`/freelance/${key}#sent-h`, 303);
+    if (!d.isHx(c)) return c.redirect(u(d.base, `/freelance/${key}#sent-h`), 303);
     return c.html(gigSentSection(result.sent).value);
   });
 
