@@ -1,10 +1,17 @@
-import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** Root of all jobpilot state: `$JOBPILOT_HOME`, else `~/.jobpilot`. */
+import { resolveHome } from '../profiles/root.js';
+
+let selected: string | undefined;
+/** The CLI's `--profile` (set once per process before the command runs). */
+export function selectProfile(id: string | undefined): void {
+  selected = id;
+}
+export const selectedProfile = (): string | undefined => selected;
+
+/** The home this process works in: `--profile`, else `$JOBPILOT_HOME`, else the root's active profile, else the root itself (legacy). */
 export function jobpilotHome(): string {
-  const env = process.env['JOBPILOT_HOME'];
-  return env !== undefined && env !== '' ? env : join(homedir(), '.jobpilot');
+  return resolveHome({ profile: selected }).home;
 }
 
 export const packDir = (): string => join(jobpilotHome(), 'pack');
