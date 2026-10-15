@@ -6,6 +6,7 @@ const Hex64 = z.string().regex(/^[0-9a-f]{64}$/);
 const Hex40 = z.string().regex(/^[0-9a-f]{40}$/);
 const Day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const LastDone = z.strictObject({ daily: Day.nullable(), freelance: Day.nullable(), coverage: Day.nullable() });
+export type LastDone = z.infer<typeof LastDone>;
 export const GenRecord = z.strictObject({
   gen: z.number().int().min(1),
   tag: z.string(),
