@@ -55,6 +55,17 @@ export const GOLDEN_ROUTES: readonly (readonly [name: string, path: string, stat
   ['not-found', '/nope', 404],
 ];
 
+/** Pages the 400 px check visits besides the golden routes: variants whose layout differs (long lists, flashes). */
+export const NARROW_ONLY: readonly (readonly [name: string, path: string])[] = [
+  ['jobs-company', '/?companyKey=acme.example&band=rejected&band=disclosed'],
+  ['job-duplicate', `/jobs/${JOB.dup}`],
+  ['job-xss', `/jobs/${JOB.xss}`],
+  ['companies-flash', '/companies?done=approved&key=acme.example'],
+  ['freelance-tab-networks', '/freelance?tab=networks'],
+  ['gig-review', `/freelance/${GIG.review}`],
+  ['gig-role', `/freelance/${GIG.role}`],
+];
+
 const sha = (b: string): string => createHash('sha256').update(b).digest('hex');
 const PREVIEW = (kind: string): string =>
   `<!doctype html><html><head><style>body{}</style></head><body><main data-doc="${kind}"><ul><li data-fact="f-nw-01">• Led the order pipeline.</li></ul></main></body></html>\n`;
