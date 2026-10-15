@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { canonicalJson } from '../kernel/canonical.js';
 import type { GuardrailVerdict } from '../kernel/envelope.js';
 import { BUILTIN_GUARDRAILS } from '../kernel/guardrails/builtin.js';
@@ -39,6 +40,7 @@ import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermErro
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
 import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
+import { companyOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
 import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
 
@@ -226,9 +228,18 @@ export function postingSlotProblems(posting: { readonly title: string; readonly 
   });
 }
 
-/** Every grounding problem of a CoverPlan, its resume included; unsafe posting text first. */
-export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unknown = pack): string[] {
-  const problems = [...postingSlotProblems(cover.resume.evidence.scored.posting), ...resumeProblems(cover.resume, pack, 'resume.', rawPack)];
+/**
+ * Every grounding problem of a CoverPlan, its resume included; unsafe posting text first. `o.budget` is the resume
+ * plan's bullet budget (default: the daily resume's) and `o.paragraphs` the letter's re-derivation (default: the daily
+ * `renderCover(coverSlots(...))`); the gig cover letter passes the compact budget and its contract availability.
+ */
+export function coverProblems(
+  cover: CoverPlan,
+  pack: WritingPack,
+  rawPack: unknown = pack,
+  o: { readonly budget?: BulletBudget; readonly paragraphs?: (resume: ResumePlan) => CoverPlan['paragraphs'] } = {},
+): string[] {
+  const problems = [...postingSlotProblems(cover.resume.evidence.scored.posting), ...resumeProblems(cover.resume, pack, 'resume.', rawPack, o.budget ?? DEFAULT_BUDGET)];
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
   const roles = displayRoles(pack);
   if (cover.jobKey !== cover.resume.jobKey) problems.push("jobKey is not the resume plan's");
@@ -247,7 +258,7 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
   });
   // Every slot recomputed (headline, years, covered list, employer display, verb form, where I work now), then the
   // templates re-rendered: any difference from the plan, to the byte, trips.
-  const expected = attempt(problems, 'paragraphs', () => renderCover(coverSlots(cover.resume, pack)));
+  const expected = attempt(problems, 'paragraphs', () => (o.paragraphs === undefined ? renderCover(coverSlots(cover.resume, pack)) : o.paragraphs(cover.resume)));
   if (expected !== undefined) {
     for (let i = 0; i < Math.max(expected.length, cover.paragraphs.length); i++) {
       if (!same(expected[i] ?? null, cover.paragraphs[i] ?? null)) {
@@ -337,6 +348,8 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
     }
   }
 
+  if (plan.cover !== undefined) problems.push(...gigCoverProblems(plan, pack, rawPack));
+
   const expected = attempt(problems, 'plan', () => planGigDocs(plan.scored, rawPack));
   if (expected !== undefined) {
     const d = firstDiff(expected, plan);
@@ -344,6 +357,34 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
   }
   return problems;
 }
+
+/**
+ * The grounding problems of a gig plan's cover letter (freelance-v2), each prefixed `cover.`: only a contract from an
+ * employer job board has one (`getsCover`); its resume plan's posting is the gig's synthetic posting named for the
+ * gig's company (`gigPostingOf`); its jobKey is the contract CV's; then every daily cover check (`coverProblems`: safe
+ * posting slots, the resume plan at the compact budget, every cited fact citeable, placed in a role and in its paragraph
+ * verbatim, every paragraph its template rendering) with the contract availability paragraph (`gigCoverOf`).
+ */
+function gigCoverProblems(plan: GigDocsPlan, pack: WritingPack, rawPack: unknown): string[] {
+  const cover = plan.cover;
+  if (cover === undefined) return [];
+  const problems: string[] = [];
+  const gig = plan.scored.risked.verdict.rated.gig;
+  if (!getsCover(gig)) problems.push('cover: only a contract from an employer job board gets a cover letter');
+  const company = companyOf(gig);
+  if (company === null) problems.push('cover: the gig names no company');
+  else {
+    const want = attempt(problems, 'cover.resume', () => gigPostingOf(gig, pack, company));
+    const d = want === undefined ? undefined : firstDiff(want, cover.resume.evidence.scored.posting);
+    if (d !== undefined) problems.push(`cover.resume.evidence.scored.posting is not the gig's synthetic posting named for its company (at ${d})`);
+  }
+  if (cover.jobKey !== plan.resume.jobKey) problems.push("cover.jobKey is not the contract CV's");
+  const rules = attempt(problems, 'cover', () => GigFreelanceRules.parse(rawPack).freelance);
+  if (rules === undefined) return problems;
+  return [...problems, ...coverProblems(cover, pack, rawPack, { budget: COMPACT, paragraphs: (r) => gigCoverOf(r, pack, rules).paragraphs }).map((p) => `cover.${p}`)];
+}
+
+const GigFreelanceRules = z.object({ freelance: z.object({ maxHoursPerWeek: z.number(), istWindow: z.string() }) });
 
 /** G-GROUND on the gig renderer's output: see the module rules. Details name fields and lines, never their text. */
 function gigRenderedProblems(ctx: GuardrailContext): string[] {
@@ -475,6 +516,9 @@ export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set([
   // GigDocsPlan@1 and GigRendered@1 (Task 8): the scored gig is source data; the hook quote is checked where it is used.
   'scored.risked',
   'plan.scored.risked',
+  // freelance-v2: the gig cover letter's resume plan embeds the gig's posting named for the company (source data too).
+  'cover.resume.evidence.scored.posting',
+  'plan.cover.resume.evidence.scored.posting',
 ]);
 
 /** A copy of `v` without the values at `SOURCE_POSTING_PATHS`. */

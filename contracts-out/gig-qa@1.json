@@ -1,5 +1,5 @@
 {
-  "hash": "efd9a980451960c4b83c05dcd6717d5348ed7e4e2b98bb08afe6c1926f12e1b1",
+  "hash": "fddaf638f844c97b0169898d35846bbc7bbb6c9528548207eea129f9c7cae969",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -74,6 +74,595 @@
           "plan": {
             "additionalProperties": false,
             "properties": {
+              "cover": {
+                "additionalProperties": false,
+                "properties": {
+                  "jobKey": {
+                    "pattern": "^[0-9a-f]{16}$",
+                    "type": "string"
+                  },
+                  "paragraphs": {
+                    "items": {
+                      "additionalProperties": false,
+                      "properties": {
+                        "factIds": {
+                          "items": {
+                            "type": "string"
+                          },
+                          "type": "array"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "text",
+                        "factIds"
+                      ],
+                      "type": "object"
+                    },
+                    "type": "array"
+                  },
+                  "resume": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "ats": {
+                        "enum": [
+                          "greenhouse",
+                          "lever",
+                          "ashby",
+                          "feed",
+                          "careers",
+                          "workday",
+                          "eightfold",
+                          "oracle",
+                          "icims",
+                          "successfactors",
+                          "smartrecruiters",
+                          "jsonld-sitemap",
+                          "workable",
+                          "recruitee",
+                          "teamtailor",
+                          "personio",
+                          "bamboohr",
+                          "breezy",
+                          "pinpoint",
+                          "rippling",
+                          "gem"
+                        ],
+                        "type": "string"
+                      },
+                      "certs": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "factId": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "factId",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "covered": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "education": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "factId": {
+                              "type": "string"
+                            },
+                            "text": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "factId",
+                            "text"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "evidence": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "covered": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "missing": {
+                            "items": {
+                              "type": "string"
+                            },
+                            "type": "array"
+                          },
+                          "ranked": {
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "employer": {
+                                  "type": "string"
+                                },
+                                "factId": {
+                                  "type": "string"
+                                },
+                                "matched": {
+                                  "items": {
+                                    "type": "string"
+                                  },
+                                  "type": "array"
+                                },
+                                "rank": {
+                                  "type": "number"
+                                }
+                              },
+                              "required": [
+                                "factId",
+                                "employer",
+                                "rank",
+                                "matched"
+                              ],
+                              "type": "object"
+                            },
+                            "type": "array"
+                          },
+                          "scored": {
+                            "additionalProperties": false,
+                            "properties": {
+                              "breakdown": {
+                                "items": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "points": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "label",
+                                    "points"
+                                  ],
+                                  "type": "object"
+                                },
+                                "type": "array"
+                              },
+                              "jdTerms": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "gap": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "medium": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  },
+                                  "strong": {
+                                    "items": {
+                                      "type": "string"
+                                    },
+                                    "type": "array"
+                                  }
+                                },
+                                "required": [
+                                  "strong",
+                                  "medium",
+                                  "gap"
+                                ],
+                                "type": "object"
+                              },
+                              "notes": {
+                                "items": {
+                                  "type": "string"
+                                },
+                                "type": "array"
+                              },
+                              "posting": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "ats": {
+                                    "enum": [
+                                      "greenhouse",
+                                      "lever",
+                                      "ashby",
+                                      "feed",
+                                      "careers",
+                                      "workday",
+                                      "eightfold",
+                                      "oracle",
+                                      "icims",
+                                      "successfactors",
+                                      "smartrecruiters",
+                                      "jsonld-sitemap",
+                                      "workable",
+                                      "recruitee",
+                                      "teamtailor",
+                                      "personio",
+                                      "bamboohr",
+                                      "breezy",
+                                      "pinpoint",
+                                      "rippling",
+                                      "gem"
+                                    ],
+                                    "type": "string"
+                                  },
+                                  "atsRef": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "board": {
+                                        "type": [
+                                          "string",
+                                          "null"
+                                        ]
+                                      },
+                                      "id": {
+                                        "type": "string"
+                                      },
+                                      "platform": {
+                                        "enum": [
+                                          "greenhouse",
+                                          "lever",
+                                          "ashby",
+                                          "workday"
+                                        ],
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "platform",
+                                      "board",
+                                      "id"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "comp": {
+                                    "anyOf": [
+                                      {
+                                        "additionalProperties": false,
+                                        "properties": {
+                                          "basis": {
+                                            "enum": [
+                                              "base",
+                                              "unknown"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          "currency": {
+                                            "enum": [
+                                              "INR",
+                                              "USD",
+                                              "EUR",
+                                              "GBP"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          "max": {
+                                            "type": [
+                                              "number",
+                                              "null"
+                                            ]
+                                          },
+                                          "min": {
+                                            "type": [
+                                              "number",
+                                              "null"
+                                            ]
+                                          },
+                                          "period": {
+                                            "const": "year",
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "min",
+                                          "max",
+                                          "currency",
+                                          "period",
+                                          "basis"
+                                        ],
+                                        "type": "object"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "company": {
+                                    "type": "string"
+                                  },
+                                  "dedupeKey": {
+                                    "pattern": "^[0-9a-f]{16}$",
+                                    "type": "string"
+                                  },
+                                  "descriptionText": {
+                                    "type": "string"
+                                  },
+                                  "employmentType": {
+                                    "type": [
+                                      "string",
+                                      "null"
+                                    ]
+                                  },
+                                  "jobKey": {
+                                    "pattern": "^[0-9a-f]{16}$",
+                                    "type": "string"
+                                  },
+                                  "locationText": {
+                                    "type": "string"
+                                  },
+                                  "postedAt": {
+                                    "anyOf": [
+                                      {
+                                        "pattern": "^\\d{4}-\\d{2}-\\d{2}(?:T[0-9:.]+(?:Z|[+-]\\d{2}:?\\d{2})?)?$",
+                                        "type": "string"
+                                      },
+                                      {
+                                        "type": "null"
+                                      }
+                                    ]
+                                  },
+                                  "remote": {
+                                    "additionalProperties": false,
+                                    "properties": {
+                                      "countries": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "signals": {
+                                        "items": {
+                                          "type": "string"
+                                        },
+                                        "type": "array"
+                                      },
+                                      "structured": {
+                                        "anyOf": [
+                                          {
+                                            "enum": [
+                                              "remote",
+                                              "hybrid",
+                                              "onsite"
+                                            ],
+                                            "type": "string"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "required": [
+                                      "structured",
+                                      "countries",
+                                      "signals"
+                                    ],
+                                    "type": "object"
+                                  },
+                                  "slug": {
+                                    "type": "string"
+                                  },
+                                  "source": {
+                                    "type": "string"
+                                  },
+                                  "sourceId": {
+                                    "type": "string"
+                                  },
+                                  "title": {
+                                    "type": "string"
+                                  },
+                                  "url": {
+                                    "type": "string"
+                                  },
+                                  "yearsRequired": {
+                                    "type": [
+                                      "number",
+                                      "null"
+                                    ]
+                                  }
+                                },
+                                "required": [
+                                  "jobKey",
+                                  "dedupeKey",
+                                  "source",
+                                  "sourceId",
+                                  "company",
+                                  "slug",
+                                  "ats",
+                                  "title",
+                                  "url",
+                                  "locationText",
+                                  "remote",
+                                  "employmentType",
+                                  "descriptionText",
+                                  "postedAt",
+                                  "comp",
+                                  "yearsRequired"
+                                ],
+                                "type": "object"
+                              },
+                              "score": {
+                                "type": "number"
+                              },
+                              "verdict": {
+                                "enum": [
+                                  "eligible",
+                                  "review"
+                                ],
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "posting",
+                              "verdict",
+                              "notes",
+                              "score",
+                              "breakdown",
+                              "jdTerms"
+                            ],
+                            "type": "object"
+                          }
+                        },
+                        "required": [
+                          "scored",
+                          "ranked",
+                          "covered",
+                          "missing"
+                        ],
+                        "type": "object"
+                      },
+                      "firstSeen": {
+                        "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                        "type": "string"
+                      },
+                      "headline": {
+                        "type": "string"
+                      },
+                      "jobKey": {
+                        "pattern": "^[0-9a-f]{16}$",
+                        "type": "string"
+                      },
+                      "missing": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "roles": {
+                        "items": {
+                          "additionalProperties": false,
+                          "properties": {
+                            "bullets": {
+                              "items": {
+                                "additionalProperties": false,
+                                "properties": {
+                                  "factId": {
+                                    "type": "string"
+                                  },
+                                  "text": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "factId",
+                                  "text"
+                                ],
+                                "type": "object"
+                              },
+                              "type": "array"
+                            },
+                            "employer": {
+                              "type": "string"
+                            },
+                            "end": {
+                              "type": "string"
+                            },
+                            "location": {
+                              "type": "string"
+                            },
+                            "start": {
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "employer",
+                            "title",
+                            "location",
+                            "start",
+                            "end",
+                            "bullets"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "skills": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      },
+                      "summary": {
+                        "additionalProperties": false,
+                        "properties": {
+                          "slots": {
+                            "additionalProperties": {
+                              "type": [
+                                "string",
+                                "number"
+                              ]
+                            },
+                            "propertyNames": {
+                              "type": "string"
+                            },
+                            "type": "object"
+                          },
+                          "text": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "text",
+                          "slots"
+                        ],
+                        "type": "object"
+                      },
+                      "unplaced": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "jobKey",
+                      "evidence",
+                      "headline",
+                      "summary",
+                      "skills",
+                      "roles",
+                      "certs",
+                      "education",
+                      "unplaced",
+                      "covered",
+                      "missing",
+                      "ats",
+                      "firstSeen"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "jobKey",
+                  "resume",
+                  "paragraphs"
+                ],
+                "type": "object"
+              },
               "covered": {
                 "items": {
                   "type": "string"
@@ -1452,6 +2041,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.6.0"
+    "version": "1.7.0"
   }
 }

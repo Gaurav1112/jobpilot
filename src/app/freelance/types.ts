@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { definePredicate } from '../../kernel/predicates.js';
 import { defineType } from '../../kernel/types.js';
-import { IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
+import { CoverPlan, IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
 
 export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit', 'himalayas']);
 export type Platform = z.infer<typeof Platform>;
@@ -161,6 +161,12 @@ export const GigDocsPlan = defineType(
         .strict()
         .nullable(),
       pitch: z.object({ lines: z.array(FactLine) }).strict().nullable(),
+      /**
+       * freelance-v2: the daily cover letter of a contract role from an employer job board (`writing/gig-cover.ts`),
+       * its resume plan the gig's posting named for the company; its last paragraph keeps `{city}` for the gig
+       * renderer. Absent for every other gig (and when the letter cannot be planned).
+       */
+      cover: CoverPlan.schema.optional(),
       resume: ResumePlan.schema,
       covered: z.array(z.string()),
       missing: z.array(z.string()),
