@@ -190,6 +190,12 @@ node --run jobpilot -- audit verify                # whole event chain; --db <fi
 node --run jobpilot -- store compact               # dry run of the monthly archive; --apply after a backup (guide, section 9)
 ```
 
+- **freehire and new sources:** each coverage week sends 300 boards of a vendored freehire catalogue
+  (MIT, `assets/freehire/NOTICE`) to the verifier and runs at most 10 discovery searches
+  (`run-coverage --no-freehire` leaves them out); JazzHR, Zoho Recruit, Manatal and Freshteam boards
+  are read daily (UKG Pro is skipped: its robots.txt forbids its job list); Draft.dev, Prime
+  Intellect and Fractional Jobs are freelance sources (switch one off with
+  `platforms.<id>.enabled: false` in `freelance.yaml`). Details in the guide.
 - **Coverage** is sliced (at most 90 minutes) and yields to the daily and freelance runs; the next
   start continues the same run.
 - **Companies tab** on the dashboard: approve, reject, undo, add a company, or resolve one now.

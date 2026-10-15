@@ -26,6 +26,10 @@ import { rateNormalizer } from './rate.js';
 import { gigEligibility } from './gig-eligibility.js';
 import { mergeGigs } from './sources/common.js';
 import { freelancerUrl, srcFreelancer } from './sources/freelancer.js';
+import { makeSrcDraftdev } from './sources/draftdev.js';
+import { fractionalJobsHosts, makeSrcFractionalJobs } from './sources/fractional-jobs.js';
+import { makeGithubHosts } from './sources/github.js';
+import { makeSrcPrimeIntellect } from './sources/prime-intellect.js';
 import { himalayasGigsHosts, himalayasGigsUrl, makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { srcHn } from './sources/hn.js';
 import { REMOTIVE_OFF, srcRemotive } from './sources/remotive.js';
@@ -55,7 +59,7 @@ import type { Gig, GigRequest, RatedGig, RawGig, ScoredGig } from './types.js';
 export type Access = 'ok' | 'partial' | 'key' | 'email' | 'failed';
 export const ACCESS_POINTS: Readonly<Record<Access, number>> = { ok: 30, partial: 22, key: 20, email: 10, failed: 0 };
 
-export const KEPT_IDS = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'himalayas'] as const;
+export const KEPT_IDS = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'himalayas', 'draftdev', 'prime-intellect', 'fractional-jobs'] as const;
 export const PARKED_IDS = ['arbeitnow', 'golangprojects', 'remoteok', 'workingnomads', 'wwr'] as const;
 export const PROBE_SOURCE_IDS: readonly string[] = [...KEPT_IDS, ...PARKED_IDS];
 const NAMES: Readonly<Record<string, string>> = {
@@ -64,6 +68,9 @@ const NAMES: Readonly<Record<string, string>> = {
   'hn-freelancer': 'HN Freelancer? Seeking freelancer?',
   'hn-hiring': 'HN Who is hiring? (contract)',
   himalayas: 'Himalayas (contract and part-time, India)',
+  draftdev: 'Draft.dev (GitHub)',
+  'prime-intellect': 'Prime Intellect bounties (GitHub)',
+  'fractional-jobs': 'Fractional Jobs',
   arbeitnow: 'Arbeitnow DE/UK',
   golangprojects: 'Golang Projects',
   remoteok: 'RemoteOK',
@@ -536,6 +543,9 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     'hn-freelancer': d.loaded.pack.platformRules['hn-freelancer'].minIntervalMs,
     'hn-hiring': d.loaded.pack.platformRules['hn-hiring'].minIntervalMs,
     himalayas: d.loaded.pack.platformRules.himalayas.minIntervalMs,
+    draftdev: d.loaded.pack.platformRules.draftdev.minIntervalMs,
+    'prime-intellect': d.loaded.pack.platformRules['prime-intellect'].minIntervalMs,
+    'fractional-jobs': d.loaded.pack.platformRules['fractional-jobs'].minIntervalMs,
   };
   const keptSkips: string[] = [];
 
@@ -607,6 +617,28 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     r.gigs.push(...mergeGigs(batches));
     r.notes.push(...keptSkips.slice(before));
     kept.push(r);
+  }
+
+  // Draft.dev, Prime Intellect (one GitHub host state: the run budget is shared) and Fractional Jobs (its public page):
+  // one agent call each, probed whether or not the run has them on. Their robots.txt, pacing and refusals are the agents' own.
+  {
+    const github = makeGithubHosts();
+    const once: { id: 'draftdev' | 'prime-intellect' | 'fractional-jobs'; agent: Agent<GigRequest, RawGig> }[] = [
+      { id: 'draftdev', agent: makeSrcDraftdev(github) },
+      { id: 'prime-intellect', agent: makeSrcPrimeIntellect(github) },
+      { id: 'fractional-jobs', agent: makeSrcFractionalJobs(fractionalJobsHosts()) },
+    ];
+    for (const o of once) {
+      const r: Raw = { id: o.id, requests: 1, errors: [], gigs: [], notes: [] };
+      const before = keptSkips.length;
+      try {
+        r.gigs.push(...(await callAgent(o.agent, { platform: o.id, query: '', ...at0 }, o.id)));
+      } catch (e) {
+        r.errors.push(errText(e));
+      }
+      r.notes.push(...keptSkips.slice(before));
+      kept.push(r);
+    }
   }
 
   const rows: ProbeRow[] = [];
