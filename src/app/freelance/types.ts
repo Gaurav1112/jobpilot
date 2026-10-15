@@ -167,6 +167,8 @@ export const GigDocsPlan = defineType(
        * renderer. Absent for every other gig (and when the letter cannot be planned).
        */
       cover: CoverPlan.schema.optional(),
+      /** freelance-v2 review: why a contract from an employer job board has no `cover` ("title states pay or hours", ...). */
+      coverNote: z.string().optional(),
       resume: ResumePlan.schema,
       covered: z.array(z.string()),
       missing: z.array(z.string()),
@@ -197,6 +199,11 @@ export const GigRendered = defineType(
       plan: GigDocsPlan.schema,
       /** `cover` (freelance-v2): the cover letter's document text (`modelText`, contact block included), only with a planned cover. */
       text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string(), cover: z.string().optional() }).strict(),
+      /**
+       * freelance-v2 review: why a planned cover letter was not rendered (an unsafe city or notice, a glyph, a forbidden
+       * term, more than one page). The pitch and CV are rendered either way; no cover file or text is listed then.
+       */
+      coverBlocked: z.string().optional(),
     })
     .strict(),
 );

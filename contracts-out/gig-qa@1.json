@@ -1,5 +1,5 @@
 {
-  "hash": "dfca36d54b9a16fa52b6aad479d3a9d96b824394a4e595c8afe2714938ee72bf",
+  "hash": "97ab67d36e65759b3d70de19cd18a19b6bc9e899ba02885eb5e84245ea4b9cfa",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -21,6 +21,9 @@
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
+          "coverBlocked": {
+            "type": "string"
+          },
           "files": {
             "items": {
               "additionalProperties": false,
@@ -664,6 +667,9 @@
                   "paragraphs"
                 ],
                 "type": "object"
+              },
+              "coverNote": {
+                "type": "string"
               },
               "covered": {
                 "items": {

@@ -96,12 +96,12 @@ describe('the cover letter', () => {
   it('ends with contract availability from the pack (hours, IST window, alongside the current role), the city left for the renderer', () => {
     const p4 = plan(boardRole()).cover!.paragraphs.at(-1)!;
     expect(p4.factIds).toEqual([]);
-    expect(p4.text).toBe(`I'm based in {city} and can start right away, working up to 20 hours a week alongside my current role, mostly 18:00-00:00 IST. ${COVER_P4_THANKS}`);
+    expect(p4.text).toBe(`I'm based in {city}, {notice}, and can work up to 20 hours a week alongside my current role, mostly 18:00-00:00 IST. ${COVER_P4_THANKS}`);
     expect(GIG_COVER_P4_CITY).toContain('{maxHoursPerWeek}');
-    expect(p4.text).not.toMatch(/fully remote|notice/);
+    expect(p4.text).not.toMatch(/fully remote|right away|immediately/);
     // the pack values, never hard-coded
     const other = { ...pub, freelance: { ...pub.freelance, maxHoursPerWeek: 12, istWindow: '19:00-23:00' } };
-    expect(plan(boardRole(), other).cover!.paragraphs.at(-1)!.text).toContain('working up to 12 hours a week alongside my current role, mostly 19:00-23:00 IST.');
+    expect(plan(boardRole(), other).cover!.paragraphs.at(-1)!.text).toContain('can work up to 12 hours a week alongside my current role, mostly 19:00-23:00 IST.');
     // with no ongoing role, no "alongside my current role"
     const ended = { ...pub, roles: pub.roles.map((r) => (r.end === 'present' ? { ...r, end: '2026-09' } : r)), experience: { ...pub.experience } };
     expect(plan(boardRole(), ended).cover?.paragraphs.at(-1)!.text ?? '').not.toContain('alongside');
@@ -184,5 +184,40 @@ describe('the gig-cover-grounding eval (fictional fixtures, gate exactMatch 1.00
       const name = c.input.risked.verdict.rated.gig.client.name ?? '';
       expect(name === '' || /^(?:Example|Fictional|Sample) /.test(name) || /\bExample\b/.test(name) || name.startsWith('Initech') || name.startsWith('Mail '), name).toBe(true);
     }
+  });
+});
+
+describe('a title or company that states pay or hours gets no letter (freelance-v2 review)', () => {
+  it.each([
+    'Backend Engineer - $60/hr',
+    'Backend Engineer (USD 4000 per month)',
+    'Backend Engineer, INR 2,000 per hour',
+    'Backend Engineer ₹1.5 lakh',
+    'Backend Engineer (20 hours per week)',
+    'Backend Engineer 10-20 hrs/week',
+    'Backend Engineer - 30h/week',
+  ])('%s: no cover, the named reason, pitch and CV unchanged', (title) => {
+    const p = plan(boardRole({ title }));
+    expect('cover' in p).toBe(false);
+    expect(p.coverNote).toBe('title states pay or hours');
+    expect(p.pitch).not.toBeNull();
+    expect(p.resume.roles.some((r) => r.bullets.length > 0)).toBe(true);
+    expect(gigDocsProblems(p, pub)).toEqual([]);
+  });
+
+  it('a company that states pay is refused the same way; an ordinary title is not', () => {
+    expect(plan(boardRole({ client: { name: 'Example Pay $50/hr', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null } })).coverNote).toBe('title states pay or hours');
+    for (const title of ['Senior Backend Engineer - Java (6-month contract)', 'Backend Engineer, 24/7 Payments Platform', 'Staff Engineer (1-year contract)']) {
+      expect(plan(boardRole({ title })).cover, title).toBeDefined();
+    }
+  });
+
+  it('every other gig from an employer board without a letter names why; other gigs carry no note', () => {
+    expect(plan(boardRole({ client: { name: null, country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null } })).coverNote).toBe('the posting names no company');
+    expect(plan(boardRole({ client: { name: 'Mail cv@example.com', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null } })).coverNote).toBe('the title or company cannot go into a letter');
+    expect('coverNote' in plan(scoredGig({ kind: 'contract' }))).toBe(false);
+    expect('coverNote' in plan(boardRole())).toBe(false);
+    const p = plan(boardRole());
+    expect(gigDocsProblems({ ...p, coverNote: 'x' }, pub).join('\n')).toMatch(/coverNote is set/);
   });
 });

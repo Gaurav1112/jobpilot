@@ -29,6 +29,20 @@ function answerText(answers: Readonly<Record<string, unknown>>, key: string): st
   return s === undefined || s === '' ? undefined : s;
 }
 
+/**
+ * `answers.yaml` `notice_period` as fill text (`answerText`), or undefined when missing. Throws when it cannot go into a
+ * document: it must be its own sanitised form, pass the posting-slot rules and hold no brace. Shared by the daily p4
+ * and (freelance-v2) the gig cover letter's availability clause.
+ */
+export function noticeAnswer(answers: Readonly<Record<string, unknown>>): string | undefined {
+  const notice = answerText(answers, FILL_KEYS.notice);
+  if (notice !== undefined) {
+    const why = sanitisePostingText(notice) !== notice ? 'it changes when sanitised' : unsafePostingText(notice);
+    if (why !== null || /[{}]/.test(notice)) throw new Error(`answers.yaml ${FILL_KEYS.notice} cannot go into a document (${why ?? 'it has a brace'})`);
+  }
+  return notice;
+}
+
 /** Characters a city may not hold: markup, template and escape characters. */
 const CITY_DISALLOWED = /[<>{}`\\]/;
 
@@ -51,11 +65,7 @@ export function unsafeCity(city: string): string | null {
  */
 export function fillP4(p4: string, answers: Readonly<Record<string, unknown>>, city: string, officeCities: readonly string[] = []): string {
   if (p4 !== COVER_P4) throw new Error('the last cover paragraph is not the availability template, so it cannot be filled');
-  const notice = answerText(answers, FILL_KEYS.notice);
-  if (notice !== undefined) {
-    const why = sanitisePostingText(notice) !== notice ? 'it changes when sanitised' : unsafePostingText(notice);
-    if (why !== null || /[{}]/.test(notice)) throw new Error(`answers.yaml ${FILL_KEYS.notice} cannot go into a document (${why ?? 'it has a brace'})`);
-  }
+  const notice = noticeAnswer(answers);
   const place = city.trim();
   if (place !== '') {
     const why = unsafeCity(place);

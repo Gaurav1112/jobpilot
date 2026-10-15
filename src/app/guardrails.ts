@@ -39,7 +39,7 @@ import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermError } from './pack/rules.js';
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
-import { gigCoverModel, gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
+import { gigCoverModel, gigFilesOf, gigTexts, isRenderTimeBlock } from './freelance/writing/gig-text.js';
 import { companyOf, coverTitleOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
 import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
@@ -349,6 +349,7 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
   }
 
   if (plan.cover !== undefined) problems.push(...gigCoverProblems(plan, pack, rawPack));
+  if (plan.coverNote !== undefined && (plan.cover !== undefined || !getsCover(gig))) problems.push('coverNote is set, but the gig has a cover letter or never gets one');
 
   const expected = attempt(problems, 'plan', () => planGigDocs(plan.scored, rawPack));
   if (expected !== undefined) {
@@ -399,9 +400,16 @@ function gigRenderedProblems(ctx: GuardrailContext): string[] {
   if (out.data.gigKey !== input.data.gigKey) problems.push("gigKey is not the input plan's");
   if (!same(out.data.plan, input.data)) problems.push(`plan differs from the input plan (at ${firstDiff(out.data.plan, input.data) ?? '?'})`);
   const want = attempt(problems, 'text', () => gigTexts(input.data, full.data));
+  // freelance-v2 review: a blocked cover letter. Its reason is the one the plan and the full pack give (an unsafe city
+  // or notice), or a render-time one (`isRenderTimeBlock`: glyph, forbidden term, pages, DOCX layer); then no cover text
+  // and no cover file.
+  const blocked = out.data.coverBlocked;
+  if (blocked !== undefined && input.data.cover === undefined) problems.push('coverBlocked is set, but the plan has no cover letter');
+  if (want !== undefined && want.coverBlocked !== undefined && blocked !== want.coverBlocked) problems.push('coverBlocked is not the reason the plan and the full pack give');
+  if (want !== undefined && want.coverBlocked === undefined && blocked !== undefined && !isRenderTimeBlock(blocked)) problems.push('coverBlocked names no render-time reason, but the letter re-renders');
   if (want !== undefined) {
     for (const k of ['proposal', 'pitch', 'resume', 'cover'] as const) {
-      const w = want[k] ?? null;
+      const w = k === 'cover' && blocked !== undefined ? null : (want[k] ?? null);
       const g = out.data.text[k] ?? null;
       if (w === g) continue;
       if (w === null || g === null) problems.push(`text.${k} is ${g === null ? 'missing' : 'present'}, the plan gives ${w === null ? 'none' : 'one'}`);
@@ -412,7 +420,7 @@ function gigRenderedProblems(ctx: GuardrailContext): string[] {
       }
     }
   }
-  const files = gigFilesOf(input.data);
+  const files = gigFilesOf(input.data, input.data.cover !== undefined && blocked === undefined);
   const got = out.data.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path }));
   if (!same(files, got)) problems.push(`files are not the expected gig documents in order (at ${firstDiff(files, got) ?? '?'})`);
   out.data.files.forEach((f, i) => {
@@ -674,11 +682,13 @@ function gigFillProblems(ctx: GuardrailContext, full: RenderPack): string[] {
   const got = out.data.text.cover;
   if (!same(out.data.plan, plan)) return [`plan differs from the input plan (at ${firstDiff(out.data.plan, plan) ?? '?'})`];
   if (plan.cover === undefined) return got === undefined ? [] : ['text.cover is present, but the plan has no cover letter'];
+  // a blocked letter has no text to fill (G-GROUND checks the reason)
+  if (out.data.coverBlocked !== undefined) return got === undefined ? [] : ['text.cover is present, but the cover letter is blocked'];
   if (got === undefined) return ['text.cover is missing, but the plan has a cover letter'];
   const problems: string[] = [];
   if (hasBrace(got)) problems.push('text.cover still holds a placeholder brace');
   const want = attempt(problems, 'the cover fill', () => modelText(gigCoverModel(plan.cover as CoverPlan, full)));
-  if (want !== undefined && got !== want) problems.push('text.cover is not the letter filled from contact.yaml and rendered');
+  if (want !== undefined && got !== want) problems.push('text.cover is not the letter filled from contact.yaml and answers.yaml and rendered');
   return problems;
 }
 

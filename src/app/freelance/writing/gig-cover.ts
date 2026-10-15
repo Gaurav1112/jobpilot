@@ -18,14 +18,17 @@ import { evidenceFor, syntheticPosting } from './gig-evidence.js';
  *   real company, `client.name`, its title without pictographs (`coverTitleOf`: "🌍 Senior Engineer" is named
  *   "Senior Engineer"). The scorer never reads the company, so the Evidence, and with the compact budget
  *   (`COMPACT`) the resume plan's bullets, are the contract CV's: the letter cites what the CV sent with it shows.
- * - **No cover** (the plan leaves the key out) when the gig has no company, when the sanitised title or company is not
+ * - **No cover** (the plan leaves `cover` out and names why in `coverNote`, `COVER_NOTES`) when the gig has no company,
+ *   when the title or company states pay or hours (`PAY_OR_HOURS`), when the sanitised title or company is not
  *   safe for a template slot (`unsafePostingText`), names a forbidden term (strict), or has a character outside the
  *   Latin, Greek and Cyrillic ranges the embedded font draws (`NAMEABLE`), or when no bullet backs the letter (the
  *   daily cover-writer's `plan.has-bullets`). The pitch and CV are planned either way.
  * - **The letter** is `planCover` (the daily cover-writer's rules: p1 opening, employer-anchored evidence, the
  *   signature fact), then its availability paragraph is the contract one (`gigCoverP4`): the freelance pack's
  *   `maxHoursPerWeek` and `istWindow`, "alongside my current role" only when a role is ongoing, and `{city}` left for the
- *   gig renderer (contact.yaml is P1). It never states the role's pay or hours: no slot reads the budget or the hours.
+ *   gig renderer (contact.yaml is P1), and `{notice}` for the availability clause from answers.yaml notice_period (the
+ *   daily phrasing, `availabilityClause`). It never states the role's pay or hours: no slot reads the budget or the
+ *   hours, and a title or company that states them gets no letter.
  */
 
 /** The employer job boards whose contract roles get a cover letter. */
@@ -34,20 +37,24 @@ export const COVER_PLATFORMS: readonly Platform[] = ['boards', 'himalayas'];
 /** Whether a gig's kind and platform get a cover letter. */
 export const getsCover = (gig: Pick<Gig, 'kind' | 'platform'>): boolean => gig.kind === 'contract' && COVER_PLATFORMS.includes(gig.platform);
 
-/** The placeholder the gig renderer fills from `contact.yaml` city. */
+/** The placeholders the gig renderer fills from `contact.yaml` city and `answers.yaml` notice_period (both P1). */
 export const CITY_PLACEHOLDER = '{city}';
-/** The contract availability paragraph, before the thanks; `{city}` stays for the renderer, the rest is filled from the pack. */
-export const GIG_COVER_P4_CITY = "I'm based in {city} and can start right away, working up to {maxHoursPerWeek} hours a week{alongside}, mostly {istWindow} IST.";
+export const NOTICE_PLACEHOLDER = '{notice}';
+/**
+ * The contract availability paragraph, before the thanks; `{city}` and `{notice}` stay for the renderer, the rest is
+ * filled from the pack. The renderer drops the clause of a missing city or notice (`fillGigCoverP4`).
+ */
+export const GIG_COVER_P4_CITY = "I'm based in {city}, {notice}, and can work up to {maxHoursPerWeek} hours a week{alongside}, mostly {istWindow} IST.";
 /** Said only when a role is ongoing (the freelance work runs alongside it). */
 export const ALONGSIDE = ' alongside my current role';
-/** The opening the renderer drops with an empty city, and what replaces it. */
-const CITY_LEAD = `I'm based in ${CITY_PLACEHOLDER} and can`;
-const NO_CITY_LEAD = 'I can';
+/** The planned opening, up to the hours, that the renderer rewrites. */
+const PLANNED_LEAD = `I'm based in ${CITY_PLACEHOLDER}, ${NOTICE_PLACEHOLDER}, and can `;
 
 /** The planned availability paragraph: see the module rules. */
 export function gigCoverP4(rules: { readonly maxHoursPerWeek: number; readonly istWindow: string }, pack: WritingPack): string {
   const first = fill(GIG_COVER_P4_CITY, {
     city: CITY_PLACEHOLDER,
+    notice: NOTICE_PLACEHOLDER,
     maxHoursPerWeek: rules.maxHoursPerWeek,
     istWindow: rules.istWindow,
     alongside: hasOngoingRole(pack) ? ALONGSIDE : '',
@@ -56,13 +63,22 @@ export function gigCoverP4(rules: { readonly maxHoursPerWeek: number; readonly i
 }
 
 /**
- * The planned availability paragraph with the city filled: `city` (already checked safe by the caller) in place of
- * `{city}`, or, with no city, the city clause dropped ("I can start right away, ..."). Throws when `p4` is not a planned
- * paragraph (exactly one `{city}`, in its opening).
+ * The planned availability paragraph filled: `city` (already checked safe by the caller, '' for none) and `available`
+ * (the availability clause of the notice, `availabilityClause`, or undefined for none), each clause dropped when
+ * missing: "I'm based in Pune, available after a 30-day notice period, and can ...", "I'm based in Pune and can ...",
+ * "I'm available to start immediately and can ...", "I can ...". Throws when `p4` is not a planned paragraph (its
+ * opening, with exactly one `{city}` and one `{notice}`).
  */
-export function fillGigCoverP4(p4: string, city: string): string {
-  if (!p4.startsWith(CITY_LEAD) || p4.split(CITY_PLACEHOLDER).length !== 2) throw new Error('the last cover paragraph is not the contract availability template, so it cannot be filled');
-  return city === '' ? `${NO_CITY_LEAD}${p4.slice(CITY_LEAD.length)}` : p4.replace(CITY_PLACEHOLDER, () => city);
+export function fillGigCoverP4(p4: string, city: string, available: string | undefined): string {
+  if (!p4.startsWith(PLANNED_LEAD) || p4.split(CITY_PLACEHOLDER).length !== 2 || p4.split(NOTICE_PLACEHOLDER).length !== 2) {
+    throw new Error('the last cover paragraph is not the contract availability template, so it cannot be filled');
+  }
+  const lead =
+    city !== '' && available !== undefined ? "I'm based in " + city + ', ' + available + ', and can '
+    : city !== '' ? "I'm based in " + city + ' and can '
+    : available !== undefined ? "I'm " + available + ' and can '
+    : 'I can ';
+  return lead + p4.slice(PLANNED_LEAD.length);
 }
 
 /** What the embedded font draws for sure: Latin (to Extended-B), combining marks, Greek, Cyrillic, dashes and the minus. */
@@ -108,14 +124,39 @@ export function gigPostingOf(gig: Gig, pack: WritingPack, company: string, title
 export const gigCoverResume = (gig: Gig, company: string, pack: WritingPack, rawPack: unknown): ResumePlan =>
   planResume(evidenceFor(gigPostingOf(gig, pack, company, coverTitleOf(gig.title)), pack, rawPack), pack, COMPACT);
 
-/** The planned cover letter of one gig, or undefined when it gets none: see the module rules. */
-export function planGigCover(gig: Gig, pack: WritingPack, rawPack: unknown, rules: { readonly maxHoursPerWeek: number; readonly istWindow: string }): CoverPlan | undefined {
+/**
+ * Pay or hours stated in a title or company (freelance-v2 review): a currency sign or code, a rate unit ("per hour",
+ * "/hr", "/month"), or a number of hours ("20 hours", "10-20 hrs/week"). The letter's p1 names the title and company
+ * verbatim, so such a title would put the role's pay or hours into the letter: it gets no letter instead. gig-qa runs
+ * the same test on every rendered letter's opening (`cover.no-terms`).
+ */
+export const PAY_OR_HOURS =
+  /[$€£₹]|\b(?:usd|inr|eur|gbp|lpa|ctc)\b|\bper\s+(?:hour|hr|day|week|month|annum|year)\b|\/\s*(?:hr|hrs|hour|h|day|wk|week|mo|month|year|yr)\b|\b\d+\s*\+?\s*(?:[-–]\s*\d+\s*)?(?:hours?|hrs?)\b|\b\d+\s*h\s*(?:\/|per)\s*(?:week|wk)\b/i;
+
+/** Why a gig from an employer job board gets no cover letter (`GigDocsPlan.coverNote`). */
+export const COVER_NOTES = {
+  noCompany: 'the posting names no company',
+  payOrHours: 'title states pay or hours',
+  unsafe: 'the title or company cannot go into a letter',
+  noFacts: 'no verified fact backs a letter for it',
+} as const;
+
+/** The planned cover letter of one gig, or the named reason it gets none; undefined for a gig that never gets one. */
+export function planGigCover(
+  gig: Gig,
+  pack: WritingPack,
+  rawPack: unknown,
+  rules: { readonly maxHoursPerWeek: number; readonly istWindow: string },
+): { readonly cover: CoverPlan } | { readonly note: string } | undefined {
   if (!getsCover(gig)) return undefined;
   const company = companyOf(gig);
-  if (company === null || !nameable(company, pack.naming.forbiddenTerms) || !nameable(coverTitleOf(gig.title), pack.naming.forbiddenTerms)) return undefined;
+  if (company === null) return { note: COVER_NOTES.noCompany };
+  const title = coverTitleOf(gig.title);
+  if (PAY_OR_HOURS.test(title) || PAY_OR_HOURS.test(company)) return { note: COVER_NOTES.payOrHours };
+  if (!nameable(company, pack.naming.forbiddenTerms) || !nameable(title, pack.naming.forbiddenTerms)) return { note: COVER_NOTES.unsafe };
   const resume = gigCoverResume(gig, company, pack, rawPack);
-  if (!planHasBullets.test(resume)) return undefined;
-  return gigCoverOf(resume, pack, rules);
+  if (!planHasBullets.test(resume)) return { note: COVER_NOTES.noFacts };
+  return { cover: gigCoverOf(resume, pack, rules) };
 }
 
 /** The cover letter of a resume plan: `planCover`, its availability paragraph the contract one (`gigCoverP4`). */

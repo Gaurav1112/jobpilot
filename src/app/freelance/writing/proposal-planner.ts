@@ -403,8 +403,9 @@ export function planGigDocs(scored: ScoredGig, rawPack: unknown): GigDocsPlan | 
   if (gig.kind === 'contract') {
     // freelance-v2: a contract role from an employer job board also gets the daily cover letter (`gig-cover.ts`); the
     // key is left out for every other gig, so their plans are byte-identical to before.
-    const cover = planGigCover(gig, writingPackOf(rawPack, 'proposal-planner'), rawPack, GigRules.parse(rawPack).freelance);
-    return { ...base, proposal: null, pitch: pitchOf(gigSlots(scored, resume, rawPack, 2)), ...(cover === undefined ? {} : { cover }) };
+    const c = planGigCover(gig, writingPackOf(rawPack, 'proposal-planner'), rawPack, GigRules.parse(rawPack).freelance);
+    const extra = c === undefined ? {} : 'cover' in c ? { cover: c.cover } : { coverNote: c.note };
+    return { ...base, proposal: null, pitch: pitchOf(gigSlots(scored, resume, rawPack, 2)), ...extra };
   }
   const proposalOf = (s: GigSlots): Proposal => ({
     hook: { ...s.hook },

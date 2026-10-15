@@ -8,6 +8,7 @@ import { htmlAttributeText, htmlText } from '../../render/html.js';
 import { normText, PAGE_LIMITS } from '../../render/model.js';
 import { GigQaReport, gigQaRan, GigRendered } from '../types.js';
 import { coverPasteText, gigFilesOf, txtBytes } from './gig-text.js';
+import { PAY_OR_HOURS } from './gig-cover.js';
 import { hasNonAsciiPunct } from './phrases.js';
 
 /**
@@ -18,6 +19,7 @@ import { hasNonAsciiPunct } from './phrases.js';
  * |---|---|
  * | qa.files | exactly the expected files (`gigFilesOf`), each readable, each sha256 equal to the one recorded |
  * | gig.text | the `.txt` file is the recorded text, UTF-8, LF line ends, one final LF |
+ * | cover.no-terms | freelance-v2 review: the cover letter's opening (the planned p1 and the rendered line) states no pay or hours (`PAY_OR_HOURS`) |
  * | cover.text | freelance-v2, with a planned cover: `cover.txt` is the letter's paste text (`coverPasteText` of `text.cover`), UTF-8, LF, one final LF; no cover text without a planned cover. The cover PDF (at most `PAGE_LIMITS.cover` page), DOCX and HTML go through qa.pages, qa.hyphen, qa.docx-text, qa.pdf-text, qa.contact-intact and gig.naming like the CV |
  * | gig.limits | the proposal or pitch is at most the platform's `maxChars` characters, its first line (the preview) at most `hookChars`; over **fails**, it is never cut |
  * | gig.links | no URL, web address or email in the text when the platform's `linksAllowed` is false |
@@ -99,7 +101,9 @@ export const linkProblems = (text: string): string[] => text.split('\n').flatMap
 export function gigQaChecks(rendered: GigRendered, rawPack: unknown, read: GigQaInputs): Check[] {
   const pack = GigQaPack.parse(rawPack);
   const plan = rendered.plan;
-  const expected = gigFilesOf(plan);
+  // freelance-v2 review: a cover letter blocked at render time has no files; the pitch and CV are checked as ever.
+  const withCover = plan.cover !== undefined && rendered.coverBlocked === undefined;
+  const expected = gigFilesOf(plan, withCover);
   const byPath = new Map(rendered.files.map((f) => [f.path, f]));
   const bytesOf = (path: string): Uint8Array | undefined => {
     const got = read.files.get(path);
@@ -194,9 +198,13 @@ export function gigQaChecks(rendered: GigRendered, rawPack: unknown, read: GigQa
   // freelance-v2: the cover letter of a contract role on an employer job board, checked like the daily letter.
   const coverTextProblems: string[] = [];
   const coverText = rendered.text.cover;
-  if (plan.cover === undefined) {
-    if (coverText !== undefined) coverTextProblems.push('the output has a cover letter text, but the plan has no cover');
-  } else {
+  // cover.no-terms (freelance-v2 review): the letter's opening names the title and company verbatim; it must state no
+  // pay or hours of the role (`PAY_OR_HOURS`), on every rendered letter, not only in the eval.
+  const noTerms = plan.cover !== undefined && PAY_OR_HOURS.test(plan.cover.paragraphs[0]?.text ?? '') ? ['the cover letter opening states pay or hours'] : [];
+  if (coverText !== undefined && PAY_OR_HOURS.test(coverText.split('\n').find((l) => l.startsWith("I'm applying for")) ?? '')) noTerms.push('text.cover opening states pay or hours');
+  if (!withCover) {
+    if (coverText !== undefined) coverTextProblems.push(plan.cover === undefined ? 'the output has a cover letter text, but the plan has no cover' : 'the output has a cover letter text, but the letter is blocked');
+  } else if (plan.cover !== undefined) {
     const at = (format: 'txt' | 'pdf' | 'docx' | 'html') => expected.find((f) => f.kind === 'cover' && f.format === format) as (typeof expected)[number];
     const [cTxt, cPdf, cDocx, cHtml] = [at('txt'), at('pdf'), at('docx'), at('html')];
     if (coverText === undefined) coverTextProblems.push('the rendered output has no cover letter text');
@@ -244,6 +252,7 @@ export function gigQaChecks(rendered: GigRendered, rawPack: unknown, read: GigQa
     check('qa.files', fileProblems),
     check('gig.text', txtProblems),
     check('cover.text', coverTextProblems),
+    check('cover.no-terms', noTerms),
     check('gig.limits', limits),
     check('gig.links', links),
     check('gig.banned', banned),

@@ -111,7 +111,7 @@ const COVER_EVAL_CONTACT = { name: 'Eval Candidate', email: 'eval@example.com', 
  * The `gig-cover-grounding` gate (freelance-v2): from one ScoredGig, run proposal-planner as the pipeline would and pass
  * every out guardrail (G-GROUND re-derives the cover letter, G-NAMING, G-NO-GAP-CLAIM); then, with a planned cover,
  * render its texts (`gigTexts`, the fictional contact block) and pass G-GROUND and G-FILL as the gig renderer's output
- * (the city filled, no placeholder left), and check the letter states no pay or hours of the role. `{pass, cover}`:
+ * (the city filled, no placeholder left), and gig-qa's `cover.no-terms` (the opening states no pay or hours). `{pass, cover}`:
  * `cover` is whether a letter was planned; any trip or failed check is listed.
  */
 async function gigCoverGrounding(scored: ScoredGig, pack: unknown): Promise<unknown> {
@@ -121,7 +121,7 @@ async function gigCoverGrounding(scored: ScoredGig, pack: unknown): Promise<unkn
   const failed: string[] = [];
   if (p.cover !== undefined) {
     const full = { ...(pack as object), contact: COVER_EVAL_CONTACT, answers: {} };
-    const text = gigTexts(p, full as unknown as Parameters<typeof gigTexts>[1]);
+    const { coverBlocked: _blocked, ...text } = gigTexts(p, full as unknown as Parameters<typeof gigTexts>[1]);
     const files = gigFilesOf(p).map((f) => ({ ...f, sha256: '0'.repeat(64), pages: f.format === 'pdf' ? 1 : null }));
     const env = {
       envelopeId: 'eval', stepKey: 'eval', index: 0, type: 'GigDocsPlan@1',
@@ -134,8 +134,9 @@ async function gigCoverGrounding(scored: ScoredGig, pack: unknown): Promise<unkn
       const v = g.check(ctx);
       if (v.verdict === 'trip') failed.push(`${v.id}: ${v.detail ?? ''}`);
     }
-    const letter = p.cover.paragraphs.map((x) => x.text).join('\n');
-    if (/\$|\bUSD\b|per hour|\/h(?:ou)?r\b/i.test(letter)) failed.push('the letter states pay');
+    // the runtime gig-qa check (freelance-v2 review): the opening states no pay or hours
+    const terms = gigQaChecks({ gigKey: p.gigKey, files: [], plan: p, text }, pack, { files: new Map(), pdfText: new Map() }).find((c) => c.id === 'cover.no-terms');
+    if (terms?.ok !== true) failed.push(`cover.no-terms: ${terms?.detail ?? 'did not run'}`);
   }
   const trips = plan.trips;
   return trips.length === 0 && failed.length === 0 ? { pass: true, cover: p.cover !== undefined } : { pass: false, cover: p.cover !== undefined, trips, failed };

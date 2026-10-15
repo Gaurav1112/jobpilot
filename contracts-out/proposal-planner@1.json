@@ -1,5 +1,5 @@
 {
-  "hash": "d8acc68b8c03812cb5aa910b6a35ceb1f8680be375c3eae5e786d0a878c9ee86",
+  "hash": "eecf71b36c66b0a6230ce9a2ddfff920a71d6945aa27240828751563804e4006",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -1127,6 +1127,9 @@
               "paragraphs"
             ],
             "type": "object"
+          },
+          "coverNote": {
+            "type": "string"
           },
           "covered": {
             "items": {
