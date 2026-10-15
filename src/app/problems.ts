@@ -94,7 +94,7 @@ const oneLine = (t: string): string => {
 };
 
 /** The posting an app envelope carries, at whatever depth its type puts it. */
-function postingIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unknown> | undefined {
+export function postingIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unknown> | undefined {
   const p = env.payload;
   const at = (...path: string[]): unknown => path.reduce<unknown>((v, k) => (isObj(v) ? v[k] : undefined), p);
   const found = ((): unknown => {
@@ -120,7 +120,7 @@ function postingIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unkn
 }
 
 /** The gig a freelance envelope carries, at whatever depth its type puts it. */
-function gigIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unknown> | undefined {
+export function gigIn(env: Pick<Envelope, 'type' | 'payload'>): Record<string, unknown> | undefined {
   const at = (...path: string[]): unknown => path.reduce<unknown>((v, k) => (isObj(v) ? v[k] : undefined), env.payload);
   const found = ((): unknown => {
     switch (env.type) {

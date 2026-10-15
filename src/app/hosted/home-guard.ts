@@ -5,7 +5,7 @@ import { basename, dirname, join, relative, resolve, isAbsolute } from 'node:pat
 export class DefaultHomeError extends Error {}
 
 /** Resolves symlinks for the longest existing prefix of the path, then appends the rest (the path may not exist yet). */
-function realish(p: string): string {
+export function realish(p: string): string {
   let cur = resolve(p);
   const rest: string[] = [];
   while (!existsSync(cur)) {

@@ -44,6 +44,7 @@ import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
 import { keychain, secretsFor } from './app/secrets.js';
+import { registerShadow } from './app/hosted/cli.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -765,5 +766,7 @@ schedule
       console.log(f ? 'it runs only when the window is owed; "jobpilot run-freelance" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'freelance.log') : 'it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
+
+registerShadow(program);
 
 await program.parseAsync();
