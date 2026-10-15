@@ -414,3 +414,7 @@ input[type="url"], input[type="text"] {
 .co-reasons li, .co-deferred li { overflow-wrap: anywhere; }
 .co .btn-row { margin-top: var(--space-2); }
 .co-add { margin-bottom: 0; }
+
+.tech { margin-top: var(--space-2); font-size: var(--fs-sm); }
+.tech summary { color: var(--text-2); }
+.net-flag { margin: 0 0 var(--space-2); }

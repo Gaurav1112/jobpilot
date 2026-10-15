@@ -473,7 +473,7 @@ describe('companies: links to their jobs', () => {
     expect(keys.sort()).toEqual(['a1a1a1a1a1a1a1a1', 'a2a2a2a2a2a2a2a2']);
     expect(body).toContain('Jobs at <strong>Acme Robotics</strong> only');
     expect(body).toContain('<input type="hidden" name="companyKey" value="acme.example">');
-    expect(body).toContain('Not eligible: The title matches a role you filtered out <code>role:product manager</code>');
+    expect(body).toContain('Not eligible: The title matches a role you filtered out</p>');
   });
 });
 

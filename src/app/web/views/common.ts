@@ -2,7 +2,7 @@ import type { Band, DocsState, JobStatus, JobView } from '../../store/app-store.
 import { JOB_STATUSES } from '../../store/schema.js';
 import { compText } from '../format.js';
 import { remoteText } from '../copy.js';
-import { html, type Html } from '../html.js';
+import { Html, html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
 import { NOTE_B2B, NOTE_OFFICE_PREFIX } from '../../agents/eligibility.js';
 
@@ -71,3 +71,13 @@ export const officePill = (notes: readonly string[]): Html | '' => {
   const note = notes.find((n) => n.startsWith(NOTE_OFFICE_PREFIX));
   return note === undefined ? '' : pill(note, 'accent');
 };
+
+/** Parts joined by a middle dot; empty parts are dropped, so a separator never dangles ("GitLab · · via …", A6). */
+export function meta(parts: readonly (Html | string | null | undefined | false)[]): Html {
+  const kept = parts.filter((p): p is Html | string => (typeof p === 'string' ? p.trim() !== '' : p instanceof Html && p.value.trim() !== ''));
+  return html`${kept.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${typeof p === 'string' ? html`<span>${p}</span>` : p}`)}`;
+}
+
+/** The raw codes behind a verdict, for whoever wants them: closed by default, never the first thing read. */
+export const techDetail = (codes: readonly string[]): Html | '' =>
+  codes.length === 0 ? '' : html`<details class="tech"><summary>Technical detail</summary><ul class="plain">${codes.map((c) => html`<li><code>${c}</code></li>`)}</ul></details>`;

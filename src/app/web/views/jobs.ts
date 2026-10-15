@@ -2,7 +2,7 @@ import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-sto
 import { dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { reasonText, sourceName } from '../copy.js';
-import { b2bPill, officePill, BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { meta, b2bPill, officePill, BAND_LABEL, bandPill, compCell, docsPill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -73,11 +73,13 @@ function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): H
 <div class="job-score num" title="Fit score">${j.score === null ? '–' : scoreText(j.score)}</div>
 <div class="job-main">
 <h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="/jobs/${j.jobKey}">${j.title}</a></h2>
-<p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span>${
-    j.alsoListedOn.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : ''
-  }</p>
+<p class="job-sub">${meta([
+    j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
+    j.location,
+    j.alsoListedOn.length > 0 ? html`<span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : null,
+  ])}</p>
 <p class="job-pills">${remotePill(j.remote)}${b2bPill(j.notes)}${officePill(j.notes)}${docsPill(j.docsState)}</p>
-${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${j.reasons.map((r, i) => html`${i > 0 ? '; ' : ''}${reasonText(r)} <code>${r}</code>`)}</p>` : ''}
+${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${[...new Set(j.reasons.map(reasonText))].join('; ')}</p>` : ''}
 ${historyLine(j, istDay)}
 </div>
 <div class="job-status">${statusPill(j.status)}</div>

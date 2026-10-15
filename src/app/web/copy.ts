@@ -72,6 +72,8 @@ export function docsReason(j: Pick<JobView, 'docsState' | 'docsDetail' | 'compan
 /** Readable eligibility reason codes; the code itself is shown beside it. */
 export function reasonText(code: string): string {
   if (code === 'remote-unclear') return 'The posting does not say clearly where remote work is allowed';
+  if (code === 'onsite') return 'On-site only';
+  if (code === 'hybrid') return 'Hybrid only, outside the cities you accept';
   if (code === 'onsite-only') return 'On-site only, outside the cities you accept';
   if (code.startsWith('remote-excludes-india')) return 'Remote, but not open to people in India';
   if (code === 'location-outside-india') return 'The posting names only places outside India';
@@ -82,6 +84,21 @@ export function reasonText(code: string): string {
   if (code.startsWith('years')) return 'Asks for more years than you set as your limit';
   return code;
 }
+
+const GIG_REASON: Readonly<Record<string, string>> = {
+  'budget-below-floor': 'The budget is under your minimum rate',
+  'budget-preset': 'The client picked a preset budget range',
+  'hours-over-cap': 'Asks for more hours a week than you set',
+  'hours-unclear': "The posting doesn't state the weekly hours",
+  'rate-unclear': "The posting doesn't state the pay",
+  'role-filter': 'The title matches a role you filtered out',
+  closed: 'The posting is closed',
+  naming: 'It names a company you never mention',
+};
+/** The gig verdict codes `src/app/freelance/gig-eligibility.ts` emits. */
+export const GIG_REASON_CODES: readonly string[] = Object.keys(GIG_REASON);
+/** A gig verdict code in words (amendment 10: mapped at render time, so stored rows read right too). */
+export const gigReasonText = (code: string): string => GIG_REASON[code] ?? 'Another check flagged it; see Technical detail';
 
 /** A score breakdown label in words. `display` maps a lexicon key to its display name. */
 export function breakdownText(label: string, display: (key: string) => string): string {

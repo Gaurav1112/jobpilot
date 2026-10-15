@@ -1,6 +1,6 @@
 import { periodText } from '../format.js';
 import { html, type Html } from '../html.js';
-import { csrfField, pill, type Tone } from './common.js';
+import { csrfField, meta, pill, type Tone } from './common.js';
 
 export interface FactRow {
   readonly id: string;
@@ -42,7 +42,7 @@ export function factRow(f: FactRow, csrf: string, flash?: string): Html {
 ${statusPill(f.status)}${f.packStatus !== null ? html` <span class="muted">your change (facts.yaml says ${factStatusLabel(f.packStatus)})</span>` : ''}
 </div>
 <p class="fact-claim">${f.claim}</p>
-<p class="fact-sub"><span>${f.kind}</span><span class="sep" aria-hidden="true">·</span><span>${f.employer}</span><span class="sep" aria-hidden="true">·</span><span class="num">${periodText(f.period)}</span></p>
+<p class="fact-sub">${meta([f.kind, f.employer, html`<span class="num">${periodText(f.period)}</span>`])}</p>
 ${unverified ? html`<p class="fact-warn">Not used in documents until you verify it.</p>` : ''}
 ${!used(f.status) && !unverified ? html`<p class="hint">Not used in documents.</p>` : ''}
 ${

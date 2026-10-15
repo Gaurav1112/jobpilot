@@ -1,6 +1,6 @@
 import { dateText } from '../format.js';
 import { html, type Html } from '../html.js';
-import { csrfField, pill, type Tone } from './common.js';
+import { csrfField, meta, pill, type Tone } from './common.js';
 
 /**
  * The Companies tab (Task 11, spec §5): the coverage registry in five lists (Verified, Proposed, Failing, Rejected,
@@ -127,7 +127,7 @@ function found(c: CompanyRowView): Html {
   if (c.platform !== null) parts.push(html`<span>${companyPlatformName(c.platform)}${c.platformSlug !== null ? html` <code>${c.platformSlug}</code>` : ''}</span>`);
   if (c.boardUrl !== null) parts.push(html`<span>board <code>${c.boardUrl}</code></span>`);
   parts.push(html`<span>website <code>${c.website}</code></span>`);
-  return html`<p class="co-found">${parts.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>`;
+  return html`<p class="co-found">${meta(parts)}</p>`;
 }
 
 const reasonsList = (rs: readonly string[], label: string): Html | '' =>

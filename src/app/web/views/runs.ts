@@ -1,6 +1,6 @@
 import type { RunSummary } from '../../store/app-store.js';
 import { html, type Html } from '../html.js';
-import { pill } from './common.js';
+import { meta, pill } from './common.js';
 import type { ChainCheck } from '../../chain-status.js';
 
 /**
@@ -93,7 +93,7 @@ function run(r: RunSummary, istTime: (iso: string) => string): Html {
   const warns = r.warnings ?? [];
   return html`<section class="card wide run" aria-labelledby="run-${r.runId}">
 <h2 id="run-${r.runId}"><code>${r.runId}</code> ${probs.length > 0 ? pill(String(probs.length) + (probs.length === 1 ? ' problem' : ' problems'), 'critical') : pill('Clean', 'good')}</h2>
-<p class="run-meta"><span>${istTime(r.at)}</span><span class="sep" aria-hidden="true">·</span><span>pack <code title="${r.packHash}">${r.packHash.slice(0, 12)}</code></span><span class="sep" aria-hidden="true">·</span><span>policy <code title="${r.policyHash}">${r.policyHash.slice(0, 12)}</code></span></p>
+<p class="run-meta">${meta([istTime(r.at), html`<span>pack <code title="${r.packHash}">${r.packHash.slice(0, 12)}</code></span>`, html`<span>policy <code title="${r.policyHash}">${r.policyHash.slice(0, 12)}</code></span>`])}</p>
 ${counts(r.counts)}
 ${problems(probs)}
 ${warns.length > 0 ? html`<h3>Warnings</h3><ul class="plain warnings">${warns.map((w) => html`<li>${w}</li>`)}</ul>` : ''}

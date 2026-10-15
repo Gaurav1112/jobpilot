@@ -13,7 +13,7 @@ import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { NOTE_ONE_SKILL } from '../../src/app/freelance/project.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { Store as KernelStore } from '../../src/kernel/store/store.js';
-import { linksOf, rowOf, textOf } from '../support/dom.js';
+import { elementsWith, linksOf, rowOf, textOf } from '../support/dom.js';
 
 /**
  * The freelance tab (Task 10, spec §8) through Hono's `app.request()`: a temp JOBPILOT_HOME with the fictional pack,
@@ -383,6 +383,7 @@ describe('freelance: networks', () => {
         const j = body.indexOf('data-network="', i + 1);
         return body.slice(i, j === -1 ? undefined : j);
       };
+      expect(textOf(elementsWith(body, 'id', 'net-h-arc')[0] ?? '')).toBe('Arc');
       expect(card('arc')).toContain('check before use');
       expect(card('contra')).not.toContain('check before use');
       expect(card('arc')).toContain('href="/freelance/networks/arc/files/resume.pdf"');

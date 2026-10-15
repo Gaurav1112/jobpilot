@@ -2,8 +2,8 @@ import type { GigDoc, GigHistoryEntry, GigSnapshot, GigStatus, GigView, NetworkS
 import { GIG_STATUSES, NETWORK_STATUSES } from '../../store/schema.js';
 import { dateText, groupWestern, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
-import { platformName } from '../copy.js';
-import { csrfField, pill, type Tone } from './common.js';
+import { gigReasonText, platformName } from '../copy.js';
+import { csrfField, meta, pill, techDetail, type Tone } from './common.js';
 
 /**
  * The freelance tab (Task 10, spec §8): Contracts, Gigs, Review, Networks and Sources, one gig's page, and the fragments
@@ -83,7 +83,7 @@ function factsLine(v: GigRowView): Html {
   const parts: Html[] = [html`<span>${v.hours}</span>`, html`<span>IST overlap: ${v.overlap ?? 'not stated'} <span class="muted">(your window ${v.istWindow})</span></span>`];
   if (v.age !== null) parts.push(html`<span>${v.age}</span>`);
   if (v.bids !== null) parts.push(html`<span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>`);
-  return html`<p class="gig-facts">${parts.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>`;
+  return html`<p class="gig-facts">${meta(parts)}</p>`;
 }
 
 function gigRow(v: GigRowView): Html {
@@ -93,7 +93,7 @@ function gigRow(v: GigRowView): Html {
 <div class="gig-fit num" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h2 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h2>
-<p class="gig-sub"><span>${platformName(g.platform)}</span>${v.client.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span>${v.client.join(', ')}</span>` : html`<span class="sep" aria-hidden="true">·</span><span class="muted">no client details</span>`}<span class="sep" aria-hidden="true">·</span>${sourceLink(g, 'Open the posting')}</p>
+<p class="gig-sub">${meta([platformName(g.platform), v.client.length > 0 ? v.client.join(', ') : html`<span class="muted">no client details</span>`, sourceLink(g, 'Open the posting')])}</p>
 ${factsLine(v)}
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
@@ -162,7 +162,7 @@ function roleRow(r: ContractRoleView): Html {
 <div class="gig-fit num" title="Fit">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h3 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h3>
-<p class="gig-sub">${sub.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>
+<p class="gig-sub">${meta(sub)}</p>
 <p class="role-skills">${r.skills.length > 0 ? html`Matches your facts: ${r.skills.join(', ')}` : html`<span class="muted">Matched skills not on record yet</span>`}</p>
 <p class="role-ask">${pill(r.ask, 'warn', 'The posting does not state these: ask the employer before you apply')}</p>
 ${files.length > 0 ? html`<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${ROLE_FILE_LABEL(f)}</a>`)}</div>` : html`<p class="muted">${r.docsReason ?? 'No documents yet.'}</p>`}
@@ -329,7 +329,7 @@ function checksSection(d: GigPageData): Html {
   const empty = v.flags.length === 0 && v.notes.length === 0 && d.reasons.length === 0;
   return html`<section class="card" aria-labelledby="checks-h"><h2 id="checks-h">Before you bid</h2>
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
-${d.reasons.length > 0 ? html`<ul class="plain">${d.reasons.map((r) => html`<li><code>${r}</code></li>`)}</ul>` : ''}
+${d.reasons.length > 0 ? html`<ul class="plain">${[...new Set(d.reasons.map(gigReasonText))].map((t) => html`<li>${t}</li>`)}</ul>${techDetail(d.reasons)}` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${empty ? html`<p class="muted">Nothing to flag.</p>` : ''}
 ${v.client.length > 0 ? html`<p class="hint">Client: ${v.client.join(', ')}</p>` : html`<p class="hint">The platform states nothing about the client.</p>`}
@@ -342,7 +342,7 @@ export function gigBody(d: GigPageData): Html {
   return html`<header class="job-head">
 <p class="crumbs"><a href="/freelance">Freelance</a></p>
 <h1>${g.title}</h1>
-<p class="job-sub"><span>${platformName(g.platform)}</span><span class="sep" aria-hidden="true">·</span><span>${g.kind === 'contract' ? 'Contract' : g.kind === 'gig' ? 'Gig' : g.kind}</span>${v.age !== null ? html`<span class="sep" aria-hidden="true">·</span><span>${v.age}</span>` : ''}${v.bids !== null ? html`<span class="sep" aria-hidden="true">·</span><span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>` : ''}</p>
+<p class="job-sub">${meta([platformName(g.platform), g.kind === 'contract' ? 'Contract' : g.kind === 'gig' ? 'Gig' : g.kind, v.age, v.bids !== null ? html`<span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>` : null])}</p>
 <div class="head-facts">
 <div class="fact-box"><span class="label">Rate</span><span class="rate-label">${v.rate}</span></div>
 <div class="fact-box"><span class="label">Hours</span><span>${v.hours}</span></div>
@@ -441,7 +441,8 @@ ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopen
 function networkCard(n: NetworkCard, csrf: string, istDay: (iso: string) => string): Html {
   const unchecked = n.hasFile && !n.checkedByUser;
   return html`<section class="card net" id="net-${n.id}" data-network="${n.id}" aria-labelledby="net-h-${n.id}">
-<h2 id="net-h-${n.id}">${n.name}${unchecked ? pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page') : ''}</h2>
+<h2 id="net-h-${n.id}">${n.name}</h2>
+${unchecked ? html`<p class="net-flag">${pill('check before use', 'warn')}</p>` : ''}
 ${networkFacts(n)}
 ${unchecked ? html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>` : ''}
 ${networkStatusBlock({ ...n, notOpen: n.facts?.india === 'not-open' }, csrf, istDay)}

@@ -2,7 +2,7 @@ import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
-import { b2bPill, officePill, bandPill, compCell, csrfField, docsPill, pill, remotePill, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { b2bPill, officePill, bandPill, compCell, csrfField, docsPill, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
 
 export interface Recommended {
   readonly format: 'pdf' | 'docx';
@@ -34,7 +34,11 @@ function header(j: JobDetail): Html {
   return html`<header class="job-head">
 <p class="crumbs"><a href="/">Jobs</a></p>
 <h1>${j.title}</h1>
-<p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span><span class="sep" aria-hidden="true">·</span><span>via ${sourceName(j.source)}${j.ats !== j.source && j.ats !== 'feed' ? html` (applies on ${sourceName(j.ats)})` : ''}</span></p>
+<p class="job-sub">${meta([
+  j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
+  j.location,
+  html`<span>via ${sourceName(j.source)}${j.ats !== j.source && j.ats !== 'feed' ? html` (applies on ${sourceName(j.ats)})` : ''}</span>`,
+])}</p>
 <div class="head-facts">
 <div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
 <div class="fact-box"><span class="label">Fit score</span><span class="big num">${j.score === null ? '–' : scoreText(j.score)}</span></div>
@@ -71,7 +75,7 @@ function eligibility(j: JobDetail): Html {
   const verdict = j.verdict === 'eligible' ? pill('Eligible', 'good') : j.verdict === 'review' ? pill('Needs a look', 'warn') : j.verdict === 'rejected' ? pill('Not eligible', 'critical') : pill('Not assessed yet', 'muted');
   return html`<section class="card" aria-labelledby="elig"><h2 id="elig">Eligibility</h2>
 <p>${verdict}${b2bPill(j.notes)}${officePill(j.notes)}</p>
-${j.reasons.length > 0 ? html`<ul class="plain">${j.reasons.map((r) => html`<li>${reasonText(r)} <code>${r}</code></li>`)}</ul>` : ''}
+${j.reasons.length > 0 ? html`<ul class="plain">${[...new Set(j.reasons.map(reasonText))].map((t) => html`<li>${t}</li>`)}</ul>${techDetail(j.reasons)}` : ''}
 ${j.notes.length > 0 ? html`<ul class="plain notes">${j.notes.map((n) => html`<li>${n}</li>`)}</ul>` : ''}
 ${j.reasons.length === 0 && j.notes.length === 0 ? html`<p class="muted">Nothing to flag.</p>` : ''}
 </section>`;
