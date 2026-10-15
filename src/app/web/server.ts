@@ -83,6 +83,8 @@ export interface DashboardDeps {
   readonly onSchemaNewer?: () => void;
   /** What the Companies tab's "Resolve now" fetches with (the CLI: the real fetcher). Absent: Resolve now is not offered. */
   readonly resolve?: ResolveDeps;
+  /** The profiles root serves several profiles: the header shows a switcher between them. Absent: no switcher. */
+  readonly profiles?: () => { ids: string[]; current: string };
 }
 
 /** Tests only (reached through `server-testing.ts`): runs just before an applied snapshot is recorded. */
@@ -272,6 +274,19 @@ export async function warmDashboard(app: Hono<Env>, host: string): Promise<numbe
   return Math.max(performance.now() - t0, 0.001);
 }
 
+/** The security headers every response carries (the dashboard's and the profiles root's own). */
+export function securityHeaders(c: Context): void {
+  const h = c.res.headers;
+  if (!h.has('content-security-policy')) h.set('content-security-policy', PAGE_CSP);
+  h.set('x-content-type-options', 'nosniff');
+  // same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` on a plain form post, which the
+  // origin check must refuse. Links out carry rel="noreferrer", so nothing leaks to other sites.
+  h.set('referrer-policy', 'same-origin');
+  h.set('cross-origin-opener-policy', 'same-origin');
+  h.set('cross-origin-resource-policy', 'same-origin');
+  if (!h.has('cache-control')) h.set('cache-control', 'no-store');
+}
+
 export function createDashboard(deps: DashboardDeps): Hono<Env> {
   return buildDashboard(deps, {});
 }
@@ -294,7 +309,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const portOf = (): number | undefined => (typeof deps.port === 'function' ? deps.port() : deps.port);
 
   const page = (c: Context<Env>, nav: Nav, title: string, banners: readonly Banner[], body: Html, status: 200 | 400 | 403 | 404 | 409 | 500 | 503 = 200) =>
-    c.html(layout({ base, title, nav, banners, body }).value, status);
+    c.html(layout({ base, title, nav, banners, body, ...(deps.profiles !== undefined ? { profiles: deps.profiles() } : {}) }).value, status);
 
   // dashboard-perf fix 5: one long-lived connection per dashboard, never holding a transaction (`connection.ts`)
   const shared = new SharedStore(paths.db, timeoutMs, hooks.onOpen, deps.onSchemaNewer, () => liveHolder(deps.home) !== undefined);
@@ -329,15 +344,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     if (!allowedHosts(portOf()).has(host) || new URL(c.req.url).host.toLowerCase() !== host) return c.text('This dashboard only answers on 127.0.0.1.', 403);
     await next();
     scheduleIdle();
-    const h = c.res.headers;
-    if (!h.has('content-security-policy')) h.set('content-security-policy', PAGE_CSP);
-    h.set('x-content-type-options', 'nosniff');
-    // same-origin, not no-referrer: under no-referrer a browser sends `Origin: null` on a plain form post, which the
-    // origin check must refuse. Links out carry rel="noreferrer", so nothing leaks to other sites.
-    h.set('referrer-policy', 'same-origin');
-    h.set('cross-origin-opener-policy', 'same-origin');
-    h.set('cross-origin-resource-policy', 'same-origin');
-    if (!h.has('cache-control')) h.set('cache-control', 'no-store');
+    securityHeaders(c);
   });
 
   // --- session cookie --------------------------------------------------------------------------------------------

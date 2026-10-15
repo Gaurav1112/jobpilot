@@ -1,5 +1,5 @@
 import { html, type Html } from '../html.js';
-import { u } from '../paths.js';
+import { profileHref, u } from '../paths.js';
 
 export type Nav = 'jobs' | 'freelance' | 'companies' | 'facts' | 'runs';
 
@@ -14,6 +14,8 @@ export interface LayoutData {
   readonly nav: Nav;
   readonly banners: readonly Banner[];
   readonly body: Html;
+  /** Set by the profiles root: every profile id and the one being shown. */
+  readonly profiles?: { readonly ids: readonly string[]; readonly current: string };
 }
 
 const navLink = (href: string, label: string, here: boolean): Html =>
@@ -42,7 +44,7 @@ export function layout(d: LayoutData): Html {
 <header class="top">
 <div class="top-inner">
 <a class="brand" href="${u(d.base, '/')}">jobpilot</a>
-<nav aria-label="Main">${navLink(u(d.base, '/'), 'Jobs', d.nav === 'jobs')}${navLink(u(d.base, '/freelance'), 'Freelance', d.nav === 'freelance')}${navLink(u(d.base, '/companies'), 'Companies', d.nav === 'companies')}${navLink(u(d.base, '/facts'), 'Your facts', d.nav === 'facts')}${navLink(u(d.base, '/runs'), 'Runs', d.nav === 'runs')}</nav>
+<nav aria-label="Main">${navLink(u(d.base, '/'), 'Jobs', d.nav === 'jobs')}${navLink(u(d.base, '/freelance'), 'Freelance', d.nav === 'freelance')}${navLink(u(d.base, '/companies'), 'Companies', d.nav === 'companies')}${navLink(u(d.base, '/facts'), 'Your facts', d.nav === 'facts')}${navLink(u(d.base, '/runs'), 'Runs', d.nav === 'runs')}</nav>${d.profiles === undefined ? '' : html`<nav class="profiles" aria-label="Profiles">${d.profiles.ids.map((id) => html`<a href="${profileHref(id)}"${id === d.profiles?.current ? html` aria-current="page"` : ''}>${id}</a>`)}</nav>`}
 </div>
 </header>
 <main id="main">

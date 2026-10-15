@@ -9,3 +9,5 @@ export function u(base: string, path: string): string {
   if (!path.startsWith('/')) throw new Error(`dashboard path must start with /: ${path}`);
   return base === '' ? path : `${base}${path}`;
 }
+/** A profile's dashboard home under the profiles root. */
+export const profileHref = (id: string): string => u(`/p/${id}`, '/');

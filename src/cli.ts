@@ -26,7 +26,7 @@ import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
 import { homePaths, jobpilotHome, selectedProfile, selectProfile } from './app/pack/paths.js';
-import { ProfileError, jobpilotRoot, profileHome, resolveHome } from './app/profiles/root.js';
+import { ProfileError, isProfilesRoot, jobpilotRoot, profileHome, resolveHome } from './app/profiles/root.js';
 import { createProfile, removeProfile, useProfile } from './app/profiles/commands.js';
 import { adoptLaunchd, unadoptLaunchd } from './app/profiles/adopt-launchd.js';
 import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
@@ -39,6 +39,7 @@ import { forbiddenTermsAt, redactedError, runCommand, runCoverageCommand, runFre
 import { AppStore, SchemaBehindError } from './app/store/app-store.js';
 import { COVERAGE_DUE, DAILY_DUE, FREELANCE_DUE, coverageWeek, due, type DueSpec } from './app/due.js';
 import { COVERAGE_LABEL, DAILY_LABEL, FREELANCE_LABEL, installSchedule, profileLabels, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
+import { serveRoot } from './app/web/root.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
 import { probeCommand } from './app/freelance/probe.js';
@@ -47,7 +48,7 @@ import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
 import { keychain, realSecretsRunner } from './app/secrets.js';
-import { profileKeychainService } from './app/profiles/keychain.js';
+import { keychainServiceOf, profileKeychainService } from './app/profiles/keychain.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -670,7 +671,35 @@ program
         console.error('jobpilot dashboard: the database was upgraded by a newer jobpilot; exiting so it restarts on the new code');
         setTimeout(() => process.exit(1), 250).unref();
       };
-      const server = serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, onSchemaNewer, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+      // a profiles root without --profile serves every profile (/p/<id>/); --profile or a single home serves one dashboard
+      const rootToServe = ((): string | undefined => {
+        if (selectedProfile() !== undefined) return undefined;
+        const explicit = process.env['JOBPILOT_HOME'];
+        const named = explicit !== undefined && explicit !== '';
+        if (named && !(isProfilesRoot(explicit) && !existsSync(join(explicit, 'pack')))) return undefined;
+        const r = named ? explicit : jobpilotRoot();
+        return isProfilesRoot(r) ? r : undefined;
+      })();
+      const server =
+        rootToServe !== undefined
+          ? serveRoot(
+              {
+                root: rootToServe,
+                clock: systemClock,
+                port,
+                gmailConnected: (home) => {
+                  try {
+                    return keychain(realSecretsRunner, keychainServiceOf(home)).has(SECRET.refresh);
+                  } catch {
+                    return false;
+                  }
+                },
+                onSchemaNewer,
+                resolve: { fetch: nodeFetch },
+              },
+              (url) => console.log(`jobpilot dashboard on ${url} (every profile; Ctrl-C to stop)`),
+            )
+          : serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, onSchemaNewer, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
       server.on('error', (e) => {
         console.error(`error: ${e.message}`);
         process.exit(1);

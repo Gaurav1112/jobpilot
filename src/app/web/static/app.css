@@ -110,6 +110,8 @@ p { margin: 0 0 var(--space-2); }
 }
 .top nav a:hover { color: var(--text); background: var(--surface-2); }
 .top nav a[aria-current="page"] { color: var(--accent); background: var(--accent-soft); font-weight: 600; }
+.top nav.profiles { margin-left: auto; padding-left: var(--space-3); border-left: 1px solid var(--border); }
+.top nav.profiles a { font-size: 0.875rem; }
 main { max-width: 72rem; margin: 0 auto; padding: var(--space-4); }
 .page-head { margin-bottom: var(--space-4); }
 .page-head h1 { margin-bottom: var(--space-1); }
@@ -315,6 +317,7 @@ details summary { cursor: pointer; color: var(--accent); }
   .preview { height: 26rem; }
   .answers div { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .top-inner { gap: var(--space-3); }
+  .top nav.profiles { flex-basis: 100%; margin-left: 0; padding-left: 0; border-left: 0; }
   legend { float: none; width: 100%; }
 }
 
