@@ -1,3 +1,4 @@
+import type { AwakeClock } from '../../kernel/awake.js';
 import type { Clock } from '../../kernel/clock.js';
 import { policyHash } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
@@ -124,6 +125,8 @@ export interface CoverageRunOptions {
   readonly online?: () => Promise<boolean>;
   /** The run's one per-host pacer (every stage and the online probe); default: a new one at the coverage policy's interval. */
   readonly hostPacer?: HostPacer;
+  /** The supervisors' awake clock (step timeouts, wake detection); default the process's. Tests inject one on `manualTimers`. */
+  readonly awake?: AwakeClock;
 }
 
 /**
@@ -352,6 +355,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         retry: true,
         hostPacer,
         online,
+        ...(o.awake !== undefined ? { awake: o.awake } : {}),
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id

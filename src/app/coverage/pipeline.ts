@@ -1,3 +1,4 @@
+import type { AwakeClock } from '../../kernel/awake.js';
 import type { AnyAgent } from '../../kernel/agent.js';
 import type { EgressSets, HostPacer } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
@@ -201,6 +202,8 @@ export interface CoverageStagesOptions {
    * and steps re-queued after a wake wait for it. Absent: only failures just after a detected wake are re-queued.
    */
   readonly online?: () => Promise<boolean>;
+  /** The supervisors' awake clock; default the process's. */
+  readonly awake?: AwakeClock;
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -395,6 +398,7 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         ...(o.online !== undefined ? { online: o.online } : {}),
         // coverage's own re-queues and the wake re-queues share one budget (MAX_REQUEUES = MAX_WAKE_REQUEUES)
         requeueEvents: [REQUEUED],
+        ...(o.awake !== undefined ? { awake: o.awake } : {}),
         pauseBefore,
         beforeFinish,
       });
