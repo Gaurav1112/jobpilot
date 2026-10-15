@@ -148,6 +148,13 @@ describe('Freshteam listing', () => {
     parseFreshteamListing('<a '.repeat(500_000), 'acme');
     expect(performance.now() - t0).toBeLessThan(1500);
   });
+
+  it('is linear on unclosed job anchors with a valid id-checked href', () => {
+    const t0 = performance.now();
+    const r = parseFreshteamListing('<a href="/jobs/abcdefghijkl/x">'.repeat(60_000), 'acme');
+    expect(r.jobs).toHaveLength(60_000);
+    expect(performance.now() - t0).toBeLessThan(2000);
+  });
 });
 
 describe('scopeListed', () => {

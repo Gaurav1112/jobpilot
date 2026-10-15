@@ -59,7 +59,7 @@ function jobPath(href: string, host: string): { id: string; path: string } | nul
  * The /jobs listing: each `<a href="/jobs/<id12>/<slug>" … data-portal-location="…" data-portal-remote-location=…>` is
  * one job (title = the `<div class="job-title">` text after it; location = the attribute, entities decoded; remote =
  * the attribute `true`/`false`, else null). `next` = the page links `/jobs?page=<n+1>`. Linear scan over `<a ` tags:
- * each tag's end is one forward `indexOf`, and a card's title is searched only up to its own `</a>`.
+ * each tag's end is one forward `indexOf`, and a card's title is searched only up to its own `</a>` or the next `<a ` tag.
  */
 export function parseFreshteamListing(html: string, slug: string, n = 1): { jobs: ScopedJob[]; next: boolean } {
   const host = freshteamHost(slug);
@@ -76,8 +76,13 @@ export function parseFreshteamListing(html: string, slug: string, n = 1): { jobs
     if (href !== null) {
       const path = jobPath(href, host);
       if (path !== null) {
-        const close = html.indexOf('</a>', gt + 1);
-        const body = html.slice(gt + 1, close < 0 ? html.length : close);
+        // The card ends at its `</a>` or at the next `<a ` tag, whichever comes first: segments never overlap.
+        open.lastIndex = gt + 1;
+        const after = open.exec(html);
+        const limit = after === null ? html.length : after.index;
+        const seg = html.slice(gt + 1, limit);
+        const close = seg.indexOf('</a>');
+        const body = close < 0 ? seg : seg.slice(0, close);
         const at = body.indexOf('job-title');
         let title: string | null = null;
         if (at >= 0) {
