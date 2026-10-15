@@ -43,6 +43,20 @@ export const FICTIONAL: readonly string[] = [
   'We are looking for a contract engineer to maintain a payments platform: event-driven services, PostgreSQL, Redis and AWS. Remote work across time zones is fine.',
 ];
 
+/** Titles that state pay or hours (re-review): each gets no letter. */
+export const PAY_OR_HOURS_BLOCKED: readonly string[] = [
+  'Java Engineer 50 dollars an hour', 'Backend Engineer Rs 50,000 monthly', 'Backend Engineer Part-time 20h', 'Backend Engineer forty hours a week',
+  'Backend Engineer 50 bucks hourly', 'Backend Engineer 100k salary', 'Backend Engineer - $60/hr contract', 'Backend Engineer (20 hours per week)',
+  'Backend Engineer Rs. 2 lakhs', 'Backend Engineer 500 rupees per day', 'Backend Engineer 3000 weekly', 'Backend Engineer twenty-five hours',
+  // one per pattern alternative, matched by that alternative alone (so a mutant dropping it fails a case)
+  `Backend Engineer ${String.fromCodePoint(0x20ac)}5000`, 'Backend Engineer Rs 900', 'Backend Engineer paid per month', 'Backend Engineer 4 days a week',
+  'Backend Engineer 60/hr', 'Backend Engineer 10-20 hrs',
+];
+/** Titles that look close but state neither: each keeps its letter. */
+export const PAY_OR_HOURS_KEPT: readonly string[] = [
+  'Senior Engineer (Hourly Systems)', '24/7 Ops', 'Go/Rust', 'AI/ML', 'C/C++', 'React/Hooks', 'EU/US hours overlap', 'Hourly Java Contractor', 'Backend Engineer (6-month contract)',
+];
+
 export interface CoverEvalCase {
   readonly id: string;
   readonly input: ScoredGig;
@@ -126,6 +140,8 @@ export async function gigCoverEvalCases(): Promise<CoverEvalCase[]> {
   edit('edge-board-forbidden-in-description', (g) => ({ ...g, description: `${g.description} The platform is run by Initech.` }), true);
   edit('edge-board-pay-in-title', (g) => ({ ...g, title: 'Senior Backend Engineer - $60/hr contract' }));
   edit('edge-board-hours-in-title', (g) => ({ ...g, title: 'Senior Backend Engineer (20 hours per week)' }));
+  for (const [i, title] of PAY_OR_HOURS_BLOCKED.entries()) edit(`edge-title-pay-or-hours-${i + 1}`, (g) => ({ ...g, title }));
+  for (const [i, title] of PAY_OR_HOURS_KEPT.entries()) edit(`edge-title-kept-${i + 1}`, (g) => ({ ...g, title }), true);
   return cases;
 }
 

@@ -125,13 +125,30 @@ export const gigCoverResume = (gig: Gig, company: string, pack: WritingPack, raw
   planResume(evidenceFor(gigPostingOf(gig, pack, company, coverTitleOf(gig.title)), pack, rawPack), pack, COMPACT);
 
 /**
- * Pay or hours stated in a title or company (freelance-v2 review): a currency sign or code, a rate unit ("per hour",
- * "/hr", "/month"), or a number of hours ("20 hours", "10-20 hrs/week"). The letter's p1 names the title and company
+ * Pay or hours stated in a title or company (freelance-v2 review, widened on re-review), one alternative per wording:
+ * a currency sign; a currency code or word (USD, INR, Rs, rupees, dollars, bucks, lakhs, LPA, CTC); a rate unit
+ * ("per hour", "an hour", "a week", "/hr", "/month"); a number with "k" ("100k") or a period ("3000 weekly"); a number of
+ * hours in digits ("20 hours", "10-20 hrs", "20h") or words ("forty hours", "twenty-five hours"). Not matched: "Hourly
+ * Systems", "24/7", "Go/Rust", "AI/ML", "C/C++", "React/Hooks", "EU/US hours overlap", "(6-month contract)". The letter's p1 names the title and company
  * verbatim, so such a title would put the role's pay or hours into the letter: it gets no letter instead. gig-qa runs
  * the same test on every rendered letter's opening (`cover.no-terms`).
  */
-export const PAY_OR_HOURS =
-  /[$€£₹]|\b(?:usd|inr|eur|gbp|lpa|ctc)\b|\bper\s+(?:hour|hr|day|week|month|annum|year)\b|\/\s*(?:hr|hrs|hour|h|day|wk|week|mo|month|year|yr)\b|\b\d+\s*\+?\s*(?:[-–]\s*\d+\s*)?(?:hours?|hrs?)\b|\b\d+\s*h\s*(?:\/|per)\s*(?:week|wk)\b/i;
+export const PAY_OR_HOURS = new RegExp(
+  [
+    String.raw`[$€£₹]`,
+    String.raw`\b(?:usd|inr|eur|gbp|lpa|ctc|rupees?|dollars?|bucks|lakhs?)\b`,
+    String.raw`\brs\b\.?`,
+    String.raw`\bper\s+(?:hour|hr|day|week|month|annum|year)\b`,
+    String.raw`\ban?\s+(?:hour|day|week|month)\b`,
+    String.raw`\/\s*(?:hr|hrs|hour|h|day|wk|week|mo|month|year|yr)\b`,
+    String.raw`\b\d+(?:[.,]\d+)*\s*k\b`,
+    String.raw`\b\d+(?:[.,]\d+)*\s*(?:hourly|daily|weekly|monthly)\b`,
+    String.raw`\b\d+\s*\+?\s*(?:[-–]\s*\d+\s*)?(?:hours?|hrs?)\b`,
+    String.raw`\b\d+\s*h\b`,
+    String.raw`\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty)(?:[\s-](?:one|two|three|four|five|six|seven|eight|nine))?\s+(?:hours?|hrs?)\b`,
+  ].join('|'),
+  'i',
+);
 
 /** Why a gig from an employer job board gets no cover letter (`GigDocsPlan.coverNote`). */
 export const COVER_NOTES = {

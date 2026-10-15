@@ -15,6 +15,9 @@ import type { GuardrailContext } from '../../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import { FICTIONAL, gigCoverEvalCases, gigCoverEvalText } from '../../support/gig-cover-eval.js';
 import { boardRole, fixturePack, scoredGig } from '../../support/gig-fixtures.js';
+import { PAY_OR_HOURS_BLOCKED, PAY_OR_HOURS_KEPT } from '../../support/gig-cover-eval.js';
+import { gigQaChecks } from '../../../src/app/freelance/writing/gig-qa.js';
+import { gigTexts } from '../../../src/app/freelance/writing/gig-text.js';
 
 /**
  * freelance-v2 Feature 2: a full tailored cover letter for contract roles from employer job boards (`boards`, the
@@ -227,5 +230,24 @@ describe('a title or company that states pay or hours gets no letter (freelance-
     expect('coverNote' in plan(boardRole())).toBe(false);
     const p = plan(boardRole());
     expect(gigDocsProblems({ ...p, coverNote: 'x' }, pub).join('\n')).toMatch(/coverNote is set/);
+  });
+});
+
+describe('pay and hours in every common wording (re-review)', () => {
+  const qaNoTerms = (title: string): boolean | undefined => {
+    const p = plan(boardRole());
+    const p1 = p.cover!.paragraphs[0]!;
+    const tampered = { ...p, cover: { ...p.cover!, paragraphs: [{ ...p1, text: p1.text.replace('Senior Backend Engineer - Java (6-month contract)', title) }, ...p.cover!.paragraphs.slice(1)] } };
+    return gigQaChecks({ gigKey: p.gigKey, files: [], plan: tampered, text: gigTexts(p, full) }, pub, { files: new Map(), pdfText: new Map() }).find((c) => c.id === 'cover.no-terms')?.ok;
+  };
+  it.each([...PAY_OR_HOURS_BLOCKED])('"%s": no letter, and gig-qa fails a letter naming it', (title) => {
+    const p = plan(boardRole({ title }));
+    expect('cover' in p).toBe(false);
+    expect(p.coverNote).toBe('title states pay or hours');
+    expect(qaNoTerms(title)).toBe(false);
+  });
+  it.each([...PAY_OR_HOURS_KEPT])('"%s": still gets its letter, and gig-qa passes it', (title) => {
+    expect(plan(boardRole({ title })).cover, title).toBeDefined();
+    expect(qaNoTerms(title)).toBe(true);
   });
 });
