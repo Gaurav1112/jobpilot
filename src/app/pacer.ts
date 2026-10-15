@@ -26,7 +26,7 @@ const DAY_MS = 86_400_000;
 export function machinePacer(file: string, minIntervalMs: number, kind: 'http' | 'browser', clock: Clock, sleep: (ms: number) => Promise<void>): HostPacer & { close(): void } {
   if (!existsSync(file)) closeSync(openSync(file, 'a', 0o600));
   const db = new Database(file, { timeout: 10_000 });
-  db.pragma('journal_mode = WAL');
+  // No WAL: switching journal mode on a brand-new file ignores busy_timeout and can throw SQLITE_BUSY when two processes open it together. The default rollback journal plus BEGIN IMMEDIATE and busy_timeout suffices for these tiny transactions.
   db.exec('CREATE TABLE IF NOT EXISTS host_slots (key TEXT PRIMARY KEY, slot_ms INTEGER NOT NULL)');
   db.prepare('DELETE FROM host_slots WHERE slot_ms < ?').run(Date.parse(clock.now()) - DAY_MS);
   const get = db.prepare('SELECT slot_ms FROM host_slots WHERE key = ?');
