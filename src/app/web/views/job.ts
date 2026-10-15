@@ -53,8 +53,8 @@ function header(j: JobDetail, back?: JobPageData['back']): Html {
   j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
   j.location,
   html`<span>via ${sourceName(j.source)}${j.ats !== j.source && j.ats !== 'feed' ? html` (applies on ${sourceName(j.ats)})` : ''}</span>`,
-])}</p>
-${j.ats === 'freehire' ? html`<p class="hint">Found through freehire${via === null ? '' : html` (via ${via})`}. jobpilot cannot read this platform, so it is listed for review only.</p>` : ''}
+])}</p>${j.ats === 'freehire' ? html`
+<p class="hint">Found through freehire${via === null ? '' : html` (via ${via})`}. jobpilot cannot read this platform, so it is listed for review only.</p>` : ''}
 <div class="head-facts">
 <div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
 <div class="fact-box"><span class="label">Fit score</span><span class="big num" aria-hidden="true">${j.score === null ? '–' : scoreText(j.score)}</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">${j.score === null ? 'Not scored' : html`Fit score ${scoreText(j.score)} out of 100`}</span></div>
