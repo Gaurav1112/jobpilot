@@ -328,7 +328,7 @@ try { const s = AppStore.open(${JSON.stringify(path)}, { schema: 'migrate' }); c
   });
 });
 
-describe('AppStore.listJobs comp-first sort (spec §7)', () => {
+describe('AppStore.listJobs fit-first sort within the eligibility tier (A1)', () => {
   const k = (n: number) => n.toString(16).padStart(16, '0');
   function seed(): AppStore {
     const s = AppStore.on(Store.open(':memory:'));
@@ -350,17 +350,17 @@ describe('AppStore.listJobs comp-first sort (spec §7)', () => {
     return s;
   }
 
-  it('orders disclosed (by max INR desc), then undisclosed, then review, each by score, first_seen desc, job key', () => {
+  it('orders eligible (disclosed and undisclosed together), then review, each by score desc, max INR desc, first_seen desc, job key', () => {
     const s = seed();
     // k(11) is disclosed but under the 12 L floor: below-floor, hidden by default.
-    expect(s.listJobs({ floorInr: 1_200_000 }).map((j) => j.jobKey)).toEqual([k(2), k(3), k(1), k(5), k(4), k(12), k(6), k(7), k(8)]);
+    expect(s.listJobs({ floorInr: 1_200_000 }).map((j) => j.jobKey)).toEqual([k(5), k(4), k(12), k(3), k(6), k(1), k(2), k(7), k(8)]);
     expect(s.listJobs({ floorInr: 1_200_000 }).map((j) => j.band)).toEqual([
-      'disclosed', 'disclosed', 'disclosed', 'undisclosed', 'undisclosed', 'undisclosed', 'undisclosed', 'review', 'review',
+      'undisclosed', 'undisclosed', 'undisclosed', 'disclosed', 'undisclosed', 'disclosed', 'disclosed', 'review', 'review',
     ]);
   });
 
   it('without a floor every disclosed comp counts as disclosed', () => {
-    expect(seed().listJobs({}).map((j) => j.jobKey).slice(0, 4)).toEqual([k(2), k(3), k(1), k(11)]);
+    expect(seed().listJobs({}).map((j) => j.jobKey).slice(0, 4)).toEqual([k(11), k(5), k(4), k(12)]);
   });
 
   it('lists rejected and below-floor jobs only when filtered for', () => {

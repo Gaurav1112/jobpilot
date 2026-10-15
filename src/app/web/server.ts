@@ -25,6 +25,7 @@ import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
 import { AppStore, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
+import { toDecideFrom } from '../triage.js';
 import { dateText, daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
@@ -89,7 +90,7 @@ export interface DashboardTestHooks {
   /** Called each time the dashboard opens its (shared) database connection. */
   readonly onOpen?: () => void;
   /** Replaces `listJobsPage` for `GET /` (the equivalence test runs the pre-fix-2 JS path through the real route). */
-  readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }) => JobsPage;
+  readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number; readonly decideFrom: string }) => JobsPage;
 }
 
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
@@ -113,6 +114,8 @@ const JOB_KEY = /^[0-9a-f]{16}$/;
 const DOC_NAME = /^(resume|cover)\.(pdf|docx|html)$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const FX_STALE_DAYS = 30;
+/** A1: the jobs list's statuses when the query names none: everything but Not for me and Not selected. */
+export const DEFAULT_STATUSES: readonly JobStatus[] = JOB_STATUSES.filter((s) => s !== 'skipped' && s !== 'rejected');
 const PAGE_SIZE = 100;
 
 const STATIC_DIR = join(import.meta.dirname, 'static');
@@ -371,7 +374,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const at = now();
     const ps = packState(deps.home, at);
     const r = redactor(ps.naming);
-    const statuses = c.req.queries('status')?.filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s)) ?? [];
+    const asked = c.req.queries('status')?.filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s)) ?? [];
+    const statuses = asked.length > 0 ? asked : DEFAULT_STATUSES;
     const ALL: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
     const bands = c.req.queries('band')?.filter((b): b is Band => (ALL as readonly string[]).includes(b)) ?? [];
     const minRaw = c.req.query('min')?.trim() ?? '';
@@ -388,7 +392,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const floor = ps.pack?.offers.floor;
     const floorInr = floor ? floor.amount * (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
     const filter: JobFilter = {
-      ...(statuses.length > 0 ? { status: statuses } : {}),
+      status: statuses,
       ...(bands.length > 0 ? { band: bands } : {}),
       ...(min !== undefined ? { minScore: min } : {}),
       ...(q !== '' ? { text: q } : {}),
@@ -405,8 +409,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
 
     // dashboard-perf fix 2: the page, its counts and the hidden count in SQL over the covering index (`listJobsPage`)
-    const { jobs, hidden, overrides, total, newCount, pageNo, pages } = withStore((s) => {
-      const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev };
+    const { jobs, hidden, overrides, total, newCount, toDecide, pageNo, pages } = withStore((s) => {
+      const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev, decideFrom: toDecideFrom(at) };
       const p = hooks.jobsPage !== undefined ? hooks.jobsPage(s, filter, opts) : s.listJobsPage(filter, opts);
       const hist = s.histories(p.jobs.map((j) => j.jobKey));
       return {
@@ -416,13 +420,14 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
         overrides: s.factOverrides(),
         total: p.total,
         newCount: p.newCount,
+        toDecide: p.toDecide,
         pageNo: p.page,
         pages: p.pages,
       };
     });
     const pageHref = (n: number): string => {
       const qs = new URLSearchParams();
-      for (const v of statuses) qs.append('status', v);
+      for (const v of asked) qs.append('status', v);
       for (const v of bands) qs.append('band', v);
       if (min !== undefined) qs.set('min', String(min));
       if (q !== '') qs.set('q', q);
@@ -432,8 +437,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
-      page: pageNo, pages, total, newCount, pageHref,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, defaultStatuses: asked.length === 0, hiddenCount: hidden, istDay: istDate,
+      page: pageNo, pages, total, newCount, toDecide, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
   });

@@ -11,6 +11,7 @@ import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
+import { DECIDE_BANDS } from '../triage.js';
 import { routesToFreelance, structuredFullTime } from './contract-routes.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
@@ -31,6 +32,9 @@ export type Verdict = 'eligible' | 'rejected' | 'review';
  */
 export type Band = 'disclosed' | 'undisclosed' | 'review' | 'below-floor' | 'rejected';
 export const DEFAULT_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review'];
+/** A1: the list's tiers: eligible (pay at or above the minimum, or not listed), check first, under the minimum, not a match. */
+const BAND_TIER: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 0, review: 1, 'below-floor': 2, rejected: 3 };
+const descNullLast = (a: number | null, b: number | null): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : b - a);
 const BAND_RANK: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 1, review: 2, 'below-floor': 3, rejected: 4 };
 export { ATS_SOURCES };
 
@@ -234,6 +238,8 @@ export interface JobsPage {
   readonly total: number;
   readonly newCount: number;
   readonly hiddenCount: number;
+  /** The listed rows that are To decide (U9, `isToDecideFrom`). */
+  readonly toDecide: number;
 }
 
 export interface RunSummary {
@@ -865,9 +871,9 @@ export class AppStore {
       .filter((j) => company === undefined || jobOfCompany(jobKeys(j), company))
       .sort(
         (a, b) =>
-          BAND_RANK[a.band] - BAND_RANK[b.band] ||
-          (a.band === 'disclosed' ? (b.compMaxInr ?? 0) - (a.compMaxInr ?? 0) : 0) ||
-          (b.score ?? -Infinity) - (a.score ?? -Infinity) ||
+          BAND_TIER[a.band] - BAND_TIER[b.band] ||
+          descNullLast(a.score, b.score) ||
+          descNullLast(a.compMaxInr, b.compMaxInr) ||
           cmp(b.firstSeen, a.firstSeen) ||
           cmp(a.jobKey, b.jobKey),
       );
@@ -885,7 +891,7 @@ export class AppStore {
    * - `hiddenCount`: the rows every other filter passes whose band is not listed (the "N hidden" line).
    * - Only the shown rows and their groups' rows are read in full (by key).
    */
-  listJobsPage(filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }): JobsPage {
+  listJobsPage(filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number; readonly decideFrom: string }): JobsPage {
     registerListFunctions(this.db);
     const listed = new Set(filter.band ?? DEFAULT_BANDS);
     const where: string[] = [];
@@ -904,31 +910,36 @@ export class AppStore {
       where.push('jp_job_of_company(j.company, j.url, j.source, j.source_id, @cNorm, @cDomain, @cBoard) = 1');
       Object.assign(args, { cNorm: c.norm, cDomain: c.domain, cBoard: c.board });
     }
+    const prec = (col: string): string => `CASE ${col} ${JOB_STATUSES.map((st) => `WHEN '${st}' THEN ${STATUS_PRECEDENCE[st]}`).join(' ')} END`;
+    // the group's status rank: the furthest of the preferred row's and its duplicates' (`groupStatus`)
+    const groupRank = `MAX(${prec(`CASE WHEN j.duplicate_of IS NULL THEN j.status ELSE (SELECT t.status FROM jobs t WHERE t.job_key = j.duplicate_of) END`)},
+             COALESCE((SELECT MAX(${prec('d.status')}) FROM jobs d WHERE d.duplicate_of = COALESCE(j.duplicate_of, j.job_key)), -1))`;
     if (filter.status !== undefined) {
-      // the group's status: the furthest of the preferred row's and its duplicates' (`groupStatus`)
-      const prec = (col: string): string => `CASE ${col} ${JOB_STATUSES.map((st) => `WHEN '${st}' THEN ${STATUS_PRECEDENCE[st]}`).join(' ')} END`;
       const wanted = [...new Set(filter.status)].map((st) => STATUS_PRECEDENCE[st]);
-      where.push(
-        `MAX(${prec(`CASE WHEN j.duplicate_of IS NULL THEN j.status ELSE (SELECT t.status FROM jobs t WHERE t.job_key = j.duplicate_of) END`)},
-             COALESCE((SELECT MAX(${prec('d.status')}) FROM jobs d WHERE d.duplicate_of = COALESCE(j.duplicate_of, j.job_key)), -1))
-         IN (${wanted.length === 0 ? 'NULL' : wanted.join(', ')})`,
-      );
+      where.push(`${groupRank} IN (${wanted.length === 0 ? 'NULL' : wanted.join(', ')})`);
     }
+    args['decideFromMs'] = Date.parse(opts.decideFrom);
     // `bandOf`, as a rank (BAND_RANK)
     const band = `CASE WHEN j.verdict = 'rejected' THEN 4 WHEN j.docs_state = 'below-floor' THEN 3 WHEN j.verdict = 'eligible' THEN
       CASE WHEN j.comp_max_inr IS NULL THEN 1 WHEN @floor IS NOT NULL AND j.comp_max_inr < @floor THEN 3 ELSE 0 END ELSE 2 END`;
-    const base = `SELECT j.job_key, j.score, j.first_seen, j.comp_max_inr, ${band} AS band FROM jobs j${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`;
+    // U9 (src/app/triage.ts): new, first seen since decideFrom; -1 for rows outside the window (the subqueries run for recent rows only)
+    const decideRank = `CASE WHEN jp_epoch_ms(j.first_seen) >= @decideFromMs THEN ${groupRank} ELSE -1 END`;
+    const base = `SELECT j.job_key, j.score, j.first_seen, j.comp_max_inr, ${band} AS band, ${decideRank} AS decide_rank FROM jobs j${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`;
     const counts = this.db
-      .prepare(`SELECT band, COUNT(*) AS n, SUM(CASE WHEN jp_epoch_ms(first_seen) > @newAfter THEN 1 ELSE 0 END) AS fresh FROM (${base}) GROUP BY band`)
-      .all({ ...args, newAfter: opts.newAfterMs }) as { band: number; n: number; fresh: number }[];
+      .prepare(`SELECT band, COUNT(*) AS n, SUM(CASE WHEN jp_epoch_ms(first_seen) > @newAfter THEN 1 ELSE 0 END) AS fresh,
+                       SUM(CASE WHEN decide_rank = 0 THEN 1 ELSE 0 END) AS decide FROM (${base}) GROUP BY band`)
+      .all({ ...args, newAfter: opts.newAfterMs }) as { band: number; n: number; fresh: number; decide: number }[];
+    const decideRanks = DECIDE_BANDS.map((b) => BAND_RANK[b as Band]);
     const ranks = ALL_BANDS.filter((b) => listed.has(b)).map((b) => BAND_RANK[b]);
     let total = 0;
     let newCount = 0;
     let hiddenCount = 0;
+    let toDecide = 0;
     for (const c of counts) {
       if (ranks.includes(c.band)) {
         total += c.n;
         newCount += c.fresh;
+        if (decideRanks.includes(c.band)) toDecide += c.decide;
       } else hiddenCount += c.n;
     }
     const pages = Math.max(1, Math.ceil(total / opts.size));
@@ -937,11 +948,12 @@ export class AppStore {
       ? []
       : (this.db
           .prepare(
-            `SELECT job_key FROM (${base}) WHERE band IN (${ranks.join(', ')})
-             ORDER BY band, CASE WHEN band = 0 THEN comp_max_inr END DESC, score DESC, first_seen DESC, job_key LIMIT @limit OFFSET @offset`,
+            `SELECT job_key FROM (SELECT job_key, band, score, comp_max_inr, first_seen, CASE band WHEN 0 THEN 0 WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 ELSE 3 END AS band_tier FROM (${base}))
+             WHERE band IN (${ranks.join(', ')})
+             ORDER BY band_tier, score DESC, comp_max_inr DESC, first_seen DESC, job_key LIMIT @limit OFFSET @offset`,
           )
           .all({ ...args, limit: opts.size, offset: (page - 1) * opts.size }) as { job_key: string }[]).map((r) => r.job_key);
-    return { jobs: this.leanViews(keys, filter.floorInr), page, pages, total, newCount, hiddenCount };
+    return { jobs: this.leanViews(keys, filter.floorInr), page, pages, total, newCount, hiddenCount, toDecide };
   }
 
   /**

@@ -233,10 +233,10 @@ describe('dashboard: the short cover note', () => {
 });
 
 describe('dashboard: jobs list', () => {
-  it('renders the rows comp-first (disclosed by max INR, then undisclosed, then review), hiding rejected, below-floor and duplicate listings', async () => {
+  it('renders the rows fit-first within the eligibility tier, hiding rejected, below-floor and duplicate listings', async () => {
     const { status, body } = await get('/');
     expect(status).toBe(200);
-    expect(order(body)).toEqual([K2, K1, K3, K10, K9, K7, K11, K4]);
+    expect(order(body)).toEqual([K3, K1, K2, K10, K9, K7, K11, K4]);
     expect(textOf(rowOf(body, 'data-job', K1))).toContain('also listed on Himalayas');
     expect(textOf(body)).toContain('2 not-eligible or below-floor jobs are hidden');
   });
@@ -253,7 +253,7 @@ describe('dashboard: jobs list', () => {
     expect(order((await get('/?status=applied')).body)).toEqual([K9]);
     expect(order((await get('/?band=rejected')).body)).toEqual([K5]);
     expect(order((await get('/?band=below-floor')).body)).toEqual([K6]);
-    expect(order((await get('/?band=disclosed&band=below-floor')).body)).toEqual([K2, K1, K6]);
+    expect(order((await get('/?band=disclosed&band=below-floor')).body)).toEqual([K1, K2, K6]);
     expect(order((await get('/?min=85')).body)).toEqual([K3, K4]);
     expect(order((await get('/?q=reilly')).body)).toEqual([K7]);
     expect(order((await get('/?q=acme&min=70')).body)).toEqual([K1]);
@@ -295,6 +295,41 @@ describe('dashboard: jobs list', () => {
     const r = await app.request('/', { headers: { cookie: `${cookie}; jp_visit=${later}.${later}` } });
     expect(await r.text()).not.toContain('New since your last visit');
     expect(r.headers.get('set-cookie')).toMatch(/jp_visit=\d+\.\d+/);
+  });
+});
+
+describe('A1: the jobs list defaults and order', () => {
+  it('hides Not for me and Not selected unless asked for, and links to them', async () => {
+    withStore((s) => {
+      s.setStatus(K3, 'skipped', 'user', NOW);
+      s.setStatus(K7, 'rejected', 'user', NOW);
+    });
+    const { body } = await get('/');
+    expect(order(body)).toEqual([K1, K2, K10, K9, K11, K4]);
+    expect(textOf(body)).toContain('Not for me and Not selected are hidden: show them.');
+    expect(linksOf(body).find((l) => l.text === 'show them')?.href).toBe('/?status=skipped&status=rejected');
+    expect(order((await get('/?status=skipped&status=rejected')).body)).toEqual([K3, K7]);
+    expect(textOf((await get('/?status=skipped')).body)).not.toContain('are hidden: show them');
+    // the default shows as ticked boxes, like the band default
+    for (const st of ['new', 'approved', 'applied', 'interview', 'offer']) expect(body).toMatch(new RegExp(`name="status" value="${st}" checked`));
+    for (const st of ['rejected', 'skipped']) expect(body).not.toMatch(new RegExp(`name="status" value="${st}" checked`));
+  });
+
+  it('orders by eligibility tier, then fit, then INR pay, then newest, and says so', async () => {
+    withStore((s) => {
+      s.upsertJob(row('c1c1c1c1c1c1c1c1', 21, { title: 'Pay tie A', score: 77, compMinInr: 4_000_000, compMaxInr: 5_000_000, comp: { min: 4_000_000, max: 5_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
+      s.upsertJob(row('c2c2c2c2c2c2c2c2', 22, { title: 'Pay tie B', score: 77, compMinInr: 7_200_000, compMaxInr: 8_000_000, comp: { min: 7_200_000, max: 8_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
+      s.upsertJob(row('c3c3c3c3c3c3c3c3', 23, { title: 'Pay tie C', score: 77 }));
+    });
+    const { body } = await get('/');
+    expect(order(body)).toEqual([K3, K1, 'c2c2c2c2c2c2c2c2', 'c1c1c1c1c1c1c1c1', 'c3c3c3c3c3c3c3c3', K2, K10, K9, K7, K11, K4]);
+    expect(textOf(body)).toContain('sorted by best fit, then pay');
+  });
+
+  it('counts To decide with the U9 predicate (new, eligible or check first, first seen in the last 7 IST days)', async () => {
+    expect(textOf((await get('/')).body)).toContain('8 jobs · 7 to decide');
+    now = '2026-10-16T06:30:00.000Z'; // 16 Oct IST: the rows first seen on 9 Oct (IST) have left the window
+    expect(textOf((await get('/')).body)).toContain('8 jobs · 0 to decide');
   });
 });
 

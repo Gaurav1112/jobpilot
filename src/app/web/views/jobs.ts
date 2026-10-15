@@ -24,7 +24,11 @@ export interface JobsPageData {
   readonly filter: JobsFilterView;
   /** True when no band filter was given (rejected and below-floor jobs are hidden). */
   readonly defaultBands: boolean;
+  /** True when no status filter was given (Not for me and Not selected are hidden). */
+  readonly defaultStatuses: boolean;
   readonly hiddenCount: number;
+  /** Listed rows that are To decide (U9). */
+  readonly toDecide: number;
   /** New since the last visit, across all pages. */
   readonly newCount: number;
   readonly istDay: (iso: string) => string;
@@ -93,13 +97,13 @@ export function jobsBody(d: JobsPageData): Html {
   const newCount = d.newCount;
   return html`<div class="page-head">
 <h1>Jobs</h1>
-<p class="lede"><span class="num">${d.total}</span> job${d.total === 1 ? '' : 's'} shown${
+<p class="lede"><span class="num">${d.total}</span> job${d.total === 1 ? '' : 's'} · <span class="num">${d.toDecide}</span> to decide${
     newCount > 0 ? html`, <span class="num">${newCount}</span> new since your last visit` : ''
-  }. Best pay first, then fit.${
+  } · sorted by best fit, then pay.${
     d.defaultBands && d.hiddenCount > 0
       ? html` <span class="muted"><span class="num">${d.hiddenCount}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
       : ''
-  }</p>
+  }${d.defaultStatuses ? html` <span class="muted">Not for me and Not selected are hidden: <a href="/?status=skipped&amp;status=rejected">show them</a>.</span>` : ''}</p>
 </div>
 ${filterForm(d.filter, d.defaultBands)}
 ${
