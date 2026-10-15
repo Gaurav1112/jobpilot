@@ -1,5 +1,6 @@
 import type { Clock } from '../../kernel/clock.js';
 import type { HostPacer } from '../../kernel/broker.js';
+import type { PacerFactory } from '../pacer.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import type { RunReport } from '../../kernel/supervisor.js';
 import { diskDocCheck } from '../docs-check.js';
@@ -62,6 +63,8 @@ export interface FreelanceRunOptions {
    * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
    */
   readonly online?: (pacer: HostPacer) => Promise<boolean>;
+  /** The machine-wide pacer factory (`machinePacerFactory`) of a live run; absent (tests, offline fixtures): in-memory pacers. */
+  readonly pacerFactory?: PacerFactory;
 }
 
 export interface FreelanceSummary {
@@ -205,7 +208,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
           gmail = { ...GMAIL_OFF, reason: `Gmail could not be prepared (${e instanceof Error ? e.message : String(e)}); Gmail skipped` };
         }
       }
-      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}) });
+      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), ...(o.pacerFactory !== undefined ? { pacerFactory: o.pacerFactory } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];

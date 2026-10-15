@@ -5,6 +5,7 @@ import { createInterface } from 'node:readline/promises';
 import { Command, InvalidArgumentError } from 'commander';
 import { checkDrift, exportContracts } from './kernel/contracts-export.js';
 import { systemClock } from './kernel/clock.js';
+import { machinePacerFactory, pacerFile, type PacerFactory } from './app/pacer.js';
 import { PRODUCT_POLICY_V1 } from './kernel/policy.js';
 import { nodeFetch } from './kernel/providers.js';
 import { Registry } from './kernel/registry.js';
@@ -291,6 +292,8 @@ function todaysPack(mode: LoadMode) {
   return loadRunPack(paths.pack, overridesAt(paths.db), istMonth(systemClock.now()), nonce, mode);
 }
 
+const cliPacerFactory = (): PacerFactory => machinePacerFactory(pacerFile(process.env, selectedProfile()), systemClock, (ms) => new Promise((r) => setTimeout(r, ms)));
+
 program
   .command('run')
   .description('Run the daily pipeline, project the results into the app tables and post the notification. Exit 0: clean; 1: some step failed or was quarantined (see problems); 2: the run could not run')
@@ -301,7 +304,7 @@ program
   .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+      { home: jobpilotHome(), clock: systemClock, pacerFactory: cliPacerFactory(), notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });
 
@@ -314,7 +317,7 @@ program
   .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runFreelanceCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain(realSecretsRunner, profileKeychainService())) },
+      { home: jobpilotHome(), clock: systemClock, pacerFactory: cliPacerFactory(), notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain(realSecretsRunner, profileKeychainService())) },
     );
   });
 
@@ -352,7 +355,7 @@ program
         freehire: o.freehire,
         ...(o.catalogueLimit !== undefined ? { catalogueLimit: o.catalogueLimit } : {}),
       },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), ...(o.yield ? {} : { yieldCheck: () => null }) },
+      { home: jobpilotHome(), clock: systemClock, pacerFactory: cliPacerFactory(), notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), ...(o.yield ? {} : { yieldCheck: () => null }) },
     );
   });
 
@@ -542,7 +545,7 @@ sources
   .action((o: { json?: boolean; record?: string; force?: boolean }) =>
     guarded(async () => {
       process.exitCode = await probeCommand({
-        home: jobpilotHome(), repoRoot: root, json: o.json === true, ...(o.record !== undefined ? { record: o.record } : {}), force: o.force === true,
+        home: jobpilotHome(), repoRoot: root, pacerFactory: cliPacerFactory(), json: o.json === true, ...(o.record !== undefined ? { record: o.record } : {}), force: o.force === true,
         clock: systemClock, sleep: (ms) => new Promise((r) => setTimeout(r, ms)), out: (l) => console.log(l),
       });
     }),

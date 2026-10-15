@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import type { HostPacer } from '../kernel/broker.js';
+import type { PacerFactory } from './pacer.js';
 import { accessSync, constants } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { hashOf } from '../kernel/canonical.js';
@@ -138,6 +139,8 @@ export interface AppKernelOptions {
    * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
    */
   readonly online?: (pacer: HostPacer) => Promise<boolean>;
+  /** The machine-wide pacer factory (`machinePacerFactory`); absent (tests, offline fixtures): in-memory pacers. */
+  readonly pacerFactory?: PacerFactory;
 }
 
 export interface AppKernel {
@@ -208,6 +211,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
     ...(o.online !== undefined ? { online: o.online } : {}),
+    ...(o.pacerFactory !== undefined ? { hostPacer: o.pacerFactory(policy.minHostIntervalMs, 'http'), browserPacer: o.pacerFactory(policy.minBrowserIntervalMs, 'browser') } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };
 }
@@ -267,6 +271,7 @@ export function freelanceKernel(o: Omit<AppKernelOptions, 'browser' | 'mode'>): 
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
     ...(o.online !== undefined ? { online: o.online } : {}),
+    ...(o.pacerFactory !== undefined ? { hostPacer: o.pacerFactory(policy.minHostIntervalMs, 'http'), browserPacer: o.pacerFactory(policy.minBrowserIntervalMs, 'browser') } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };
 }

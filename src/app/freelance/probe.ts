@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { Agent } from '../../kernel/agent.js';
+import type { PacerFactory } from '../pacer.js';
 import { createHostPacer, freezePack, HTTP_HEADERS, issueContext, type HostPacer } from '../../kernel/broker.js';
 import type { Clock } from '../../kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
@@ -471,6 +472,8 @@ export interface ProbeDeps {
   readonly get: ParkedGet;
   /** Receives every raw response as a fixture candidate. */
   readonly record?: (name: string, text: string) => void;
+  /** The machine-wide pacer factory (`machinePacerFactory`); absent (tests): in-memory pacers. */
+  readonly pacerFactory?: PacerFactory;
 }
 
 export interface ProbeRow extends Tally {
@@ -511,7 +514,7 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
 
   const pacers = new Map<number, HostPacer>();
   const pacer = (ms: number): HostPacer => {
-    const p = pacers.get(ms) ?? createHostPacer(ms, d.clock, d.sleep);
+    const p = pacers.get(ms) ?? d.pacerFactory?.(ms, 'http') ?? createHostPacer(ms, d.clock, d.sleep);
     pacers.set(ms, p);
     return p;
   };
@@ -732,6 +735,7 @@ export interface ProbeCommandOptions {
   readonly sleep: (ms: number) => Promise<void>;
   readonly fetch?: FetchLike;
   readonly get?: ParkedGet;
+  readonly pacerFactory?: PacerFactory;
   readonly out: (line: string) => void;
 }
 
@@ -757,6 +761,7 @@ export async function probeCommand(o: ProbeCommandOptions): Promise<number> {
     try {
       const report = await runProbe({
         loaded, app, clock: o.clock, sleep: o.sleep, fetch: o.fetch ?? nodeFetch, get: o.get ?? liveGet,
+        ...(o.pacerFactory !== undefined ? { pacerFactory: o.pacerFactory } : {}),
         ...(o.record !== undefined ? { record: fileRecorder(resolve(o.record)) } : {}),
       });
       o.out(o.json ? JSON.stringify(report, null, 2) : formatProbeTable(report));

@@ -15,6 +15,7 @@ import type { Notifier } from './notify.js';
 import { checkOutage } from './check-outage.js';
 import { httpsOnline, pacedHttpsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
+import type { PacerFactory } from './pacer.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
 import { failureNotification, formatSummary, runDaily } from './run.js';
@@ -44,6 +45,8 @@ export interface RunCommandDeps {
   readonly online?: () => Promise<boolean>;
   /** The live runs' fetch; default `nodeFetch`. Tests inject one (an offline run uses its fixtures instead). */
   readonly fetch?: FetchLike;
+  /** The machine-wide pacer (`machinePacerFactory` in the CLI); passed to a live run only, never to an offline-fixtures run. */
+  readonly pacerFactory?: PacerFactory;
   /**
    * The freelance run's Gmail access (`gmailRunAccess` over the Keychain in the CLI), asked only when a live run
    * starts. Absent, or an offline run: Gmail is not read.
@@ -184,6 +187,7 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
         // a live run's steps that fail while offline are asked again once HTTPS works (the wake rule)
         // the probe hosts are crawled by the run itself: the probe waits on the run's host pacer (sleep-safe review I1)
         ...(offline === undefined ? { online: pacedHttpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF.daily) } : {}),
+        ...(offline === undefined && d.pacerFactory !== undefined ? { pacerFactory: d.pacerFactory } : {}),
         ...hooks,
       });
       return { text: formatSummary(summary), exitCode: summary.exitCode };
@@ -213,6 +217,7 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(offline === undefined ? { online: pacedHttpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF.freelance) } : {}),
+      ...(offline === undefined && d.pacerFactory !== undefined ? { pacerFactory: d.pacerFactory } : {}),
       ...hooks,
     });
     return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
@@ -253,6 +258,7 @@ export async function runCoverageCommand(
       ...(online !== undefined ? { online: outage === null ? online : outage.online(online) } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+      ...(offline === undefined && d.pacerFactory !== undefined ? { pacerFactory: d.pacerFactory } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),
       ...(o.sliceMs !== undefined ? { sliceMs: o.sliceMs } : {}),
       // sources-x: the vendored freehire catalogue goes to the verifier unless --no-freehire; absent here (tests, library callers): neither

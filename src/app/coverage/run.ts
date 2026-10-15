@@ -10,6 +10,7 @@ import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { readFileSync } from 'node:fs';
 import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
+import type { PacerFactory } from '../pacer.js';
 import { httpsOnline, pacedFetch } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { fullChainCheck } from '../chain-status.js';
@@ -132,6 +133,8 @@ export interface CoverageRunOptions {
   readonly online?: () => Promise<boolean>;
   /** The run's one per-host pacer (every stage and the online probe); default: a new one at the coverage policy's interval. */
   readonly hostPacer?: HostPacer;
+  /** The machine-wide pacer factory of a live run; used when no `hostPacer` is given. */
+  readonly pacerFactory?: PacerFactory;
   /** The supervisors' awake clock (step timeouts, wake detection); default the process's. Tests inject one on `manualTimers`. */
   readonly awake?: AwakeClock;
   /**
@@ -385,7 +388,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         }
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
-      const hostPacer = o.hostPacer ?? createHostPacer(policy.minHostIntervalMs, o.clock, o.sleep ?? realSleep);
+      const hostPacer = o.hostPacer ?? o.pacerFactory?.(policy.minHostIntervalMs, 'http') ?? createHostPacer(policy.minHostIntervalMs, o.clock, o.sleep ?? realSleep);
       const online = o.online ?? pacedOnline(o.fetch, hostPacer);
       const gate = makeRunGate({ runKey: runId, store: app, online });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);

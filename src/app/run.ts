@@ -1,5 +1,6 @@
 import type { Clock } from '../kernel/clock.js';
 import type { HostPacer } from '../kernel/broker.js';
+import type { PacerFactory } from './pacer.js';
 import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
 import type { Store } from '../kernel/store/store.js';
@@ -157,6 +158,8 @@ export interface RunOptions {
    * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
    */
   readonly online?: (pacer: HostPacer) => Promise<boolean>;
+  /** The machine-wide pacer factory (`machinePacerFactory`) of a live run; absent (tests, offline fixtures): in-memory pacers. */
+  readonly pacerFactory?: PacerFactory;
 }
 
 /**
@@ -222,7 +225,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const boards = registryBoards(app.verifiedCompanies());
       // Sources expansion Task 9: the freehire leads the weekly discovery stored this coverage week or the one before (SELECT only)
       const leads = app.freehireLeads(leadsSince(now));
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), boards, ...(leads.length > 0 ? { leads } : {}), pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), ...(o.pacerFactory !== undefined ? { pacerFactory: o.pacerFactory } : {}), boards, ...(leads.length > 0 ? { leads } : {}), pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
