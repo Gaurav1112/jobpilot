@@ -4,7 +4,7 @@ import { KernelError } from '../../../kernel/errors.js';
 import { SOURCE_TIMEOUT_MS } from '../../agents/sources/common.js';
 import { indiaEligible } from '../../agents/sources/himalayas.js';
 import { hasChallengeMarker, isChallenge } from '../../challenge.js';
-import { parseRobots, robotsAllows, type Robots } from '../../coverage/robots.js';
+import { robotsAllows, robotsVerdictOf, type Robots } from '../../coverage/robots.js';
 import { GigRequest, RawGig } from '../types.js';
 import { finishGigs, idOf, isRecord } from './common.js';
 
@@ -106,13 +106,10 @@ function checkStatus(hosts: HimalayasGigsHosts, status: number, body: string, wh
   if (status >= 500) throw new KernelError('overloaded', `${HIMALAYAS_GIGS_HOST} answered ${what} with ${status}`);
 }
 
-/** A robots.txt body with at least one rule group is honoured, whatever its status (see the module comment). */
+/** The shared rule (`robotsVerdictOf`): a 404 whose body carries rules (Himalayas') is honoured; 401/403 refuse. */
 function robotsOf(status: number, body: string): Robots | 'allow-all' | 'disallow-all' {
-  const parsed = parseRobots(body);
-  if (parsed.groups.length > 0) return parsed;
-  if (status === 404 || status === 410) return 'allow-all';
-  if (status >= 200 && status < 300) return parsed;
-  return 'disallow-all';
+  const v = robotsVerdictOf(status, body);
+  return v.kind === 'rules' ? v.robots : v.kind === 'allow-all' ? 'allow-all' : 'disallow-all';
 }
 
 export function makeSrcHimalayasGigs(hosts: HimalayasGigsHosts = himalayasGigsHosts()): Agent<GigRequest, RawGig> {

@@ -135,13 +135,29 @@ export function robotsAllows(robots: Robots, pathAndQuery: string, agent: string
 }
 
 /**
+ * The rules a robots.txt BODY carries, whatever its status, or null. Strict, so an error page never counts: no HTML
+ * (`<html`, `<!doctype`, `<body`, `<head`), and at least one group whose `User-agent:` line is followed by an `Allow:`
+ * or `Disallow:` line (a rule with a non-empty path). A body with only a Sitemap, a Crawl-delay or prose is null.
+ */
+export function robotsInBody(body: string): Robots | null {
+  if (/<\s*(?:!doctype|html|body|head)\b/iu.test(body)) return null;
+  const parsed = parseRobots(body);
+  return parsed.groups.some((g) => g.agents.length > 0 && g.rules.length > 0) ? parsed : null;
+}
+
+/**
  * The verdict of a robots.txt that answered `status` with `body` (no redirect, no challenge, no 429: the caller
- * handles those): 404/410 allows all; 401/403 disallows the host (`robots-forbidden`); a 5xx disallows it for now
+ * handles those): 404/410 allows all, unless the body carries rules (`robotsInBody`): then those rules apply
+ * (controller decision 2026-10-15, the user's rule "no scraping against robots.txt"; Himalayas serves its rules with a
+ * 404). Rules never loosen a stricter verdict, so a 401/403 or another 4xx stays a refusal whatever its body; 401/403 disallows the host (`robots-forbidden`); a 5xx disallows it for now
  * (`robots-transient`: the server is in trouble, ask again later, C1); any other 3xx or 4xx disallows it
  * (`robots-unavailable`, RFC 9309's conservative choice); a 2xx is parsed.
  */
 export function robotsVerdictOf(status: number, body: string): RobotsVerdict {
-  if (status === 404 || status === 410) return { kind: 'allow-all', why: `robots.txt ${status}` };
+  if (status === 404 || status === 410) {
+    const rules = robotsInBody(body);
+    return rules === null ? { kind: 'allow-all', why: `robots.txt ${status}` } : { kind: 'rules', robots: rules };
+  }
   if (status === 401 || status === 403) return { kind: 'disallow-all', reason: 'robots-forbidden', why: `robots.txt ${status}` };
   if (status >= 500 && status < 600) return { kind: 'disallow-all', reason: 'robots-transient', why: `robots.txt ${status}`, transient: 'overloaded' };
   if (status >= 300 || status < 200) return { kind: 'disallow-all', reason: 'robots-unavailable', why: `robots.txt ${status}` };
