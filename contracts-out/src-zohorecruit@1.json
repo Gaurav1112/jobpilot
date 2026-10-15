@@ -1,0 +1,146 @@
+{
+  "hash": "8ac8ca0323d40aaecceaff87f085fa8f40b15b41c6d086488c852690d633386a",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "ats": {
+            "enum": [
+              "greenhouse",
+              "lever",
+              "ashby",
+              "feed",
+              "careers",
+              "workday",
+              "eightfold",
+              "oracle",
+              "icims",
+              "successfactors",
+              "smartrecruiters",
+              "jsonld-sitemap",
+              "workable",
+              "recruitee",
+              "teamtailor",
+              "personio",
+              "bamboohr",
+              "breezy",
+              "pinpoint",
+              "rippling",
+              "gem",
+              "jazzhr",
+              "zohorecruit",
+              "manatal",
+              "freshteam",
+              "freehire"
+            ],
+            "type": "string"
+          },
+          "attempt": {
+            "maximum": 9007199254740991,
+            "minimum": 2,
+            "type": "integer"
+          },
+          "company": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ats",
+          "slug",
+          "company",
+          "runDate"
+        ],
+        "type": "object"
+      },
+      "type": "DiscoveryRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "registry:zohorecruit-hosts"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-zohorecruit",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "company": {
+            "type": "string"
+          },
+          "raw": {},
+          "slug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "sourceId",
+          "company",
+          "slug",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawPosting@1"
+    },
+    "redactor": false,
+    "requires": [
+      "req.known-ats"
+    ],
+    "retry": {
+      "backoffMs": [
+        8000
+      ],
+      "max": 1,
+      "on": [
+        "network",
+        "overloaded"
+      ]
+    },
+    "team": "sourcing-zohorecruit",
+    "timeoutMs": 300000,
+    "version": "1.1.0"
+  }
+}

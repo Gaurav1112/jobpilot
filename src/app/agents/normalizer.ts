@@ -54,7 +54,7 @@ import { Posting, RawPosting } from '../types.js';
  *   `jsonLd`, as careers; without, the `sitemal.xml` item (see `successfactors` below).
  *
  * - Task 9, the small platforms (platforms/workable.ts, recruitee.ts, teamtailor.ts, personio.ts, bamboohr.ts, breezy.ts,
- *   pinpoint.ts, rippling.ts, gem.ts): each raw is that platform's kept feed fields (documented in its module). The
+ *   pinpoint.ts, rippling.ts, gem.ts, zohorecruit.ts): each raw is that platform's kept feed fields (documented in its module). The
  *   location text is the platform's own place fields, never invented (Rippling's label may be only a state code, Personio's
  *   offices have no country). A job the platform flags REMOTE (Workable `telecommuting`, Recruitee `remote`, Teamtailor
  *   `remoteStatus: fully`, BambooHR `isRemote`, Breezy `is_remote`, Pinpoint `workplace_type`, Gem `location_type`) is
@@ -926,6 +926,27 @@ function rippling(raw: RawPosting, r: Rec): Posting {
   return smallPosting(raw, 'rippling', { title: r.title, url: r.url, places: arr(r.locations).map(str).filter((x): x is string => x !== null).map(oneLine), structured: null, employmentType: null, description: '', postedAt: null });
 }
 
+/**
+ * Zoho Recruit: `{id, title, url, city, state, country, remote, jobType}`. The location is city, state, country as
+ * the opening gives them; `Remote_Job` true is remote; the job type is mapped to the three types eligibility reads
+ * (`Full time`, `Contract` / `Temporary`, `Part time`), anything else states nothing. No description or date.
+ */
+function zohorecruit(raw: RawPosting, r: Rec): Posting {
+  const remote = r.remote === true;
+  const type = str(r.jobType)?.trim().toLowerCase().replace(/[\s_-]+/gu, ' ') ?? null;
+  const employmentType = type === 'full time' ? 'full-time' : type === 'contract' || type === 'temporary' ? 'contract' : type === 'part time' ? 'part-time' : null;
+  return smallPosting(raw, 'zohorecruit', {
+    title: r.title,
+    url: r.url,
+    places: [joinUnique([r.city, r.state, r.country], ', ')],
+    structured: remote ? 'remote' : null,
+    signals: remote ? ['Remote_Job:true'] : [],
+    employmentType,
+    description: '',
+    postedAt: null,
+  });
+}
+
 const GEM_WORKPLACE: Readonly<Record<string, Remote['structured']>> = { remote: 'remote', hybrid: 'hybrid', onsite: 'onsite', 'on-site': 'onsite', in_office: 'onsite' };
 
 /** Gem: `location_type` (remote, hybrid, in_office), the post's location then its offices'. */
@@ -967,6 +988,7 @@ const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> 
   breezy,
   pinpoint,
   rippling,
+  zohorecruit,
   gem,
 };
 

@@ -30,6 +30,8 @@ const WITH_PLATFORMS = [
   // Sources expansion, Task 2, the listing-pages adapters
   { platform: 'jazzhr', company: 'Example', ref: 'example' },
   { platform: 'freshteam', company: 'Example', ref: 'example' },
+  // Sources expansion, Task 3, the Zoho Recruit feed board
+  { platform: 'zohorecruit', company: 'Example', ref: 'example.zohorecruit.com' },
 ] as const;
 
 /**

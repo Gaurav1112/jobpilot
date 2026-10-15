@@ -64,6 +64,8 @@ export const CAPABILITY_ALLOW_LIST = {
   /** Sources expansion, Task 2: the JazzHR and Freshteam listing adapters. */
   jazzhrEgress: ['src-jazzhr'],
   freshteamEgress: ['src-freshteam'],
+  /** Sources expansion, Task 3: the Zoho Recruit feed adapter. */
+  zohorecruitEgress: ['src-zohorecruit'],
 } as const satisfies Record<string, readonly string[]>;
 
 /** Every allow-list violation among `contracts`, sorted by agent id; empty when the set is allowed. */
@@ -108,6 +110,7 @@ export function capabilityProblems(contracts: readonly AnyContract[]): string[] 
       ['registry:gem-hosts', 'gemEgress', 'Gem'],
       ['registry:jazzhr-hosts', 'jazzhrEgress', 'JazzHR'],
       ['registry:freshteam-hosts', 'freshteamEgress', 'Freshteam'],
+      ['registry:zohorecruit-hosts', 'zohorecruitEgress', 'Zoho Recruit'],
     ] as const) {
       if (c.egress.includes(egress) && !allowed(CAPABILITY_ALLOW_LIST[key], c.id)) {
         problems.push(`${c.id} declares egress ${egress}; only ${CAPABILITY_ALLOW_LIST[key].join(', ')} may contact the registry's ${what} hosts`);

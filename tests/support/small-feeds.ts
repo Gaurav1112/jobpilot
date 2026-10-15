@@ -45,6 +45,12 @@ export const BUILD: Readonly<Record<string, (w: Where, title?: string) => string
     const label = w === 'blr' ? 'Bengaluru, India' : w === 'remote-in' ? 'Remote (Bengaluru, India)' : w === 'paris' ? 'Paris, France' : 'Remote (Paris, France)';
     return JSON.stringify([{ uuid: '11111111-2222-3333-4444-555555555555', name: ` ${title} `, department: { id: 'Eng', label: 'Eng' }, url: 'https://ats.rippling.com/acme/jobs/11111111-2222-3333-4444-555555555555', workLocation: { label, id: label } }]);
   },
+  zohorecruit: (w, title = TITLE) => {
+    const p = PLACES[w];
+    const jobs = [{ id: '100000000000009001', Posting_Title: title, City: p.city, State: p.region, Country: p.country, Remote_Job: p.remote, Publish: true, Job_Type: 'Full time' }];
+    const value = JSON.stringify(jobs).replace(/&/g, '&amp;').replace(/"/g, '&#34;');
+    return `<!DOCTYPE html><html><body><input type="hidden" value="${value}" id="jobs"></body></html>`;
+  },
   gem: (w, title = TITLE) => {
     const p = PLACES[w];
     return JSON.stringify([{ id: 5001, title, absolute_url: 'https://jobs.gem.com/acme/5001', content: '<p>Build services.</p>', location: { name: `${p.city}, ${p.country}` }, location_type: p.remote ? 'remote' : 'in_office', offices: [], departments: [{ id: '1', name: 'Eng' }], employment_type: 'full_time', first_published_at: '2026-10-01T09:00:00.000Z' }]);
