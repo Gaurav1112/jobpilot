@@ -274,8 +274,10 @@ details summary { cursor: pointer; color: var(--accent); }
 .fact { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3) var(--space-4); }
 .fact-unverified { border-color: var(--warn); box-shadow: inset 4px 0 0 var(--warn); }
 .fact-unused .fact-claim { color: var(--text-3); }
-.fact-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-bottom: var(--space-1); font-size: var(--fs-sm); }
-.fact-id { color: var(--text-2); }
+.fact-state { margin: 0 0 var(--space-1); font-size: var(--fs-sm); }
+.fact-id { font-size: 0.875em; color: var(--text-3); }
+.btn-danger { color: var(--critical); border-color: var(--critical); }
+.btn-danger:hover { background: var(--critical-soft); }
 .fact-claim { font-size: var(--fs-md); margin-bottom: var(--space-1); overflow-wrap: anywhere; }
 .fact-sub { color: var(--text-3); font-size: var(--fs-sm); }
 .fact-warn { color: var(--warn); font-weight: 600; font-size: var(--fs-sm); }

@@ -1302,3 +1302,16 @@ describe('A2: previews are paper, fold away, and never change what is sent', () 
     expect(textOf(cited)).toMatch(/^Facts these documents cite \(1\) f-nw-01 Led the design of an event-driven order pipeline/);
   });
 });
+
+describe('A10: facts waiting for you come first, the claim leads, Reject is a danger button', () => {
+  it('orders, lays out and styles the facts', async () => {
+    const body = (await get('/facts')).body;
+    const lis = [...body.matchAll(/<li class="(fact[^"]*)" id="fact-([^"]*)"/g)].map((m) => ({ pending: (m[1] as string).includes('fact-unverified'), id: m[2] }));
+    expect(lis[0]?.pending).toBe(true);
+    expect(lis.slice(lis.findIndex((l) => !l.pending)).some((l) => l.pending)).toBe(false);
+    const row = rowOf(body, 'id', 'fact-f-nw-01');
+    expect(row.indexOf('class="fact-claim"')).toBeLessThan(row.indexOf('class="fact-id"'));
+    expect(textOf(row)).toMatch(/^Led the design of an event-driven order pipeline/);
+    expect(elementsWith(row, 'class', 'btn btn-danger').map(textOf)).toEqual(['Reject']);
+  });
+});
