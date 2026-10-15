@@ -429,7 +429,11 @@ class HostedRun {
       this.killedLine = this.emit('killed', { pipeline: name, seconds: GRACE_SECONDS });
       throw new Killed();
     }
-    this.pipelines[name] = run.exit;
+    // the deadline SIGTERM reached a child before it installed its handler (one started at the deadline): a stop, not a crash
+    const stoppedEarly = run.exit === null && run.stopped && (run.signal ?? 'SIGTERM') === 'SIGTERM';
+    // the ledger's schema takes only the exit codes a pipeline can end with (0-2)
+    this.pipelines[name] = run.exit !== null && run.exit >= 0 && run.exit <= 2 ? run.exit : null;
+    if (stoppedEarly) return { run, summary: null };
     if (run.exit === null || run.exit > 2) throw new StepFailure('pipeline-crash');
     return { run, summary: readSummary(summaryFile) };
   }
@@ -444,7 +448,7 @@ class HostedRun {
     return { problems: Object.values(out).reduce((a, b) => a + b, 0), codes: codesOf(out) };
   }
   private outcomeOf(run: PipelineRun, summary: RunSummaryJson | null): 'done' | 'paused' | 'failed' | 'could not run' | 'not owed' {
-    if (summary === null) return run.exit === 0 ? 'not owed' : 'could not run';
+    if (summary === null) return run.stopped ? 'paused' : run.exit === 0 ? 'not owed' : 'could not run';
     if (summary.status === 'paused') return 'paused';
     return summary.exitCode === 0 ? 'done' : 'failed';
   }
@@ -492,6 +496,11 @@ class HostedRun {
     if (!cfg.freelance.windows.includes('am') || done?.freelance === this.today) return;
     if (!decision.freelanceAllowed) {
       this.emit('freelanceCut', { until: nextCycleDm(this.month, cfg.budget.cycleStartDay) });
+      return;
+    }
+    if (Date.parse(this.now()) >= this.deadline()) {
+      // the deadline already passed (the daily ran into it): a child started now would only be stopped at once
+      this.emit('freelance', { outcome: 'paused', minutes: 0, gigs: 0, problems: 0, codes: '' });
       return;
     }
     this.at('freelance');

@@ -70,6 +70,8 @@ beforeAll(async () => {
 interface Script {
   exit?: number | null;
   killed?: boolean;
+  /** The deadline SIGTERM ended the child before it installed its handler: a signal death, not a kill. */
+  stoppedEarly?: boolean;
   /** No summary file (a run that could not run). */
   noSummary?: boolean;
   status?: 'completed' | 'paused';
@@ -127,6 +129,7 @@ function setup(over: { state?: typeof STATE; windows?: ('am' | 'pm')[]; now?: st
         calls.push({ pipeline, argv: a.argv, env: { ...a.env }, deadlineAt: a.deadlineAt, logFile: a.logFile });
         const home = a.env['JOBPILOT_HOME'] as string;
         if (sc.killed === true) return { exit: null, stopped: true, killed: true, ms: 61_000 };
+        if (sc.stoppedEarly === true) return { exit: null, stopped: true, killed: false, ms: 3 };
         const date = '2026-11-02';
         const runId = pipeline === 'daily' ? `daily-${date}` : `freelance-${date}-am`;
         if (sc.noSummary !== true) {
@@ -513,6 +516,39 @@ describe('runHosted: children', () => {
     expect(await run(s)).toBe(0);
     expect(hasAlert(s, 'gmail')).toBe(true);
     expect(hasAlert(s, 'gave-up')).toBe(true);
+  });
+
+  it('a child the deadline SIGTERM ended before its handler (exit null, stopped, not killed) is a stop: the daily work commits', async () => {
+    const s = setup();
+    s.script.freelance = { stoppedEarly: true };
+    expect(await run(s)).toBe(0);
+    const p = await pointer(s);
+    expect(p.gen).toBe(2);
+    expect(p.current?.lastDone).toMatchObject({ daily: '2026-11-02', freelance: null });
+    expect(s.out.some((x) => /^freelance: paused in 0 min · 0 gigs · 0 problems$/.test(x)), s.out.join('|')).toBe(true);
+    expect((await ledger(s)).at(-1)).toMatchObject({ outcome: 'committed', pipelines: { daily: 0, freelance: null } });
+  });
+
+  it('past the deadline freelance is not started; the paused daily work commits', async () => {
+    const s = setup();
+    let t = NOW;
+    const orig = s.d.spawn;
+    s.d = {
+      ...s.d,
+      clock: { now: () => t },
+      spawn: async (a) => {
+        const r = await orig(a);
+        t = new Date(Date.parse(NOW) + 136 * 60_000).toISOString(); // the daily ran into the deadline
+        return { ...r, stopped: true };
+      },
+    };
+    s.script.daily = { status: 'paused' };
+    expect(await run(s)).toBe(0);
+    expect(s.calls.map((c) => c.pipeline)).toEqual(['daily']);
+    expect((await pointer(s)).gen).toBe(2);
+    expect(s.out.some((x) => /^daily: paused in /.test(x))).toBe(true);
+    expect(s.out).toContain('freelance: paused in 0 min · 0 gigs · 0 problems');
+    for (const line of s.out) expect(isTemplateLine(line) || line.startsWith('::add-mask::'), line).toBe(true);
   });
 
   it('a pipeline signal death that was not the deadline is a pipeline-crash, nothing committed', async () => {

@@ -19,8 +19,12 @@ describe('spawnPipeline', () => {
     const logFile = join(root, 'logs', 'b.log');
     const t0 = Date.now();
     const r = await spawnPipeline({ argv: [process.execPath, fx('child-ignores.mjs')], env: { PATH: process.env['PATH'] ?? '' }, cwd: root, logFile, deadlineAt: Date.now() + 400, graceMs: 300 });
-    expect(r).toMatchObject({ stopped: true, killed: true, exit: null });
+    expect(r).toMatchObject({ stopped: true, killed: true, exit: null, signal: 'SIGKILL' });
     expect(Date.now() - t0).toBeLessThan(8000);
+  });
+  it('a deadline already past stops a child before any handler: exit null, stopped, not killed, signal SIGTERM', async () => {
+    const r = await spawnPipeline({ argv: [process.execPath, '-e', 'setTimeout(() => {}, 20000)'], env: {}, cwd: root, logFile: join(root, 'e.log'), deadlineAt: Date.now() - 1000, graceMs: 10_000 });
+    expect(r).toMatchObject({ exit: null, stopped: true, killed: false, signal: 'SIGTERM' });
   });
   it('a child that ends before the deadline is neither stopped nor killed; its exit code is reported', async () => {
     const r = await spawnPipeline({ argv: [process.execPath, '-e', 'process.exit(2)'], env: {}, cwd: root, logFile: join(root, 'c.log'), deadlineAt: Date.now() + 60_000 });

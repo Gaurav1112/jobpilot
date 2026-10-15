@@ -11,6 +11,8 @@ export interface PipelineRun {
   /** The child was still alive `graceMs` after the SIGTERM and was SIGKILLed. */
   readonly killed: boolean;
   readonly ms: number;
+  /** The signal that ended the child, when one did (SIGTERM: the deadline stop reached it before its handler). */
+  readonly signal?: NodeJS.Signals | null;
 }
 
 export const DEFAULT_GRACE_MS = 60_000;
@@ -67,9 +69,9 @@ export function spawnPipeline(o: {
       finish();
       reject(e);
     });
-    child.on('close', (code) => {
+    child.on('close', (code, sig) => {
       finish();
-      resolve({ exit: code, stopped, killed, ms: Date.now() - started });
+      resolve({ exit: code, stopped, killed, ms: Date.now() - started, signal: sig });
     });
   });
 }
