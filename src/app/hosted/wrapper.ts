@@ -7,7 +7,7 @@ import type { RunSummaryJson } from '../run-summary.js';
 import { storeCompactCommand } from '../store/compact-command.js';
 import { envSecrets } from '../secrets.js';
 import { raiseAlert, type ALERTS } from './alerts.js';
-import { billedMinutes, cycleMonth, govern, ledgerPath, levelRose, parseLedger, type Decision, type LedgerEntry } from './budget.js';
+import { billedMinutes, cycleMonth, govern, ledgerPath, LedgerEntry, levelRose, parseLedger, type Decision } from './budget.js';
 import { checkState, openInto, StateError } from './bundle.js';
 import { loadHostedConfig, parseCodeLock, type HostedConfig } from './config.js';
 import { digestFileName, digestJson, digestRun, runOn, type Digest } from './digest.js';
@@ -676,11 +676,18 @@ class HostedRun {
         ...(this.audit !== undefined ? { audit: this.audit } : {}),
         ...(this.decision !== undefined ? { level: this.decision.level } : {}),
       };
+      // a line that fails its own schema would wedge every later run at the cheap check: never append one
+      const valid = LedgerEntry.safeParse(entry);
+      if (!valid.success) {
+        this.log(`ledger line not written (it fails the ledger schema): ${valid.error.issues.map((x) => x.path.join('.') || '(root)').join(', ')}`);
+        if (refused) return;
+        throw new Error('ledger entry fails its schema');
+      }
       await appendStateFiles(
         this.d.gh,
         async (_head, read) => {
           const existing = (await read(ledgerPath(month))) ?? '';
-          return { [ledgerPath(month)]: `${existing}${JSON.stringify(entry)}\n` };
+          return { [ledgerPath(month)]: `${existing}${JSON.stringify(valid.data)}\n` };
         },
         `ledger ${this.o.runId}`,
       );

@@ -551,6 +551,27 @@ describe('runHosted: children', () => {
     for (const line of s.out) expect(isTemplateLine(line) || line.startsWith('::add-mask::'), line).toBe(true);
   });
 
+  it('a child exit of 3 or more is a pipeline-crash whose ledger line still parses, and the next run is not wedged', async () => {
+    const s = setup();
+    s.script.daily = { exit: 13, noSummary: true };
+    expect(await run(s)).toBe(1);
+    expect(s.out).toContain('state: not committed (pipeline-crash); generation 1 stays');
+    expect((await ledger(s)).at(-1)).toMatchObject({ outcome: 'failed', pipelines: { daily: null, freelance: null } });
+    s.script.daily = {};
+    const workDir = fresh();
+    mkdirSync(workDir);
+    expect(await run(s, { runId: '4243', workDir })).toBe(0);
+    expect((await pointer(s)).gen).toBe(2);
+  });
+
+  it('an invalid run id is refused and writes no ledger line that would fail its schema', async () => {
+    const s = setup();
+    expect(await run(s, { runId: '' })).toBe(1);
+    expect(await s.gh.readStateFile('ledger/2026-11.jsonl')).toBeNull();
+    expect(await run(s, { runId: '4243' })).toBe(0);
+    expect(await ledger(s)).toHaveLength(1);
+  });
+
   it('a pipeline signal death that was not the deadline is a pipeline-crash, nothing committed', async () => {
     const s = setup();
     // exit null without the deadline kill: a signal ended the child
