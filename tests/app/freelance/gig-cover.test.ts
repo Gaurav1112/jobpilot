@@ -1,4 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { appEvalSpecs } from '../../../src/app/evals.js';
+import { runEval } from '../../../src/evals/runner.js';
 import { COVER_P4_THANKS, COVER_OPENING } from '../../../src/app/agents/writing/templates.js';
 import { COVER_PLATFORMS, getsCover, GIG_COVER_P4_CITY } from '../../../src/app/freelance/writing/gig-cover.js';
 import { planGigDocs } from '../../../src/app/freelance/writing/proposal-planner.js';
@@ -63,6 +67,11 @@ describe('which gigs get a cover letter', () => {
     expect('cover' in markup).toBe(false);
     const cjk = plan(boardRole({ client: { name: String.fromCodePoint(0x6771, 0x4eac) + ' Labs', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null } }));
     expect('cover' in cjk).toBe(false);
+    // a pictograph some boards put before a title is decoration: the letter names the title without it
+    const globe = plan(boardRole({ title: String.fromCodePoint(0x1f30d) + ' Senior Backend Engineer, Payments - Remote - Contract' }));
+    expect(globe.cover?.paragraphs[0]!.text).toContain("I'm applying for the Senior Backend Engineer, Payments - Remote - Contract role at Example Robotics.");
+    expect(gigDocsProblems(globe, pub)).toEqual([]);
+    expect(globe.resume.evidence.scored.posting.title).toBe(String.fromCodePoint(0x1f30d) + ' Senior Backend Engineer, Payments - Remote - Contract');
     const accented = plan(boardRole({ client: { name: 'Caf' + String.fromCodePoint(0xe9) + ' Systems', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null } }));
     expect('cover' in accented).toBe(true);
   });
@@ -143,5 +152,37 @@ describe('the planner guardrails on a plan with a cover', () => {
     const bad = { ...p, cover: { ...p.cover!, paragraphs: p.cover!.paragraphs.map((x, i) => (i === 1 ? { ...x, text: `${x.text} Initech.` } : x)) } };
     expect(G_NAMING.check(ctx(s, bad)).verdict).toBe('trip');
     expect(G_GROUND.check(ctx(s, bad)).verdict).toBe('trip');
+  });
+});
+
+describe('the gig-cover-grounding eval (fictional fixtures, gate exactMatch 1.000)', () => {
+  const root = join(import.meta.dirname, '../../..');
+  const spec = () => appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.name === 'gig-cover-grounding');
+
+  it('is registered with a gate of 1 and passes every case', async () => {
+    const s = spec();
+    expect(s).toBeDefined();
+    expect(s!.min).toBe(1);
+    const r = await runEval(s!, { providers: { fetch: async () => ({ status: 404, text: async () => '' }) }, policy: PRODUCT_POLICY_V1 });
+    expect(r.failures).toEqual([]);
+    expect(r.score).toBe(1);
+    expect(r.n).toBeGreaterThanOrEqual(12);
+  });
+
+  it('has cases on both employer boards with a cover, and cases that must get none', () => {
+    const cases = spec()!.cases as unknown as { id: string; input: ScoredGig; expected: { pass: boolean; cover: boolean } }[];
+    const withCover = cases.filter((c) => c.expected.cover);
+    expect(new Set(withCover.map((c) => c.input.risked.verdict.rated.gig.platform))).toEqual(new Set(['boards', 'himalayas']));
+    expect(cases.filter((c) => !c.expected.cover).length).toBeGreaterThanOrEqual(4);
+    expect(cases.every((c) => c.expected.pass)).toBe(true);
+  });
+
+  it('holds no personal data and no real pack value: fictional companies and the fixture pack only', () => {
+    const text = readFileSync(join(root, 'evals/datasets/gig-cover-grounding.jsonl'), 'utf8');
+    expect(text).not.toMatch(/@(?!example\.)[a-z0-9-]+\.[a-z]{2,}/i); // no email outside example domains
+    for (const c of spec()!.cases as unknown as { input: ScoredGig }[]) {
+      const name = c.input.risked.verdict.rated.gig.client.name ?? '';
+      expect(name === '' || /^(?:Example|Fictional|Sample) /.test(name) || /\bExample\b/.test(name) || name.startsWith('Initech') || name.startsWith('Mail '), name).toBe(true);
+    }
   });
 });

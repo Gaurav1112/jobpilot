@@ -40,7 +40,7 @@ import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermErro
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
 import { gigCoverModel, gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
-import { companyOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
+import { companyOf, coverTitleOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
 import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
 
@@ -374,7 +374,7 @@ function gigCoverProblems(plan: GigDocsPlan, pack: WritingPack, rawPack: unknown
   const company = companyOf(gig);
   if (company === null) problems.push('cover: the gig names no company');
   else {
-    const want = attempt(problems, 'cover.resume', () => gigPostingOf(gig, pack, company));
+    const want = attempt(problems, 'cover.resume', () => gigPostingOf(gig, pack, company, coverTitleOf(gig.title)));
     const d = want === undefined ? undefined : firstDiff(want, cover.resume.evidence.scored.posting);
     if (d !== undefined) problems.push(`cover.resume.evidence.scored.posting is not the gig's synthetic posting named for its company (at ${d})`);
   }

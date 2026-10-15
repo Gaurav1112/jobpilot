@@ -15,7 +15,8 @@ import { evidenceFor, syntheticPosting } from './gig-evidence.js';
  *   contract postings, mostly Himalayas) and `himalayas` (src-himalayas-gigs). In any list (contracts, gigs, review),
  *   at or above the freelance fit floor like every gig document (proposal-planner's `belowFitFloor`).
  * - **The posting.** The gig's synthetic posting (`gigPostingOf`, the one the contract CV is planned from) named for the
- *   real company, `client.name`. The scorer never reads the company, so the Evidence, and with the compact budget
+ *   real company, `client.name`, its title without pictographs (`coverTitleOf`: "🌍 Senior Engineer" is named
+ *   "Senior Engineer"). The scorer never reads the company, so the Evidence, and with the compact budget
  *   (`COMPACT`) the resume plan's bullets, are the contract CV's: the letter cites what the CV sent with it shows.
  * - **No cover** (the plan leaves the key out) when the gig has no company, when the sanitised title or company is not
  *   safe for a template slot (`unsafePostingText`), names a forbidden term (strict), or has a character outside the
@@ -74,6 +75,14 @@ export function nameable(s: string, forbiddenTerms: readonly string[]): boolean 
   return forbiddenTermStrict(s, { forbiddenTerms }) === undefined && forbiddenTermStrict(shown, { forbiddenTerms }) === undefined;
 }
 
+/**
+ * The role title a cover letter names: the gig title without pictographs (emoji such as a globe some boards put before
+ * a title), their variation selectors and joiners, whitespace collapsed. Every other character is kept, so it is the
+ * title the employer wrote, minus decoration; `nameable` still decides whether it can be named at all.
+ */
+export const coverTitleOf = (title: string): string =>
+  title.replace(/[\p{Extended_Pictographic}\ufe0f\u200d]/gu, ' ').replace(/\s+/gu, ' ').trim();
+
 /** The company a cover letter names: the gig's client name, trimmed, or null. */
 export const companyOf = (gig: Gig): string | null => {
   const n = gig.client.name?.trim() ?? '';
@@ -85,25 +94,25 @@ export const companyOf = (gig: Gig): string | null => {
  * gig scorer reads it), firstSeen the gig's `postedAt` (else the first day of the pack's asOf month), and `company`.
  * The contract CV names the platform; the cover letter names the real company.
  */
-export function gigPostingOf(gig: Gig, pack: WritingPack, company: string): Posting {
+export function gigPostingOf(gig: Gig, pack: WritingPack, company: string, title: string = gig.title): Posting {
   return syntheticPosting({
     key: gig.gigKey,
-    title: gig.title,
+    title,
     company,
     text: gig.skills.length === 0 ? gig.description : `${gig.description}\n${gig.skills.join(', ')}`,
     firstSeen: gig.postedAt ?? `${pack.experience.asOf}-01`,
   });
 }
 
-/** The cover letter's resume plan: the compact plan of the gig's posting named for the company. */
+/** The cover letter's resume plan: the compact plan of the gig's posting named for the company, its title `coverTitleOf`. */
 export const gigCoverResume = (gig: Gig, company: string, pack: WritingPack, rawPack: unknown): ResumePlan =>
-  planResume(evidenceFor(gigPostingOf(gig, pack, company), pack, rawPack), pack, COMPACT);
+  planResume(evidenceFor(gigPostingOf(gig, pack, company, coverTitleOf(gig.title)), pack, rawPack), pack, COMPACT);
 
 /** The planned cover letter of one gig, or undefined when it gets none: see the module rules. */
 export function planGigCover(gig: Gig, pack: WritingPack, rawPack: unknown, rules: { readonly maxHoursPerWeek: number; readonly istWindow: string }): CoverPlan | undefined {
   if (!getsCover(gig)) return undefined;
   const company = companyOf(gig);
-  if (company === null || !nameable(company, pack.naming.forbiddenTerms) || !nameable(gig.title, pack.naming.forbiddenTerms)) return undefined;
+  if (company === null || !nameable(company, pack.naming.forbiddenTerms) || !nameable(coverTitleOf(gig.title), pack.naming.forbiddenTerms)) return undefined;
   const resume = gigCoverResume(gig, company, pack, rawPack);
   if (!planHasBullets.test(resume)) return undefined;
   return gigCoverOf(resume, pack, rules);

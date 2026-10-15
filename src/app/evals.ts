@@ -22,9 +22,10 @@ import { gigRisk } from './freelance/gig-risk.js';
 import { gigScorer } from './freelance/gig-scorer.js';
 import { rateNormalizer } from './freelance/rate.js';
 import { gigQaChecks } from './freelance/writing/gig-qa.js';
-import { gigTexts } from './freelance/writing/gig-text.js';
+import { gigRendererContract } from './freelance/writing/gig-renderer.js';
+import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
 import { proposalPlanner } from './freelance/writing/proposal-planner.js';
-import { appGuardrails } from './guardrails.js';
+import { appGuardrails, G_FILL, G_GROUND } from './guardrails.js';
 import { offlineProviders } from './offline.js';
 import { loadPack } from './pack/load.js';
 import type { GigDocsPlan, GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
@@ -103,6 +104,43 @@ async function gigGrounding(scored: ScoredGig, pack: unknown): Promise<unknown> 
   return plan.trips.length === 0 && failed.length === 0 ? { pass: true } : { pass: false, trips: plan.trips, failed };
 }
 
+/** The stand-in full pack of the gig-cover gate: the eval pack plus a fictional contact block (city included) and no answers. */
+const COVER_EVAL_CONTACT = { name: 'Eval Candidate', email: 'eval@example.com', phone: '', city: 'Eval City', links: [] };
+
+/**
+ * The `gig-cover-grounding` gate (freelance-v2): from one ScoredGig, run proposal-planner as the pipeline would and pass
+ * every out guardrail (G-GROUND re-derives the cover letter, G-NAMING, G-NO-GAP-CLAIM); then, with a planned cover,
+ * render its texts (`gigTexts`, the fictional contact block) and pass G-GROUND and G-FILL as the gig renderer's output
+ * (the city filled, no placeholder left), and check the letter states no pay or hours of the role. `{pass, cover}`:
+ * `cover` is whether a letter was planned; any trip or failed check is listed.
+ */
+async function gigCoverGrounding(scored: ScoredGig, pack: unknown): Promise<unknown> {
+  const plan = await runChecked(proposalPlanner, 'ScoredGig@1', scored, gigScorer, pack);
+  if (plan.outs.length !== 1) return { plans: plan.outs.length, trips: plan.trips };
+  const p = plan.outs[0] as GigDocsPlan;
+  const failed: string[] = [];
+  if (p.cover !== undefined) {
+    const full = { ...(pack as object), contact: COVER_EVAL_CONTACT, answers: {} };
+    const text = gigTexts(p, full as unknown as Parameters<typeof gigTexts>[1]);
+    const files = gigFilesOf(p).map((f) => ({ ...f, sha256: '0'.repeat(64), pages: f.format === 'pdf' ? 1 : null }));
+    const env = {
+      envelopeId: 'eval', stepKey: 'eval', index: 0, type: 'GigDocsPlan@1',
+      producer: { agentId: 'proposal-planner', version: proposalPlanner.contract.version, contractHash: contractHash(proposalPlanner.contract) },
+      parents: [], payload: p,
+      handoff: { guarantees: [], dataClass: 'P0' as const, obligations: [], pins: { policyHash: PHASH } }, guardrails: [], cost: ZERO_COST,
+    };
+    const ctx = { side: 'out' as const, contract: gigRendererContract, policy: PRODUCT_POLICY_V1, policyHash: PHASH, contractHashOf: () => undefined, input: env, output: { payload: { gigKey: p.gigKey, files, plan: p, text }, dataClass: 'P1' as const }, pack: pack as object, fullPack: full };
+    for (const g of [G_GROUND, G_FILL]) {
+      const v = g.check(ctx);
+      if (v.verdict === 'trip') failed.push(`${v.id}: ${v.detail ?? ''}`);
+    }
+    const letter = p.cover.paragraphs.map((x) => x.text).join('\n');
+    if (/\$|\bUSD\b|per hour|\/h(?:ou)?r\b/i.test(letter)) failed.push('the letter states pay');
+  }
+  const trips = plan.trips;
+  return trips.length === 0 && failed.length === 0 ? { pass: true, cover: p.cover !== undefined } : { pass: false, cover: p.cover !== undefined, trips, failed };
+}
+
 /**
  * The app's golden-set evals. They run on the fictional fixture pack (`tests/fixtures/pack`), never the user's own:
  * the public part of it (no contact, no answers), frozen with `freezePack` as the supervisor does, with its hash.
@@ -169,6 +207,18 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: proposalPlanner,
       cases: loadJsonl(join(datasetDir, 'gig-grounding.jsonl')),
       project: async (outs) => (outs.length === 1 ? gigGrounding((outs[0] as GigDocsPlan).scored, gigPack) : { plans: outs.length }),
+      metric: 'exactMatch',
+      min: 1,
+      pack: gigPack,
+      packHash: hashOf(unfloored),
+    },
+    {
+      // freelance-v2: contract roles from employer job boards (fictional Himalayas recordings and boards postings) and
+      // the gigs that must get no letter, through the planner and the cover letter's G-GROUND and G-FILL.
+      name: 'gig-cover-grounding',
+      agent: proposalPlanner,
+      cases: loadJsonl(join(datasetDir, 'gig-cover-grounding.jsonl')),
+      project: async (outs) => (outs.length === 1 ? gigCoverGrounding((outs[0] as GigDocsPlan).scored, gigPack) : { plans: outs.length }),
       metric: 'exactMatch',
       min: 1,
       pack: gigPack,
