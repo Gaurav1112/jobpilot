@@ -288,6 +288,45 @@ describe('runHosted: failures leave the pointer at G', () => {
     expect(hasAlert(sw, 'conflict')).toBe(true);
   });
 
+  it('a commit whose outcome is unknown (it threw, no CAS verdict): nothing is deleted, prune takes it later', async () => {
+    const s = setup();
+    const gh: GitHubClient = {
+      ...s.gh,
+      casState: async (parent, f, message) => {
+        if (message.startsWith('generation ')) throw new Error('socket hang up');
+        return s.gh.casState(parent, f, message);
+      },
+    };
+    const sw: Setup = { ...s, gh, d: { ...s.d, gh } };
+    expect(await run(sw)).toBe(1);
+    expect((await pointer(sw)).gen).toBe(1);
+    expect((await gen2(sw)).filter((t) => t.startsWith('state-'))).toHaveLength(1);
+  });
+
+  it('prune plans from the pointer as it is now, not from the head this run committed', async () => {
+    const s = setup();
+    const other = 'state-g000002-ffffffff';
+    let moved = false;
+    const gh: GitHubClient = {
+      ...s.gh,
+      listReleases: async () => {
+        const head = await s.gh.readState();
+        if (!moved && head?.pointer.gen === 2 && head.pointer.current) {
+          moved = true;
+          // meanwhile: a rollback to 1 and another writer's commit of generation 2
+          await s.gh.createRelease(other);
+          const rec = { ...head.pointer.current, tag: other };
+          await patchPointer(s, (p) => ({ ...p, current: rec, history: [rec, ...p.history.filter((h) => h.gen < 2)] }));
+        }
+        return s.gh.listReleases();
+      },
+    };
+    const sw: Setup = { ...s, gh, d: { ...s.d, gh } };
+    expect(await run(sw)).toBe(0);
+    expect(moved).toBe(true);
+    expect(await releases(sw)).toContain(other);
+  });
+
   it('a fault at prune: committed, exit 0', async () => {
     const s = setup({ fault: (x) => { if (x === 'prune') throw new Error('boom'); } });
     expect(await run(s)).toBe(0);

@@ -154,6 +154,8 @@ class HostedRun {
   private killedLine = '';
   /** The release tags this run created (the only ones a failure may delete). */
   private readonly created: string[] = [];
+  /** The generation CAS was sent: its outcome may be unknown, so a failure from here on deletes nothing (prune decides). */
+  private commitSent = false;
 
   constructor(private readonly o: HostedRunOptions, private readonly d: HostedDeps) {
     this.gw = createGateway({ out: d.out, ...(d.summaryFile !== undefined ? { summaryFile: d.summaryFile } : {}) });
@@ -253,9 +255,15 @@ class HostedRun {
   /**
    * After an unexpected exception in the publish step: the releases THIS run created go, unless the pointer names one
    * (the commit landed). A release this run did not create (another writer's, an abandoned line's) is never touched.
+   * Once the generation CAS was sent its outcome is unknown (a definite conflict already dropped the releases in
+   * publishHome), so nothing is deleted: prune takes an orphan later (sync.ts).
    */
   private async cleanupUnpublished(): Promise<void> {
     if (this.head === undefined || this.step === 'ledger' || this.created.length === 0) return;
+    if (this.commitSent) {
+      this.log('cleanup skipped: the commit outcome is unknown, a later prune decides');
+      return;
+    }
     try {
       const now = await this.d.gh.readState();
       if (now === null) return;
@@ -599,7 +607,10 @@ class HostedRun {
         return d.gh.uploadAsset(tag, file, name);
       },
       casState: async (parent, f, message) => {
-        if (message.startsWith('generation ')) this.at('commit');
+        if (message.startsWith('generation ')) {
+          this.at('commit');
+          this.commitSent = true;
+        }
         return d.gh.casState(parent, f, message);
       },
     };
@@ -643,7 +654,11 @@ class HostedRun {
     try {
       this.at('prune');
       const cfg = this.cfg as HostedConfig;
-      const plan = prunePlan(await this.d.gh.listReleases(), (this.head as StateHead).pointer, this.now(), {
+      // the releases first, then the pointer as it is now: a newer pointer only names more of the listed releases
+      const releases = await this.d.gh.listReleases();
+      const head = await this.d.gh.readState();
+      if (head === null) throw new Error('the state repo has no pointer');
+      const plan = prunePlan(releases, head.pointer, this.now(), {
         generations: cfg.state.keepGenerations,
         weekly: cfg.state.keepWeekly,
         archiveDays: cfg.state.archiveDays,
