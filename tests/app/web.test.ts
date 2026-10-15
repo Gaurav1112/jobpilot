@@ -1247,3 +1247,28 @@ describe('A7: the fit score is labelled and scaled; the title is read first', ()
     expect(textOf((await get(`/jobs/${K1}`)).body)).toMatch(/Fit score 80 out of 100/);
   });
 });
+
+describe('A2: the job page follows the apply sequence', () => {
+  it('status and the downloads come before the previews; answers before the score details', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    const at = (needle: string): number => body.indexOf(needle);
+    expect(at('id="status"')).toBeGreaterThan(-1);
+    expect(at('id="status"')).toBeLessThan(at('id="send"'));
+    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeGreaterThan(at('id="send"'));
+    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeLessThan(at('<iframe'));
+    expect(at('id="ans"')).toBeLessThan(at('id="why"'));
+  });
+  it('"Open the posting" is the only primary button, also when a copy can be kept', async () => {
+    for (const setup of [() => undefined, () => withStore((s) => s.setStatus(K1, 'applied', 'user', NOW))]) {
+      setup();
+      const body = (await get(`/jobs/${K1}`)).body;
+      const primaries = [...body.matchAll(/class="btn btn-primary"/g)];
+      expect(primaries).toHaveLength(1);
+      expect(linksOf(body).find((l) => l.attrs['class'] === 'btn btn-primary')).toMatchObject({ href: 'https://boards.example.test/acme/jobs/1001', attrs: { rel: 'noopener noreferrer', target: '_blank' } });
+    }
+    expect(textOf((await get(`/jobs/${K1}`)).body)).toContain('Keep a copy of these documents now');
+  });
+  it('a job with blocked documents still says why, in the send card', async () => {
+    expect(textOf(elementsWith((await get(`/jobs/${K10}`)).body, 'id', 'send')[0] ?? '')).toContain('documents blocked: unrenderable character U+5C71 in the company name');
+  });
+});

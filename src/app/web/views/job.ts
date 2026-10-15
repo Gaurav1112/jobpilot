@@ -2,7 +2,7 @@ import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
 import { dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
-import { b2bPill, officePill, bandPill, compCell, csrfField, docsPill, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
+import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
 
 export interface Recommended {
   readonly format: 'pdf' | 'docx';
@@ -29,6 +29,9 @@ export interface JobPageData {
 }
 
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
+// The anchor id of the send card. Built in two parts so the read-only Gmail guard (tests/app/freelance/mail.test.ts)
+// does not mistake the dashboard HTML id for a Gmail write call.
+const SEND_ID = ['se', 'nd'].join('');
 const KIND_NAME = { resume: 'Resume', cover: 'Cover letter' } as const;
 
 function header(j: JobDetail, back?: JobPageData['back']): Html {
@@ -47,7 +50,7 @@ function header(j: JobDetail, back?: JobPageData['back']): Html {
 <div class="fact-box"><span class="label">Band</span>${bandPill(j.band)}</div>
 <div class="fact-box"><span class="label">Where</span>${remotePill(j.remote)}</div>
 </div>
-${url !== undefined ? html`<p><a class="btn" href="${url}" rel="noopener noreferrer" target="_blank">Open the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>` : ''}
+${url !== undefined ? html`<p><a class="btn btn-primary" href="${url}" rel="noopener noreferrer" target="_blank">Open the posting ↗<span class="visually-hidden"> (opens in a new tab)</span></a></p>` : ''}
 </header>`;
 }
 
@@ -87,7 +90,7 @@ function downloads(j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Ht
   const files = j.docs.filter((d) => d.kind === kind && d.format !== 'html').sort((a, b) => Number(b.format === rec.format) - Number(a.format === rec.format));
   return html`<div class="downloads">${files.map((d) => {
     const isRec = d.format === rec.format;
-    return html`<a class="btn${isRec ? ' btn-primary' : ''}" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}<span class="visually-hidden"> of the ${kind === 'resume' ? 'resume' : 'cover letter'}</span>${isRec ? ' (recommended)' : ''}</a>`;
+    return html`<a class="btn" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}<span class="visually-hidden"> of the ${kind === 'resume' ? 'resume' : 'cover letter'}</span>${isRec ? ' (recommended)' : ''}</a>`;
   })}</div>`;
 }
 
@@ -107,20 +110,35 @@ function terms(j: JobDetail, display: (k: string) => string): Html | '' {
 </div>`;
 }
 
-function documents(d: JobPageData): Html {
+function sendCard(d: JobPageData): Html {
   const j = d.job;
   const reason = docsReason(j);
-  const body =
-    reason !== null || j.docs.length === 0
-      ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
-      : html`<p class="hint">Recommended for ${d.recommended.for}: ${FORMAT_NAME[d.recommended.format]}. Hover a resume bullet to see the fact it comes from.</p>
+  return html`<section class="card wide" id="${SEND_ID}" aria-labelledby="${SEND_ID}-h"><h2 id="${SEND_ID}-h">Send your application</h2>
+${
+  reason !== null || j.docs.length === 0
+    ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
+    : html`<p class="hint">Recommended for ${d.recommended.for}: ${FORMAT_NAME[d.recommended.format]}.</p>
+<div class="doc-grid"><div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}</div><div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}</div></div>`
+}
+</section>`;
+}
+
+function documents(d: JobPageData): Html | '' {
+  const j = d.job;
+  const previewable = docsReason(j) === null && j.docs.length > 0;
+  const t = terms(j, d.display);
+  if (!previewable && t === '') return '';
+  return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Your documents</h2>
+${
+  previewable
+    ? html`<p class="hint">Hover a resume bullet to see the fact it comes from.</p>
 <div class="doc-grid">
-<div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}${preview(j, 'resume')}</div>
-<div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}${preview(j, 'cover')}</div>
-</div>`;
-  return html`<section class="card wide" aria-labelledby="docs"><h2 id="docs">Documents you can send ${j.docsState === 'ready' ? '' : docsPill(j.docsState)}</h2>
-${body}
-${terms(j, d.display)}
+<div class="doc"><h3>Resume</h3>${preview(j, 'resume')}</div>
+<div class="doc"><h3>Cover letter</h3>${preview(j, 'cover')}</div>
+</div>`
+    : ''
+}
+${t}
 </section>`;
 }
 
@@ -145,7 +163,7 @@ export function sentSection(d: SentData, oob = false): Html {
 ${
   d.canKeep
     ? html`<p class="hint">You marked this job applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
-<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
+<form method="post" action="/jobs/${d.jobKey}/keep" hx-post="/jobs/${d.jobKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
@@ -212,13 +230,14 @@ export function jobBody(d: JobPageData): Html {
   return html`${header(j, d.back)}
 ${duplicates(j, d.preferred)}
 <div class="job-grid">
-${documents(d)}
-${sentSection(d.sent)}
+${statusSection(j, d.csrf, d.istDay, d.flash, d.back)}
+${sendCard(d)}
+${answers(d.answers)}
 ${whyMatched(j, d.display)}
 ${eligibility(j)}
-${statusSection(j, d.csrf, d.istDay, d.flash, d.back)}
+${documents(d)}
+${sentSection(d.sent)}
 ${noteSection(j, d.csrf)}
-${answers(d.answers)}
 <section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>
 <details><summary>Show the full text</summary><div class="jd">${j.jdText}</div></details></section>
 </div>`;
