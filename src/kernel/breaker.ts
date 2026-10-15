@@ -12,6 +12,12 @@ export class Breakers {
     this.fails.set(key, 0);
   }
 
+  /** Closes `key` and clears its count (its items were put back for a retry the earlier failures say nothing about). */
+  reset(key: string): void {
+    this.fails.delete(key);
+    this.open.delete(key);
+  }
+
   /** Returns true when this failure opens the breaker. */
   failure(key: string, threshold: number): boolean {
     const n = (this.fails.get(key) ?? 0) + 1;

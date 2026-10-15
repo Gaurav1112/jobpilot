@@ -8,7 +8,7 @@ import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
-import { httpsOnline } from '../net.js';
+import { httpsOnline, pacedFetch } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { fullChainCheck } from '../chain-status.js';
 import { runProblems, type Problem } from '../problems.js';
@@ -131,11 +131,7 @@ export interface CoverageRunOptions {
  * the one every stage's requests use, so a probe host is never asked within the minimum interval of another request.
  */
 export function pacedOnline(fetch: FetchLike, pacer: HostPacer): () => Promise<boolean> {
-  const paced: FetchLike = async (url, init) => {
-    await pacer.wait(new URL(url).hostname);
-    return fetch(url, init);
-  };
-  return () => httpsOnline(paced);
+  return () => httpsOnline(pacedFetch(fetch, pacer));
 }
 
 /** One invocation's time slice: then it pauses between steps and the next `run-coverage` continues the same run. */

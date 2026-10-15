@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import type { HostPacer } from '../kernel/broker.js';
 import { accessSync, constants } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { hashOf } from '../kernel/canonical.js';
@@ -129,11 +130,11 @@ export interface AppKernelOptions {
   /** The page adapters' job pages per company per IST day (`appPageLedger(app, PAGE_LEDGER_PREFIX)`); default in memory. */
   readonly jobPageLedger?: PageLedger;
   /**
-   * The HTTPS online check (`httpsOnline`): a transport failure while it says offline is not final; the step is
-   * re-queued once it passes (the supervisor's wake rule). Absent (tests, fixtures): only failures just after a
-   * detected wake are re-queued.
+   * The HTTPS online check (`pacedHttpsOnline`), given the supervisor's per-host pacer, which its probes must wait on: a
+   * network failure while it says offline is not final; the step is re-queued once it passes (the supervisor's wake
+   * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
    */
-  readonly online?: () => Promise<boolean>;
+  readonly online?: (pacer: HostPacer) => Promise<boolean>;
 }
 
 export interface AppKernel {

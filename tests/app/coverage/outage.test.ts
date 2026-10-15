@@ -117,6 +117,22 @@ describe('C1: a network outage mid-run', () => {
     expect(unlocated).toEqual({ proposed: 0, failed: 0, counted: 1 });
   });
 
+  it('the run passes its online check to the supervisor: a network failure while it says offline is marked not final (wake rule)', async () => {
+    const home = newHome();
+    let start: number | undefined;
+    let dark = false;
+    const w = world((t, url) => {
+      if (SEED_HOSTS.has(new URL(url).hostname)) return null;
+      start ??= t;
+      dark = t - start < 120_000;
+      return dark ? 'ENOTFOUND' : null;
+    });
+    await invoke(home, w, async () => !dark);
+    const due = locateEvents(home, 'wake_retry_due');
+    expect(due.length).toBeGreaterThan(0);
+    expect(due.every((d) => d['why'] === 'offline')).toBe(true);
+  });
+
   it('the machine found offline (5 network errors in a row, then the DNS check): the slice pauses "offline", never a failed attempt; the next one finishes', async () => {
     const home = newHome();
     let start: number | undefined;

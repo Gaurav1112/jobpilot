@@ -100,3 +100,17 @@ describe('executeStep: the step timeout counts awake time only', () => {
     expect(t.pending()).toBe(0);
   });
 });
+
+describe('executeStep: no timer outlives an attempt that throws before the agent runs', () => {
+  it('a store error while the attempt is set up leaves nothing scheduled', async () => {
+    const t = manualTimers();
+    const { agent } = heldAgent(120_000);
+    const store = Store.open(':memory:');
+    (store as unknown as { runCost: () => number }).runCost = () => {
+      throw new Error('the database is gone');
+    };
+    const out = await executeStep(deps(store, new AwakeClock(t), contractHash(agent.contract)), 'r', agent, seedEnv());
+    expect(out.kind).toBe('failed');
+    expect(t.pending()).toBe(0);
+  });
+});

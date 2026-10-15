@@ -83,16 +83,26 @@ export interface SupervisorDeps {
    */
   readonly awake?: AwakeClock;
   /**
-   * Is the machine online (the app's HTTPS check)? Asked after a transport failure that is not just after a wake (an
-   * offline answer makes it not final, cached ONLINE_CACHE_MS), and before re-queueing such failures. Without it, only
-   * the wake rule applies and the re-queue does not wait.
+   * Is the machine online (the app's HTTPS check)? Asked after a `network` failure that is not just after a wake (an
+   * offline answer makes it not final, cached ONLINE_CACHE_MS; a timeout or a 5xx is a fact about one host and asks
+   * nothing), and before re-queueing such failures. It is given the supervisor's per-host pacer: its probe requests
+   * must wait on it, since the probe hosts are hosts the run crawls. Without it, only the wake rule applies and the
+   * re-queue does not wait.
    */
-  readonly online?: () => Promise<boolean>;
+  readonly online?: (pacer: HostPacer) => Promise<boolean>;
+  /**
+   * Event kinds another layer records when it re-queues an item (`{agent, envelopeId}` data; coverage's
+   * `coverage.requeued`): they count against the same MAX_WAKE_REQUEUES budget per item per run as the wake re-queues.
+   */
+  readonly requeueEvents?: readonly string[];
 }
 
 /** A transport failure (network, timeout) within this long after a detected wake is not final: it is re-queued. */
 export const WAKE_GRACE_MS = 120_000;
-/** The most times one queue item is re-queued after a wake or an offline failure in a run; then it fails as before. */
+/**
+ * The most times one queue item is re-queued in a run, by the wake rule and any other layer (`requeueEvents`) together;
+ * then it fails as before.
+ */
 export const MAX_WAKE_REQUEUES = 3;
 /** Before re-queueing, the online check is asked up to ONLINE_MAX_POLLS times, ONLINE_POLL_MS apart. */
 export const ONLINE_POLL_MS = 15_000;
@@ -151,10 +161,10 @@ export class Supervisor {
   private readonly pack: unknown;
   private readonly fullPack: unknown;
   private readonly awake: AwakeClock;
-  /** Wall ms of the last wake the awake clock detected during a drain. */
+  /** The awake clock's time (`awake.now()`) of the last wake it detected during a drain. */
   private lastWakeAt: number | undefined;
   /** Wakes detected and not yet recorded as events (recorded between steps, never inside a store transaction). */
-  private wakesToLog: { at: number; slept: number }[] = [];
+  private wakesToLog: { wallAt: number; slept: number }[] = [];
   private onlineSeen: { at: number; ok: boolean } | undefined;
   /** Per run: how many times each item was re-queued by the wake rule (read from the events once, then kept). */
   private readonly wakeCounts = new Map<string, Map<string, number>>();
@@ -299,21 +309,24 @@ export class Supervisor {
     const release = this.awake.hold();
     const off = this.awake.onWake((at, slept) => {
       this.lastWakeAt = at;
-      this.wakesToLog.push({ at, slept });
+      this.wakesToLog.push({ wallAt: Date.now(), slept });
     });
     try {
       return await this.drainAll(runId);
     } finally {
       off();
       release();
-      this.logWakes(runId);
+      // logged before the run was finished or paused (`logWakes`); a wake after that belongs to no step of it
+      this.wakesToLog = [];
     }
   }
 
+  /** Records the wakes detected so far (reading the clock first), between steps and before the run ends. */
   private logWakes(runId: string): void {
+    this.awake.sleptMs();
     const wakes = this.wakesToLog;
     this.wakesToLog = [];
-    for (const w of wakes) this.event(runId, WAKE_EVENT.woke, { wokeAt: new Date(w.at).toISOString(), sleptMs: Math.round(w.slept) });
+    for (const w of wakes) this.event(runId, WAKE_EVENT.woke, { wokeAt: new Date(w.wallAt).toISOString(), sleptMs: Math.round(w.slept) });
   }
 
   private async drainAll(runId: string): Promise<RunReport> {
@@ -324,15 +337,25 @@ export class Supervisor {
       if (paused) return this.report(runId, 'paused');
       const woke = await this.wakeRequeue(runId);
       if (woke.paused !== undefined) {
+        this.logWakes(runId);
         this.event(runId, 'run_paused', { reason: woke.paused, pending: store.queueCounts(runId).pending });
         return this.report(runId, 'paused');
       }
-      if (woke.requeued > 0) {
-        this.breakersByRun.set(runId, new Breakers());
+      if (woke.requeued.length > 0) {
+        // only the breakers of what was put back: an unrelated agent's open breaker stays open
+        const breakers = this.breakers(runId);
+        for (const agentId of new Set(woke.requeued)) {
+          breakers.reset(`agent:${agentId}`);
+          const team = this.d.compiled.teamOf.get(agentId);
+          if (team) breakers.reset(`team:${team.id}`);
+        }
         this.event(runId, 'run_requeued', { pending: store.queueCounts(runId).pending, after: 'wake' });
         continue;
       }
       const hold = (await this.d.beforeFinish?.()) ?? null;
+      // the hook may have re-queued items (and recorded it): the shared budget is read again from the events
+      this.wakeCounts.delete(runId);
+      this.logWakes(runId);
       if (hold !== null) {
         this.event(runId, 'run_paused', { reason: hold, pending: store.queueCounts(runId).pending });
         return this.report(runId, 'paused');
@@ -434,11 +457,12 @@ export class Supervisor {
     if (!TRANSPORT.has(error)) return undefined;
     if ((this.wakeCountsOf(runId).get(itemKey(item.agent_id, item.envelope_id)) ?? 0) >= MAX_WAKE_REQUEUES) return undefined;
     if (this.lastWakeAt !== undefined && this.awake.now() - this.lastWakeAt <= WAKE_GRACE_MS) return 'after-wake';
+    // only a network-class error asks whether the machine is offline: a per-host timeout or a 5xx is the host's
     const online = this.d.online;
-    if (online === undefined) return undefined;
+    if (online === undefined || error !== 'network') return undefined;
     const now = this.awake.now();
     if (this.onlineSeen === undefined || now - this.onlineSeen.at >= ONLINE_CACHE_MS) {
-      this.onlineSeen = { at: now, ok: await online().catch(() => false) };
+      this.onlineSeen = { at: now, ok: await online(this.hostPacer).catch(() => false) };
     }
     return this.onlineSeen.ok ? undefined : 'offline';
   }
@@ -447,8 +471,9 @@ export class Supervisor {
     let m = this.wakeCounts.get(runId);
     if (m === undefined) {
       m = new Map();
+      const kinds = new Set([WAKE_EVENT.requeued, ...(this.d.requeueEvents ?? [])]);
       for (const e of this.d.store.events(runId)) {
-        if (e.kind !== WAKE_EVENT.requeued) continue;
+        if (!kinds.has(e.kind)) continue;
         const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown };
         const k = itemKey(String(d.agent), String(d.envelopeId));
         m.set(k, (m.get(k) ?? 0) + 1);
@@ -466,6 +491,7 @@ export class Supervisor {
       const d = JSON.parse(e.data) as { agent?: unknown; envelopeId?: unknown };
       last.set(itemKey(String(d.agent), String(d.envelopeId)), e.kind);
     }
+    // the budget was checked when `wake_retry_due` was recorded (`notFinalWhy`); nothing re-queues in between
     return this.d.store.queueItems(runId).filter((q) => q.status === 'failed' && last.get(itemKey(q.agent_id, q.envelope_id)) === WAKE_EVENT.due);
   }
 
@@ -473,18 +499,18 @@ export class Supervisor {
    * Puts back the failures that were not final (`wakeDue`), once the online check passes (asked up to ONLINE_MAX_POLLS
    * times, ONLINE_POLL_MS apart; a `pauseBefore` reason stops the wait). If it never passes, they stay failed.
    */
-  private async wakeRequeue(runId: string): Promise<{ readonly requeued: number; readonly paused?: string }> {
+  private async wakeRequeue(runId: string): Promise<{ readonly requeued: readonly string[]; readonly paused?: string }> {
     const due = this.wakeDue(runId);
-    if (due.length === 0) return { requeued: 0 };
+    if (due.length === 0) return { requeued: [] };
     const { store } = this.d;
     const online = this.d.online;
     if (online !== undefined) {
       let ok = false;
       for (let i = 0; i < ONLINE_MAX_POLLS; i++) {
-        ok = await online().catch(() => false);
+        ok = await online(this.hostPacer).catch(() => false);
         if (ok) break;
         const pause = this.d.pauseBefore?.() ?? null;
-        if (pause !== null) return { requeued: 0, paused: pause };
+        if (pause !== null) return { requeued: [], paused: pause };
         if (i < ONLINE_MAX_POLLS - 1) await this.sleep(ONLINE_POLL_MS);
       }
       this.onlineSeen = { at: this.awake.now(), ok };
@@ -492,11 +518,11 @@ export class Supervisor {
         store.tx(() => {
           for (const q of due) this.event(runId, WAKE_EVENT.abandoned, { agent: q.agent_id, envelopeId: q.envelope_id });
         });
-        return { requeued: 0 };
+        return { requeued: [] };
       }
     }
     const counts = this.wakeCountsOf(runId);
-    let n = 0;
+    const requeued: string[] = [];
     store.tx(() => {
       for (const q of due) {
         if (!store.requeue(runId, q.agent_id, q.envelope_id)) continue;
@@ -504,10 +530,10 @@ export class Supervisor {
         const attempt = (counts.get(k) ?? 0) + 1;
         counts.set(k, attempt);
         this.event(runId, WAKE_EVENT.requeued, { agent: q.agent_id, envelopeId: q.envelope_id, attempt });
-        n++;
+        requeued.push(q.agent_id);
       }
     });
-    return { requeued: n };
+    return { requeued };
   }
 
   private report(runId: string, status: RunReport['status']): RunReport {

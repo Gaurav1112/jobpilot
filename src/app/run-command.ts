@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
-import { nodeFetch } from '../kernel/providers.js';
+import { type FetchLike, nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
@@ -11,7 +11,7 @@ import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
 import { checkOutage } from './check-outage.js';
-import { httpsOnline, PROBE_HOSTS } from './net.js';
+import { httpsOnline, pacedHttpsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
@@ -40,6 +40,8 @@ export interface RunCommandDeps {
   readonly sleep?: (ms: number) => Promise<void>;
   /** `--if-due` asks this before a live run (and the coverage run when a slice meets errors); default `httpsOnline` (R1: HTTPS must work, not only DNS). */
   readonly online?: () => Promise<boolean>;
+  /** The live runs' fetch; default `nodeFetch`. Tests inject one (an offline run uses its fixtures instead). */
+  readonly fetch?: FetchLike;
   /**
    * The freelance run's Gmail access (`gmailRunAccess` over the Keychain in the CLI), asked only when a live run
    * starts. Absent, or an offline run: Gmail is not read.
@@ -120,7 +122,7 @@ export async function runWithDue(
       }
       // A run with every fetch failing would complete, count as the window's and block it (rereview of 8b49294):
       // wait for the network instead, quietly; the next half-hourly start tries again.
-      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF[spec.pipeline])))())) {
+      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => httpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF[spec.pipeline])))())) {
         d.out('not due: the network is down (no source host answers over HTTPS); the next start tries again');
         return 0;
       }
@@ -171,14 +173,15 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
       const summary = await runDaily({
         home: d.home,
         clock: d.clock,
-        fetch: offline?.fetch ?? nodeFetch,
+        fetch: offline?.fetch ?? d.fetch ?? nodeFetch,
         browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
         ...(o.notify ? { notifier: d.notifier } : {}),
         ...(o.refresh ? { refresh: true } : {}),
         ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
         ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
         // a live run's steps that fail while offline are asked again once HTTPS works (the wake rule)
-        ...(offline === undefined ? { online: d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF.daily)) } : {}),
+        // the probe hosts are crawled by the run itself: the probe waits on the run's host pacer (sleep-safe review I1)
+        ...(offline === undefined ? { online: pacedHttpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF.daily) } : {}),
         ...hooks,
       });
       return { text: formatSummary(summary), exitCode: summary.exitCode };
@@ -202,12 +205,12 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
     const summary = await runFreelance({
       home: d.home,
       clock: d.clock,
-      fetch: offline?.fetch ?? nodeFetch,
+      fetch: offline?.fetch ?? d.fetch ?? nodeFetch,
       ...(gmail !== undefined ? { gmail } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
-      ...(offline === undefined ? { online: d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF.freelance)) } : {}),
+      ...(offline === undefined ? { online: pacedHttpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF.freelance) } : {}),
       ...hooks,
     });
     return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
@@ -237,7 +240,8 @@ export async function runCoverageCommand(
     // the live re-check's outage simulation (check-only; inert unless JOBPILOT_CHECK_OUTAGE is set)
     const outage = checkOutage();
     if (outage !== null) d.err(`warning: ${outage.describe}`);
-    const fetch = outage === null ? (offline?.fetch ?? nodeFetch) : outage.fetch(offline?.fetch ?? nodeFetch);
+    const live = offline?.fetch ?? d.fetch ?? nodeFetch;
+    const fetch = outage === null ? live : outage.fetch(live);
     // the run's own online check goes through its per-host pacer (re-check m5): only a fixtures run or a caller's check is passed in
     const online = offline !== undefined ? async () => true : d.online;
     const summary = await runCoverage({

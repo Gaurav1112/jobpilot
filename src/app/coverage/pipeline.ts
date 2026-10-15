@@ -6,7 +6,7 @@ import type { GuardrailRegistry } from '../../kernel/guardrails/index.js';
 import { hostDenied, mergePolicy, policyHash, PRODUCT_POLICY_V1, type Policy } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import type { QueueRow, Store } from '../../kernel/store/store.js';
-import { Supervisor } from '../../kernel/supervisor.js';
+import { MAX_WAKE_REQUEUES, Supervisor, WAKE_EVENT } from '../../kernel/supervisor.js';
 import type { CompiledPipeline, Pipeline } from '../../kernel/wiring.js';
 import { appGuardrails } from '../guardrails.js';
 import type { Pack } from '../pack/schema.js';
@@ -144,8 +144,11 @@ export function deniedWebsites(candidates: readonly CompanyCandidate[], policy: 
 
 /** Wait after a transient failure (or a breaker skip) before the step is re-queued (C1-c). */
 export const TRANSIENT_RETRY_AFTER_MS = 10 * 60_000;
-/** The most times one step is re-queued in a run (C1-c); after that it is a transient deferral. */
-export const MAX_REQUEUES = 3;
+/**
+ * The most times one step is re-queued in a run (C1-c), by this retry and the supervisor's wake rule together (one
+ * budget); after that it is a transient deferral.
+ */
+export const MAX_REQUEUES = MAX_WAKE_REQUEUES;
 /** The event of a re-queued step, in its stage run. */
 export const REQUEUED = 'coverage.requeued';
 /** The pause reason of a stage that waits for a step to be asked again. */
@@ -299,10 +302,11 @@ export function retryPlan(store: Store, runId: string, gate: RunGate, now: strin
   const last = new Map<string, { at: string; kind: string; error: string; detail: string }>();
   const requeued = new Map<string, number>();
   for (const e of store.events(runId)) {
-    if (e.kind !== 'step_failed' && e.kind !== 'step_skipped' && e.kind !== REQUEUED) continue;
+    if (e.kind !== 'step_failed' && e.kind !== 'step_skipped' && e.kind !== REQUEUED && e.kind !== WAKE_EVENT.requeued) continue;
     const d = JSON.parse(e.data) as Record<string, unknown>;
     const key = `${String(d['agent'])}\u0000${String(d['envelopeId'])}`;
-    if (e.kind === REQUEUED) requeued.set(key, (requeued.get(key) ?? 0) + 1);
+    // one budget per step per run (sleep-safe review I3): the supervisor's wake re-queues count too
+    if (e.kind === REQUEUED || e.kind === WAKE_EVENT.requeued) requeued.set(key, (requeued.get(key) ?? 0) + 1);
     else last.set(key, { at: e.at, kind: e.kind, error: String(d['error'] ?? d['reason'] ?? ''), detail: String(d['detail'] ?? '') });
   }
   const t = Date.parse(now);
@@ -387,7 +391,10 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         codeHash: o.codeHash,
         ...(o.hostPacer !== undefined ? { hostPacer: o.hostPacer } : {}),
         ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+        // already paced on the run's pacer (pacedOnline), the one this supervisor uses too
         ...(o.online !== undefined ? { online: o.online } : {}),
+        // coverage's own re-queues and the wake re-queues share one budget (MAX_REQUEUES = MAX_WAKE_REQUEUES)
+        requeueEvents: [REQUEUED],
         pauseBefore,
         beforeFinish,
       });

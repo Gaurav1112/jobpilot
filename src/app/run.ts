@@ -1,4 +1,5 @@
 import type { Clock } from '../kernel/clock.js';
+import type { HostPacer } from '../kernel/broker.js';
 import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
 import type { Store } from '../kernel/store/store.js';
@@ -145,11 +146,11 @@ export interface RunOptions {
   /** Test hook: the code fingerprint in every step key (review I4); default `codeHash()` of this checkout. */
   readonly codeHash?: string;
   /**
-   * The HTTPS online check (`httpsOnline`): a transport failure while it says offline is not final; the step is
-   * re-queued once it passes (the supervisor's wake rule). Absent (tests, fixtures): only failures just after a
-   * detected wake are re-queued.
+   * The HTTPS online check (`pacedHttpsOnline`), given the supervisor's per-host pacer, which its probes must wait on: a
+   * network failure while it says offline is not final; the step is re-queued once it passes (the supervisor's wake
+   * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
    */
-  readonly online?: () => Promise<boolean>;
+  readonly online?: (pacer: HostPacer) => Promise<boolean>;
 }
 
 /**

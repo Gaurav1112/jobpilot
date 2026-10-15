@@ -1,5 +1,5 @@
 import { lookup } from 'node:dns/promises';
-import { HTTP_HEADERS } from '../kernel/broker.js';
+import { HTTP_HEADERS, type HostPacer } from '../kernel/broker.js';
 import type { KernelError } from '../kernel/errors.js';
 import type { FetchLike } from '../kernel/providers.js';
 
@@ -35,6 +35,20 @@ export async function httpsOnline(fetch: FetchLike, hosts: readonly string[] = P
   }
   return false;
 }
+
+/** `fetch` with each request first waiting for its host's slot on `pacer` (the run's own: a probe is paced like a crawl). */
+export function pacedFetch(fetch: FetchLike, pacer: HostPacer): FetchLike {
+  return async (url, init) => {
+    await pacer.wait(new URL(url).hostname);
+    return fetch(url, init);
+  };
+}
+
+/** The supervisor's online check for a live run: `httpsOnline` on `hosts` through the run's fetch, paced by its pacer. */
+export const pacedHttpsOnline =
+  (fetch: FetchLike, hosts: readonly string[]) =>
+  (pacer: HostPacer): Promise<boolean> =>
+    httpsOnline(pacedFetch(fetch, pacer), hosts);
 
 /** The KernelError codes of a transport failure: an outage, a slow or overloaded host. Asked again later, never a verdict. */
 export const TRANSIENT_CODES: ReadonlySet<string> = new Set(['network', 'timeout', 'overloaded']);

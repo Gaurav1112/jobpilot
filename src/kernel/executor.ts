@@ -315,11 +315,6 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       if (attempt > 0 && overCall()) return fail('budget_exceeded', overCallDetail);
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
-      // Awake time, not wall time: a step frozen by a sleeping Mac is not timed out when it wakes (2026-10-14).
-      const awake = deps.awake ?? systemAwake;
-      const timeout = awake.timeout(c.timeoutMs);
-      const signal = timeout.signal;
-      const slept0 = awake.sleptMs();
       // Each attempt stages into its own directory, sealed when the attempt ends; only the final one is committed.
       const pendingFiles = staging === undefined ? undefined : openPending(staging.root, stepKey, attempt);
       const priorSpend = {
@@ -327,22 +322,34 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         runUsd: deps.store.runCost(runId) + unrecorded.usd,
         maxCallUsd: maxCallSoFar(),
       };
-      const ctx = issueContext({
-        contract: c,
-        policy: deps.policy,
-        inputClass: input.handoff.dataClass,
-        providers: deps.providers,
-        clock: deps.clock,
-        signal,
-        awake,
-        sleptMs: () => awake.sleptMs() - slept0,
-        priorSpend,
-        ...(agentPack !== undefined ? { pack: agentPack } : {}),
-        ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
-        ...(deps.browserPacer ? { browserPacer: deps.browserPacer } : {}),
-        ...(deps.egressSets ? { egressSets: deps.egressSets } : {}),
-        ...(pendingFiles ? { pendingFiles } : {}),
-      });
+      // Awake time, not wall time: a step frozen by a sleeping Mac is not timed out when it wakes (2026-10-14). Started
+      // only now, after everything that can throw before the agent runs, and cleared if issuing the context throws.
+      const awake = deps.awake ?? systemAwake;
+      const timeout = awake.timeout(c.timeoutMs);
+      const signal = timeout.signal;
+      const slept0 = awake.sleptMs();
+      let ctx: ReturnType<typeof issueContext>;
+      try {
+        ctx = issueContext({
+          contract: c,
+          policy: deps.policy,
+          inputClass: input.handoff.dataClass,
+          providers: deps.providers,
+          clock: deps.clock,
+          signal,
+          awake,
+          sleptMs: () => awake.sleptMs() - slept0,
+          priorSpend,
+          ...(agentPack !== undefined ? { pack: agentPack } : {}),
+          ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
+          ...(deps.browserPacer ? { browserPacer: deps.browserPacer } : {}),
+          ...(deps.egressSets ? { egressSets: deps.egressSets } : {}),
+          ...(pendingFiles ? { pendingFiles } : {}),
+        });
+      } catch (e) {
+        timeout.clear();
+        throw e;
+      }
       let result: { ok: true; items: readonly unknown[] } | { ok: false; err: unknown };
       try {
         deps.onInvoke?.(c.id, stepKey);

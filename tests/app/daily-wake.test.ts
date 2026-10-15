@@ -1,6 +1,7 @@
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolvePdftotext } from '../../src/app/kernel.js';
@@ -14,6 +15,7 @@ import type { FetchLike } from '../../src/kernel/providers.js';
  * check passes, and the run ends exactly as the strict daily-identity golden: same step keys, statuses and outputs.
  * No sleep- or outage-related value enters a step key or an envelope.
  */
+const sha = (x: string): string => createHash('sha256').update(x).digest('hex');
 const root = join(import.meta.dirname, '../..');
 const GOLDEN = join(root, 'tests/fixtures/daily-identity.json');
 const pdftotext = (() => {
@@ -33,7 +35,7 @@ describe.skipIf(pdftotext === undefined)('daily run: transport failures while of
   });
   afterAll(() => rmSync(home, { recursive: true, force: true }));
 
-  it('re-queues after the online check passes; steps and envelopes equal the golden', async () => {
+  it('re-queues after the online check passes; steps, envelopes, jobs and docs equal the golden', async () => {
     const offline = offlineProviders(join(root, 'tests/fixtures/e2e'));
     let down = true;
     let failed = 0;
@@ -66,11 +68,16 @@ describe.skipIf(pdftotext === undefined)('daily run: transport failures while of
       const steps = (d.prepare('SELECT agent_id, step_key, status, error_code FROM steps ORDER BY agent_id, step_key').all() as { agent_id: string; step_key: string; status: string; error_code: string | null }[]).map(
         (s) => `${s.agent_id} ${s.step_key} ${s.status} ${s.error_code ?? '-'}`,
       );
-      const envelopes = (d.prepare('SELECT envelope_id FROM envelopes ORDER BY envelope_id').all() as { envelope_id: string }[]).map((e) => e.envelope_id);
       const kinds = (d.prepare(`SELECT kind FROM events WHERE run_id = ?`).all(r.runId) as { kind: string }[]).map((e) => e.kind);
-      const want = JSON.parse(readFileSync(GOLDEN, 'utf8')) as { steps: string[]; envelopes: string[] };
+      const want = JSON.parse(readFileSync(GOLDEN, 'utf8')) as { steps: string[]; envelopes: string[]; jobs: string; docs: string[] };
       expect(steps).toEqual(want.steps);
-      expect(envelopes).toEqual(want.envelopes.map((e) => e.split(' ')[0]));
+      const envelopes = (d.prepare('SELECT envelope_id, step_key, idx, type, body FROM envelopes ORDER BY envelope_id').all() as { envelope_id: string; step_key: string; idx: number; type: string; body: string }[]).map((e) => {
+        const body = JSON.parse(e.body) as { payload?: unknown };
+        return `${e.envelope_id} ${e.step_key} ${e.idx} ${e.type} ${sha(JSON.stringify(body.payload ?? null))}`;
+      });
+      expect(envelopes).toEqual(want.envelopes);
+      expect(sha(JSON.stringify(d.prepare('SELECT * FROM jobs ORDER BY job_key').all()))).toBe(want.jobs);
+      expect((d.prepare('SELECT * FROM job_docs ORDER BY 1, 2, 3').all() as Record<string, unknown>[]).map((r) => JSON.stringify(r))).toEqual(want.docs);
       expect(kinds).toContain('wake_retry_due');
       expect(kinds).toContain('wake_requeued');
     } finally {

@@ -67,3 +67,24 @@ describe('C1-c: the re-queue plan of a stage run', () => {
     expect(plan(stage({ kind: 'step_skipped', data: { reason: 'budget' } }), gate(), after(7 * 24 * 60 * 60_000))).toEqual({ due: [], waiting: 0 });
   });
 });
+
+describe('one re-queue budget per step per run (sleep-safe review I3)', () => {
+  it(`the supervisor's wake re-queues count against MAX_REQUEUES (${MAX_REQUEUES} in all)`, () => {
+    const s = Store.open(':memory:');
+    s.startRun(RUN, 'jobpilot-coverage/locate@1.0.0', 'p', T0);
+    s.enqueue(RUN, 0, AGENT, 'e1');
+    s.appendEvent(RUN, T0, REQUEUED, { agent: AGENT, envelopeId: 'e1', why: 'network' }, 'p');
+    for (let i = 0; i < MAX_REQUEUES - 1; i++) s.appendEvent(RUN, T0, 'wake_requeued', { agent: AGENT, envelopeId: 'e1', attempt: i + 1 }, 'p');
+    s.markQueue(RUN, AGENT, 'e1', 'failed');
+    s.appendEvent(RUN, T0, 'step_failed', { agent: AGENT, envelopeId: 'e1', error: 'network', detail: 'x' }, 'p');
+    expect(plan(s, gate(), after(TRANSIENT_RETRY_AFTER_MS))).toEqual({ due: [], waiting: 0 });
+    // one wake re-queue fewer: due again
+    const t = Store.open(':memory:');
+    t.startRun(RUN, 'jobpilot-coverage/locate@1.0.0', 'p', T0);
+    t.enqueue(RUN, 0, AGENT, 'e1');
+    t.appendEvent(RUN, T0, 'wake_requeued', { agent: AGENT, envelopeId: 'e1', attempt: 1 }, 'p');
+    t.markQueue(RUN, AGENT, 'e1', 'failed');
+    t.appendEvent(RUN, T0, 'step_failed', { agent: AGENT, envelopeId: 'e1', error: 'network', detail: 'x' }, 'p');
+    expect(plan(t, gate(), after(TRANSIENT_RETRY_AFTER_MS))).toEqual({ due: ['network'], waiting: 0 });
+  });
+});
