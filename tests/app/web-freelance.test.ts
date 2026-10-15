@@ -437,6 +437,8 @@ describe('freelance: sources', () => {
       expect(t).toContain('2026-W41');
       expect(t).toContain('Upwork API key pending approval');
       expect(t).toContain('Reddit needs your OAuth script app');
+      // freelance-boost: Remotive is off, with its named reason.
+      expect(t).toContain('Remotive robots.txt disallows /api (2026-10-15)');
       expect(t).toContain('Gmail not connected - run jobpilot gmail connect');
       expect(t).toContain('freelancer: 3 requests skipped after 5 failures');
       expect(t).not.toContain('freelancer q6');

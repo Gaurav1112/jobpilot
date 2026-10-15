@@ -4,7 +4,7 @@ import { NETWORK_FILES } from '../freelance/networks-command.js';
 import { catalogueEntry, NETWORKS_CHECKED, orderedNetworkIds } from '../freelance/network-catalogue.js';
 import { isoWeek } from '../freelance/health.js';
 import { ALERT_PARSERS } from '../freelance/mail/parsers/index.js';
-import { PLATFORM_AGENT } from '../freelance/pipeline.js';
+import { PLATFORM_AGENT, ROBOTS_OFF } from '../freelance/pipeline.js';
 import { presetTierUsd } from '../freelance/gig-eligibility.js';
 import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
@@ -330,6 +330,8 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       return { platform: p, probeFailures: rows[0]?.probeFailures ?? 0, rows: rows.map((h) => ({ ...h, outcomes: { applied: count(p, h.week, 'applied'), replied: count(p, h.week, 'replied'), won: count(p, h.week, 'won') } })) };
     });
     const disabled = Platform.options.flatMap((p) => {
+      const robots = ROBOTS_OFF[p];
+      if (robots !== undefined) return [{ platform: p, reason: robots }];
       const known = DISABLED_REASON[p];
       if (known !== undefined && PLATFORM_AGENT[p] === undefined) return [{ platform: p, reason: known }];
       if (!rules.platforms[p].enabled) return [{ platform: p, reason: 'turned off in your freelance.yaml' }];

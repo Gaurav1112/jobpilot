@@ -88,7 +88,8 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     expect(first.projection.lists.gigs).toBeGreaterThan(0);
     expect(first.projection.lists.review).toBeGreaterThan(0);
     const gigs = withApp(home, (app) => app.listGigs({ duplicates: true }));
-    expect(new Set(gigs.map((g) => g.platform))).toEqual(new Set(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards']));
+    // No Remotive since 2026-10-15: its robots.txt disallows /api/*, so it is never seeded.
+    expect(new Set(gigs.map((g) => g.platform))).toEqual(new Set(['freelancer', 'hn-freelancer', 'hn-hiring', 'boards']));
     const board = gigs.filter((g) => g.platform === 'boards');
     expect(board.map((g) => g.title)).toEqual(['Backend Contractor (Go, TypeScript)']);
     // One row per gigKey: the four projects both the java and the typescript queries returned are one gig each.
@@ -139,7 +140,6 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
       'freelancer 2026-W42 runs=1',
       'hn-freelancer 2026-W42 runs=1',
       'hn-hiring 2026-W42 runs=1',
-      'remotive 2026-W42 runs=1',
     ]);
     const fl = rows.find((r) => r.platform === 'freelancer')!;
     expect(fl.fetched).toBeGreaterThan(fl.eligible);
@@ -160,16 +160,16 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     expect(second.projection.inserted).toBe(0);
   });
 
-  it('the pm half fetches again but Remotive does not, and the am Remotive rows are kept', async () => {
+  it('the pm half fetches again; Remotive is never asked (off since 2026-10-15) and has no rows', async () => {
     const before = withApp(home, (app) => app.listGigs({ duplicates: true }).filter((g) => g.platform === 'remotive'));
-    expect(before.length).toBeGreaterThan(0);
+    expect(before).toEqual([]);
     const pm = await runAt(home, PM);
     expect(pm.runId).toBe('freelance-2026-10-12-pm');
     expect(pm.counts.byAgent['src-freelancer']?.replayed).toBe(0);
     const after = withApp(home, (app) => app.listGigs({ duplicates: true }).filter((g) => g.platform === 'remotive'));
     expect(after).toEqual(before);
     const rows = withApp(home, (app) => app.sourceHealth());
-    expect(rows.find((r) => r.platform === 'remotive')?.runs).toBe(1);
+    expect(rows.find((r) => r.platform === 'remotive')).toBeUndefined();
     expect(rows.find((r) => r.platform === 'freelancer')?.runs).toBe(2);
   }, 600_000);
 });

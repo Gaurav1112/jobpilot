@@ -4,7 +4,9 @@ import type { GigRequest, RawGig } from '../../../src/app/freelance/types.js';
 import { GigRequest as GigRequestType, RawGig as RawGigType } from '../../../src/app/freelance/types.js';
 import { mergeGigs } from '../../../src/app/freelance/sources/common.js';
 import { freelancerUrl, srcFreelancer } from '../../../src/app/freelance/sources/freelancer.js';
-import { srcRemotive } from '../../../src/app/freelance/sources/remotive.js';
+import { REMOTIVE_OFF, remotiveParse, srcRemotive } from '../../../src/app/freelance/sources/remotive.js';
+import { freelanceSeeds, ROBOTS_OFF } from '../../../src/app/freelance/pipeline.js';
+import { FreelanceFile } from '../../../src/app/pack/freelance-schema.js';
 import { srcHn } from '../../../src/app/freelance/sources/hn.js';
 import { srcBoardContracts } from '../../../src/app/freelance/sources/board-contracts.js';
 import { offlineProviders } from '../../../src/app/offline.js';
@@ -187,31 +189,24 @@ describe('src-freelancer', () => {
   });
 });
 
-describe('src-remotive', () => {
+describe('src-remotive (off since 2026-10-15: its robots.txt disallows /api/*)', () => {
   const URL_ = 'https://remotive.com/api/remote-jobs?category=software-dev';
 
-  it('am: one request, only contract / freelance / part_time jobs, sorted, with the Remotive url', async () => {
-    const f = offlineProviders(dir('remotive'));
-    const { gigs } = await runWith(srcRemotive, req('remotive'), f.fetch);
-    expect(f.fetch.calls).toEqual([URL_]);
-    const all = (read('remotive/software-dev.json') as { jobs: { id: number; job_type: string; url: string }[] }).jobs;
-    const want = all.filter((j) => ['contract', 'freelance', 'part_time'].includes(j.job_type));
-    expect(want.length).toBe(8);
-    expect(ids(gigs)).toEqual(sorted(want.map((j) => String(j.id))));
-    for (const g of gigs) {
-      const raw = g.raw as { url: string; job_type: string };
-      expect(raw.url).toMatch(/^https:\/\/remotive\.com\/remote-jobs\//);
-      expect(['contract', 'freelance', 'part_time']).toContain(raw.job_type);
-      expect(g.platform).toBe('remotive');
+  it('a Remotive request makes no request at all and is the named skip, am or pm', async () => {
+    for (const half of ['am', 'pm'] as const) {
+      const f = serve({ [URL_]: '{"jobs":[]}' });
+      const r = await runWith(srcRemotive, req('remotive', '', { half }), f);
+      expect(r.gigs).toEqual([]);
+      expect(f.calls).toEqual([]);
+      expect(r.skips).toEqual(['remotive: robots.txt disallows /api (2026-10-15); not read']);
     }
-    expect(JSON.stringify(gigs)).not.toContain('legal');
+    expect(REMOTIVE_OFF).toBe('robots.txt disallows /api (2026-10-15)');
   });
 
-  it('pm answers [] and makes no request (the pm run reuses the am outputs)', async () => {
-    const f = serve({});
-    const r = await runWith(srcRemotive, req('remotive', '', { half: 'pm' }), f);
-    expect(r.gigs).toEqual([]);
-    expect(f.calls).toEqual([]);
+  it('the run never seeds Remotive, even when freelance.yaml turns it on', () => {
+    const rules = FreelanceFile.parse({ platforms: { remotive: { enabled: true } } });
+    expect(freelanceSeeds(rules, '2026-10-15', 'am', []).some((s) => s.platform === 'remotive')).toBe(false);
+    expect(ROBOTS_OFF.remotive).toBe(REMOTIVE_OFF);
   });
 
   it('ignores other platforms', async () => {
@@ -220,14 +215,12 @@ describe('src-remotive', () => {
     expect(f.calls).toEqual([]);
   });
 
-  it('malformed bodies are invalid_output; zero kept jobs is []', async () => {
-    for (const body of ['{}', '[]', '{"jobs":{}}', 'nope']) {
-      await expect(runWith(srcRemotive, req('remotive'), serve({ [URL_]: body })), body).rejects.toMatchObject({ code: 'invalid_output' });
-    }
-    await expect(runWith(srcRemotive, req('remotive'), serve({ [URL_]: '{"jobs":[]}' }))).resolves.toMatchObject({ gigs: [] });
-    const fullTime = JSON.stringify({ jobs: [{ id: 1, title: 't', job_type: 'full_time', url: 'u' }] });
-    await expect(runWith(srcRemotive, req('remotive'), serve({ [URL_]: fullTime }))).resolves.toMatchObject({ gigs: [] });
-    await expect(runWith(srcRemotive, req('remotive'), serve({ [URL_]: '{"jobs":[{"nope":1}]}' }))).rejects.toMatchObject({ code: 'invalid_output' });
+  it('the kept parser: only contract / freelance / part_time jobs; malformed bodies are invalid_output', () => {
+    const all = (read('remotive/software-dev.json') as { jobs: { id: number; job_type: string }[] }).jobs;
+    const want = all.filter((j) => ['contract', 'freelance', 'part_time'].includes(j.job_type));
+    expect(sorted(remotiveParse(read('remotive/software-dev.json')).gigs.map((g) => g.sourceId))).toEqual(sorted(want.map((j) => String(j.id))));
+    for (const body of [{}, [], { jobs: {} }]) expect(() => remotiveParse(body)).toThrow(/no jobs array/);
+    expect(remotiveParse({ jobs: [{ nope: 1 }] }).skipped).toHaveLength(1);
   });
 });
 

@@ -86,7 +86,7 @@ export interface DueRunResult {
 /** Hosts each pipeline's sources depend on; one resolving means the network is up. */
 const PROBE_HOSTS_OF: Readonly<Record<DueSpec['pipeline'], readonly string[]>> = {
   daily: PROBE_HOSTS,
-  freelance: ['www.freelancer.com', 'remotive.com', 'hn.algolia.com'],
+  freelance: ['www.freelancer.com', 'himalayas.app', 'hn.algolia.com'],
   coverage: PROBE_HOSTS,
 };
 

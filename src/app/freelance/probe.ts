@@ -27,7 +27,7 @@ import { mergeGigs } from './sources/common.js';
 import { freelancerUrl, srcFreelancer } from './sources/freelancer.js';
 import { himalayasGigsHosts, himalayasGigsUrl, makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { srcHn } from './sources/hn.js';
-import { srcRemotive } from './sources/remotive.js';
+import { REMOTIVE_OFF, srcRemotive } from './sources/remotive.js';
 import type { Gig, GigRequest, RatedGig, RawGig, ScoredGig } from './types.js';
 
 /**
@@ -563,8 +563,10 @@ export async function runProbe(d: ProbeDeps): Promise<ProbeReport> {
     r.gigs.push(...mergeGigs(batches));
     kept.push(r);
   }
-  // Remotive: exactly one request in the whole run.
-  {
+  // Remotive: off since 2026-10-15 (its robots.txt disallows /api): the row says so and nothing is requested.
+  if (REMOTIVE_OFF !== null) {
+    kept.push({ id: 'remotive', requests: 0, errors: [`off: ${REMOTIVE_OFF}`], gigs: [], notes: [] });
+  } else {
     const r: Raw = { id: 'remotive', requests: 1, errors: [], gigs: [], notes: [] };
     try {
       r.gigs.push(...(await callAgent(srcRemotive, { platform: 'remotive', query: '', ...at0 }, 'remotive')));

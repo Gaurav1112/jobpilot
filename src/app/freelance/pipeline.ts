@@ -11,6 +11,7 @@ import { GMAIL_LABEL, GMAIL_MAX_INTERVAL_MS, GMAIL_MAX_REQUESTS } from './mail/g
 import { rateNormalizer } from './rate.js';
 import { makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { gigSources } from './sources/index.js';
+import { REMOTIVE_OFF } from './sources/remotive.js';
 import { GigRequest, type Platform } from './types.js';
 import { gigQa } from './writing/gig-qa.js';
 import { gigRenderer } from './writing/gig-renderer.js';
@@ -81,7 +82,13 @@ export function freelancePipeline(agents: readonly AnyAgent[]): Pipeline {
 }
 
 /** The platforms whose source fetches over the network (boards reads the store). */
-export const FETCHING_PLATFORMS: readonly Platform[] = ['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'gmail', 'himalayas'];
+export const FETCHING_PLATFORMS: readonly Platform[] = ['freelancer', 'hn-freelancer', 'hn-hiring', 'gmail', 'himalayas'];
+
+/**
+ * Platforms switched off because their robots.txt forbids what the source would read (the user's rule "no scraping
+ * against robots.txt"), with the named reason the Sources page shows. Never seeded, whatever freelance.yaml says.
+ */
+export const ROBOTS_OFF: Readonly<Partial<Record<Platform, string>>> = REMOTIVE_OFF === null ? {} : { remotive: REMOTIVE_OFF };
 
 /** The platforms this build has a source agent for, and the agent that answers each. */
 export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
@@ -109,7 +116,7 @@ export function freelanceSeeds(
   boardPostings: readonly unknown[],
   o: { readonly gmailConnected?: boolean } = {},
 ): GigRequest[] {
-  const on = (p: Platform) => rules.platforms[p].enabled;
+  const on = (p: Platform) => rules.platforms[p].enabled && ROBOTS_OFF[p] === undefined;
   const seeds: GigRequest[] = [];
   const at = { runDate, half };
   if (on('freelancer')) for (const query of [...new Set(rules.platforms.freelancer.queries)]) seeds.push({ platform: 'freelancer', query, ...at });

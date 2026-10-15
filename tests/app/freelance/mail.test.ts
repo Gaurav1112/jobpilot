@@ -13,7 +13,7 @@ import { authUrl, exchangeCode, gmailRunAccess, newPkce, realFormPost, startLoop
 import { ALERT_PARSERS, parserProblems, selectParser } from '../../../src/app/freelance/mail/parsers/index.js';
 import { freelanceSeeds, PLATFORM_AGENT } from '../../../src/app/freelance/pipeline.js';
 import { runFreelance } from '../../../src/app/freelance/run.js';
-import { REMOTIVE_URL } from '../../../src/app/freelance/sources/remotive.js';
+import { hnSearchUrl } from '../../../src/app/freelance/sources/hn.js';
 import { AppStore } from '../../../src/app/store/app-store.js';
 import { CAPABILITY_ALLOW_LIST } from '../../../src/app/allow-list.js';
 import { exportedAgents } from '../../../src/exported-agents.js';
@@ -634,18 +634,19 @@ describe('not connected: the source is disabled, never failed', () => {
     const home = tempHome();
     cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
     const off = { enabled: false, queries: [] };
-    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: { enabled: true, queries: [] }, 'hn-freelancer': off, 'hn-hiring': off, boards: off, himalayas: off, gmail: { enabled: true, queries: [] } } })}\n`);
+    writeFileSync(join(home, 'pack', 'freelance.yaml'), `${JSON.stringify({ platforms: { freelancer: off, remotive: off, 'hn-freelancer': { enabled: true, queries: [] }, 'hn-hiring': off, boards: off, himalayas: off, gmail: { enabled: true, queries: [] } } })}\n`);
     const locked: SecretsRunner = () => ({ status: 36, stdout: '', stderr: 'security: SecKeychainSearchCopyNext: User interaction is not allowed.' });
     const fetched: string[] = [];
     const fetch: FetchLike = async (url) => {
       fetched.push(url);
-      return url === REMOTIVE_URL ? ok({ jobs: [] }) : { status: 404, text: async () => '' };
+      // The other source here is HN (Remotive is off since 2026-10-15); no thread found is a named skip, not a failure.
+      return url === hnSearchUrl('hn-freelancer') ? ok({ hits: [] }) : { status: 404, text: async () => '' };
     };
     const s = await runFreelance({ home, clock: { now: () => '2026-10-12T03:00:00.000Z' }, fetch, sleep: async () => {}, pdftotext: '/usr/bin/false', gmail: () => gmailRunAccess(keychain(locked)) });
     expect(s.exitCode).toBe(0);
     expect(s.warnings).toContain('Keychain could not be read (security exit 36); Gmail skipped');
-    expect(fetched).toEqual([REMOTIVE_URL]);
-    expect(s.counts.byAgent['src-remotive']?.done).toBe(1);
+    expect(fetched).toEqual([hnSearchUrl('hn-freelancer')]);
+    expect(s.counts.byAgent['src-hn']?.done).toBe(1);
     expect(s.problems).toEqual([]);
   });
 

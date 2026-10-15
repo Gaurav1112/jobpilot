@@ -379,3 +379,8 @@ Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/fr
   tags are all off-stack loses 10 fit points (`stack:off`); lists sort by `maxUsdH × fit` after the red-flag rule.
 - **Networks.** A catalogue of 13 networks (India eligibility, rates, hours, link, recommended order; Lemon.io not open
   to India) joined to `pack/networks/` by id; one-click "Mark applied", logged as `network.status`.
+- **Remotive is off (controller, 2026-10-15).** remotive.com's robots.txt says `Disallow: /api/*` for every agent, so
+  `src-remotive` is never seeded (whatever freelance.yaml says), answers any request with the named skip
+  "robots.txt disallows /api (2026-10-15)" and no request, and the Sources page and `sources probe` show that reason.
+  The code is kept. Remotive was never a daily source.
+- **Daily Himalayas reads page 1 only (controller, 2026-10-15)**: its robots.txt body disallows `/jobs*&page=`.
