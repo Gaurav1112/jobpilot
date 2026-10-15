@@ -161,6 +161,8 @@ h2 .pill { margin-left: var(--space-2); }
 .field.grow { flex: 1 1 14rem; }
 .field.narrow { flex: 0 0 7rem; }
 .filter-actions { display: flex; gap: var(--space-2); }
+.filter-more > summary { font-size: var(--fs-sm); font-weight: 600; }
+.filter-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 input[type="search"], input[type="number"], textarea {
   font: inherit; font-size: var(--fs-md); color: var(--text); background: var(--surface);
   border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;

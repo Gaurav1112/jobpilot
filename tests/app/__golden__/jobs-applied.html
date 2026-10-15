@@ -30,15 +30,19 @@
 
 <div class="filter-row">
 <label class="field grow"><span>Search</span><input type="search" name="q" value="" placeholder="Company or title" maxlength="100"></label>
-<label class="field narrow"><span>Min score</span><input type="number" name="min" value="" min="0" max="200" step="1" inputmode="numeric"></label>
 <div class="filter-actions"><button class="btn btn-primary">Apply</button><a class="btn" href="/">Reset</a></div>
 </div>
+<details class="filter-more" open><summary>Filters · <span class="num">1</span> active</summary>
+<div class="filter-body">
+<label class="field narrow"><span>Min score</span><input type="number" name="min" value="" min="0" max="200" step="1" inputmode="numeric"></label>
 <fieldset><legend>Pay band</legend><label class="chip"><input type="checkbox" name="band" value="disclosed" checked><span>Pay at or above your floor</span></label><label class="chip"><input type="checkbox" name="band" value="undisclosed" checked><span>Pay not disclosed</span></label><label class="chip"><input type="checkbox" name="band" value="review" checked><span>Needs a look</span></label><label class="chip"><input type="checkbox" name="band" value="below-floor"><span>Below your floor</span></label><label class="chip"><input type="checkbox" name="band" value="rejected"><span>Not eligible</span></label></fieldset>
 <fieldset><legend>Status</legend><label class="chip"><input type="checkbox" name="status" value="new"><span>Not started</span></label><label class="chip"><input type="checkbox" name="status" value="approved"><span>Shortlisted</span></label><label class="chip"><input type="checkbox" name="status" value="applied" checked><span>Applied</span></label><label class="chip"><input type="checkbox" name="status" value="interview"><span>Interviewing</span></label><label class="chip"><input type="checkbox" name="status" value="offer"><span>Offer</span></label><label class="chip"><input type="checkbox" name="status" value="rejected"><span>Not selected</span></label><label class="chip"><input type="checkbox" name="status" value="skipped"><span>Not for me</span></label></fieldset>
+</div>
+</details>
 </form>
-<ol class="jobs" aria-label="Jobs"><li class="job" data-job="9999999999999999">
+<ol class="jobs" id="jobs" aria-label="Jobs"><li class="job" id="job-9999999999999999" data-job="9999999999999999">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/9999999999999999">Data Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/9999999999999999?from=%2F%3Fstatus%3Dapplied">Data Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Initrode</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 

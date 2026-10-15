@@ -346,6 +346,53 @@ describe('A1: the jobs list defaults and order', () => {
   });
 });
 
+describe('A8: filters fold away; a job remembers its list and the next row', () => {
+  it('the filters are a <details>, open only when a filter is not the default, with the count in the summary', async () => {
+    const closed = elementsWith((await get('/')).body, 'class', 'filter-more')[0] as string;
+    expect(closed).toMatch(/^<details class="filter-more">/);
+    expect(textOf(closed)).toMatch(/^Filters Min score/);
+    const open = elementsWith((await get('/?band=rejected&min=60')).body, 'class', 'filter-more')[0] as string;
+    expect(open).toMatch(/^<details class="filter-more" open>/);
+    expect(textOf(open)).toMatch(/^Filters · 2 active/);
+    expect(elementsWith(closed, 'name', 'q')).toEqual([]); // search and Apply stay outside
+  });
+
+  it('a row links to its job with from= and next=, and is its own anchor', async () => {
+    const body = (await get('/?q=engineer')).body;
+    const [a, b] = order(body) as [string, string];
+    expect(linksOf(rowOf(body, 'data-job', a)).find((l) => l.href.startsWith('/jobs/'))?.href).toBe(`/jobs/${a}?from=%2F%3Fq%3Dengineer&next=${b}`);
+    expect(attrsOf(rowOf(body, 'data-job', a))['id']).toBe(`job-${a}`);
+  });
+
+  it('the job page links back to its row; any other from is ignored', async () => {
+    const crumb = (b: string): string | undefined => linksOf(elementsWith(b, 'class', 'crumbs')[0] ?? '')[0]?.href;
+    expect(crumb((await get(`/jobs/${K1}?from=%2F%3Fq%3Dacme&next=${K2}`)).body)).toBe(`/?q=acme#job-${K1}`);
+    for (const bad of ['%2F%2Fevil.example', 'https%3A%2F%2Fevil.example%2F', '%2Fjobs%2Fx', '%2F%5Cevil', 'javascript%3Aalert(1)', '%2F%3Fq%3Da%23x']) {
+      expect(crumb((await get(`/jobs/${K1}?from=${bad}`)).body), bad).toBe(`/#job-${K1}`);
+    }
+  });
+
+  it('without JS, a status that takes the job out of its list lands on the next row; any other stays on the job', async () => {
+    const leave = await post(`/jobs/${K1}/status`, { _csrf: token, to: 'skipped', from: '/?q=e', next: K2 }, nojs(`/jobs/${K1}`));
+    expect(leave.status).toBe(303);
+    expect(leave.headers.get('location')).toBe(`/?q=e#job-${K2}`);
+    const stay = await post(`/jobs/${K2}/status`, { _csrf: token, to: 'approved', from: '/?q=e', next: K3 }, nojs(`/jobs/${K2}`));
+    expect(stay.headers.get('location')).toBe(`/jobs/${K2}?from=%2F%3Fq%3De&next=${K3}#status`);
+    const kept = await post(`/jobs/${K3}/status`, { _csrf: token, to: 'skipped', from: '/?status=skipped', next: K4 }, nojs(`/jobs/${K3}`));
+    expect(kept.headers.get('location')).toBe(`/jobs/${K3}?from=%2F%3Fstatus%3Dskipped&next=${K4}#status`);
+    const last = await post(`/jobs/${K4}/status`, { _csrf: token, to: 'rejected', from: '/' }, nojs(`/jobs/${K4}`));
+    expect(last.headers.get('location')).toBe('/#jobs');
+    const bad = await post(`/jobs/${K7}/status`, { _csrf: token, to: 'skipped', from: '//evil.example', next: 'zz' }, nojs(`/jobs/${K7}`));
+    expect(bad.headers.get('location')).toBe(`/jobs/${K7}#status`);
+  });
+
+  it('the status form carries from and next, so the plain POST knows them', async () => {
+    const form = elementsWith((await get(`/jobs/${K1}?from=%2F%3Fq%3Dacme&next=${K2}`)).body, 'class', 'status-form')[0] as string;
+    expect(attrsOf(elementsWith(form, 'name', 'from')[0] ?? '')['value']).toBe('/?q=acme');
+    expect(attrsOf(elementsWith(form, 'name', 'next')[0] ?? '')['value']).toBe(K2);
+  });
+});
+
 describe('dashboard: job page', () => {
   it('shows the header, why it matched, eligibility, documents, answers, status and note', async () => {
     const { status, body } = await get(`/jobs/${K1}`);

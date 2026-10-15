@@ -114,8 +114,20 @@ const JOB_KEY = /^[0-9a-f]{16}$/;
 const DOC_NAME = /^(resume|cover)\.(pdf|docx|html)$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const FX_STALE_DAYS = 30;
+/** A8: a list URL the job page may link and redirect back to: the jobs list and its query only. */
+export function safeFrom(raw: string | undefined): string | undefined {
+  return raw !== undefined && raw.length <= 600 && /^\/(\?[^#\s\\]*)?$/.test(raw) ? raw : undefined;
+}
+
 /** A1: the jobs list's statuses when the query names none: everything but Not for me and Not selected. */
 export const DEFAULT_STATUSES: readonly JobStatus[] = JOB_STATUSES.filter((s) => s !== 'skipped' && s !== 'rejected');
+
+/** Whether status `to` takes a job out of the list at `from` (its status filter, or the default one). */
+function leavesList(from: string, to: JobStatus): boolean {
+  const q = new URLSearchParams(from.includes('?') ? from.slice(from.indexOf('?') + 1) : '');
+  const asked = q.getAll('status').filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s));
+  return !(asked.length > 0 ? asked : DEFAULT_STATUSES).includes(to);
+}
 const PAGE_SIZE = 100;
 
 const STATIC_DIR = join(import.meta.dirname, 'static');
@@ -478,7 +490,11 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     }
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
-    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}) });
+    const from = safeFrom(c.req.query('from'));
+    const nextQ = c.req.query('next');
+    const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
+    const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
+    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -515,9 +531,20 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return { job: s.getJob(key), sent: sentData(s, c, key), notice };
     });
     if (!result?.job) return c.text('No such job', 404);
-    if (!isHx(c)) return c.redirect(`/jobs/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`, 303);
+    const from = safeFrom(typeof body['from'] === 'string' ? body['from'] : undefined);
+    const next = typeof body['next'] === 'string' && JOB_KEY.test(body['next']) ? body['next'] : undefined;
+    if (!isHx(c)) {
+      if (from !== undefined && leavesList(from, to as JobStatus)) return c.redirect(`${from}${next !== undefined ? `#job-${next}` : '#jobs'}`, 303);
+      const qs = new URLSearchParams();
+      if (from !== undefined) qs.set('from', from);
+      if (from !== undefined && next !== undefined) qs.set('next', next);
+      if (result.notice !== undefined) qs.set('notice', result.notice);
+      const q = qs.toString();
+      return c.redirect(`/jobs/${key}${q === '' ? '' : `?${q}`}#status`, 303);
+    }
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
-    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash)}${sentSection(result.sent, true)}`.value);
+    const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
+    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash, back)}${sentSection(result.sent, true)}`.value);
   });
 
   // "Keep a copy of these documents now": the snapshot an apply could not make (applied elsewhere, or a failed copy).

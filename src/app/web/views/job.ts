@@ -24,15 +24,17 @@ export interface JobPageData {
   readonly istDay: (iso: string) => string;
   /** A one-off message after a status change (a snapshot that could not be made). */
   readonly flash?: string;
+  /** A8: the list this job was opened from, and the row after it. */
+  readonly back?: { readonly from: string; readonly next?: string };
 }
 
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
 const KIND_NAME = { resume: 'Resume', cover: 'Cover letter' } as const;
 
-function header(j: JobDetail): Html {
+function header(j: JobDetail, back?: JobPageData['back']): Html {
   const url = externalUrl(j.url);
   return html`<header class="job-head">
-<p class="crumbs"><a href="/">Jobs</a></p>
+<p class="crumbs"><a href="${back?.from ?? '/'}#job-${j.jobKey}">← Jobs</a></p>
 <h1>${j.title}</h1>
 <p class="job-sub">${meta([
   j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
@@ -166,13 +168,14 @@ ${d.snapshots.map(
 }
 
 /** The status block: the current status, a button per status, and any message. Returned alone to htmx. */
-export function statusSection(j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history'>, csrf: string, istDay: (iso: string) => string, flash?: string): Html {
+export function statusSection(j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history'>, csrf: string, istDay: (iso: string) => string, flash?: string, back?: JobPageData['back']): Html {
   const last = j.history.at(-1);
   return html`<section id="status" class="card" aria-labelledby="status-h">
 <h2 id="status-h">Your status ${statusPill(j.status)}</h2>
 ${j.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(j.appliedAt))}</p>` : ''}
 <form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML">
 ${csrfField(csrf)}
+${back !== undefined ? html`<input type="hidden" name="from" value="${back.from}">${back.next !== undefined ? html`<input type="hidden" name="next" value="${back.next}">` : ''}` : ''}
 <div class="btn-row">${STATUSES.map(
     (s: JobStatus) => html`<button class="btn${s === j.status ? ' btn-current' : ''}" name="to" value="${s}"${s === j.status ? html` aria-pressed="true"` : html` aria-pressed="false"`}>${STATUS_LABEL[s]}</button>`,
   )}</div>
@@ -206,14 +209,14 @@ ${
 
 export function jobBody(d: JobPageData): Html {
   const j = d.job;
-  return html`${header(j)}
+  return html`${header(j, d.back)}
 ${duplicates(j, d.preferred)}
 <div class="job-grid">
 ${documents(d)}
 ${sentSection(d.sent)}
 ${whyMatched(j, d.display)}
 ${eligibility(j)}
-${statusSection(j, d.csrf, d.istDay, d.flash)}
+${statusSection(j, d.csrf, d.istDay, d.flash, d.back)}
 ${noteSection(j, d.csrf)}
 ${answers(d.answers)}
 <section class="card wide" aria-labelledby="jd"><h2 id="jd">The job description</h2>

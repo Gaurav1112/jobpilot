@@ -44,18 +44,30 @@ const ALL_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below
 const check = (name: string, value: string, label: string, on: boolean): Html =>
   html`<label class="chip"><input type="checkbox" name="${name}" value="${value}"${on ? html` checked` : ''}><span>${label}</span></label>`;
 
-function filterForm(f: JobsFilterView, defaultBands: boolean): Html {
+/** A8: a job's link from a list carries the list's URL and the row after it (amendment 9: back to the next row). */
+export function jobHref(key: string, from: string, next: string | undefined): string {
+  const qs = new URLSearchParams({ from });
+  if (next !== undefined) qs.set('next', next);
+  return '/jobs/' + key + '?' + qs.toString();
+}
+
+function filterForm(f: JobsFilterView, defaultBands: boolean, defaultStatuses: boolean): Html {
   const bandsOn = defaultBands ? (['disclosed', 'undisclosed', 'review'] as Band[]) : f.band;
+  const active = (defaultBands ? 0 : 1) + (defaultStatuses ? 0 : 1) + (f.min !== undefined ? 1 : 0);
   const company = f.company;
   return html`<form class="filters" method="get" action="/" role="search" aria-label="Filter jobs">
 ${company !== undefined ? html`<input type="hidden" name="companyKey" value="${company.key}"><p class="filter-company">Jobs at <strong>${company.name}</strong> only <a href="/">Show every company</a></p>` : ''}
 <div class="filter-row">
 <label class="field grow"><span>Search</span><input type="search" name="q" value="${f.q}" placeholder="Company or title" maxlength="100"></label>
-<label class="field narrow"><span>Min score</span><input type="number" name="min" value="${f.min ?? ''}" min="0" max="200" step="1" inputmode="numeric"></label>
 <div class="filter-actions"><button class="btn btn-primary">Apply</button><a class="btn" href="/">Reset</a></div>
 </div>
+<details class="filter-more"${active > 0 ? html` open` : ''}><summary>Filters${active > 0 ? html` · <span class="num">${active}</span> active` : ''}</summary>
+<div class="filter-body">
+<label class="field narrow"><span>Min score</span><input type="number" name="min" value="${f.min ?? ''}" min="0" max="200" step="1" inputmode="numeric"></label>
 <fieldset><legend>Pay band</legend>${ALL_BANDS.map((b) => check('band', b, BAND_LABEL[b], bandsOn.includes(b)))}</fieldset>
 <fieldset><legend>Status</legend>${STATUSES.map((s) => check('status', s, STATUS_LABEL[s], f.status.includes(s)))}</fieldset>
+</div>
+</details>
 </form>`;
 }
 
@@ -67,10 +79,10 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
   )}${j.history.length > imported.length ? html` · ${countText(j.history.length - imported.length)} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
 }
 
-function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): Html {
-  return html`<li class="job" data-job="${j.jobKey}">
+function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean, from: string, next: string | undefined): Html {
+  return html`<li class="job" id="job-${j.jobKey}" data-job="${j.jobKey}">
 <div class="job-main">
-<h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="/jobs/${j.jobKey}">${j.title}</a></h2>
+<h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="${jobHref(j.jobKey, from, next)}">${j.title}</a></h2>
 <p class="job-sub">${meta([
     j.company === '' ? null : html`<span class="job-company">${j.company}</span>`,
     remoteText(j.remote).label,
@@ -108,10 +120,10 @@ export function jobsBody(d: JobsPageData): Html {
       : ''
   }${d.defaultStatuses ? html` <span class="muted">Not for me and Not selected are hidden: <a href="/?status=skipped&amp;status=rejected">show them</a>.</span>` : ''}</p>
 </div>
-${filterForm(d.filter, d.defaultBands)}
+${filterForm(d.filter, d.defaultBands, d.defaultStatuses)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" aria-label="Jobs">${d.jobs.map((j) => row(j, d.istDay, markNew))}</ol>${pager(d)}`
+    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(j, d.istDay, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager(d)}`
 }`;
 }

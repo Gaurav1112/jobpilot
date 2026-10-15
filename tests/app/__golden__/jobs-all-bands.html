@@ -30,15 +30,19 @@
 
 <div class="filter-row">
 <label class="field grow"><span>Search</span><input type="search" name="q" value="" placeholder="Company or title" maxlength="100"></label>
-<label class="field narrow"><span>Min score</span><input type="number" name="min" value="" min="0" max="200" step="1" inputmode="numeric"></label>
 <div class="filter-actions"><button class="btn btn-primary">Apply</button><a class="btn" href="/">Reset</a></div>
 </div>
+<details class="filter-more" open><summary>Filters · <span class="num">1</span> active</summary>
+<div class="filter-body">
+<label class="field narrow"><span>Min score</span><input type="number" name="min" value="" min="0" max="200" step="1" inputmode="numeric"></label>
 <fieldset><legend>Pay band</legend><label class="chip"><input type="checkbox" name="band" value="disclosed" checked><span>Pay at or above your floor</span></label><label class="chip"><input type="checkbox" name="band" value="undisclosed" checked><span>Pay not disclosed</span></label><label class="chip"><input type="checkbox" name="band" value="review" checked><span>Needs a look</span></label><label class="chip"><input type="checkbox" name="band" value="below-floor" checked><span>Below your floor</span></label><label class="chip"><input type="checkbox" name="band" value="rejected" checked><span>Not eligible</span></label></fieldset>
 <fieldset><legend>Status</legend><label class="chip"><input type="checkbox" name="status" value="new" checked><span>Not started</span></label><label class="chip"><input type="checkbox" name="status" value="approved" checked><span>Shortlisted</span></label><label class="chip"><input type="checkbox" name="status" value="applied" checked><span>Applied</span></label><label class="chip"><input type="checkbox" name="status" value="interview" checked><span>Interviewing</span></label><label class="chip"><input type="checkbox" name="status" value="offer" checked><span>Offer</span></label><label class="chip"><input type="checkbox" name="status" value="rejected"><span>Not selected</span></label><label class="chip"><input type="checkbox" name="status" value="skipped"><span>Not for me</span></label></fieldset>
+</div>
+</details>
 </form>
-<ol class="jobs" aria-label="Jobs"><li class="job" data-job="3333333333333333">
+<ol class="jobs" id="jobs" aria-label="Jobs"><li class="job" id="job-3333333333333333" data-job="3333333333333333">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/3333333333333333">Platform Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/3333333333333333?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=1111111111111111">Platform Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Hooli</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 
@@ -47,9 +51,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">90</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 90 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="1111111111111111">
+</li><li class="job" id="job-1111111111111111" data-job="1111111111111111">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/1111111111111111">Senior Backend Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/1111111111111111?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=cccccccccccccccc">Senior Backend Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Acme Robotics</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span><span class="sep" aria-hidden="true">·</span><span class="muted">also listed on Himalayas</span></p>
 <p class="job-pills"></p>
 
@@ -58,9 +62,9 @@
 <div class="job-comp"><span class="comp-main num">₹70–90 LPA</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">80</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 80 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="cccccccccccccccc">
+</li><li class="job" id="job-cccccccccccccccc" data-job="cccccccccccccccc">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/cccccccccccccccc">Java Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/cccccccccccccccc?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=2222222222222222">Java Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Massive Dynamic</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 
@@ -69,9 +73,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">72</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 72 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="2222222222222222">
+</li><li class="job" id="job-2222222222222222" data-job="2222222222222222">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/2222222222222222">Staff Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/2222222222222222?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=eeeeeeeeeeeeeeee">Staff Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Globex</span><span class="sep" aria-hidden="true">·</span><span>Remote · India +2</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Office: Pune</span></p>
 
@@ -80,9 +84,9 @@
 <div class="job-comp"><span class="comp-main num">$125k–150k</span><span class="comp-inr num">≈ ₹1.04–1.25 Cr</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">70</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 70 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="eeeeeeeeeeeeeeee">
+</li><li class="job" id="job-eeeeeeeeeeeeeeee" data-job="eeeeeeeeeeeeeeee">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/eeeeeeeeeeeeeeee">Kotlin Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/eeeeeeeeeeeeeeee?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=aaaaaaaaaaaaaaaa">Kotlin Engineer</a></h2>
 <p class="job-sub"><span class="job-company">GitLabs Example</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 
@@ -91,9 +95,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">68</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 68 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="aaaaaaaaaaaaaaaa">
+</li><li class="job" id="job-aaaaaaaaaaaaaaaa" data-job="aaaaaaaaaaaaaaaa">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/aaaaaaaaaaaaaaaa">Backend Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/aaaaaaaaaaaaaaaa?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=9999999999999999">Backend Engineer</a></h2>
 <p class="job-sub"><span class="job-company">山 Systems</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-critical" data-exception="1">Documents blocked</span></p>
 
@@ -102,9 +106,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">66</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 66 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="9999999999999999">
+</li><li class="job" id="job-9999999999999999" data-job="9999999999999999">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/9999999999999999">Data Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/9999999999999999?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=7777777777777777">Data Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Initrode</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 
@@ -113,9 +117,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">65</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 65 out of 100</span></span></div>
 <div class="job-status"><span class="pill pill-good">Applied</span></div>
-</li><li class="job" data-job="7777777777777777">
+</li><li class="job" id="job-7777777777777777" data-job="7777777777777777">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/7777777777777777">&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&quot; onmouseover=&quot;y</a></h2>
+<h2 class="job-title"><a href="/jobs/7777777777777777?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=bbbbbbbbbbbbbbbb">&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&quot; onmouseover=&quot;y</a></h2>
 <p class="job-sub"><span class="job-company">O&#39;Reilly &amp; Sons</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Pay not listed</span></p>
 
@@ -124,9 +128,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">60</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 60 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="bbbbbbbbbbbbbbbb">
+</li><li class="job" id="job-bbbbbbbbbbbbbbbb" data-job="bbbbbbbbbbbbbbbb">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/bbbbbbbbbbbbbbbb">Backend Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/bbbbbbbbbbbbbbbb?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=4444444444444444">Backend Engineer</a></h2>
 <p class="job-sub"><span class="job-company">[hidden: contains a forbidden term]</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-neutral" data-exception="1">Contract (B2B)</span></p>
 
@@ -135,9 +139,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">50</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 50 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="4444444444444444">
+</li><li class="job" id="job-4444444444444444" data-job="4444444444444444">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/4444444444444444">Backend Developer</a></h2>
+<h2 class="job-title"><a href="/jobs/4444444444444444?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=6666666666666666">Backend Developer</a></h2>
 <p class="job-sub"><span class="job-company">Vandelay</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-warn" data-exception="1">Check before applying</span></p>
 
@@ -146,9 +150,9 @@
 <div class="job-comp"><span class="comp-main num">Pay not disclosed</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">85</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 85 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="6666666666666666">
+</li><li class="job" id="job-6666666666666666" data-job="6666666666666666">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/6666666666666666">Junior Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/6666666666666666?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected&amp;next=5555555555555555">Junior Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Soylent</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-muted" data-exception="1">Pay under your minimum</span></p>
 
@@ -157,9 +161,9 @@
 <div class="job-comp"><span class="comp-main num">₹4–10 LPA</span></div>
 <div class="job-score"><span class="fit-chip"><span class="fit-num num" aria-hidden="true">75</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score 75 out of 100</span></span></div>
 <div class="job-status"></div>
-</li><li class="job" data-job="5555555555555555">
+</li><li class="job" id="job-5555555555555555" data-job="5555555555555555">
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/5555555555555555">Frontend Engineer</a></h2>
+<h2 class="job-title"><a href="/jobs/5555555555555555?from=%2F%3Fband%3Ddisclosed%26band%3Dundisclosed%26band%3Dreview%26band%3Dbelow-floor%26band%3Drejected">Frontend Engineer</a></h2>
 <p class="job-sub"><span class="job-company">Umbrella</span><span class="sep" aria-hidden="true">·</span><span>Remote · India</span></p>
 <p class="job-pills"><span class="pill pill-muted" data-exception="1">Not a match</span></p>
 <p class="job-reasons">Not eligible: The title matches a role you filtered out; On-site only</p>
