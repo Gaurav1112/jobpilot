@@ -372,16 +372,17 @@ const WEEKS_PER_MONTH = 4.33;
 const DAYS_PER_WEEK = 5;
 const RANGE_SEP = '\\s?(?:-|–|—|to)\\s?';
 /** "160 hours per month", "40-80 hrs/mo", "8 hours a day", "6-8 h/day". */
-const HOURS_PER_MONTH = new RegExp(`\\b(\\d{1,3})(?:${RANGE_SEP}(\\d{1,3}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:month|mo)\\b`, 'gi');
-const HOURS_PER_DAY = new RegExp(`\\b(\\d{1,2})(?:${RANGE_SEP}(\\d{1,2}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:day|weekday)\\b`, 'gi');
+const NUM = '\\d{1,3}(?:\\.\\d+)?';
+const HOURS_PER_MONTH = new RegExp(`\\b(${NUM})(?:${RANGE_SEP}(${NUM}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:month|mo)\\b`, 'gi');
+const HOURS_PER_DAY = new RegExp(`\\b(${NUM})(?:${RANGE_SEP}(${NUM}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:day|weekday)\\b`, 'gi');
 /** Any hours figure in any unit or wording: digits or written-out numbers next to "hour(s)", "N hours weekly", "per week ... N hours". */
 const ANY_HOURS =
   /\b\d{1,3}(?:\.\d+)?\s?(?:\+|(?:-|–|—|to)\s?\d{1,3})?\s?(?:h|hrs?|hours?)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|eighty|hundred|few|several|couple of)(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?[\s-]+(?:hours?|hrs)\b|\bper\s+(?:week|month|day)\b[^.;\n]{0,40}\b\d{1,3}\s?(?:h|hrs?|hours?)\b/i;
 /** Full-time wording of any shape, or a working-day window: never "hours not stated". */
 const FULL_TIME_ANY = /\bfull[\s-]?time\b|\bentire\s+(?:week|day)\b|\b9\s?(?:am)?\s?(?:-|–|to)\s?[56]\s?(?:pm)?\b|\b\d{1,2}\s?(?:am|pm)\s?(?:-|–|to)\s?\d{1,2}\s?(?:am|pm)\b|\b40\s?(?:h|hrs?|hours?)\b/i;
 
-/** One unambiguous per-month or per-day figure, as hours per week (÷ 4.33, × 5), with how it was reached; else null. */
-export function convertedHours(text: string): { min: number; max: number; note: string } | null {
+/** Every per-month or per-day figure in the text, as hours per week (÷ 4.33, × 5), with what it said; null if one is malformed. */
+function convertedAll(text: string): { min: number; max: number; note: string }[] | null {
   const found = new Map<string, { min: number; max: number; note: string }>();
   const r1 = (x: number): number => Math.round(x * 10) / 10;
   for (const m of text.matchAll(HOURS_PER_MONTH)) {
@@ -394,9 +395,24 @@ export function convertedHours(text: string): { min: number; max: number; note: 
     const lo = Number(m[1]);
     const hi = Number(m[2] ?? m[1]);
     if (!(lo > 0 && hi >= lo)) return null;
-    found.set(`d${lo}-${hi}`, { min: lo * DAYS_PER_WEEK, max: hi * DAYS_PER_WEEK, note: `${lo === hi ? lo : `${lo}–${hi}`} hours per day` });
+    found.set(`d${lo}-${hi}`, { min: r1(lo * DAYS_PER_WEEK), max: r1(hi * DAYS_PER_WEEK), note: `${lo === hi ? lo : `${lo}–${hi}`} hours per day` });
   }
-  return found.size === 1 ? ([...found.values()][0] ?? null) : null;
+  return [...found.values()];
+}
+
+/** One unambiguous per-month or per-day figure, as hours per week, with what it said; else null. */
+export function convertedHours(text: string): { min: number; max: number; note: string } | null {
+  const all = convertedAll(text);
+  return all !== null && all.length === 1 ? (all[0] ?? null) : null;
+}
+
+export const NOTE_MIXED_UNITS = 'hours stated in several ways; confirm';
+/** A per-week figure next to a per-month or per-day one that disagrees by over 20%, or either over the cap. */
+function mixedUnits(g: Gig, cap: number): boolean {
+  const week = g.hoursPerWeek.max ?? g.hoursPerWeek.min;
+  const others = convertedAll(g.description);
+  if (week === null || others === null || others.length === 0) return false;
+  return others.some((o) => week > cap || o.max > cap || Math.abs(o.max - week) > 0.2 * Math.max(o.max, week));
 }
 
 export const noteWideRange = (max: number, cap: number): string => `hours range up to ${max}/week exceeds ${cap}; confirm`;
@@ -410,6 +426,8 @@ export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
     if (plus.size === 1) min = [...plus][0] ?? null;
   }
   const ft = fullTime(text);
+  // A per-week figure beside a per-month or per-day one that disagrees (controller decision 2026-10-15): review.
+  if (g.hoursPerWeek.min !== null && mixedUnits(g, cap)) return reviewOf('hours-unclear', NOTE_MIXED_UNITS);
   if (min !== null) {
     if (min > cap) {
       const status = figureStatus(g.description, min);
@@ -427,12 +445,13 @@ export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
     return PASS;
   }
   if (ft === 'softened') return softened();
-  // Hours per month or per day: converted to a week as a stated assumption (÷ 4.33, × 5). Within the cap it passes
-  // with the note; over it, or a range reaching over it, is review: a converted figure never rejects.
+  // Hours per month or per day are converted to a week ONLY as a note (controller decision 2026-10-15): the gig is
+  // review either way ("7 days a week", "at least", a launch week at full time... a conversion cannot know), and a
+  // converted figure never rejects.
   const converted = ft === 'no' ? convertedHours(g.description) : null;
   if (converted !== null) {
-    const how = `≈${converted.min === converted.max ? converted.min : `${converted.min}–${converted.max}`} h/week from ${converted.note} (assumed ${converted.note.endsWith('month') ? `${WEEKS_PER_MONTH} weeks a month` : `${DAYS_PER_WEEK} days a week`})`;
-    return converted.max <= cap ? noteOf(how) : reviewOf('hours-unclear', `${how} - verify`);
+    const how = `≈${converted.min === converted.max ? converted.min : `${converted.min}–${converted.max}`} h/week from ${converted.note} (assumed ${converted.note.endsWith('month') ? `${WEEKS_PER_MONTH} weeks/month` : `${DAYS_PER_WEEK} days/week`})`;
+    return reviewOf('hours-unclear', converted.max <= cap ? `${how}; confirm` : `${how} - verify`);
   }
   if (ft === 'yes') return rejectOf('hours-over-cap');
   // "Hours not stated" only when the text has NO hours figure in any unit or wording ("160 hours per month", "8

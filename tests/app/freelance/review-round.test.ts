@@ -54,16 +54,40 @@ describe('I1: "hours not stated" only when no hours figure in any unit and no fu
     expect(decide(normalizeGig(fl('Need Go backend work on our API.')))).toEqual({ verdict: 'eligible', reasons: [], notes: [YOU_SET] });
   });
 
-  it('per month and per day convert to a week as a stated assumption: within the cap passes, over it is review', () => {
-    expect(decide(normalizeGig(fl('We need 40 hours per month.')))).toEqual({ verdict: 'eligible', reasons: [], notes: ['≈9.2 h/week from 40 hours per month (assumed 4.33 weeks a month)'] });
-    expect(decide(normalizeGig(fl('About 2 hours a day.')))).toEqual({ verdict: 'eligible', reasons: [], notes: ['≈10 h/week from 2 hours per day (assumed 5 days a week)'] });
-    expect(decide(normalizeGig(fl('About 160 hours per month.')))).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'], notes: ['≈37 h/week from 160 hours per month (assumed 4.33 weeks a month) - verify'] });
+  it('per month and per day convert to a week only as a note: never eligible, never rejected (controller, 2026-10-15)', () => {
+    expect(decide(normalizeGig(fl('We need 40 hours per month.')))).toEqual({ verdict: 'review', reasons: ['hours-unclear'], notes: ['≈9.2 h/week from 40 hours per month (assumed 4.33 weeks/month); confirm'] });
+    expect(decide(normalizeGig(fl('About 2 hours a day.')))).toEqual({ verdict: 'review', reasons: ['hours-unclear'], notes: ['≈10 h/week from 2 hours per day (assumed 5 days/week); confirm'] });
+    expect(decide(normalizeGig(fl('About 4.5 hours a day.')))).toMatchObject({ verdict: 'review', notes: ['≈22.5 h/week from 4.5 hours per day (assumed 5 days/week) - verify'] });
+    expect(decide(normalizeGig(fl('About 160 hours per month.')))).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'], notes: ['≈37 h/week from 160 hours per month (assumed 4.33 weeks/month) - verify'] });
+    for (const t of ['4 hours a day, 7 days a week.', 'At least 80 hours per month.', '30 hours per month but full-time during launch week.', '3-5 hours a day.']) {
+      expect(decide(normalizeGig(fl(`Pay $45/hr. ${t}`))).verdict, t).toBe('review');
+    }
     // On another platform the same: a converted figure never rejects.
     expect(decide(normalizeGig(hn('We pay $80/hr. Work 8 hours a day.')))).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
   });
 
   it('"N hours weekly" is a per-week figure', () => {
     expect(normalizeGig(hn('Pay $80/hr. 10 hours weekly.')).hoursPerWeek).toEqual({ min: 10, max: 10, source: 'text' });
+  });
+});
+
+describe('mixed hour units with a per-week figure go to review (controller, 2026-10-15)', () => {
+  const MIXED = 'hours stated in several ways; confirm';
+  it.each([
+    'We pay $80/hr. 10 hours per week to start; 160 hours per month after onboarding.',
+    'We pay $80/hr. 10 h/week. You must also be online 8 hours a day.',
+  ])('%s', (text) => {
+    const d = decide(normalizeGig(hn(text)));
+    expect(d.verdict).toBe('review');
+    expect(d.notes).toContain(MIXED);
+  });
+
+  it('units that agree within 20% and stay under the cap are not "several ways"', () => {
+    expect(decide(normalizeGig(hn('We pay $80/hr. 10 hours per week, about 40 hours per month.')))).toEqual({ verdict: 'eligible', reasons: [], notes: [] });
+    // disagreeing by over 20%, both under the cap: review
+    expect(decide(normalizeGig(hn('We pay $80/hr. 10 hours per week, about 80 hours per month.'))).notes).toContain(MIXED);
+    // agreeing within 20% but over the cap: review
+    expect(decide(normalizeGig(hn('We pay $80/hr. 25 hours per week, about 100 hours per month.'))).notes).toContain(MIXED);
   });
 });
 
