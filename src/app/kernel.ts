@@ -128,6 +128,12 @@ export interface AppKernelOptions {
   readonly pageState?: PageState;
   /** The page adapters' job pages per company per IST day (`appPageLedger(app, PAGE_LEDGER_PREFIX)`); default in memory. */
   readonly jobPageLedger?: PageLedger;
+  /**
+   * The HTTPS online check (`httpsOnline`): a transport failure while it says offline is not final; the step is
+   * re-queued once it passes (the supervisor's wake rule). Absent (tests, fixtures): only failures just after a
+   * detected wake are re-queued.
+   */
+  readonly online?: () => Promise<boolean>;
 }
 
 export interface AppKernel {
@@ -196,6 +202,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     egressSets: { ...careersEgressSets(pack.watchlist), ...registryEgressSets(boards) },
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+    ...(o.online !== undefined ? { online: o.online } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };
 }
@@ -254,6 +261,7 @@ export function freelanceKernel(o: Omit<AppKernelOptions, 'browser' | 'mode'>): 
     fullPackHash: packs.fullPackHash,
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+    ...(o.online !== undefined ? { online: o.online } : {}),
   });
   return { registry, compiled, supervisor, policy, policyHash: pHash };
 }

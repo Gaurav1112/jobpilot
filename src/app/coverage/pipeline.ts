@@ -193,6 +193,11 @@ export interface CoverageStagesOptions {
   readonly retry?: boolean;
   /** One per-host pacer for every stage and the run's own online probe (re-check m5); default: one per stage. */
   readonly hostPacer?: HostPacer;
+  /**
+   * The run's online check, for the supervisor's wake rule: a transport failure while it says offline is not final,
+   * and steps re-queued after a wake wait for it. Absent: only failures just after a detected wake are re-queued.
+   */
+  readonly online?: () => Promise<boolean>;
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -382,6 +387,7 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
         codeHash: o.codeHash,
         ...(o.hostPacer !== undefined ? { hostPacer: o.hostPacer } : {}),
         ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+        ...(o.online !== undefined ? { online: o.online } : {}),
         pauseBefore,
         beforeFinish,
       });

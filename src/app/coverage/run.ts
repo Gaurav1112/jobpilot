@@ -324,7 +324,8 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
       const hostPacer = o.hostPacer ?? createHostPacer(policy.minHostIntervalMs, o.clock, o.sleep ?? realSleep);
-      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? pacedOnline(o.fetch, hostPacer) });
+      const online = o.online ?? pacedOnline(o.fetch, hostPacer);
+      const gate = makeRunGate({ runKey: runId, store: app, online });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
       const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
       // the slice limit applies once this invocation has done a step, so every slice makes progress
@@ -354,6 +355,7 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         pauseBefore,
         retry: true,
         hostPacer,
+        online,
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id

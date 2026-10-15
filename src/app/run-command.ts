@@ -177,6 +177,8 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
         ...(o.refresh ? { refresh: true } : {}),
         ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
         ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+        // a live run's steps that fail while offline are asked again once HTTPS works (the wake rule)
+        ...(offline === undefined ? { online: d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF.daily)) } : {}),
         ...hooks,
       });
       return { text: formatSummary(summary), exitCode: summary.exitCode };
@@ -205,6 +207,7 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
+      ...(offline === undefined ? { online: d.online ?? (() => httpsOnline(nodeFetch, PROBE_HOSTS_OF.freelance)) } : {}),
       ...hooks,
     });
     return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
