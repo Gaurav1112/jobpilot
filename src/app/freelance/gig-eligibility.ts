@@ -63,7 +63,9 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    at or above the floor is eligible on that, with the rate left unknown. A fixed budget whose raw currency, minimum
  *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
  *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected; at or above the floor
- *    (user decision 2026-10-13) it stays eligible with that note, so every surface labels it a preset tier.
+ *    (user decision 2026-10-13) it stays eligible with that note, so every surface labels it a preset tier. A fixed
+ *    budget with a minimum and no maximum ("$300+ per post", sources-expansion) below the floor is review
+ *    (`rate-unclear`, `budget is a minimum with no maximum - verify`), never a reject.
  * 8b. ceiling (freelance-boost): a `stated-ceiling` rate ("up to $X/hr") below the floor rejects as
  *    `rate-below-floor:<X>` (a hedge is review, as below); at or above it is review `ceiling-only` with the note
  *    `pay is a stated ceiling only (up to $X/h) - verify`: a ceiling never passes the floor on its own. A reject from
@@ -136,6 +138,8 @@ export const NOTE_PARTIAL_SCOPE = 'stated hours may cover part of the scope - ve
 export const NOTE_RATE_NEGOTIABLE = 'rate negotiable - verify';
 export const NOTE_LOCATION_ZONES = 'location field names time zones - verify';
 export const NOTE_RATE_UNKNOWN = 'rate unknown - verify';
+/** sources-expansion: a fixed budget stated as a minimum ("$300+ per post"), no maximum, below the floor. */
+export const NOTE_BUDGET_MINIMUM = 'budget is a minimum with no maximum - verify';
 export const NOTE_DERIVED_NOT_COUNTED = 'derived rate below floor - not counted';
 /** freelance-boost: the pay is only a stated ceiling at or above the floor. */
 export const noteCeiling = (max: number): string => `pay is a stated ceiling only (up to $${max}/h) - verify`;
@@ -675,6 +679,8 @@ function payOutcome(r: RatedGig, f: GigPack['freelance'], tiers: readonly Tier[]
       // A preset at or above the floor stays eligible, labelled (spec §13 D1b, user decision 2026-10-13).
       if (rate.budgetUsd >= f.fixedBudgetFloorUsd) return preset ? noteOf(NOTE_PRESET) : PASS;
       if (preset) return reviewOf('budget-preset', NOTE_PRESET);
+      // A budget with a minimum and no maximum ("$300+ per post") is open-ended: the floor cannot be judged from it.
+      if (gig.budget.type === 'fixed' && gig.budget.min !== null && gig.budget.max === null) return reviewOf('rate-unclear', NOTE_BUDGET_MINIMUM);
       return hedged(gig.description) ? negotiable() : rejectOf('budget-below-floor');
     }
     return reviewOf('rate-unclear', NOTE_RATE_UNKNOWN);

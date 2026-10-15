@@ -66,6 +66,18 @@ function keepLive(v: CompanyVerdict, prev: Company | undefined): CompanyVerdict 
   return { ...v, status: 'failed', reasons: [first, ...v.reasons] };
 }
 
+/**
+ * D3: a board that came from freehire (catalogue or discovery) and failed to verify is Proposed, its reasons kept (a 404
+ * included, `not verified: ` before the first), never `failed`: the user can reject it, and it is not counted as a
+ * failing company. A live one still goes through `keepLive` afterwards.
+ */
+function freehireProposed(v: CompanyVerdict): CompanyVerdict {
+  const src = v.guess.site.candidate.source;
+  if (v.status !== 'failed' || (src !== 'freehire' && src !== 'freehire-discovery')) return v;
+  const [first, ...rest] = v.reasons;
+  return { ...v, status: 'proposed', reasons: [`not verified: ${first ?? 'no reason recorded'}`, ...rest] };
+}
+
 const unlocatedGuess = (s: CareersSite): PlatformGuess => ({ site: s, platform: null, slug: null, boardUrl: null, signature: null, routedFrom: null, evidence: ['not located'] });
 const notLocated = (s: CareersSite): string => `careers site not located: ${(s.reasons ?? ['no probe found a careers page']).slice(0, 6).join('; ')}`;
 
@@ -80,7 +92,7 @@ export function projectCoverage(app: AppStore, input: CoverageProjectInput): Cov
   return app.tx(() => {
     const before = new Map(app.listCompanies().map((c) => [c.companyKey, c]));
     const opts = { countFailure: input.countFailures };
-    for (const v of input.verdicts) app.upsertCompanyVerdict(keepLive(v, before.get(v.guess.site.candidate.companyKey)), input.at, opts);
+    for (const v of input.verdicts) app.upsertCompanyVerdict(keepLive(freehireProposed(v), before.get(v.guess.site.candidate.companyKey)), input.at, opts);
     const unlocated = { proposed: 0, failed: 0, counted: 0 };
     for (const s of input.unlocated) {
       const prev = before.get(s.candidate.companyKey);

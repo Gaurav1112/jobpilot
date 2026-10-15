@@ -1,0 +1,22 @@
+{
+ "data": [
+  {
+   "public_slug": "x",
+   "source": "lever",
+   "external_id": "Fabrikam:abc",
+   "url": "https://jobs.lever.co/fabrikam/abc?utm_source=freehire.me",
+   "title": "Cloud Engineer",
+   "company": null,
+   "location": "Worldwide",
+   "posted_at": null,
+   "created_at": "2026-10-11T10:00:00Z",
+   "last_seen_at": "2026-10-11T10:00:00Z",
+   "closed_at": null
+  }
+ ],
+ "meta": {
+  "total": 1,
+  "limit": 100,
+  "offset": 0
+ }
+}

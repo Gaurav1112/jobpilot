@@ -9,6 +9,9 @@ import { LEVER_HOST, LEVER_PAGE_SIZE, leverParse, leverUrl } from '../lever.js';
 import * as ef from './eightfold.js';
 import * as orc from './oracle.js';
 import { fetchIcimsListing, icimsBoardOfUrl, icimsSitemapUrl, parseIcimsRef } from './icims.js';
+import { freshteam } from './freshteam.js';
+import { jazzhr } from './jazzhr.js';
+import type { ListingPagesBoard } from './listing-pages.js';
 import { fetchJsonLdListing, jsonLdBoardOfUrl, jsonLdRef, parseJsonLdRef } from './jsonld-sitemap.js';
 import { hiringOrganizationOf, readOneJobPage, type PageListing } from './pages.js';
 import { fetchSrListing, parseSmartRecruitersRef, smartRecruitersBoardOfUrl, srListingUrl } from './smartrecruiters.js';
@@ -334,7 +337,27 @@ async function pageRead(platform: string, ref: string, http: HttpTool, opts: Rea
 
 const sameHostAs = (host: string) => (u: URL): boolean => u.hostname.toLowerCase() === host;
 
+/** A listing-pages platform's client (JazzHR, Freshteam): the whole listing, then one job page for the board name. */
+function listingClient(b: ListingPagesBoard): PlatformClient {
+  const s = b.spec;
+  const slugOf = (ref: string): string => boardOf(ref, s.parseRef, s.platform, '<slug>');
+  return {
+    platform: s.platform,
+    host: null,
+    robots: true,
+    refOf: (slug, boardUrl) => (boardUrl === null ? null : s.boardOfUrl(boardUrl)) ?? s.parseRef(slug),
+    hostOf: (ref) => (s.parseRef(ref) === null ? null : s.hostOf(ref)),
+    boardUrl: (ref) => s.listingUrl(slugOf(ref), 1),
+    readBoard(ref, http, opts) {
+      const slug = slugOf(ref);
+      return pageRead(s.platform, ref, http, opts, s.listingUrl(slug, 1), (hosts) => b.fetchListing(http, hosts, slug, opts?.timeoutMs), sameHostAs(s.hostOf(slug)));
+    },
+  };
+}
+
 const PAGE_CLIENTS: Readonly<Record<string, PlatformClient>> = {
+  jazzhr: listingClient(jazzhr),
+  freshteam: listingClient(freshteam),
   icims: {
     platform: 'icims',
     host: null,
@@ -427,7 +450,7 @@ function feedClient(fb: FeedBoard<string>): PlatformClient {
       const req = { company: ref, slug: ref };
       const page = await refused(async () => {
         try {
-          return await fb.fetchFeed(http, hosts, b, req, opts?.timeoutMs);
+          return await fb.fetchFeed(http, hosts, b, req, opts?.timeoutMs, { firstPageOnly: true });
         } catch (e) {
           // the daily run defers a deterministic per-tenant problem; the verifier records it as a failed board
           if (e instanceof KernelError && e.code === 'input_rejected') throw new KernelError('invalid_output', e.message);
@@ -438,7 +461,7 @@ function feedClient(fb: FeedBoard<string>): PlatformClient {
         boardName: page.names.length === 1 ? (page.names[0] as string) : null,
         boardNames: page.names.length > 1 ? page.names : [],
         jobs: finish(page.postings),
-        complete: page.total === null || page.total <= page.listed,
+        complete: page.more !== true && (page.total === null || page.total <= page.listed),
         url: s.urlOf(b),
         nameKey: page.names.length === 0 && s.nameKey !== undefined ? s.nameKey(b) : null,
       };

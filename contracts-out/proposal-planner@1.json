@@ -1,5 +1,5 @@
 {
-  "hash": "eecf71b36c66b0a6230ce9a2ddfff920a71d6945aa27240828751563804e4006",
+  "hash": "749bf877079af852679a0203984b1037006276b3976778fb87c3206791b3a7ed",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -320,7 +320,10 @@
                               "gmail",
                               "upwork",
                               "reddit",
-                              "himalayas"
+                              "himalayas",
+                              "draftdev",
+                              "prime-intellect",
+                              "fractional-jobs"
                             ],
                             "type": "string"
                           },
@@ -593,7 +596,12 @@
                       "breezy",
                       "pinpoint",
                       "rippling",
-                      "gem"
+                      "gem",
+                      "jazzhr",
+                      "zohorecruit",
+                      "manatal",
+                      "freshteam",
+                      "freehire"
                     ],
                     "type": "string"
                   },
@@ -768,7 +776,12 @@
                                   "breezy",
                                   "pinpoint",
                                   "rippling",
-                                  "gem"
+                                  "gem",
+                                  "jazzhr",
+                                  "zohorecruit",
+                                  "manatal",
+                                  "freshteam",
+                                  "freehire"
                                 ],
                                 "type": "string"
                               },
@@ -1195,7 +1208,10 @@
               "gmail",
               "upwork",
               "reddit",
-              "himalayas"
+              "himalayas",
+              "draftdev",
+              "prime-intellect",
+              "fractional-jobs"
             ],
             "type": "string"
           },
@@ -1312,7 +1328,12 @@
                   "breezy",
                   "pinpoint",
                   "rippling",
-                  "gem"
+                  "gem",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "freehire"
                 ],
                 "type": "string"
               },
@@ -1487,7 +1508,12 @@
                               "breezy",
                               "pinpoint",
                               "rippling",
-                              "gem"
+                              "gem",
+                              "jazzhr",
+                              "zohorecruit",
+                              "manatal",
+                              "freshteam",
+                              "freehire"
                             ],
                             "type": "string"
                           },
@@ -2146,7 +2172,10 @@
                                   "gmail",
                                   "upwork",
                                   "reddit",
-                                  "himalayas"
+                                  "himalayas",
+                                  "draftdev",
+                                  "prime-intellect",
+                                  "fractional-jobs"
                                 ],
                                 "type": "string"
                               },
@@ -2358,6 +2387,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.7.0"
+    "version": "1.8.0"
   }
 }

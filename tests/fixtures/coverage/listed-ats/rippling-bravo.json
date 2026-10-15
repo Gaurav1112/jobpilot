@@ -1,0 +1,16 @@
+[
+ {
+  "uuid": "00000000-0000-4000-8000-000000000001",
+  "name": "Account Executive",
+  "department": { "id": "Sales", "label": "Sales" },
+  "url": "https://ats.rippling.com/bravo/jobs/00000000-0000-4000-8000-000000000001",
+  "workLocation": { "label": "Remote", "id": "Remote" }
+ },
+ {
+  "uuid": "00000000-0000-4000-8000-000000000002",
+  "name": "Backend Engineer",
+  "department": { "id": "Engineering", "label": "Engineering" },
+  "url": "https://ats.rippling.com/bravo/jobs/00000000-0000-4000-8000-000000000002",
+  "workLocation": { "label": "Remote", "id": "Remote" }
+ }
+]

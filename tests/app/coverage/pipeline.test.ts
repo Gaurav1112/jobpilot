@@ -30,8 +30,8 @@ describe('coverage pipeline helpers', () => {
   it('every stage compiles through the allow-list with one team per agent, its contract\'s own', () => {
     const compiled = compileCoverage(makeRunGate({ runKey: 't', store: memoryHostStateStore() }));
     const teams = STAGES.map((s) => [...compiled[s].compiled.teamOf.values()].map((t) => t.id));
-    expect(teams).toEqual([['coverage-seed'], ['coverage-locator'], ['coverage-detector'], ['coverage-verifier']]);
-    expect(STAGES.map((s) => compiled[s].agent.contract.id)).toEqual(['company-seed', 'careers-locator', 'platform-detector', 'board-verifier']);
+    expect(teams).toEqual([['coverage-seed'], ['coverage-freehire'], ['coverage-locator'], ['coverage-detector'], ['coverage-verifier']]);
+    expect(STAGES.map((s) => compiled[s].agent.contract.id)).toEqual(['company-seed', 'src-freehire-discovery', 'careers-locator', 'platform-detector', 'board-verifier']);
   });
 
   it('the seeds carry the coverage week, so a second run in the week has the same step keys', () => {

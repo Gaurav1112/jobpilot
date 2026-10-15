@@ -146,6 +146,32 @@ is doing; it asks the network, is polite and sequential, and never part of the t
 node --run jobpilot -- sources probe
 ```
 
+**Three monitored gig sources** (each its own team, so one failing never stops another):
+
+| Source | Reads | Budget |
+|---|---|---|
+| Draft.dev (`draftdev`) | the open writer roles in its public GitHub repo, through the GitHub REST API | GitHub: ≤ 12 requests a run, shared with Prime Intellect |
+| Prime Intellect (`prime-intellect`) | open environment bounties, one GitHub search request org-wide | one request a run, inside the same GitHub budget |
+| Fractional Jobs (`fractional-jobs`) | its public homepage cards (engineering, data, product); "15 - 20 hrs" is read as hours per week | one page a run, after robots.txt |
+
+The freelance run happens two runs a day (07:30 and 19:30 IST), so GitHub sees at most 24 requests a
+day from jobpilot, unauthenticated, with the honest `jobpilot/0.1 (+local)` user-agent and two
+seconds between requests. A refusal (401, 403, 429, a challenge page, a robots.txt disallow)
+switches that host off for the rest of the run with a named problem; nothing is retried around it.
+A card or role whose pay, hours or remote scope cannot be read goes to the review band, never to
+eligible.
+
+To turn one off, set it in `pack/freelance.yaml` and run `pack check`:
+
+```yaml
+platforms:
+  draftdev: { enabled: false, queries: [] }
+```
+
+(`platforms.<id>.enabled: false`, with `<id>` one of `draftdev`, `prime-intellect`,
+`fractional-jobs`.) `sources probe` lists the three with the others, probed whether or not they
+are on.
+
 ### Coverage run (career sites)
 
 ```sh
@@ -224,6 +250,65 @@ Only one jobpilot process runs at a time (`~/.jobpilot/jobpilot.lock`). A comman
 lock held refuses and names the holder; wait for it to finish. A lock left by a process that is
 gone is taken over automatically.
 
+#### The freehire seed and discovery
+
+```sh
+node --run jobpilot -- run-coverage [--no-freehire] [--catalogue-limit N]
+```
+
+Two additions to the weekly run, both on by default:
+
+- **The catalogue.** jobpilot ships a vendored list of job boards taken from the freehire project
+  (MIT licence), filtered to boards with a recent India or worldwide-remote tech posting. Each
+  coverage week the verifier is sent **300 boards** from it (`--catalogue-limit N` sends N, for
+  checks) until the list is drained. The run prints how many wait:
+
+  ```
+  catalogue: 1840 entries left for later weeks
+  ```
+
+  A catalogue board that verifies is a normal Verified company on its platform; one that does not
+  is shown as **Proposed** with its reasons (so you can reject it), never as failed. These entries
+  have no website and a key that starts `fh-`.
+- **The discovery stage.** Once a week jobpilot asks freehire's public API at most **10 fixed
+  searches** (one page of 100 each, title and location text only, postings of the last 7 days,
+  your office cities from `eligibility.yaml`). Boards on a platform jobpilot can read go to the
+  verifier; postings on a platform it cannot read are stored as **leads** (never a Himalayas or
+  Jobicy posting: jobpilot reads those feeds itself, only when `feeds.yaml` enables them). Leads
+  appear on the Jobs list in the **review** band under **Found through freehire**, never as
+  eligible, until you look at them; a lead whose own title or location says onsite or hybrid, or
+  that fails your filters, is rejected as usual. A 401, 403, 429 or challenge from freehire.me
+  stops the searches for the rest of that coverage run, a resumed run included.
+
+`--no-freehire` leaves both out of a run. Nothing at run time reads freehire's catalogue from the
+network: only the discovery searches contact `freehire.me`, once a week.
+
+**Regenerating the seed** is a build step, never done by hand:
+
+```sh
+node --run catalogue:freehire -- --date 2026-10-16 --cache /tmp/freehire-cache
+node --run catalogue:freehire -- --date 2026-10-16 --cache /tmp/freehire-cache --offline
+```
+
+The first form asks the freehire API once per platform and caches every answer in `<dir>`; the
+`--offline` form replays the cache and must produce **no diff** against the committed
+`assets/freehire/catalogue-seed.jsonl` and `manifest.json` (the manifest records the sha256 of
+every cached answer). The script fails above the 2 MB cap.
+
+**Attribution.** The seed is derived from freehire (github.com/strelov1/freehire, MIT). The licence
+notice is `assets/freehire/NOTICE` and must stay with the seed; any page that shows a freehire
+lead says where it came from.
+
+#### The new platforms
+
+The daily run reads the verified boards of four more platforms, each its own team: **JazzHR**,
+**Zoho Recruit**, **Manatal** and **Freshteam**. They are read only after a coverage run has
+verified a company on them (the registry decides; nothing is added to your watchlist), at the same
+politeness as the other platforms (robots.txt first, two seconds apart, a refusal disables the
+host for the run). **UKG Pro is detected but skipped**: its robots.txt disallows `*/JobBoardView`,
+the only endpoint that lists every job, so such a company is shown as Proposed with that reason
+and is never read.
+
 ### Coverage probe: what the coverage adds
 
 ```sh
@@ -242,6 +327,7 @@ Companies by status and platform
   ashby              0         0        0         0       1
   total              2         1        0         0       1
   deferred this week (coverage week of 2026-10-11): 0
+  catalogue: 0 verified, 0 proposed, 1840 left · discovery: boards 0, leads 0 (last week)
 
 New jobs only the platform adapters found (no copy on an existing source), passing = eligible or review with fit >= 60
   none
@@ -252,6 +338,10 @@ Requests today and problems per platform (latest daily run daily-2026-10-14-2)
   greenhouse: 1/1 boards
   ...
 ```
+
+The `catalogue:` line counts the freehire catalogue boards in the registry (verified, proposed),
+the catalogue entries not yet offered to the verifier, and what the discovery stage added: boards
+and leads (leads seen since the week before this one).
 
 It reads the database only and makes no request. It takes the run lock, so it refuses while a run
 is writing. It reports the companies by status and platform, the **new jobs** found only through

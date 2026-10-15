@@ -37,6 +37,10 @@ export const SYMBOLIC_EGRESS = [
   'registry:pinpoint-hosts',
   'registry:rippling-hosts',
   'registry:gem-hosts',
+  'registry:jazzhr-hosts',
+  'registry:freshteam-hosts',
+  'registry:zohorecruit-hosts',
+  'registry:manatal-hosts',
 ] as const;
 export type SymbolicEgress = (typeof SYMBOLIC_EGRESS)[number];
 export const isSymbolicEgress = (e: string): e is SymbolicEgress => (SYMBOLIC_EGRESS as readonly string[]).includes(e);

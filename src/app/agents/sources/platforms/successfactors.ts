@@ -257,7 +257,7 @@ export interface SuccessFactorsRaw {
 
 export const srcSuccessFactorsContract = defineContract({
   id: 'src-successfactors',
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Reads one verified SuccessFactors careers site\'s sitemal feed, streamed under a fifty megabyte cap, with job pages only for items without a location',
   skills: ['job-sourcing'],
   team: 'sourcing-successfactors',

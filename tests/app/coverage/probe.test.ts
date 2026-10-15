@@ -126,6 +126,34 @@ describe('companies', () => {
   });
 });
 
+describe('freehire', () => {
+  const freehireOf = (home: Home) => reportOf(home).freehire;
+  it('counts the catalogue boards by status, the discovery boards, the entries left and the last weeks leads', () => {
+    const e = makeHome();
+    const ins = (key: string, status: string, source: string, slug: string): void => {
+      e.app.kernel.db.prepare(`INSERT INTO companies (company_key, name, website, platform, platform_slug, status, source, updated_at) VALUES (?, ?, '', 'greenhouse', ?, ?, ?, 'a')`).run(key, key, slug, status, source);
+    };
+    ins('fh-0000000000000001.freehire', 'verified', 'freehire', 'a');
+    ins('fh-0000000000000002.freehire', 'verified', 'freehire', 'b');
+    ins('fh-0000000000000003.freehire', 'proposed', 'freehire', 'c');
+    ins('fh-0000000000000004.freehire', 'proposed', 'freehire-discovery', 'd');
+    ins('plain.example', 'verified', 'picks', 'e');
+    e.app.recordFreehireLeads('2026-10-11', [{ leadKey: 'k1', source: 'x', url: 'https://x.example/1', title: 'T', company: null, location: null, postedAt: null, evidence: 'india', queryId: 'q1' }], 'a');
+    const f = freehireOf(e);
+    expect(f.catalogue.verified).toBe(2);
+    expect(f.catalogue.proposed).toBe(1);
+    expect(f.catalogue.left).toBeGreaterThan(0);
+    expect(f.discovery).toEqual({ boards: 1, leads: 1 });
+    expect(formatReport(reportOf(e))).toContain(`catalogue: 2 verified, 1 proposed, ${f.catalogue.left} left · discovery: boards 1, leads 1 (last week)`);
+  });
+  it('is zeros with an empty registry, and the line still prints', () => {
+    const e = makeHome();
+    const f = freehireOf(e);
+    expect([f.catalogue.verified, f.catalogue.proposed, f.discovery.boards, f.discovery.leads]).toEqual([0, 0, 0, 0]);
+    expect(formatReport(reportOf(e))).toMatch(/catalogue: 0 verified, 0 proposed, \d+ left · discovery: boards 0, leads 0 \(last week\)/);
+  });
+});
+
 describe('new jobs', () => {
   it('counts Workday-only jobs and registry-only Greenhouse jobs, per platform and in total', () => {
     const r = reportOf(h);
@@ -251,7 +279,7 @@ describe('per platform', () => {
 describe('output', () => {
   it('--json has the documented stable shape and order', () => {
     const r = JSON.parse(JSON.stringify(reportOf(h))) as CoverageProbeReport;
-    expect(Object.keys(r)).toEqual(['version', 'today', 'window', 'companies', 'newJobs', 'platforms', 'latestDailyRun']);
+    expect(Object.keys(r)).toEqual(['version', 'today', 'window', 'companies', 'newJobs', 'freehire', 'platforms', 'latestDailyRun']);
     expect(r.version).toBe(1);
     expect(Object.keys(r.companies)).toEqual(['statuses', 'platforms', 'counts', 'totals', 'deferredThisWeek']);
     expect(r.companies.statuses).toEqual(['verified', 'proposed', 'failing', 'rejected', 'failed']);

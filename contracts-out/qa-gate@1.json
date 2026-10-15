@@ -1,5 +1,5 @@
 {
-  "hash": "d529c8291e7a003740257975adf13e77abb19d48b0206f4fc9dc0570f24f673b",
+  "hash": "be647830953510bb13709b459b77155b297812d31d584368bf913047864c667e",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -124,7 +124,12 @@
                       "breezy",
                       "pinpoint",
                       "rippling",
-                      "gem"
+                      "gem",
+                      "jazzhr",
+                      "zohorecruit",
+                      "manatal",
+                      "freshteam",
+                      "freehire"
                     ],
                     "type": "string"
                   },
@@ -299,7 +304,12 @@
                                   "breezy",
                                   "pinpoint",
                                   "rippling",
-                                  "gem"
+                                  "gem",
+                                  "jazzhr",
+                                  "zohorecruit",
+                                  "manatal",
+                                  "freshteam",
+                                  "freehire"
                                 ],
                                 "type": "string"
                               },
@@ -818,6 +828,6 @@
     },
     "team": "writing",
     "timeoutMs": 120000,
-    "version": "1.5.0"
+    "version": "1.6.0"
   }
 }

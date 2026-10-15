@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Runs · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs" aria-current="page">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+
+<div class="page-head">
+<h1>Runs</h1>
+<p class="lede">The last 1 run, newest first.</p>
+<details class="audit"><summary>Audit log: intact</summary><p class="chain chain-ok">Audit log intact: <span class="num">0</span> events, every one chained to the last. Full check: just now.</p></details>
+</div>
+<section class="card wide run" aria-labelledby="run-daily-2026-10-15">
+<h2 id="run-daily-2026-10-15"><code>daily-2026-10-15</code> <span class="pill pill-critical">1 problem</span></h2>
+<p class="run-meta"><span>15 Oct 2026, 07:00 IST</span><span class="sep" aria-hidden="true">·</span><span>pack <code title="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa">aaaaaaaaaaaa</code></span><span class="sep" aria-hidden="true">·</span><span>policy <code title="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb">bbbbbbbbbbbb</code></span></p>
+<div class="table-wrap"><table class="counts">
+<thead><tr><th scope="col">Agent</th><th scope="col" class="num">Done</th><th scope="col" class="num">Replayed</th><th scope="col" class="num">Failed</th><th scope="col" class="num">Gone</th><th scope="col" class="num">Skipped</th><th scope="col" class="num">Quarantined</th><th scope="col" class="num">Input rejected</th></tr></thead>
+<tbody><tr><th scope="row" class="agent"><code>evidence-matcher</code></th><td class="num">1</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num bad">1</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td></tr><tr><th scope="row" class="agent"><code>normalizer</code></th><td class="num">3</td><td class="num">2</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num">1</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td></tr></tbody>
+<tfoot><tr><th scope="row">Total</th><td class="num">4</td><td class="num">2</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num">1</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td><td class="num bad">1</td><td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td></tr></tfoot>
+</table></div>
+<h3>Problems <span class="num">(1)</span></h3><ul class="problems"><li><span class="problem-kind">Quarantined</span> <code>evidence-matcher</code> <span class="problem-item">Hooli — Platform Engineer</span><span class="problem-reason">G-GROUND: bullet 2 is not a fact claim</span></li></ul>
+<h3>Warnings</h3><ul class="plain warnings"><li>the notification could not be posted: osascript missing</li></ul>
+</section>
+</main>
+</body>
+</html>

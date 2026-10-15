@@ -6,11 +6,13 @@ import { dirname } from 'node:path';
 import { MIGRATIONS } from '../../kernel/store/migrations.js';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
-import type { CompanyVerdict, Platform } from '../coverage/types.js';
+import { listedGuess, type CompanyVerdict, type Platform } from '../coverage/types.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
+import { boardKey } from '../coverage/catalogue.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
+import { DECIDE_BANDS } from '../triage.js';
 import { routesToFreelance, structuredFullTime } from './contract-routes.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
@@ -31,6 +33,9 @@ export type Verdict = 'eligible' | 'rejected' | 'review';
  */
 export type Band = 'disclosed' | 'undisclosed' | 'review' | 'below-floor' | 'rejected';
 export const DEFAULT_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review'];
+/** A1: the list's tiers: eligible (pay at or above the minimum, or not listed), check first, under the minimum, not a match. */
+const BAND_TIER: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 0, review: 1, 'below-floor': 2, rejected: 3 };
+const descNullLast = (a: number | null, b: number | null): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : b - a);
 const BAND_RANK: Readonly<Record<Band, number>> = { disclosed: 0, undisclosed: 1, review: 2, 'below-floor': 3, rejected: 4 };
 export { ATS_SOURCES };
 
@@ -234,6 +239,8 @@ export interface JobsPage {
   readonly total: number;
   readonly newCount: number;
   readonly hiddenCount: number;
+  /** The listed rows that are To decide (U9, `isToDecideFrom`). */
+  readonly toDecide: number;
 }
 
 export interface RunSummary {
@@ -865,9 +872,9 @@ export class AppStore {
       .filter((j) => company === undefined || jobOfCompany(jobKeys(j), company))
       .sort(
         (a, b) =>
-          BAND_RANK[a.band] - BAND_RANK[b.band] ||
-          (a.band === 'disclosed' ? (b.compMaxInr ?? 0) - (a.compMaxInr ?? 0) : 0) ||
-          (b.score ?? -Infinity) - (a.score ?? -Infinity) ||
+          BAND_TIER[a.band] - BAND_TIER[b.band] ||
+          descNullLast(a.score, b.score) ||
+          descNullLast(a.compMaxInr, b.compMaxInr) ||
           cmp(b.firstSeen, a.firstSeen) ||
           cmp(a.jobKey, b.jobKey),
       );
@@ -885,7 +892,7 @@ export class AppStore {
    * - `hiddenCount`: the rows every other filter passes whose band is not listed (the "N hidden" line).
    * - Only the shown rows and their groups' rows are read in full (by key).
    */
-  listJobsPage(filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }): JobsPage {
+  listJobsPage(filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number; readonly decideFrom: string }): JobsPage {
     registerListFunctions(this.db);
     const listed = new Set(filter.band ?? DEFAULT_BANDS);
     const where: string[] = [];
@@ -904,31 +911,36 @@ export class AppStore {
       where.push('jp_job_of_company(j.company, j.url, j.source, j.source_id, @cNorm, @cDomain, @cBoard) = 1');
       Object.assign(args, { cNorm: c.norm, cDomain: c.domain, cBoard: c.board });
     }
+    const prec = (col: string): string => `CASE ${col} ${JOB_STATUSES.map((st) => `WHEN '${st}' THEN ${STATUS_PRECEDENCE[st]}`).join(' ')} END`;
+    // the group's status rank: the furthest of the preferred row's and its duplicates' (`groupStatus`)
+    const groupRank = `MAX(${prec(`CASE WHEN j.duplicate_of IS NULL THEN j.status ELSE (SELECT t.status FROM jobs t WHERE t.job_key = j.duplicate_of) END`)},
+             COALESCE((SELECT MAX(${prec('d.status')}) FROM jobs d WHERE d.duplicate_of = COALESCE(j.duplicate_of, j.job_key)), -1))`;
     if (filter.status !== undefined) {
-      // the group's status: the furthest of the preferred row's and its duplicates' (`groupStatus`)
-      const prec = (col: string): string => `CASE ${col} ${JOB_STATUSES.map((st) => `WHEN '${st}' THEN ${STATUS_PRECEDENCE[st]}`).join(' ')} END`;
       const wanted = [...new Set(filter.status)].map((st) => STATUS_PRECEDENCE[st]);
-      where.push(
-        `MAX(${prec(`CASE WHEN j.duplicate_of IS NULL THEN j.status ELSE (SELECT t.status FROM jobs t WHERE t.job_key = j.duplicate_of) END`)},
-             COALESCE((SELECT MAX(${prec('d.status')}) FROM jobs d WHERE d.duplicate_of = COALESCE(j.duplicate_of, j.job_key)), -1))
-         IN (${wanted.length === 0 ? 'NULL' : wanted.join(', ')})`,
-      );
+      where.push(`${groupRank} IN (${wanted.length === 0 ? 'NULL' : wanted.join(', ')})`);
     }
+    args['decideFromMs'] = Date.parse(opts.decideFrom);
     // `bandOf`, as a rank (BAND_RANK)
     const band = `CASE WHEN j.verdict = 'rejected' THEN 4 WHEN j.docs_state = 'below-floor' THEN 3 WHEN j.verdict = 'eligible' THEN
       CASE WHEN j.comp_max_inr IS NULL THEN 1 WHEN @floor IS NOT NULL AND j.comp_max_inr < @floor THEN 3 ELSE 0 END ELSE 2 END`;
-    const base = `SELECT j.job_key, j.score, j.first_seen, j.comp_max_inr, ${band} AS band FROM jobs j${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`;
+    // U9 (src/app/triage.ts): new, first seen since decideFrom; -1 for rows outside the window (the subqueries run for recent rows only)
+    const decideRank = `CASE WHEN jp_epoch_ms(j.first_seen) >= @decideFromMs THEN ${groupRank} ELSE -1 END`;
+    const base = `SELECT j.job_key, j.score, j.first_seen, j.comp_max_inr, ${band} AS band, ${decideRank} AS decide_rank FROM jobs j${where.length > 0 ? ` WHERE ${where.join(' AND ')}` : ''}`;
     const counts = this.db
-      .prepare(`SELECT band, COUNT(*) AS n, SUM(CASE WHEN jp_epoch_ms(first_seen) > @newAfter THEN 1 ELSE 0 END) AS fresh FROM (${base}) GROUP BY band`)
-      .all({ ...args, newAfter: opts.newAfterMs }) as { band: number; n: number; fresh: number }[];
+      .prepare(`SELECT band, COUNT(*) AS n, SUM(CASE WHEN jp_epoch_ms(first_seen) > @newAfter THEN 1 ELSE 0 END) AS fresh,
+                       SUM(CASE WHEN decide_rank = 0 THEN 1 ELSE 0 END) AS decide FROM (${base}) GROUP BY band`)
+      .all({ ...args, newAfter: opts.newAfterMs }) as { band: number; n: number; fresh: number; decide: number }[];
+    const decideRanks = DECIDE_BANDS.map((b) => BAND_RANK[b as Band]);
     const ranks = ALL_BANDS.filter((b) => listed.has(b)).map((b) => BAND_RANK[b]);
     let total = 0;
     let newCount = 0;
     let hiddenCount = 0;
+    let toDecide = 0;
     for (const c of counts) {
       if (ranks.includes(c.band)) {
         total += c.n;
         newCount += c.fresh;
+        if (decideRanks.includes(c.band)) toDecide += c.decide;
       } else hiddenCount += c.n;
     }
     const pages = Math.max(1, Math.ceil(total / opts.size));
@@ -937,11 +949,12 @@ export class AppStore {
       ? []
       : (this.db
           .prepare(
-            `SELECT job_key FROM (${base}) WHERE band IN (${ranks.join(', ')})
-             ORDER BY band, CASE WHEN band = 0 THEN comp_max_inr END DESC, score DESC, first_seen DESC, job_key LIMIT @limit OFFSET @offset`,
+            `SELECT job_key FROM (SELECT job_key, band, score, comp_max_inr, first_seen, CASE band WHEN 0 THEN 0 WHEN 1 THEN 0 WHEN 2 THEN 1 WHEN 3 THEN 2 ELSE 3 END AS band_tier FROM (${base}))
+             WHERE band IN (${ranks.join(', ')})
+             ORDER BY band_tier, score DESC, comp_max_inr DESC, first_seen DESC, job_key LIMIT @limit OFFSET @offset`,
           )
           .all({ ...args, limit: opts.size, offset: (page - 1) * opts.size }) as { job_key: string }[]).map((r) => r.job_key);
-    return { jobs: this.leanViews(keys, filter.floorInr), page, pages, total, newCount, hiddenCount };
+    return { jobs: this.leanViews(keys, filter.floorInr), page, pages, total, newCount, hiddenCount, toDecide };
   }
 
   /**
@@ -1547,7 +1560,9 @@ export class AppStore {
         )
         .run({
           key: cand.companyKey, name: cand.name, website: cand.website,
-          careersUrl: v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
+          // a board taken from the listed careersUrl as written (`<platform>:listed`) keeps that URL, not the page its
+          // redirect landed on, so a re-seed from the registry (`registryPickItems`) names the same board again
+          careersUrl: (listedGuess(v.guess) ? cand.careersUrl : null) ?? v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
           platform: keep(v.guess.platform, prev?.platform), slug: keep(v.guess.slug, prev?.platform_slug), boardUrl: keep(v.guess.boardUrl, prev?.board_url),
           status, reasons: JSON.stringify(v.reasons), source: cand.source, jobsSeen: keep(v.jobsSeen, prev?.jobs_seen),
           lastVerified, failingSince, failWeeks, override: prev?.user_override ?? null, at, natural,
@@ -1583,6 +1598,47 @@ export class AppStore {
       .prepare(`SELECT * FROM companies WHERE status IN ('verified', 'failing') AND (user_override IS NULL OR user_override <> 'rejected') ORDER BY company_key`)
       .all() as CompanyRowDb[];
     return rows.map(companyOf);
+  }
+
+  /**
+   * Sources-x Task 7: every board the registry holds, any status (rejected and failed included), as
+   * the coverage run's `boardKey` (`<platform> <slug lower-cased>`, an Eightfold slug without its stored API-variant
+   * prefix): the catalogue never offers one of them again.
+   */
+  registryBoardKeys(): Set<string> {
+    const rows = this.db.prepare(`SELECT platform, platform_slug FROM companies WHERE platform IS NOT NULL AND platform_slug IS NOT NULL`).all() as { platform: string; platform_slug: string }[];
+    return new Set(rows.map((r) => boardKey(r.platform, r.platform_slug)));
+  }
+
+  /**
+   * Sources-x Task 8: records the weekly discovery's leads (postings on platforms jobpilot cannot read). An upsert by
+   * `lead_key`: the first week is kept, everything else comes from the latest finding. Returns how many leads were new.
+   */
+  recordFreehireLeads(week: string, leads: readonly FreehireLeadIn[], _at: string): number {
+    return this.tx(() => {
+      const st = this.db.prepare(
+        `INSERT INTO freehire_leads (lead_key, source, url, title, company, location, posted_at, evidence, first_week, last_week, query_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (lead_key) DO UPDATE SET source = excluded.source, url = excluded.url, title = excluded.title, company = excluded.company,
+           location = excluded.location, posted_at = excluded.posted_at, evidence = excluded.evidence, last_week = excluded.last_week, query_id = excluded.query_id`,
+      );
+      const had = this.db.prepare(`SELECT 1 FROM freehire_leads WHERE lead_key = ?`);
+      let added = 0;
+      for (const l of leads) {
+        if (had.get(l.leadKey) === undefined) added++;
+        st.run(l.leadKey, l.source, l.url, l.title, l.company, l.location, l.postedAt, l.evidence, week, week, l.queryId);
+      }
+      return added;
+    });
+  }
+
+  /** The leads last seen in `sinceWeek` or later, by lead key. */
+  freehireLeads(sinceWeek: string): FreehireLead[] {
+    const rows = this.db.prepare(`SELECT * FROM freehire_leads WHERE last_week >= ? ORDER BY lead_key`).all(sinceWeek) as {
+      lead_key: string; source: string; url: string; title: string; company: string | null; location: string | null; posted_at: string | null;
+      evidence: 'india' | 'worldwide'; first_week: string; last_week: string; query_id: string;
+    }[];
+    return rows.map((r) => ({ leadKey: r.lead_key, source: r.source, url: r.url, title: r.title, company: r.company, location: r.location, postedAt: r.posted_at, evidence: r.evidence, firstWeek: r.first_week, lastWeek: r.last_week, queryId: r.query_id }));
   }
 
   /** One registry row, or undefined. */
@@ -1678,6 +1734,23 @@ interface CompanyRowDb {
 }
 
 /** One registry row. */
+/** A posting the weekly freehire discovery found on a platform jobpilot cannot read (sources-x Task 8). */
+export interface FreehireLeadIn {
+  readonly leadKey: string;
+  readonly source: string;
+  readonly url: string;
+  readonly title: string;
+  readonly company: string | null;
+  readonly location: string | null;
+  readonly postedAt: string | null;
+  readonly evidence: 'india' | 'worldwide';
+  readonly queryId: string;
+}
+export interface FreehireLead extends FreehireLeadIn {
+  readonly firstWeek: string;
+  readonly lastWeek: string;
+}
+
 export interface Company {
   readonly companyKey: string;
   readonly name: string;

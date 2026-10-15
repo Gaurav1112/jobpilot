@@ -86,7 +86,7 @@ describe('platformClient', () => {
   it('reads Greenhouse, Lever, Ashby, Workday, Eightfold and Oracle with the daily adapters\' own URLs; every other platform is not built', () => {
     // Task 8 added the page platforms (their clients are tested in sources-pagesites.test.ts)
     // Task 9 added the nine small platforms (their clients are tested in sources-small.test.ts)
-    expect(BUILT_PLATFORMS).toEqual(['ashby', 'bamboohr', 'breezy', 'eightfold', 'gem', 'greenhouse', 'icims', 'jsonld-sitemap', 'lever', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday']);
+    expect(BUILT_PLATFORMS).toEqual(['ashby', 'bamboohr', 'breezy', 'eightfold', 'freshteam', 'gem', 'greenhouse', 'icims', 'jazzhr', 'jsonld-sitemap', 'lever', 'manatal', 'oracle', 'personio', 'pinpoint', 'recruitee', 'rippling', 'smartrecruiters', 'successfactors', 'teamtailor', 'workable', 'workday', 'zohorecruit']);
     // Task 7: Eightfold and Oracle read each tenant's own host; robots.txt governs both, Oracle's 403 is "unknown"
     const ef = platformClient('eightfold');
     expect(ef?.refOf('explore.jobs.netflix.net/netflix.com', 'https://explore.jobs.netflix.net/api/apply/v2/jobs?domain=netflix.com')).toBe('explore.jobs.netflix.net/netflix.com');
@@ -557,4 +557,12 @@ describe('board-verifier: the page platforms (Task 8: strict robots, a JobPostin
     expect(v).toMatchObject({ status: 'proposed', boardName: 'HCL Technologies Limited', jobsSeen: 1 });
     expect(v.reasons[0]).toMatch(/^board name 'HCL Technologies Limited' ≈ 'HCLTech', please confirm$/);
   });
+});
+
+it('a UKG guess is Proposed with the robots reason, nothing fetched', async () => {
+  const { fetch, calls } = serve({});
+  const v = await verify(guess(cand('acme.com', 'Acme'), 'ukg', 'recruiting.ultipro.com/acme1/10653576-f6a1-4d69-8a9c-a0a96124abda'), fetch);
+  expect(v.status).toBe('proposed');
+  expect(v.reasons[0]).toMatch(/^ukg: not read: robots\.txt disallows \*\/JobBoardView/);
+  expect(calls).toEqual([]);
 });

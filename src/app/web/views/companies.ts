@@ -1,6 +1,6 @@
-import { dateText } from '../format.js';
+import { countText, dateText } from '../format.js';
 import { html, type Html } from '../html.js';
-import { csrfField, pill, type Tone } from './common.js';
+import { csrfField, meta, pager, pill, type Tone } from './common.js';
 
 /**
  * The Companies tab (Task 11, spec §5): the coverage registry in five lists (Verified, Proposed, Failing, Rejected,
@@ -21,10 +21,12 @@ export function httpsUrl(u: string | null): string | undefined {
   }
 }
 
-export type CompanyList = 'verified' | 'proposed' | 'failing' | 'rejected' | 'unverified' | 'deferred';
-
-const LIST_LABEL: Readonly<Record<CompanyList, string>> = {
-  verified: 'Verified', proposed: 'Proposed', failing: 'Failing', rejected: 'Rejected', unverified: 'Your picks not verified', deferred: 'Deferred this week',
+export type CompanyList = 'verified' | 'proposed' | 'failing' | 'rejected' | 'unverified';
+export type CompanySection = 'add' | 'proposed' | 'failing' | 'unverified' | 'verified' | 'rejected' | 'skipped';
+/** A9: what needs you first, then what runs; the jump links are generated from this same list. */
+export const COMPANY_SECTIONS: readonly CompanySection[] = ['add', 'proposed', 'failing', 'unverified', 'verified', 'rejected', 'skipped'];
+const SECTION_LABEL: Readonly<Record<CompanySection, string>> = {
+  add: 'Add a company', proposed: 'Proposed', failing: 'Failing', unverified: 'Your picks not verified', verified: 'Verified', rejected: 'Rejected', skipped: 'Skipped this week',
 };
 
 /** One registry row as a list shows it; every text already redacted by the route. */
@@ -67,12 +69,11 @@ export interface AddFormView {
 }
 
 export interface CompaniesPageData {
-  readonly lists: Readonly<Record<Exclude<CompanyList, 'deferred'>, readonly CompanyRowView[]>>;
+  readonly lists: Readonly<Record<CompanyList, readonly CompanyRowView[]>>;
   /** Companies from the seed lists whose board did not pass (not listed: the lists are long). */
   readonly hiddenFailed: number;
-  readonly deferred: readonly DeferredHost[];
-  /** The coverage run the deferrals come from (its id), or null when no coverage run this week. */
-  readonly deferredRun: string | null;
+  /** This week's skipped sites: the coverage run they come from (its id, or null), how many, and the count by reason in words. */
+  readonly skipped: { readonly run: string | null; readonly total: number; readonly byReason: readonly (readonly [why: string, n: number])[] };
   readonly csrf: string;
   readonly flash: { readonly tone: 'info' | 'warn'; readonly text: string; readonly key: string | null } | null;
   readonly add: AddFormView;
@@ -83,11 +84,11 @@ export interface CompaniesPageData {
 const PLATFORM_LABEL: Readonly<Record<string, string>> = {
   workday: 'Workday', eightfold: 'Eightfold', oracle: 'Oracle Recruiting', icims: 'iCIMS', successfactors: 'SuccessFactors', smartrecruiters: 'SmartRecruiters',
   workable: 'Workable', recruitee: 'Recruitee', teamtailor: 'Teamtailor', personio: 'Personio', bamboohr: 'BambooHR', breezy: 'Breezy', pinpoint: 'Pinpoint',
-  rippling: 'Rippling', gem: 'Gem', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', 'jsonld-sitemap': 'Job pages (JSON-LD)',
+  rippling: 'Rippling', gem: 'Gem', zohorecruit: 'Zoho Recruit', manatal: 'Manatal', greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', 'jsonld-sitemap': 'Job pages (JSON-LD)',
 };
 export const companyPlatformName = (p: string): string => PLATFORM_LABEL[p] ?? p;
 
-const SOURCE_LABEL: Readonly<Record<string, string>> = { pick: 'your pick', remoteintech: 'remote-jobs list', yc: 'YC hiring list', jobs: 'from your jobs' };
+const SOURCE_LABEL: Readonly<Record<string, string>> = { pick: 'your pick', remoteintech: 'remote-jobs list', yc: 'YC hiring list', jobs: 'from your jobs', freehire: 'freehire catalogue', 'freehire-discovery': 'freehire discovery' };
 
 /** A host's disable reason in words (gate.ts reasons), the code kept beside it. */
 export function deferWhy(why: string): string {
@@ -127,13 +128,13 @@ function found(c: CompanyRowView): Html {
   if (c.platform !== null) parts.push(html`<span>${companyPlatformName(c.platform)}${c.platformSlug !== null ? html` <code>${c.platformSlug}</code>` : ''}</span>`);
   if (c.boardUrl !== null) parts.push(html`<span>board <code>${c.boardUrl}</code></span>`);
   parts.push(html`<span>website <code>${c.website}</code></span>`);
-  return html`<p class="co-found">${parts.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>`;
+  return html`<p class="co-found">${meta(parts)}</p>`;
 }
 
 const reasonsList = (rs: readonly string[], label: string): Html | '' =>
   rs.length === 0 ? '' : html`<ul class="plain co-reasons" aria-label="${label}">${rs.map((r) => html`<li>${r}</li>`)}</ul>`;
 
-function row(c: CompanyRowView, list: Exclude<CompanyList, 'deferred'>, d: CompaniesPageData): Html {
+function row(c: CompanyRowView, list: CompanyList, d: CompaniesPageData): Html {
   const status: Readonly<Record<typeof list, [string, Tone]>> = {
     verified: ['Verified', 'good'], proposed: ['Proposed', 'warn'], failing: ['Failing', 'critical'], rejected: ['Rejected', 'muted'], unverified: ['Not verified', 'warn'],
   };
@@ -159,25 +160,40 @@ ${flash}
 </li>`;
 }
 
-function section(list: Exclude<CompanyList, 'deferred'>, d: CompaniesPageData, lede: string, empty: string): Html {
+function section(list: CompanyList, d: CompaniesPageData, lede: string, empty: string): Html {
   const rows = d.lists[list];
-  return html`<section class="card wide" aria-labelledby="${list}-h"><h2 id="${list}-h">${LIST_LABEL[list]} <span class="num tab-count">${rows.length}</span></h2>
+  return html`<section class="card wide" aria-labelledby="${list}-h"><h2 id="${list}-h">${SECTION_LABEL[list]} <span class="num tab-count">${countText(rows.length)}</span></h2>
 <p class="note">${lede}</p>
 ${rows.length === 0 ? html`<p class="muted">${empty}</p>` : html`<ul class="cos">${rows.map((c) => row(c, list, d))}</ul>`}
 </section>`;
 }
 
-function deferredSection(d: CompaniesPageData): Html {
-  return html`<section class="card wide" aria-labelledby="deferred-h"><h2 id="deferred-h">${LIST_LABEL.deferred} <span class="num tab-count">${d.deferred.length}</span></h2>
-<p class="note">Hosts this week's coverage run stopped asking (a refusal is never retried around). Their companies keep last week's state and are asked again next week.</p>
+function skippedSection(d: CompaniesPageData): Html {
+  const n = d.skipped.total;
+  return html`<section class="card wide" aria-labelledby="skipped-h"><h2 id="skipped-h">${SECTION_LABEL.skipped} <span class="num tab-count">${countText(n)}</span></h2>
+<p class="note">These sites refused or blocked jobpilot this week, so it left them alone. They're tried again next week.</p>
 ${
-  d.deferred.length === 0
-    ? html`<p class="muted">${d.deferredRun === null ? 'No coverage run this week yet.' : 'Nothing deferred this week.'}</p>`
-    : html`<ul class="plain co-deferred">${d.deferred.map(
-        (h) => html`<li><code>${h.host}</code> ${deferWhy(h.why)} <span class="muted">(${h.why})</span>${h.companies.length > 0 ? html`<span class="sep" aria-hidden="true">·</span>${h.companies.join(', ')}` : ''}</li>`,
-      )}</ul>`
+  n === 0
+    ? html`<p class="muted">${d.skipped.run === null ? 'No coverage run this week yet.' : 'Nothing skipped this week.'}</p>`
+    : html`<p>${meta(d.skipped.byReason.map(([why, k]) => html`<span><span class="num">${countText(k)}</span> ${why}</span>`))}</p>
+<p><a href="/companies/skipped">See the <span class="num">${countText(n)}</span> sites</a></p>`
 }
 </section>`;
+}
+
+export function skippedBody(d: { readonly hosts: readonly DeferredHost[]; readonly total: number; readonly page: number; readonly pages: number }): Html {
+  return html`<div class="page-head">
+<p class="crumbs"><a href="/companies#skipped-h">Companies</a></p>
+<h1>Sites skipped this week</h1>
+<p class="lede"><span class="num">${countText(d.total)}</span> site${d.total === 1 ? '' : 's'} refused or blocked jobpilot this week. They're tried again next week.</p>
+</div>
+${
+  d.hosts.length === 0
+    ? html`<p class="empty">Nothing skipped this week.</p>`
+    : html`<ul class="plain co-deferred">${d.hosts.map(
+        (h) => html`<li data-host="${h.host}">${meta([html`<span><code>${h.host}</code> ${deferWhy(h.why)} <span class="muted">(${h.why})</span></span>`, h.companies.length > 0 ? h.companies.join(', ') : null])}</li>`,
+      )}</ul>${pager({ page: d.page, pages: d.pages, href: (k) => (k === 1 ? '/companies/skipped' : '/companies/skipped?page=' + String(k)) })}`
+}`;
 }
 
 function addForm(d: CompaniesPageData): Html {
@@ -195,23 +211,21 @@ ${d.add.error !== null ? html`<p class="blocked" role="alert">${d.add.error}</p>
 }
 
 export function companiesBody(d: CompaniesPageData): Html {
-  const counts: [CompanyList, number][] = [
-    ['verified', d.lists.verified.length], ['proposed', d.lists.proposed.length], ['failing', d.lists.failing.length],
-    ['rejected', d.lists.rejected.length], ['unverified', d.lists.unverified.length], ['deferred', d.deferred.length],
-  ];
+  const countOf = (s: CompanySection): number => (s === 'add' ? 0 : s === 'skipped' ? d.skipped.total : d.lists[s].length);
+  const LEDE: Readonly<Record<CompanyList, readonly [string, string]>> = {
+    proposed: ['Found, but a check did not pass, so nothing is read until you approve. The reasons say what did not match.', 'Nothing waiting for you.'],
+    failing: ['Verified companies whose board stopped answering 3 weeks running. Still tried daily so they can recover; never removed without you.', 'No board is failing.'],
+    unverified: ['Companies you picked whose board did not pass the check; the weekly run tries again.' + (d.hiddenFailed > 0 ? ' ' + String(d.hiddenFailed) + (d.hiddenFailed === 1 ? ' company' : ' companies') + ' from the seed lists did not pass either (not listed).' : ''), 'None.'],
+    verified: ['Read by the daily run. Reject one to stop reading it from the next run.', 'No verified company yet.'],
+    rejected: ['Never read and never verified again. Undo reject puts one back in Proposed; Approve makes it read daily.', 'You have rejected none.'],
+  };
   return html`<div class="page-head">
 <h1>Companies</h1>
 <p class="lede">The companies whose own career sites jobpilot reads. The weekly coverage run finds and checks them; the daily run reads the verified ones (and the ones you approved).</p>
-<nav class="tabs" aria-label="Company lists">${counts.map(([l, n]) => html`<a href="#${l}-h">${LIST_LABEL[l]} <span class="num tab-count">${n}</span></a>`)}</nav>
+<nav class="tabs" aria-label="Company lists">${COMPANY_SECTIONS.map((s) => html`<a href="#${s}-h">${SECTION_LABEL[s]}${s === 'add' ? '' : html` <span class="num tab-count">${countText(countOf(s))}</span>`}</a>`)}</nav>
 </div>
 ${d.flash !== null && d.flash.key === null ? html`<p class="banner banner-${d.flash.tone}" role="status">${d.flash.text}</p>` : ''}
 <div class="stack">
-${section('proposed', d, 'Found, but a check did not pass, so nothing is read until you approve. The reasons say what did not match.', 'Nothing waiting for you.')}
-${section('verified', d, 'Read by the daily run. Reject one to stop reading it from the next run.', 'No verified company yet.')}
-${section('failing', d, 'Verified companies whose board stopped answering 3 weeks running. Still tried daily so they can recover; never removed without you.', 'No board is failing.')}
-${deferredSection(d)}
-${section('rejected', d, 'Never read and never verified again. Undo reject puts one back in Proposed; Approve makes it read daily.', 'You have rejected none.')}
-${section('unverified', d, 'Companies you picked whose board did not pass the check; the weekly run tries again.' + (d.hiddenFailed > 0 ? ' ' + String(d.hiddenFailed) + (d.hiddenFailed === 1 ? ' company' : ' companies') + ' from the seed lists did not pass either (not listed).' : ''), 'None.')}
-${addForm(d)}
+${COMPANY_SECTIONS.map((s) => (s === 'add' ? addForm(d) : s === 'skipped' ? skippedSection(d) : section(s, d, LEDE[s][0], LEDE[s][1])))}
 </div>`;
 }

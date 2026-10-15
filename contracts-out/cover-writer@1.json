@@ -1,5 +1,5 @@
 {
-  "hash": "5b673294bca47070eca74d50e9e5fe672f45c469e62897fcb2fa56143283eb6e",
+  "hash": "6b033aef10333777f70bc780212a8f83983a233f7d690e40f7e7c26b724924df",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -38,7 +38,12 @@
               "breezy",
               "pinpoint",
               "rippling",
-              "gem"
+              "gem",
+              "jazzhr",
+              "zohorecruit",
+              "manatal",
+              "freshteam",
+              "freehire"
             ],
             "type": "string"
           },
@@ -213,7 +218,12 @@
                           "breezy",
                           "pinpoint",
                           "rippling",
-                          "gem"
+                          "gem",
+                          "jazzhr",
+                          "zohorecruit",
+                          "manatal",
+                          "freshteam",
+                          "freehire"
                         ],
                         "type": "string"
                       },
@@ -646,7 +656,12 @@
                   "breezy",
                   "pinpoint",
                   "rippling",
-                  "gem"
+                  "gem",
+                  "jazzhr",
+                  "zohorecruit",
+                  "manatal",
+                  "freshteam",
+                  "freehire"
                 ],
                 "type": "string"
               },
@@ -821,7 +836,12 @@
                               "breezy",
                               "pinpoint",
                               "rippling",
-                              "gem"
+                              "gem",
+                              "jazzhr",
+                              "zohorecruit",
+                              "manatal",
+                              "freshteam",
+                              "freehire"
                             ],
                             "type": "string"
                           },
@@ -1194,6 +1214,6 @@
     },
     "team": "writing",
     "timeoutMs": 10000,
-    "version": "1.6.0"
+    "version": "1.7.0"
   }
 }

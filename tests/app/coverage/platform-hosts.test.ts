@@ -18,7 +18,7 @@ describe('platformForHost', () => {
   });
   it('every entry names a real Platform', () => {
     for (const p of PLATFORM_HOSTS) expect(Platform.safeParse(p.platform).success).toBe(true);
-    expect(PLATFORM_HOSTS).toHaveLength(23); // 22 from Task 3, plus careers.smartrecruiters.com (Task 4 signature table)
+    expect(PLATFORM_HOSTS).toHaveLength(33); // 23 before sources-x Task 1 (+10: jazzhr 1, zohorecruit 4, manatal 1, freshteam 1, ukg 3); was: 22 from Task 3, plus careers.smartrecruiters.com (Task 4 signature table)
   });
 
   it('bare-domain vendor suffixes need a tenant subdomain: not the apex, not www', () => {
@@ -27,5 +27,17 @@ describe('platformForHost', () => {
       expect(platformForHost(`www.${d}`)).toBeNull();
       expect(platformForHost(`acme.${d}`)).not.toBeNull();
     }
+  });
+});
+
+describe('sources-x hosts', () => {
+  it('knows the five new platforms on a dot boundary', () => {
+    expect(platformForHost('acme.applytojob.com')).toBe('jazzhr');
+    expect(platformForHost('acme.zohorecruit.com.au')).toBe('zohorecruit');
+    expect(platformForHost('www.careers-page.com')).toBe('manatal');
+    expect(platformForHost('acme.freshteam.com')).toBe('freshteam');
+    expect(platformForHost('recruiting2.ultipro.com')).toBe('ukg');
+    expect(platformForHost('acme.rec.pro.ukg.net')).toBe('ukg');
+    expect(platformForHost('notfreshteam.com')).toBeNull();
   });
 });

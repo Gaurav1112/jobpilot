@@ -3,7 +3,7 @@ import { definePredicate } from '../../kernel/predicates.js';
 import { defineType } from '../../kernel/types.js';
 import { CoverPlan, IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
 
-export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit', 'himalayas']);
+export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit', 'himalayas', 'draftdev', 'prime-intellect', 'fractional-jobs']);
 export type Platform = z.infer<typeof Platform>;
 
 const GigCurrency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD', 'SGD', 'NZD', 'HKD']);

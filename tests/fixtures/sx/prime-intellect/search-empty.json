@@ -1,0 +1,1 @@
+{"_note":"Shape of GET /search/issues for an open-bounty query that matches nothing open (recorded 2026-10-15: the 3 org matches were closed, so the is:open query answered empty).","total_count":0,"incomplete_results":false,"items":[]}

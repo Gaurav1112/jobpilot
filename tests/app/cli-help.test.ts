@@ -93,7 +93,7 @@ describe('the operator guide', () => {
 
   it('every option the guide uses is in that command\'s --help', () => {
     const uses = [
-      ['run', '--if-due'], ['run', '--refresh'], ['run', '--no-notify'], ['run', '--offline-fixtures'], ['run-coverage', '--if-due'], ['run-coverage', '--slice-minutes'],
+      ['run', '--if-due'], ['run', '--refresh'], ['run', '--no-notify'], ['run', '--offline-fixtures'], ['run-coverage', '--if-due'], ['run-coverage', '--slice-minutes'], ['run-coverage', '--no-freehire'], ['run-coverage', '--catalogue-limit'],
       ['coverage', 'probe', '--days'], ['coverage', 'probe', '--json'], ['serve', '--port'], ['pack', 'import', '--dry-run'], ['pack', 'import', '--forbid'], ['schedule', 'run-now', '--freelance'], ['schedule', 'run-now', '--coverage'], ['schedule', 'install', '--coverage-now'],
       ['audit', 'verify', '--db'], ['quarantined', '--db'], ['resume', '--db'],
     ] as const;
@@ -104,6 +104,24 @@ describe('the operator guide', () => {
       expect(help(path).out, `${path.join(' ')} ${opt}`).toContain(opt);
     }
   }, 120_000);
+
+  it('sources expansion: the guide covers the freehire seed, the new platforms and the gig sources', () => {
+    const scripts = (JSON.parse(read('package.json')) as { scripts: Record<string, string> }).scripts;
+    expect(scripts['catalogue:freehire']).toBeDefined();
+    for (const w of [
+      'node --run catalogue:freehire -- --date', '--cache', '--offline', 'assets/freehire/NOTICE', 'freehire', 'MIT', 'Found through freehire', '300',
+      'JazzHR', 'Zoho Recruit', 'Manatal', 'Freshteam', 'UKG Pro', 'JobBoardView',
+      'Draft.dev', 'Prime Intellect', 'Fractional Jobs', 'platforms.<id>.enabled: false', 'draftdev', 'prime-intellect', 'fractional-jobs',
+      'catalogue: ', 'discovery: boards', 'leads', '(last week)',
+    ]) expect(guide, w).toContain(w);
+    // the gig sources' request budget
+    expect(guide).toMatch(/≤ 12 requests a run/u);
+    expect(guide).toMatch(/two runs a day/u);
+    // the help texts name what the guide documents
+    expect(help(['coverage', 'probe']).out).toMatch(/catalogue/u);
+    expect(help(['sources', 'probe']).out).toMatch(/Draft\.dev/u);
+    expect(help(['run-coverage']).out).toMatch(/discovery/u);
+  }, 60_000);
 
   it('final review M-B7: a bad --limit or --slice-minutes is a usage error (commander\'s), not a crash', () => {
     for (const [opt, v] of [['--limit', 'abc'], ['--slice-minutes', '0']] as const) {

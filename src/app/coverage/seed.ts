@@ -134,7 +134,7 @@ function checkAllFailed(source: string, what: string, total: number, skipped: nu
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-const RANK: Record<CandidateSource, number> = { pick: 0, remoteintech: 1, yc: 2, jobs: 3 };
+const RANK: Record<CandidateSource, number> = { pick: 0, remoteintech: 1, yc: 2, jobs: 3, freehire: 4, 'freehire-discovery': 5 };
 
 /**
  * Joins the sources: one candidate per companyKey, the highest source wins (pick > remoteintech > yc > jobs; ties by
@@ -434,7 +434,7 @@ export function registryPickItems(app: AppStore, packPicks: readonly { readonly 
 export const companySeedContract = defineContract({
   id: 'company-seed',
   // 1.1.0: a 429 is no longer retried (final review N1: a refusal is never retried around)
-  version: '1.1.0',
+  version: '1.2.0',
   description: 'Builds the candidate companies for a coverage run from one source',
   skills: ['company-seed'],
   team: 'coverage-seed',

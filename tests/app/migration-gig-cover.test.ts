@@ -11,12 +11,15 @@ import { Store } from '../../src/kernel/store/store.js';
  */
 
 const TABLES = ['gig_docs', 'gig_snapshots'];
+/** The objects of migration 24 (sources-x freehire leads): later than this migration, left out of its byte-identical checks. */
+const LATER_OBJECTS = ['freehire_leads', 'freehire_leads_by_week'];
 
 /** Every table's rows (in rowid order) and every schema object's SQL; `sqlOf` leaves the given tables' own SQL out. */
 function dumpHash(db: Database.Database, sqlOf: readonly string[] = []): string {
   const h = createHash('sha256');
   const objs = db.prepare(`SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name`).all() as { type: string; name: string; tbl_name: string; sql: string | null }[];
   for (const o of objs) {
+    if (LATER_OBJECTS.includes(o.name)) continue;
     h.update(JSON.stringify(sqlOf.includes(o.name) && o.type === 'table' ? { ...o, sql: null } : o));
     if (o.type === 'table' && o.name !== 'app_schema') for (const r of db.prepare(`SELECT rowid AS __rowid, * FROM "${o.name}" ORDER BY rowid`).all()) h.update(JSON.stringify(r));
   }
@@ -56,8 +59,8 @@ function v22(): Store {
 }
 
 describe('migration 23: gig documents allow the cover letter', () => {
-  it('is the 23rd migration, a table rebuild with foreign keys off', () => {
-    expect(APP_MIGRATIONS.length).toBe(23);
+  it('is the 23rd of 24 migrations, a table rebuild with foreign keys off', () => {
+    expect(APP_MIGRATIONS.length).toBe(24);
     const m = APP_MIGRATIONS[22];
     expect(typeof m === 'object' && m !== null && m.foreignKeysOff).toBe(true);
   });
@@ -68,7 +71,7 @@ describe('migration 23: gig documents allow the cover letter', () => {
     const before = dumpHash(db, TABLES);
     const triggers = db.prepare(`SELECT name, sql FROM sqlite_master WHERE type IN ('trigger', 'index') AND tbl_name IN ('gig_docs', 'gig_snapshots') ORDER BY name`).all();
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(23);
+    expect(s.schemaVersion()).toBe(24);
     expect(dumpHash(db, TABLES)).toBe(before);
     expect(db.prepare(`SELECT name, sql FROM sqlite_master WHERE type IN ('trigger', 'index') AND tbl_name IN ('gig_docs', 'gig_snapshots') ORDER BY name`).all()).toEqual(triggers);
     const sqlOf = (t: string) => (db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(t) as { sql: string }).sql;

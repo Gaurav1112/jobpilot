@@ -63,7 +63,7 @@ pinned. **No new dependencies.**
 - Live data only through temp homes with a copy of `~/.jobpilot/pack`; `~/.jobpilot` is read-only (SELECT-only on
   its DB).
 - Research with endpoints, request bodies and live responses: `.superpowers/sdd/careersites-research-2026-10-13.md`.
-  Raw responses: `/private/tmp/claude-501/-Users-racit/f3efd04a-30cd-4e5b-bc92-82bcfcaace4e/scratchpad/cr/` (if
+  Raw responses: `$SCRATCH/cr/` (if
   gone, re-record with one polite request each).
 
 ## File map

@@ -1,0 +1,17 @@
+{
+  "_note": "SYNTHETIC: GitHub flags a timed-out search as incomplete; total_count above the single page of items.",
+  "total_count": 120,
+  "incomplete_results": true,
+  "items": [
+    {
+      "number": 41,
+      "title": "Environment: sandboxed code review ($800 bounty)",
+      "html_url": "https://github.com/PrimeIntellect-ai/example-environments/issues/41",
+      "repository_url": "https://api.github.com/repos/PrimeIntellect-ai/example-environments",
+      "state": "open",
+      "created_at": "2026-10-10T08:30:00Z",
+      "labels": [],
+      "body": "Anywhere in the world."
+    }
+  ]
+}

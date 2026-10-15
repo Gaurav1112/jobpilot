@@ -1,5 +1,5 @@
 {
-  "hash": "d1d83c53d4285f72adcace9ea64990b21347732a8ed96deaafc1d1d1bda3a298",
+  "hash": "c54eb931ab9a2047416600d05397d49b4de3b6dbde71b025f6da57e121fb99a6",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -35,7 +35,10 @@
               "gmail",
               "upwork",
               "reddit",
-              "himalayas"
+              "himalayas",
+              "draftdev",
+              "prime-intellect",
+              "fractional-jobs"
             ],
             "type": "string"
           },
@@ -95,7 +98,10 @@
               "gmail",
               "upwork",
               "reddit",
-              "himalayas"
+              "himalayas",
+              "draftdev",
+              "prime-intellect",
+              "fractional-jobs"
             ],
             "type": "string"
           },

@@ -1,0 +1,29 @@
+{
+ "data": [
+  {
+   "source": "greenhouse",
+   "external_id": "quillworks:4001",
+   "url": "https://job-boards.greenhouse.io/quillworks/jobs/4001?utm_source=freehire.me",
+   "title": "Platform Engineer",
+   "company": "Quill & Anvil",
+   "location": "Bengaluru, India",
+   "posted_at": "2026-10-14T08:00:00Z",
+   "created_at": "2026-10-14T08:00:00Z",
+   "last_seen_at": "2026-10-14T20:00:00Z",
+   "closed_at": null
+  },
+  {
+   "source": "remotedotcom",
+   "external_id": ":senior-backend-engineer-zz1",
+   "url": "https://remote.example/jobs/senior-backend-engineer-zz1?utm_source=freehire.me",
+   "title": "Senior Backend Engineer",
+   "company": "Example Labs",
+   "location": "India",
+   "posted_at": "2026-10-13T08:00:00Z",
+   "created_at": "2026-10-13T08:00:00Z",
+   "last_seen_at": "2026-10-14T20:00:00Z",
+   "closed_at": null
+  }
+ ],
+ "meta": { "limit": 100, "offset": 0, "total": 2 }
+}

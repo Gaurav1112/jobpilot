@@ -1,0 +1,21 @@
+{
+ "data": [
+  {
+   "posted_at": "2026-10-14T08:00:00Z",
+   "created_at": "2026-10-14T08:00:00Z",
+   "last_seen_at": "2026-10-14T20:00:00Z",
+   "closed_at": null,
+   "source": "ashby",
+   "external_id": "puneworks:p1",
+   "url": "https://jobs.ashbyhq.com/puneworks/p1?utm_source=freehire.me",
+   "title": "Senior Backend Engineer",
+   "company": "Pune Works",
+   "location": "Pune, Maharashtra, India"
+  }
+ ],
+ "meta": {
+  "limit": 100,
+  "offset": 0,
+  "total": 1
+ }
+}

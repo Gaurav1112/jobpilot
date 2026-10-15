@@ -244,6 +244,45 @@ function greenhouse(u: URL): BoardMatch {
 
 const greenhouseBoard = (slug: string): { slug: string; boardUrl: string } => ({ slug, boardUrl: `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs` });
 
+const GUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+const ZOHO_SUFFIXES = ['zohorecruit.com', 'zohorecruit.in', 'zohorecruit.eu', 'zohorecruit.com.au'] as const;
+
+/** Zoho Recruit: the board is the whole host `<label>.<suffix>` (the TLD is the data region and is part of the board). */
+function zohoBoard(u: URL): BoardMatch {
+  for (const suffix of ZOHO_SUFFIXES) {
+    if (u.hostname !== suffix && !u.hostname.endsWith(`.${suffix}`)) continue;
+    const label = tenantLabel(u.hostname, suffix);
+    if (label === null) return u.hostname === suffix || u.hostname === `www.${suffix}` ? null : 'slugless';
+    return { slug: `${label}.${suffix}`, boardUrl: `https://${label}.${suffix}/jobs/Careers` };
+  }
+  return null;
+}
+
+function manatalBoard(u: URL): BoardMatch {
+  const api = (slug: string) => ({ slug, boardUrl: `https://open.api.manatal.com/open/v3/career-page/${slug}/jobs/` });
+  if (u.hostname === 'open.api.manatal.com') {
+    const p = segs(u); // ['open','v3','career-page','<slug>','jobs']
+    return p[0] === 'open' && p[2] === 'career-page' && boardSegment(p[3]) ? api((p[3] as string).toLowerCase()) : 'slugless';
+  }
+  if (u.hostname === 'www.careers-page.com' || u.hostname === 'careers-page.com') {
+    const s = firstSeg(u, new Set(['static', 'api', 'login']));
+    return s === null ? 'slugless' : api(s.toLowerCase());
+  }
+  const label = tenantLabel(u.hostname, 'careers-page.com');
+  return label === null ? null : api(label);
+}
+
+/** UKG Pro: detected so the verifier can answer Proposed with the robots reason; never read (sources-x D8). */
+function ukgBoard(u: URL): BoardMatch {
+  const pro = tenantLabel(u.hostname, 'rec.pro.ukg.net') !== null;
+  if (!pro && !onHost(u, 'recruiting.ultipro.com', 'recruiting2.ultipro.com')) return u.hostname.endsWith('.rec.pro.ukg.net') ? 'slugless' : null;
+  const p = segs(u);
+  const tenant = p[0];
+  if (tenant === undefined || p[1]?.toLowerCase() !== 'jobboard' || !GUID.test(p[2] ?? '') || !/^[a-z0-9]{3,32}$/iu.test(tenant)) return 'slugless';
+  const guid = (p[2] as string).toLowerCase();
+  return { slug: `${u.hostname}/${tenant.toLowerCase()}/${guid}`, boardUrl: `https://${u.hostname}/${tenant.toLowerCase()}/JobBoard/${guid}/` };
+}
+
 /** The signature table, in the order of spec §3. `jsonld-sitemap` has no row: it is what is left when no row matches. */
 export const SIGNATURES: readonly SignatureRow[] = [
   { platform: 'workday', hosts: [{ suffix: 'myworkdayjobs.com' }, { suffix: 'myworkdaysite.com' }], board: workday },
@@ -282,6 +321,12 @@ export const SIGNATURES: readonly SignatureRow[] = [
     // the slug is the decoded board name; the posting API takes it percent-encoded, as the daily Ashby adapter sends it
     board: pathBoard(['jobs.ashbyhq.com'], (s) => `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(s)}`, { skip: ['api', 'static'], decode: true }),
   },
+  // sources-x Task 1
+  { platform: 'jazzhr', hosts: [{ suffix: 'applytojob.com', tenantOnly: true }], board: labelBoard('applytojob.com', (l) => `https://${l}.applytojob.com/apply`) },
+  { platform: 'zohorecruit', hosts: ZOHO_SUFFIXES.map((suffix) => ({ suffix, tenantOnly: true })), board: zohoBoard },
+  { platform: 'manatal', hosts: [{ suffix: 'careers-page.com' }], board: manatalBoard },
+  { platform: 'freshteam', hosts: [{ suffix: 'freshteam.com', tenantOnly: true }], board: labelBoard('freshteam.com', (l) => `https://${l}.freshteam.com/jobs`) },
+  { platform: 'ukg', hosts: [{ suffix: 'rec.pro.ukg.net', tenantOnly: true }, { suffix: 'recruiting.ultipro.com' }, { suffix: 'recruiting2.ultipro.com' }], board: ukgBoard },
 ];
 
 /** Page markers that are not board URLs (substrings, matched case-insensitively on host names or page text). */

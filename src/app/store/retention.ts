@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import { closeSync, createReadStream, createWriteStream, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statfsSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createGunzip, createGzip } from 'node:zlib';
-import { createInterface } from 'node:readline';
 import { parse as parseYaml } from 'yaml';
 import { z } from 'zod';
 import { canonicalJson } from '../../kernel/canonical.js';
@@ -379,8 +378,25 @@ export async function readSegment(path: string): Promise<{ sha256: string; lines
   const raw = createReadStream(path);
   raw.on('data', (c) => hash.update(c as Buffer));
   const lines: SegmentLine[] = [];
-  const rl = createInterface({ input: raw.pipe(createGunzip()), crlfDelay: Infinity });
-  for await (const l of rl) if (l !== '') lines.push(JSON.parse(l) as SegmentLine);
+  // Split on the \n byte only. readline also breaks lines at \r, U+2028 and U+2029, which JSON.stringify leaves
+  // unescaped inside strings (a scraped job description), so it would cut one record in two. 0x0a never occurs inside
+  // a UTF-8 multi-byte sequence, so splitting the bytes before decoding is safe across chunk boundaries.
+  let rest: Buffer = Buffer.alloc(0);
+  const take = (bytes: Buffer): void => {
+    const text = bytes.toString('utf8');
+    if (text !== '') lines.push(JSON.parse(text) as SegmentLine);
+  };
+  for await (const chunk of raw.pipe(createGunzip())) {
+    let buf = rest.length === 0 ? (chunk as Buffer) : Buffer.concat([rest, chunk as Buffer]);
+    let nl = buf.indexOf(0x0a);
+    while (nl !== -1) {
+      take(buf.subarray(0, nl));
+      buf = buf.subarray(nl + 1);
+      nl = buf.indexOf(0x0a);
+    }
+    rest = Buffer.from(buf);
+  }
+  take(rest);
   return { sha256: hash.digest('hex'), lines };
 }
 

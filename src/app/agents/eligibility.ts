@@ -77,6 +77,11 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    `offers.floor` → `below-floor:<maxInr>`. No comp adds the note `pay not disclosed`; an unknown basis adds
  *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor.
  * 7. experience is not checked here: the scorer applies the years penalty.
+ * 8. a freehire lead (`ats: 'freehire'`, found on a platform jobpilot cannot read) that would be `eligible` is `review`
+ *    with the reason `REASON_FREEHIRE_LEAD`; a rejected one stays rejected and a review one stays as it is. Uncertain ->
+ *    review (binding): a lead has no description, so one that rule 2 would reject as `onsite` only because nothing says
+ *    remote (no onsite or hybrid word in its title or location) is `review` with `remote-unclear` and
+ *    `REASON_FREEHIRE_LEAD`; a stated onsite or hybrid stays rejected.
  */
 
 const HEAD = 1500;
@@ -106,6 +111,9 @@ export interface Decision {
   reasons: string[];
   notes: string[];
 }
+
+/** The reason a freehire lead is held in the review band (rule 9; its code `freehire-lead` is what the dashboard reads). */
+export const REASON_FREEHIRE_LEAD = 'freehire-lead: found through freehire on a platform jobpilot cannot read; review only';
 
 const reject = (reason: string): Decision => ({ verdict: 'rejected', reasons: [reason], notes: [] });
 
@@ -506,8 +514,14 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (structured === 'remote' && countries.some((c) => INDIA_REGIONS.has(c)) && entry?.hiresInIndia === true) return null;
   if (REMOTE_WORD.test(p.locationText) && /india/i.test(p.locationText)) return null;
 
-  return anythingRemote ? 'review' : 'onsite';
+  if (anythingRemote) return 'review';
+  // Uncertain -> review: a freehire lead carries no description, so "nothing says remote" is missing evidence there,
+  // not a stated onsite (a stated one, in the title or location, returned 'onsite' or 'hybrid' above)
+  return p.ats === 'freehire' ? ONSITE_UNSTATED : 'onsite';
 }
+
+/** remoteDecision's onsite-by-absence for a freehire lead: decided like `onsite` (the office rule), else review, never a reject. */
+const ONSITE_UNSTATED = 'onsite-unstated';
 
 /** Indian states: a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
 const INDIAN_STATES: ReadonlySet<string> = new Set(['karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat']);
@@ -632,16 +646,17 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   if (employment.reason !== null) return reject(employment.reason);
 
   const decided = remoteDecision(p, pack);
-  const office = decided === 'onsite' || decided === 'hybrid' ? officeCityNote(p, pack) : null;
+  const office = decided === 'onsite' || decided === 'hybrid' || decided === ONSITE_UNSTATED ? officeCityNote(p, pack) : null;
   const remote = office !== null ? null : decided;
   const reasons: string[] = [];
   const notes: string[] = employment.b2b ? [NOTE_B2B] : [];
   if (office !== null) notes.push(office);
-  const review = remote === 'review' || remote === 'review-timezone';
+  const review = remote === 'review' || remote === 'review-timezone' || remote === ONSITE_UNSTATED;
   if (review) {
     reasons.push('remote-unclear');
     notes.push(NOTE_REMOTE_UNCLEAR);
     if (remote === 'review-timezone') notes.push(NOTE_TIMEZONE);
+    if (remote === ONSITE_UNSTATED) reasons.push(REASON_FREEHIRE_LEAD);
   } else if (remote !== null) {
     return reject(remote);
   }
@@ -649,6 +664,8 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const pay = compDecision(p, pack);
   if ('reject' in pay) return reject(pay.reject);
   if (pay.note !== null) notes.push(pay.note);
+  // Sources expansion Task 9: a posting found through freehire on a platform jobpilot cannot read is review only, never eligible
+  if (!review && p.ats === 'freehire') return { verdict: 'review', reasons: [...reasons, REASON_FREEHIRE_LEAD], notes };
   return { verdict: review ? 'review' : 'eligible', reasons, notes };
 }
 
@@ -661,7 +678,7 @@ function packOf(pack: unknown): EligibilityPack {
 
 export const eligibilityContract = defineContract({
   id: 'eligibility',
-  version: '1.5.0',
+  version: '1.6.0',
   description: 'Decides whether one posting is open to the candidate',
   skills: ['eligibility-rules'],
   team: 'evaluation',

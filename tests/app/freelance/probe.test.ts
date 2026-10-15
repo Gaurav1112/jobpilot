@@ -54,6 +54,7 @@ function keptFetch(fail: readonly string[] = []): FetchLike & { calls: string[] 
     const host = new URL(url).hostname;
     if (fail.includes(host)) return { status: 500, text: async () => 'down' };
     if (host === 'www.freelancer.com') return { status: 200, text: async () => FREELANCER_JSON };
+    if (host === 'api.github.com') return { status: 200, text: async () => (url.includes('/search/issues') ? '{"items":[]}' : '[]') };
     if (host === 'remotive.com') return { status: 200, text: async () => REMOTIVE_JSON };
     const file = hnIndex[url];
     return file === undefined ? { status: 404, text: async () => 'nope' } : { status: 200, text: async () => readFileSync(join(fixtures('hn'), file), 'utf8') };
@@ -146,23 +147,29 @@ describe('the real pipeline decides relevance', () => {
 });
 
 describe('sources probed', () => {
-  it('lists the kept sources and the parked ones; GitHub, bounties and Algora are absent', () => {
-    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'freelancer', 'golangprojects', 'himalayas', 'hn-freelancer', 'hn-hiring', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
+  it('lists the kept sources (the three sources-expansion ones included) and the parked ones; Algora is absent', () => {
+    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'draftdev', 'fractional-jobs', 'freelancer', 'golangprojects', 'himalayas', 'hn-freelancer', 'hn-hiring', 'prime-intellect', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
     expect(PARKED_IDS).toEqual(['arbeitnow', 'golangprojects', 'remoteok', 'workingnomads', 'wwr']);
-    for (const id of PROBE_SOURCE_IDS) expect(id).not.toMatch(/github|algora|bount/i);
+    for (const id of PROBE_SOURCE_IDS) expect(id).not.toMatch(/github|algora/i);
   });
 
-  it('a probe run reports no GitHub or Algora row and asks Remotive once', async () => {
+  it('a probe run reports no Algora row, asks GitHub within its budget and never asks Remotive', async () => {
     const app = AppStore.open(':memory:');
     const fetch = keptFetch();
     const report = await runProbe(deps(app, { fetch }));
     app.close();
     expect(report.rows.map((r) => r.id).sort()).toEqual([...PROBE_SOURCE_IDS].sort());
-    expect(JSON.stringify(report)).not.toMatch(/github|algora/i);
+    expect(JSON.stringify(report)).not.toMatch(/algora/i);
+    // Draft.dev and Prime Intellect share one GitHub budget of 12 requests a run; Prime Intellect asks once
+    const gh = fetch.calls.filter((u) => new URL(u).hostname === 'api.github.com');
+    expect(gh.length).toBeLessThanOrEqual(12);
+    expect(gh.filter((u) => u.includes('/search/issues')).length).toBe(1);
+    expect(report.rows.find((r) => r.id === 'prime-intellect')?.requests).toBe(1);
+    expect(report.rows.find((r) => r.id === 'draftdev')?.name).toBe('Draft.dev (GitHub)');
     // Remotive is off since 2026-10-15 (its robots.txt disallows /api/*): its row says so and nothing is asked.
     expect(fetch.calls.filter((u) => u.startsWith('https://remotive.com/')).length).toBe(0);
     expect(report.rows.find((r) => r.id === 'remotive')?.errors).toEqual(['off: robots.txt disallows /api (2026-10-15)']);
-    expect(fetch.calls.some((u) => /github|algora/.test(u))).toBe(false);
+    expect(fetch.calls.some((u) => /algora/.test(u))).toBe(false);
     const table = formatProbeTable(report);
     expect(table).toMatch(/Source\s+Score\s+Skill-matched\s+Relevant \(hours ok\)\s+Pass all rules\s+Review/);
     expect(table).toMatch(/Freelancer/);

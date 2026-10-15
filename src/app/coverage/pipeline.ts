@@ -13,12 +13,14 @@ import { appGuardrails } from '../guardrails.js';
 import type { Pack } from '../pack/schema.js';
 import { compileDaily } from '../pipeline.js';
 import { detectorEgressSets, makePlatformDetector } from './detector.js';
+import { makeSrcFreehireDiscovery } from './discovery.js';
 import { TRANSIENT_CODES } from '../net.js';
+import { boardKey, dedupeGuesses, freehireGuess } from './catalogue.js';
 import { asHttps } from './gate.js';
 import { makeRunGate, memoryHostStateStore, type RunGate } from './gate.js';
 import { locatorEgressSets, makeCareersLocator } from './locator.js';
 import { companySeed, mergeCandidates } from './seed.js';
-import { CareersSite, CompanyCandidate, CompanyVerdict, CoverageRequest, PlatformGuess } from './types.js';
+import { CareersSite, CompanyCandidate, CompanyVerdict, CoverageRequest, FreehireFinding, PlatformGuess, type FreehireQuery } from './types.js';
 import { makeBoardVerifier, noPlatformVerdict, verifierEgressSets } from './verifier.js';
 
 /**
@@ -27,7 +29,7 @@ import { makeBoardVerifier, noPlatformVerdict, verifierEgressSets } from './veri
  *   CoverageRequest@1 ─► company-seed ─► CompanyCandidate@1 ─(mergeCandidates)─► careers-locator ─► CareersSite@1
  *   ─► platform-detector ─► PlatformGuess@1 ─► board-verifier ─► CompanyVerdict@1 ─► the `companies` registry
  *
- * It runs as four STAGES, each its own supervisor run `<runId>.<stage>` (seed, locate, detect, verify) under the
+ * It runs as five STAGES, each its own supervisor run `<runId>.<stage>` (seed, discover, locate, detect, verify) under the
  * umbrella run `<runId>` (`coverage-<IST date>[-n]`), because three things are only known once the stage before has
  * finished: the cross-source merge (`mergeCandidates`, which needs every source's candidates), the detector's egress
  * (the located careers URLs' hosts, `detectorEgressSets`: a Workday or Eightfold tenant cannot be listed up front, and
@@ -63,8 +65,12 @@ export const COVERAGE_PIPELINE = { id: 'jobpilot-coverage', version: '1.0.0' } a
 /** The coverage run's floor for the spacing of two requests to one host (the constraints' 2 s). */
 export const COVERAGE_MIN_HOST_INTERVAL_MS = 2000;
 
-export type StageId = 'seed' | 'locate' | 'detect' | 'verify';
-export const STAGES: readonly StageId[] = ['seed', 'locate', 'detect', 'verify'];
+/**
+ * `discover` (sources-x Task 8) is the weekly freehire search; it runs only when the run asks for it (`discovery`), else it
+ * is an empty, unstored StageResult. Its board findings go to the verifier, its lead findings to the app layer (run.ts).
+ */
+export type StageId = 'seed' | 'discover' | 'locate' | 'detect' | 'verify';
+export const STAGES: readonly StageId[] = ['seed', 'discover', 'locate', 'detect', 'verify'];
 
 /** The coverage policy: `policy.user.yaml` with `minHostIntervalMs` raised (never lowered) to COVERAGE_MIN_HOST_INTERVAL_MS. */
 export function coveragePolicy(pack: Pick<Pack, 'policyUser'>): Policy {
@@ -75,9 +81,9 @@ export function coveragePolicy(pack: Pick<Pack, 'policyUser'>): Policy {
 /** The policy hash of the coverage run (as the daily and freelance runs hash theirs): in every step key and the run row. */
 export const coveragePolicyHash = (pack: Pick<Pack, 'policyUser'>): string => policyHash(coveragePolicy(pack));
 
-/** The four agents of one coverage run, on its gate, in stage order. */
-export function coverageAgents(gate: RunGate): { readonly seed: AnyAgent; readonly locate: AnyAgent; readonly detect: AnyAgent; readonly verify: AnyAgent } {
-  return { seed: companySeed, locate: makeCareersLocator({ gate }), detect: makePlatformDetector({ gate }), verify: makeBoardVerifier({ gate }) };
+/** The five agents of one coverage run, on its gate, in stage order (every fetching agent keeps its host state in the run's persisted gate). */
+export function coverageAgents(gate: RunGate): Record<StageId, AnyAgent> {
+  return { seed: companySeed, discover: makeSrcFreehireDiscovery({ gate }), locate: makeCareersLocator({ gate }), detect: makePlatformDetector({ gate }), verify: makeBoardVerifier({ gate }) };
 }
 
 /** The coverage agents for the contract export and the allow-list check (their contracts do not depend on a gate). */
@@ -204,6 +210,18 @@ export interface CoverageStagesOptions {
   readonly online?: () => Promise<boolean>;
   /** The supervisors' awake clock; default the process's. */
   readonly awake?: AwakeClock;
+  /**
+   * Sources-x Task 7: the freehire boards (discovery's, then the catalogue's) that go to the verifier besides the
+   * detector's guesses. Asked once, when the verify stage's input is computed, with the board keys of the detector's
+   * guesses; the caller has already left out the boards the registry holds and records its selection for a resume.
+   */
+  readonly freehireGuesses?: (taken: ReadonlySet<string>) => PlatformGuess[];
+  /**
+   * Sources-x Task 8: the weekly freehire discovery. Absent: the discover stage is empty. `queries` are its searches,
+   * `week` dates the guesses it makes, `known` the boards the registry holds (any status): a discovered board in it is
+   * not sent to the verifier again.
+   */
+  readonly discovery?: { readonly week: string; readonly queries: readonly FreehireQuery[]; readonly known?: () => ReadonlySet<string> };
 }
 
 /** The run stopped between steps (it yielded, or hit its slice limit); its stage runs stay incomplete for the next invocation. */
@@ -226,6 +244,10 @@ export interface CoverageStagesOutcome {
   readonly guesses: readonly PlatformGuess[];
   /** The verifier's verdicts plus a Proposed verdict per guess with no platform. */
   readonly verdicts: readonly CompanyVerdict[];
+  /** The discovery's boards that went to the verifier (after the dedupe against the detector and the registry), in verify order. */
+  readonly discoveryBoards: readonly PlatformGuess[];
+  /** The discovery's leads, once each (first query wins), in key order. */
+  readonly leads: readonly Extract<FreehireFinding, { kind: 'lead' }>[];
 }
 
 const HOST_DISABLED_DETAIL = 'host-disabled:';
@@ -418,6 +440,8 @@ export async function runCoverageStages(o: CoverageStagesOptions): Promise<Cover
 async function stagesOf(o: CoverageStagesOptions, run: (stage: StageId, seeds: readonly unknown[], egressSets: EgressSets) => Promise<StageResult>): Promise<CoverageStagesOutcome> {
 
   const seed = await run('seed', o.seeds, {});
+  const discover = o.discovery === undefined ? emptyStage('discover', `${o.runId}.discover`) : await run('discover', o.discovery.queries, {});
+  const findings = discover.outputs.map((x) => FreehireFinding.schema.parse(x));
   const seeded = seed.outputs.map((x) => CompanyCandidate.schema.parse(x));
   const dropped: string[] = [];
   const merged = mergeCandidates(seeded, (n) => dropped.push(n));
@@ -430,11 +454,37 @@ async function stagesOf(o: CoverageStagesOptions, run: (stage: StageId, seeds: r
 
   const detect = await run('detect', located, detectorEgressSets(located));
   const guesses = detect.outputs.map((x) => PlatformGuess.schema.parse(x));
-  const withPlatform = guesses.filter((g) => g.platform !== null);
+  const fromDetector = guesses.filter((g) => g.platform !== null);
+  // the detector's guesses first and untouched; a freehire board is added only when no earlier input names the same board
+  const taken = new Set(fromDetector.map((g) => boardKey(g.platform as string, g.slug ?? '')));
+  // then the discovery's boards (not held by the registry), then the catalogue's (which leaves out every board taken so far)
+  const known = o.discovery?.known?.() ?? new Set<string>();
+  const discoveryBoards = dedupeGuesses(discoveryGuesses(findings, o.discovery?.week ?? '')).filter((g) => {
+    const k = boardKey(g.platform as string, g.slug ?? '');
+    return !taken.has(k) && !known.has(k);
+  });
+  const takenWithDiscovery = new Set([...taken, ...discoveryBoards.map((g) => boardKey(g.platform as string, g.slug ?? ''))]);
+  const fromFreehire = o.freehireGuesses?.(takenWithDiscovery) ?? [];
+  const withPlatform = [...fromDetector, ...dedupeGuesses([...discoveryBoards, ...fromFreehire]).filter((g) => !taken.has(boardKey(g.platform as string, g.slug ?? '')))];
 
   const verify = await run('verify', withPlatform, verifierEgressSets(withPlatform));
   const verdicts = [...verify.outputs.map((x) => CompanyVerdict.schema.parse(x)), ...guesses.filter((g) => g.platform === null).map(noPlatformVerdict)];
   verdicts.sort((a, b) => (a.guess.site.candidate.companyKey < b.guess.site.candidate.companyKey ? -1 : a.guess.site.candidate.companyKey > b.guess.site.candidate.companyKey ? 1 : 0));
 
-  return { stages: { seed, locate, detect, verify }, seeded, merged, selected, dropped, denied, sites, guesses, verdicts };
+  const leads = new Map<string, Extract<FreehireFinding, { kind: 'lead' }>>();
+  for (const f of findings) if (f.kind === 'lead' && !leads.has(f.leadKey)) leads.set(f.leadKey, f);
+  const leadList = [...leads.values()].sort((a, b) => (a.leadKey < b.leadKey ? -1 : a.leadKey > b.leadKey ? 1 : 0));
+
+  return { stages: { seed, discover, locate, detect, verify }, seeded, merged, selected, dropped, denied, sites, guesses, verdicts, discoveryBoards, leads: leadList };
+}
+
+const emptyStage = (stage: StageId, runId: string): StageResult => ({ stage, runId, outputs: [], deferred: [], transient: [], broken: 0, executed: 0, replayed: 0 });
+
+/** The discovery's board findings as verifier inputs (D3): freehire-discovery candidates, in finding order. */
+function discoveryGuesses(findings: readonly FreehireFinding[], week: string): PlatformGuess[] {
+  return findings.flatMap((f) =>
+    f.kind !== 'board'
+      ? []
+      : [freehireGuess({ platform: f.platform, ref: f.ref, boardUrl: f.boardUrl, company: f.company, source: 'freehire-discovery', week, why: `found through freehire: ${f.example.title} (${f.example.location ?? 'no location'})`, signature: `freehire-discovery:${f.queryId}` })],
+  );
 }

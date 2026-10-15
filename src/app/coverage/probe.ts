@@ -1,4 +1,5 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import type { Clock } from '../../kernel/clock.js';
 import { PLATFORM_NOTE_PREFIXES } from '../agents/sources/platforms/shared.js';
 import { eightfoldMaxRequests } from '../agents/sources/platforms/eightfold.js';
@@ -13,9 +14,10 @@ import { withLock } from '../lock.js';
 import { homePaths } from '../pack/paths.js';
 import { registryBoards } from '../pipeline.js';
 import { safeLine } from '../problems.js';
-import { istDate, istMonth } from '../run.js';
+import { istDate, istMonth, leadsSince } from '../run.js';
 import { AppStore } from '../store/app-store.js';
 import { coverageWeek } from '../due.js';
+import { CATALOGUE_SEED, loadCatalogue, boardKey, type CatalogueEntry } from './catalogue.js';
 
 /**
  * `jobpilot coverage probe` (spec §7): what the career-site coverage adds, read from the DB alone (no network, nothing
@@ -114,6 +116,13 @@ export interface CoverageProbeReport {
     readonly total: { readonly found: number; readonly passing: number };
     readonly jobs: readonly NewJob[];
   };
+  /** Sources expansion, Task 13 (additive): the freehire catalogue and discovery, from the DB and the vendored seed alone. */
+  readonly freehire: {
+    /** Registry rows from the vendored catalogue by status (verified, proposed; the rest are neither), and the seed entries no registry row holds yet. */
+    readonly catalogue: { readonly verified: number; readonly proposed: number; readonly left: number };
+    /** Boards the weekly discovery added to the registry, and the leads stored since the week before this one. */
+    readonly discovery: { readonly boards: number; readonly leads: number };
+  };
   readonly platforms: readonly PlatformReport[];
   readonly latestDailyRun: { readonly runId: string; readonly at: string } | null;
 }
@@ -145,6 +154,23 @@ export interface ProbeInput {
   /** The watchlist's ATS boards, `<ats> <slug lower-cased>`: a Greenhouse, Lever or Ashby row on one is an existing source. */
   readonly watchlist: ReadonlySet<string>;
   readonly naming: { readonly forbiddenTerms: string[] };
+  /** The vendored catalogue (default: the seed shipped in assets/freehire). */
+  readonly catalogue?: readonly CatalogueEntry[];
+}
+
+/** The vendored seed, parsed. */
+const seedEntries = (): CatalogueEntry[] => loadCatalogue(readFileSync(fileURLToPath(CATALOGUE_SEED), 'utf8'));
+
+/** The freehire line's numbers: SELECT only. */
+function freehireOf(app: AppStore, now: string, entries: readonly CatalogueEntry[]): CoverageProbeReport['freehire'] {
+  const companies = app.listCompanies();
+  const by = (source: string, status: string): number => companies.filter((c) => c.source === source && c.status === status).length;
+  const known = app.registryBoardKeys();
+  const left = new Set(entries.map((e) => boardKey(e.platform, e.ref)).filter((k) => !known.has(k))).size;
+  return {
+    catalogue: { verified: by('freehire', 'verified'), proposed: by('freehire', 'proposed'), left },
+    discovery: { boards: companies.filter((c) => c.source === 'freehire-discovery').length, leads: app.freehireLeads(leadsSince(now)).length },
+  };
 }
 
 /** Builds the report from the DB. Reads only. */
@@ -221,6 +247,7 @@ export function buildReport(i: ProbeInput): CoverageProbeReport {
     window: { days: i.days, from, to: today },
     companies: { statuses: COMPANY_STATUS_ORDER, platforms: companyPlatforms, counts, totals, deferredThisWeek: deferred },
     newJobs: { minFit: i.minFit, platforms: jobPlatforms, total: { found: jobs.length, passing: jobs.filter((j) => j.passes).length }, jobs },
+    freehire: freehireOf(app, i.now, i.catalogue ?? seedEntries()),
     platforms,
     latestDailyRun: run === undefined ? null : { runId: run.runId, at: run.at },
   };
@@ -348,6 +375,7 @@ export function formatReport(r: CoverageProbeReport): string {
   const d = c.deferredThisWeek;
   const stages = Object.entries(d.byStage).filter(([, n]) => n > 0).map(([k, n]) => `${k} ${n}`).join(', ');
   out.push(`  deferred this week (coverage week of ${d.week}): ${d.total}${stages === '' ? '' : ` (${stages})`}${d.runId === null ? ' (no coverage run this week)' : ''}`);
+  out.push(`  catalogue: ${r.freehire.catalogue.verified} verified, ${r.freehire.catalogue.proposed} proposed, ${r.freehire.catalogue.left} left · discovery: boards ${r.freehire.discovery.boards}, leads ${r.freehire.discovery.leads} (last week)`);
   out.push('', `New jobs only the platform adapters found (no copy on an existing source), passing = eligible or review with fit >= ${r.newJobs.minFit}`);
   if (r.newJobs.platforms.length === 0) out.push('  none');
   else out.push(...table(['platform', 'new', 'passing'], [...r.newJobs.platforms.map((p) => [p.platform, String(p.found), String(p.passing)]), ['total', String(r.newJobs.total.found), String(r.newJobs.total.passing)]], [1, 2]).map((l) => `  ${l}`));

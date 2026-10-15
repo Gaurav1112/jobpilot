@@ -1,5 +1,5 @@
 {
-  "hash": "d615ed7164254d53ad45285a08662dd1d11b3ad8c7285aca9bc19435d49c29c2",
+  "hash": "3b41d3ebd2832f0cbb60d41111dd87b3c18b17ba5788b800189b7fbd144f9ac2",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -38,7 +38,12 @@
               "breezy",
               "pinpoint",
               "rippling",
-              "gem"
+              "gem",
+              "jazzhr",
+              "zohorecruit",
+              "manatal",
+              "freshteam",
+              "freehire"
             ],
             "type": "string"
           },
@@ -136,6 +141,6 @@
     },
     "team": "sourcing-bamboohr",
     "timeoutMs": 300000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

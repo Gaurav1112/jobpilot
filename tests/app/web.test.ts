@@ -13,6 +13,7 @@ import { Sessions } from '../../src/app/web/security.js';
 import * as htmlModule from '../../src/app/web/html.js';
 import Database from 'better-sqlite3';
 import { jobRow } from '../support/app-fixtures.js';
+import { attrsOf, elementsWith, linksOf, rowOf, textOf } from '../support/dom.js';
 import { coverPlanOf, fullPack, posting } from '../support/render-fixtures.js';
 import { fillCover } from '../../src/app/render/fill.js';
 import { coverNoteShort } from '../../src/app/agents/writing/grounded.js';
@@ -232,12 +233,12 @@ describe('dashboard: the short cover note', () => {
 });
 
 describe('dashboard: jobs list', () => {
-  it('renders the rows comp-first (disclosed by max INR, then undisclosed, then review), hiding rejected, below-floor and duplicate listings', async () => {
+  it('renders the rows fit-first within the eligibility tier, hiding rejected, below-floor and duplicate listings', async () => {
     const { status, body } = await get('/');
     expect(status).toBe(200);
-    expect(order(body)).toEqual([K2, K1, K3, K10, K9, K7, K11, K4]);
-    expect(body).toContain('also listed on Himalayas');
-    expect(body).toMatch(/2<\/span> not-eligible or below-floor jobs are hidden/);
+    expect(order(body)).toEqual([K3, K1, K2, K10, K9, K7, K11, K4]);
+    expect(textOf(rowOf(body, 'data-job', K1))).toContain('also listed on Himalayas');
+    expect(textOf(body)).toContain('2 not-eligible or below-floor jobs are hidden');
   });
 
   it('formats pay in lakh and crore, foreign pay with its INR equivalent', async () => {
@@ -252,7 +253,7 @@ describe('dashboard: jobs list', () => {
     expect(order((await get('/?status=applied')).body)).toEqual([K9]);
     expect(order((await get('/?band=rejected')).body)).toEqual([K5]);
     expect(order((await get('/?band=below-floor')).body)).toEqual([K6]);
-    expect(order((await get('/?band=disclosed&band=below-floor')).body)).toEqual([K2, K1, K6]);
+    expect(order((await get('/?band=disclosed&band=below-floor')).body)).toEqual([K1, K2, K6]);
     expect(order((await get('/?min=85')).body)).toEqual([K3, K4]);
     expect(order((await get('/?q=reilly')).body)).toEqual([K7]);
     expect(order((await get('/?q=acme&min=70')).body)).toEqual([K1]);
@@ -263,39 +264,158 @@ describe('dashboard: jobs list', () => {
     expect(f).toContain('name="q" value="x"');
   });
 
-  it('shows pills for remote, status, documents and band, and the Desk history of imported rows', async () => {
+  it('A5: one exception pill at most, none for To do, Documents ready or Pay at or above the minimum; remote as text', async () => {
     const { body } = await get('/');
-    expect(body).toContain('Remote · India');
-    expect(body).toContain('Documents ready');
-    expect(body).toContain('Pay ≥ floor');
-    expect(body).toContain('From your Application Desk: Applied on 12 Sep 2026');
+    const k1 = rowOf(body, 'data-job', K1);
+    expect(textOf(k1)).toContain('Remote · India');
+    for (const s of ['Documents ready', 'Pay ≥ floor', 'Not started']) expect(textOf(k1), s).not.toContain(s);
+    expect(elementsWith(k1, 'data-exception')).toEqual([]);
+    expect(k1).not.toMatch(/\stitle="/);
+    for (const k of order(body)) expect(elementsWith(rowOf(body, 'data-job', k), 'data-exception').length, k).toBeLessThanOrEqual(1);
+    const pillOf = (k: string): string => textOf(elementsWith(rowOf(body, 'data-job', k), 'data-exception')[0] ?? '');
+    expect(pillOf(K10)).toBe('Documents blocked');
+    expect(pillOf(K4)).toBe('Check before applying');
+    expect(pillOf(K11)).toBe('Contract (B2B)'); // beats "Pay not listed"
+    expect(pillOf(K2)).toBe('Office: Pune'); // beats nothing: its pay is listed
+    expect(pillOf(K3)).toBe('Pay not listed');
+    expect(textOf(rowOf(body, 'data-job', K9))).toContain('From your Application Desk: Applied on 12 Sep 2026');
+    expect(order(body)).not.toContain(K6); // below the minimum: hidden by default, so no row and no pill
+    expect(textOf(elementsWith(rowOf((await get('/?band=below-floor')).body, 'data-job', K6), 'data-exception')[0] ?? '')).toBe('Pay under your minimum');
   });
 
-  it('shows the B2B contractor badge on the row and on the job page, only where the note is set', async () => {
-    const list = (await get('/')).body;
-    expect(list).toContain('<span class="pill pill-accent">B2B contractor: no PF/benefits</span>');
-    expect(list.match(/B2B contractor: no PF\/benefits<\/span>/g)?.length).toBe(1);
-    expect((await get(`/jobs/${K11}`)).body).toContain('>B2B contractor: no PF/benefits</span>');
-    expect((await get(`/jobs/${K1}`)).body).not.toContain('B2B contractor: no PF/benefits</span>');
+  it('A5: remote shows India first, then how many more', async () => {
+    withStore((s) => s.upsertJob(row('c5c5c5c5c5c5c5c5', 25, { title: 'Worldwide role', score: 61, remote: { structured: 'remote', countries: ['united states', 'canada', 'india'], signals: [] } })));
+    expect(textOf(rowOf((await get('/')).body, 'data-job', 'c5c5c5c5c5c5c5c5'))).toContain('Remote · India +2');
   });
 
-  it('shows the office-city badge on the row and on the job page, only where the note is set', async () => {
-    const list = (await get('/')).body;
-    expect(list).toContain('<span class="pill pill-accent">office/hybrid: Pune</span>');
-    expect(list.match(/office\/hybrid: Pune<\/span>/g)?.length).toBe(1);
-    expect((await get(`/jobs/${K2}`)).body).toContain('>office/hybrid: Pune</span>');
-    expect((await get(`/jobs/${K1}`)).body).not.toContain('office/hybrid:');
+  it('the B2B and office notes stay in full on the job page', async () => {
+    expect(textOf((await get(`/jobs/${K11}`)).body)).toContain('B2B contractor: no PF/benefits');
+    expect(textOf((await get(`/jobs/${K2}`)).body)).toContain('office/hybrid: Pune');
   });
 
-  it('marks rows first seen since the previous visit as new', async () => {
-    // first visit: everything is new
-    const first = await app.request('/', { headers: { cookie } });
-    expect((await first.text()).match(/New since your last visit/g)?.length).toBe(8);
-    // a visit cookie from after the rows were seen: nothing new
-    const later = Date.parse('2026-10-09T03:00:00.000Z');
-    const r = await app.request('/', { headers: { cookie: `${cookie}; jp_visit=${later}.${later}` } });
-    expect(await r.text()).not.toContain('New since your last visit');
+  it('A4: "new" is said once in the lede, and new rows get a dot, only when some but not all rows are new', async () => {
+    const first = await (await app.request('/', { headers: { cookie } })).text();
+    expect(textOf(first)).not.toContain('new since your last visit');
+    expect(first).not.toContain('New since your last visit');
+    expect(elementsWith(first, 'class', 'new-dot')).toEqual([]);
+    const FRESH = 'c4c4c4c4c4c4c4c4';
+    withStore((s) => s.upsertJob(row(FRESH, 24, { title: 'Fresh role', score: 79, at: '2026-10-09T05:00:00.000Z' })));
+    const seen = Date.parse('2026-10-09T03:00:00.000Z'); // a visit after the first rows, before FRESH
+    const r = await app.request('/', { headers: { cookie: `${cookie}; jp_visit=${seen}.${seen}` } });
+    const body = await r.text();
+    expect(textOf(body)).toContain('1 new since your last visit');
+    expect(elementsWith(body, 'class', 'new-dot')).toHaveLength(1);
+    expect(elementsWith(rowOf(body, 'data-job', FRESH), 'class', 'new-dot')).toHaveLength(1);
+    expect(textOf(elementsWith(rowOf(body, 'data-job', FRESH), 'class', 'job-title')[0] ?? '')).toMatch(/^● New: Fresh role/);
     expect(r.headers.get('set-cookie')).toMatch(/jp_visit=\d+\.\d+/);
+  });
+});
+
+describe('A1: the jobs list defaults and order', () => {
+  it('hides Not for me and Not selected unless asked for, and links to them', async () => {
+    withStore((s) => {
+      s.setStatus(K3, 'skipped', 'user', NOW);
+      s.setStatus(K7, 'rejected', 'user', NOW);
+    });
+    const { body } = await get('/');
+    expect(order(body)).toEqual([K1, K2, K10, K9, K11, K4]);
+    expect(textOf(body)).toContain('Not for me and Not selected are hidden: show them.');
+    expect(linksOf(body).find((l) => l.text === 'show them')?.href).toBe('/?status=skipped&status=rejected');
+    expect(order((await get('/?status=skipped&status=rejected')).body)).toEqual([K3, K7]);
+    expect(textOf((await get('/?status=skipped')).body)).not.toContain('are hidden: show them');
+    // the default shows as ticked boxes, like the band default
+    for (const st of ['new', 'approved', 'applied', 'interview', 'offer']) expect(body).toMatch(new RegExp(`name="status" value="${st}" checked`));
+    for (const st of ['rejected', 'skipped']) expect(body).not.toMatch(new RegExp(`name="status" value="${st}" checked`));
+  });
+
+  it('orders by eligibility tier, then fit, then INR pay, then newest, and says so', async () => {
+    withStore((s) => {
+      s.upsertJob(row('c1c1c1c1c1c1c1c1', 21, { title: 'Pay tie A', score: 77, compMinInr: 4_000_000, compMaxInr: 5_000_000, comp: { min: 4_000_000, max: 5_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
+      s.upsertJob(row('c2c2c2c2c2c2c2c2', 22, { title: 'Pay tie B', score: 77, compMinInr: 7_200_000, compMaxInr: 8_000_000, comp: { min: 7_200_000, max: 8_000_000, currency: 'INR', period: 'year', basis: 'base' } }));
+      s.upsertJob(row('c3c3c3c3c3c3c3c3', 23, { title: 'Pay tie C', score: 77 }));
+    });
+    const { body } = await get('/');
+    expect(order(body)).toEqual([K3, K1, 'c2c2c2c2c2c2c2c2', 'c1c1c1c1c1c1c1c1', 'c3c3c3c3c3c3c3c3', K2, K10, K9, K7, K11, K4]);
+    expect(textOf(body)).toContain('eligible first, then best fit, then pay');
+  });
+
+  it('counts To decide with the U9 predicate (new, eligible or check first, first seen in the last 7 IST days)', async () => {
+    expect(textOf((await get('/')).body)).toContain('8 jobs · 7 to decide');
+    now = '2026-10-16T06:30:00.000Z'; // 16 Oct IST: the rows first seen on 9 Oct (IST) have left the window
+    expect(textOf((await get('/')).body)).toContain('8 jobs · 0 to decide');
+  });
+});
+
+describe('A8: filters fold away; a job remembers its list and the next row', () => {
+  it('the filters are a <details>, open only when a filter is not the default, with the count in the summary', async () => {
+    const closed = elementsWith((await get('/')).body, 'class', 'filter-more')[0] as string;
+    expect(closed).toMatch(/^<details class="filter-more">/);
+    expect(textOf(closed)).toMatch(/^Filters Min score/);
+    const open = elementsWith((await get('/?band=rejected&min=60')).body, 'class', 'filter-more')[0] as string;
+    expect(open).toMatch(/^<details class="filter-more" open>/);
+    expect(textOf(open)).toMatch(/^Filters · 2 active/);
+    expect(elementsWith(closed, 'name', 'q')).toEqual([]); // search and Apply stay outside
+  });
+
+  it('a search submitted exactly as the form renders keeps the filters closed and the hidden-row notes', async () => {
+    const form = elementsWith((await get('/')).body, 'class', 'filters')[0] as string;
+    const qs = new URLSearchParams({ q: 'engineer' });
+    for (const m of form.matchAll(/<input type="checkbox" name="(\w+)" value="([\w-]+)" checked>/g)) qs.append(m[1] as string, m[2] as string);
+    expect(qs.getAll('status')).toEqual(['new', 'approved', 'applied', 'interview', 'offer']);
+    expect(qs.getAll('band')).toEqual(['disclosed', 'undisclosed', 'review']);
+    const body = (await get(`/?${qs.toString()}`)).body;
+    expect(elementsWith(body, 'class', 'filter-more')[0]).toMatch(/^<details class="filter-more">/);
+    expect(textOf(body)).toContain('Not for me and Not selected are hidden: show them.');
+    expect(textOf((await get('/?band=review&band=disclosed&band=undisclosed&band=review')).body)).toContain('2 not-eligible or below-floor jobs are hidden');
+    // a set that differs from the default still counts as a filter
+    const one = (await get('/?status=new&band=disclosed')).body;
+    expect(textOf(elementsWith(one, 'class', 'filter-more')[0] ?? '')).toMatch(/^Filters · 2 active/);
+    expect(textOf(one)).not.toContain('are hidden');
+  });
+
+  it('a row links to its job with from= and next=, and is its own anchor', async () => {
+    const body = (await get('/?q=engineer')).body;
+    const [a, b] = order(body) as [string, string];
+    expect(linksOf(rowOf(body, 'data-job', a)).find((l) => l.href.startsWith('/jobs/'))?.href).toBe(`/jobs/${a}?from=%2F%3Fq%3Dengineer&next=${b}`);
+    expect(attrsOf(rowOf(body, 'data-job', a))['id']).toBe(`job-${a}`);
+  });
+
+  it('the job page links back to its row; any other from is ignored', async () => {
+    const crumb = (b: string): string | undefined => linksOf(elementsWith(b, 'class', 'crumbs')[0] ?? '')[0]?.href;
+    expect(crumb((await get(`/jobs/${K1}?from=%2F%3Fq%3Dacme&next=${K2}`)).body)).toBe(`/?q=acme#job-${K1}`);
+    for (const bad of ['%2F%2Fevil.example', 'https%3A%2F%2Fevil.example%2F', '%2Fjobs%2Fx', '%2F%5Cevil', 'javascript%3Aalert(1)', '%2F%3Fq%3Da%23x']) {
+      expect(crumb((await get(`/jobs/${K1}?from=${bad}`)).body), bad).toBe(`/#job-${K1}`);
+    }
+  });
+
+  it('without JS, a status that takes the job out of its list lands on the next row; any other stays on the job', async () => {
+    const leave = await post(`/jobs/${K1}/status`, { _csrf: token, to: 'skipped', from: '/?q=e', next: K2 }, nojs(`/jobs/${K1}`));
+    expect(leave.status).toBe(303);
+    expect(leave.headers.get('location')).toBe(`/?q=e#job-${K2}`);
+    const stay = await post(`/jobs/${K2}/status`, { _csrf: token, to: 'approved', from: '/?q=e', next: K3 }, nojs(`/jobs/${K2}`));
+    expect(stay.headers.get('location')).toBe(`/jobs/${K2}?from=%2F%3Fq%3De&next=${K3}#status`);
+    const kept = await post(`/jobs/${K3}/status`, { _csrf: token, to: 'skipped', from: '/?status=skipped', next: K4 }, nojs(`/jobs/${K3}`));
+    expect(kept.headers.get('location')).toBe(`/jobs/${K3}?from=%2F%3Fstatus%3Dskipped&next=${K4}#status`);
+    const last = await post(`/jobs/${K4}/status`, { _csrf: token, to: 'rejected', from: '/' }, nojs(`/jobs/${K4}`));
+    expect(last.headers.get('location')).toBe('/#jobs');
+    const bad = await post(`/jobs/${K7}/status`, { _csrf: token, to: 'skipped', from: '//evil.example', next: 'zz' }, nojs(`/jobs/${K7}`));
+    expect(bad.headers.get('location')).toBe(`/jobs/${K7}#status`);
+  });
+
+  it('without JS, Mark applied with a notice stays on the job page even when it leaves the list', async () => {
+    const nodocs = await post(`/jobs/${K4}/status`, { _csrf: token, to: 'applied', from: '/?status=new', next: K1 }, nojs(`/jobs/${K4}`));
+    expect(nodocs.status).toBe(303);
+    expect(nodocs.headers.get('location')).toBe(`/jobs/${K4}?from=%2F%3Fstatus%3Dnew&next=${K1}&notice=nodocs#status`);
+    withStore((s) => s.setStatus(K3, 'approved', 'user', NOW));
+    const shortlisted = await post(`/jobs/${K3}/status`, { _csrf: token, to: 'applied', from: '/?status=approved', next: K2 }, nojs(`/jobs/${K3}`));
+    expect(shortlisted.headers.get('location')).toBe(`/jobs/${K3}?from=%2F%3Fstatus%3Dapproved&next=${K2}&notice=nodocs#status`);
+    expect(textOf((await get(new URL(shortlisted.headers.get('location') as string, 'http://localhost').pathname + '?notice=nodocs')).body)).toContain('No documents were kept');
+  });
+
+  it('the status form carries from and next, so the plain POST knows them', async () => {
+    const form = elementsWith((await get(`/jobs/${K1}?from=%2F%3Fq%3Dacme&next=${K2}`)).body, 'class', 'status-form')[0] as string;
+    expect(attrsOf(elementsWith(form, 'name', 'from')[0] ?? '')['value']).toBe('/?q=acme');
+    expect(attrsOf(elementsWith(form, 'name', 'next')[0] ?? '')['value']).toBe(K2);
   });
 });
 
@@ -303,24 +423,16 @@ describe('dashboard: job page', () => {
   it('shows the header, why it matched, eligibility, documents, answers, status and note', async () => {
     const { status, body } = await get(`/jobs/${K1}`);
     expect(status).toBe(200);
-    expect(body).toContain('<h1>Senior Backend Engineer</h1>');
-    expect(body).toContain('href="https://boards.example.test/acme/jobs/1001" rel="noopener noreferrer"');
-    expect(body).toContain('Why it matched');
-    expect(body).toContain('Core skill: Java');
-    expect(body).toContain('Asks for PHP, which you don');
-    expect(body).toContain('Eligibility');
-    expect(body).toContain('Greenhouse reads PDF best');
-    expect(body).toMatch(/<iframe class="preview preview-resume" sandbox="" src="\/jobs\/1111111111111111\/files\/resume.html"/);
-    expect(body).toContain('href="/jobs/1111111111111111/files/resume.pdf" download>Download PDF <span class="rec">recommended</span>');
-    expect(body).toContain('href="/jobs/1111111111111111/files/resume.docx" download>Download Word (DOCX)');
-    expect(body).toContain('Missing terms are never added to your resume');
-    expect(body).toContain('<span class="term term-muted">distributed systems</span>');
-    expect(body).toContain('Screening answers');
-    expect(body).toContain('Notice period days');
-    expect(body).toContain('Also listed on Himalayas');
-    expect(body).toContain('via Greenhouse');
+    const t = textOf(body);
+    expect(elementsWith(body, 'id', 'main').length).toBe(1);
+    expect(textOf(body.slice(body.indexOf('<h1'), body.indexOf('</h1>') + 5))).toBe('Senior Backend Engineer');
+    expect(linksOf(body).find((l) => l.href === 'https://boards.example.test/acme/jobs/1001')?.attrs['rel']).toBe('noopener noreferrer');
+    for (const s of ['Why it matched', 'Core skill: Java', "Asks for PHP, which you don't list", 'Eligibility', 'Recommended for Greenhouse: PDF.', 'Missing terms are never added to your resume', 'distributed systems', 'Screening answers', 'Notice period days', 'Also listed on Himalayas', 'via Greenhouse']) expect(t).toContain(s);
+    expect(attrsOf(elementsWith(body, 'src', `/jobs/${K1}/files/resume.html`)[0] ?? '')).toMatchObject({ class: 'preview preview-resume', sandbox: '' });
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.pdf`).map((l) => l.text)).toEqual(['Download PDF of the resume (recommended)']);
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.docx`).map((l) => l.text)).toEqual(['Download Word (DOCX) of the resume']);
     expect(body).toMatch(/name="to" value="applied"/);
-    expect(body).toContain('<textarea id="note" name="note"');
+    expect(elementsWith(body, 'id', 'note')).toHaveLength(1);
   });
 
   it('warns about unplaced facts, with their ids', async () => {
@@ -497,7 +609,7 @@ describe('dashboard: applied snapshots', () => {
     const r = await post(`/jobs/${K1}/status`, { to: 'applied', _csrf: token }, hx);
     expect(r.status).toBe(200);
     const fragment = await r.text();
-    expect(fragment).toContain('<section id="sent" class="card wide" hx-swap-oob="true"');
+    expect(fragment).toContain('<section id="sent" class="card wide" data-live="A copy of your documents is kept." hx-swap-oob="true"');
     const dir = join(out, K1, `applied-${DAY}`);
     expect(readdirSync(dir).sort()).toEqual(['cover.docx', 'cover.html', 'cover.pdf', 'resume.docx', 'resume.html', 'resume.pdf']);
     for (const f of readdirSync(dir)) {
@@ -608,7 +720,10 @@ describe('dashboard: file route', () => {
     expect(prev.headers.get('content-disposition')).toBe('inline');
     expect(prev.headers.get('content-security-policy')).toContain("default-src 'none'");
     expect(prev.headers.get('content-security-policy')).toContain('sandbox');
-    expect(await prev.text()).toContain('<li data-fact="f-nw-01" title="Fact f-nw-01">');
+    const served = await prev.text();
+    expect(served).toContain('<li data-fact="f-nw-01" title="Fact f-nw-01">');
+    expect(served).toContain('<meta name="color-scheme" content="light"><style>:root{color-scheme:light;--fg:#111;--bg:#fff;--muted:#444;--rule:#ccc}</style></head>');
+    expect(readFileSync(join(out, K1, 'resume.html'), 'utf8')).not.toContain('color-scheme:light');
   });
 
   it('rejects names not recorded in job_docs or job_snapshots for that job, traversal and other jobs\' files', async () => {
@@ -675,7 +790,7 @@ describe('dashboard: runs', () => {
     expect(body).toContain('Quarantined');
     expect(body).toContain('Input rejected');
     expect(body).toContain('the notification could not be posted: osascript missing');
-    expect(body).toContain(`<code title="${'a'.repeat(64)}">${'a'.repeat(12)}</code>`);
+    expect(elementsWith(body, 'title', 'a'.repeat(64)).map(textOf)).toEqual(['a'.repeat(12)]);
     expect(body).toContain('Audit log intact');
     expect(body).toContain('9 Oct 2026, 07:00 IST');
   });
@@ -688,6 +803,26 @@ describe('dashboard: runs', () => {
     });
     const { body } = await get('/runs');
     expect(body).toContain('Audit log broken: at event 1: hash does not match the event contents');
+  });
+});
+
+describe('A11: runs read at a glance', () => {
+  it('zeros are a dash read as 0, agent names keep whole, the audit text is folded', async () => {
+    const body = (await get('/runs')).body;
+    expect(elementsWith(body, 'class', 'num zero')[0]).toBe('<td class="num zero"><span aria-hidden="true">–</span><span class="visually-hidden">0</span></td>');
+    expect(elementsWith(body, 'class', 'agent').map(textOf)).toEqual(['evidence-matcher', 'normalizer']);
+    const audit = elementsWith(body, 'class', 'audit')[0] as string;
+    expect(audit).toMatch(/^<details class="audit"><summary>Audit log: intact<\/summary>/);
+    expect(textOf(audit)).toContain('every one chained to the last');
+  });
+  it('a broken chain is never folded away: the critical banner stays', async () => {
+    withStore((s) => {
+      s.kernel.appendEvent('r1', NOW, 'run_started', { n: 1 }, 'h');
+      s.kernel.db.prepare(`UPDATE events SET data = '{"n":99}' WHERE seq = 1`).run();
+    });
+    const body = (await get('/runs')).body;
+    expect(textOf(elementsWith(body, 'role', 'alert').join(' '))).toContain('The audit log is broken');
+    expect(elementsWith(body, 'class', 'audit')[0]).toMatch(/<summary>Audit log: broken<\/summary>/);
   });
 });
 
@@ -819,6 +954,24 @@ describe('dashboard: banners and headers', () => {
   });
 });
 
+describe('A13: static files carry an ETag', () => {
+  it('a matching If-None-Match gets 304 with no body; anything else gets the file', async () => {
+    const first = await get('/static/app.css');
+    const etag = first.headers.get('etag') as string;
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(etag).toBe(`"${createHash('sha256').update(first.body).digest('hex').slice(0, 32)}"`);
+    expect(first.headers.get('cache-control')).toBe('no-cache');
+    const again = await app.request('/static/app.css', { headers: { cookie, 'if-none-match': etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe('');
+    expect(again.headers.get('etag')).toBe(etag);
+    expect(again.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect((await app.request('/static/app.css', { headers: { cookie, 'if-none-match': `"0", ${etag}` } })).status).toBe(304);
+    expect((await app.request('/static/app.css', { headers: { cookie, 'if-none-match': '"0"' } })).status).toBe(200);
+    expect((await get('/static/app.js')).headers.get('etag')).not.toBe(etag);
+  });
+});
+
 describe('dashboard: fix round 1', () => {
   it('C1: Referrer-Policy is same-origin in the header and the meta tag, so browsers send a same-origin Origin on form posts', async () => {
     const { headers, body } = await get('/');
@@ -914,10 +1067,10 @@ describe('dashboard: fix round 1', () => {
 
   it('names sources and ATSs properly and shows "New" once per row', async () => {
     const { body } = await get('/');
-    const k3 = body.slice(body.indexOf(`data-job="${K3}"`), body.indexOf('</li>', body.indexOf(`data-job="${K3}"`)));
+    const k3 = rowOf(body, 'data-job', K3);
     expect(k3.match(/>New</g) ?? []).toHaveLength(0);
-    expect(k3).toContain('Not started');
-    expect(k3).toContain('New since your last visit');
+    expect(textOf(k3)).not.toContain('Not started'); // A5: To do has no pill
+    expect(textOf(k3)).not.toContain('New since your last visit');
   });
 });
 
@@ -1129,5 +1282,130 @@ describe('I9: pack-load errors on the dashboard never show a forbidden term', ()
     const body = await r.text();
     expect(body).toContain('roles.yaml: role 0 [hidden] India) is odd');
     expect(body).not.toMatch(/initech/i);
+  });
+});
+
+describe('A7: the fit score is labelled and scaled; the title is read first', () => {
+  it('a job row reads title, then pay, then "Fit score 80 out of 100"', async () => {
+    const r = rowOf((await get('/')).body, 'data-job', K1);
+    expect(textOf(r)).toMatch(/^Senior Backend Engineer .*₹70–90 LPA.*fit Fit score 80 out of 100/);
+    expect(r).not.toContain('title="Fit score"');
+    expect(textOf(rowOf((await get('/?band=rejected')).body, 'data-job', K5))).toContain('Not scored');
+  });
+  it('the job page states the scale', async () => {
+    expect(textOf((await get(`/jobs/${K1}`)).body)).toMatch(/Fit score 80 out of 100/);
+  });
+});
+
+describe('A2: the job page follows the apply sequence', () => {
+  it('status and the downloads come before the previews; answers before the score details', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    const at = (needle: string): number => body.indexOf(needle);
+    expect(at('id="status"')).toBeGreaterThan(-1);
+    expect(at('id="status"')).toBeLessThan(at('id="apply-kit"'));
+    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeGreaterThan(at('id="apply-kit"'));
+    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeLessThan(at('<iframe'));
+    expect(at('id="ans"')).toBeLessThan(at('id="why"'));
+  });
+  it('"Open the posting" is the only primary button, also when a copy can be kept', async () => {
+    for (const setup of [() => undefined, () => withStore((s) => s.setStatus(K1, 'applied', 'user', NOW))]) {
+      setup();
+      const body = (await get(`/jobs/${K1}`)).body;
+      const primaries = [...body.matchAll(/class="btn btn-primary"/g)];
+      expect(primaries).toHaveLength(1);
+      expect(linksOf(body).find((l) => l.attrs['class'] === 'btn btn-primary')).toMatchObject({ href: 'https://boards.example.test/acme/jobs/1001', attrs: { rel: 'noopener noreferrer', target: '_blank' } });
+    }
+    expect(textOf((await get(`/jobs/${K1}`)).body)).toContain('Keep a copy of these documents now');
+  });
+  it('a job with blocked documents still says why, in the send card', async () => {
+    expect(textOf(elementsWith((await get(`/jobs/${K10}`)).body, 'id', 'apply-kit')[0] ?? '')).toContain('documents blocked: unrenderable character U+5C71 in the company name');
+  });
+});
+
+describe('A2: previews are paper, fold away, and never change what is sent', () => {
+  it('PDF and DOCX are served byte for byte as on disk, with no preview-only marker', async () => {
+    for (const name of ['resume.pdf', 'resume.docx', 'cover.pdf', 'cover.docx']) {
+      const bytes = Buffer.from(await (await app.request(`/jobs/${K1}/files/${name}`, { headers: { cookie } })).arrayBuffer());
+      expect(bytes.equals(readFileSync(join(out, K1, name))), name).toBe(true);
+      expect(bytes.toString('latin1'), name).not.toMatch(/data-fact|title="Fact|color-scheme/);
+    }
+  });
+  it('previews sit closed in <details>, load lazily, and link to a full preview in a new tab', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    const boxes = elementsWith(body, 'class', 'preview-box');
+    expect(boxes).toHaveLength(2);
+    for (const b of boxes) {
+      expect(b).toMatch(/^<details class="preview-box">/);
+      expect(attrsOf(elementsWith(b, 'loading', 'lazy')[0] ?? '')).toMatchObject({ sandbox: '', referrerpolicy: 'no-referrer' });
+    }
+    expect(linksOf(boxes[0] as string).map((l) => [l.href, l.text, l.attrs['target']])).toEqual([[`/jobs/${K1}/files/resume.html`, 'Open full preview ↗ of the resume (opens in a new tab)', '_blank']]);
+  });
+  it('says where each line comes from without hover: the cited facts are listed', async () => {
+    withStore((s) => s.putDocs(K1, s.getJob(K1)?.docs ?? [], ['f-nw-01']));
+    const body = (await get(`/jobs/${K1}`)).body;
+    expect(textOf(body)).not.toMatch(/\bhover\b/i);
+    const cited = elementsWith(body, 'class', 'cited')[0] as string;
+    expect(textOf(cited)).toMatch(/^Facts these documents cite \(1\) f-nw-01 Led the design of an event-driven order pipeline/);
+  });
+});
+
+describe('A10: facts waiting for you come first, the claim leads, Reject is a danger button', () => {
+  it('orders, lays out and styles the facts', async () => {
+    const body = (await get('/facts')).body;
+    const lis = [...body.matchAll(/<li class="(fact[^"]*)" id="fact-([^"]*)"/g)].map((m) => ({ pending: (m[1] as string).includes('fact-unverified'), id: m[2] }));
+    expect(lis[0]?.pending).toBe(true);
+    expect(lis.slice(lis.findIndex((l) => !l.pending)).some((l) => l.pending)).toBe(false);
+    const row = rowOf(body, 'id', 'fact-f-nw-01');
+    expect(row.indexOf('class="fact-claim"')).toBeLessThan(row.indexOf('class="fact-id"'));
+    expect(textOf(row)).toMatch(/^Led the design of an event-driven order pipeline/);
+    expect(elementsWith(row, 'class', 'btn btn-danger').map(textOf)).toEqual(['Reject']);
+  });
+});
+
+describe('A12: the interactive layer for keyboards and screen readers', () => {
+  it('status buttons keep stable ids; htmx forms disable their buttons while busy; the fragment says what changed', async () => {
+    const body = (await get(`/jobs/${K1}`)).body;
+    for (const s of ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped']) expect(elementsWith(body, 'id', `status-to-${s}`), s).toHaveLength(1);
+    // htmx 2 `find` is querySelector (first match only): a form with several buttons names them all with a scoped selector
+    for (const f of elementsWith(body, 'hx-post')) {
+      const multi = (f.match(/<button/g) ?? []).length > 1;
+      expect(attrsOf(f)['hx-disabled-elt'], attrsOf(f)['hx-post']).toBe(multi ? '#status button' : 'find button');
+    }
+    const frag = await (await post(`/jobs/${K1}/status`, { _csrf: token, to: 'approved' }, hx)).text();
+    expect(attrsOf(frag)['data-live']).toBe('Status set to Shortlisted.');
+    expect(elementsWith(frag, 'id', 'status-to-approved')).toHaveLength(1);
+  });
+  it('one polite live region on every page; only critical banners are alerts', async () => {
+    for (const p of ['/', `/jobs/${K1}`, '/facts', '/runs', '/freelance', '/companies']) {
+      const b = (await get(p)).body;
+      expect(elementsWith(b, 'id', 'live').map(attrsOf), p).toEqual([{ id: 'live', class: 'visually-hidden', role: 'status', 'aria-live': 'polite' }]);
+    }
+    writeFileSync(join(home, 'pack/fx.yaml'), 'asOf: "2026-08-01"\ntoINR: { USD: 83.5, EUR: 90.2, GBP: 106.4, INR: 1 }\n');
+    const warn = elementsWith((await get('/')).body, 'class', 'banner banner-warn')[0] as string;
+    expect(attrsOf(warn)['role']).toBe('status');
+  });
+});
+
+describe('A14: when you applied, and when the last run was', () => {
+  it('an applied row says how long ago, and flags a due follow-up (U9: 5 days after applying)', async () => {
+    const r = textOf(rowOf((await get('/')).body, 'data-job', K9));
+    expect(r).toContain('Applied 27 days ago');
+    expect(r).toContain('Follow-up due');
+    withStore((s) => s.setStatus(K1, 'applied', 'user', '2026-10-07T06:30:00.000Z'));
+    const k1 = textOf(rowOf((await get('/')).body, 'data-job', K1));
+    expect(k1).toContain('Applied 2 days ago');
+    expect(k1).not.toContain('Follow-up due');
+  });
+  it('the job page says "You applied to <company> N days ago"', async () => {
+    expect(textOf((await get(`/jobs/${K9}`)).body)).toContain('You applied to Initrode 27 days ago (12 Sep 2026). Follow-up due.');
+  });
+  it('the jobs page names the last daily run and its problems, linking to Runs', async () => {
+    const line = elementsWith((await get('/')).body, 'class', 'run-line')[0] as string;
+    expect(textOf(line)).toBe('Last run 9 Oct 2026, 07:00 IST · 1 problem → Runs');
+    expect(linksOf(line).map((l) => l.href)).toEqual(['/runs']);
+  });
+  it('before any daily run, it says when the first one starts', async () => {
+    withStore((s) => s.kernel.db.prepare('DELETE FROM runs_summary').run());
+    expect(textOf(elementsWith((await get('/')).body, 'class', 'run-line')[0] ?? '')).toBe('No daily run yet. It starts at 07:00 IST.');
   });
 });

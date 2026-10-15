@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CompanyJobs } from '../../src/app/coverage/company-jobs.js';
 import { AppStore, DEFAULT_BANDS, type Band, type JobFilter, type JobView } from '../../src/app/store/app-store.js';
 import { JOB_STATUSES } from '../../src/app/store/schema.js';
+import { isToDecideFrom } from '../../src/app/triage.js';
 import { Store } from '../../src/kernel/store/store.js';
 import { fillJobs, FLOOR, prng } from '../support/jobs-fixture.js';
 
@@ -13,6 +14,7 @@ import { fillJobs, FLOOR, prng } from '../support/jobs-fixture.js';
  * same counts.
  */
 const ALL: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
+const DECIDE_FROMS = ['2026-10-01T00:00:00.000Z', '2026-10-08T18:30:00.000Z', '2026-10-09T01:30:00.000Z', '2100-01-01T00:00:00.000Z'];
 const HIDDEN_BANDS = ALL.filter((b) => !DEFAULT_BANDS.includes(b));
 
 interface PageOut {
@@ -22,10 +24,11 @@ interface PageOut {
   readonly total: number;
   readonly newCount: number;
   readonly hiddenCount: number;
+  readonly toDecide: number;
 }
 
 /** The dashboard's jobs list before fix 2, verbatim in effect (server.ts `GET /`). */
-function legacy(s: AppStore, filter: JobFilter, pageAsked: number, size: number, newAfterMs: number): PageOut {
+function legacy(s: AppStore, filter: JobFilter, pageAsked: number, size: number, newAfterMs: number, decideFrom: string): PageOut {
   const list = s.listJobs(filter);
   const pages = Math.max(1, Math.ceil(list.length / size));
   const page = Math.min(pageAsked, pages);
@@ -36,12 +39,13 @@ function legacy(s: AppStore, filter: JobFilter, pageAsked: number, size: number,
     total: list.length,
     newCount: list.filter((j) => Date.parse(j.firstSeen) > newAfterMs).length,
     hiddenCount: filter.band === undefined ? s.listJobs({ ...filter, band: HIDDEN_BANDS }).length : 0,
+    toDecide: list.filter((j) => isToDecideFrom(j, decideFrom)).length,
   };
 }
 
-function viaSql(s: AppStore, filter: JobFilter, pageAsked: number, size: number, newAfterMs: number): PageOut {
-  const p = s.listJobsPage(filter, { page: pageAsked, size, newAfterMs });
-  return { jobs: p.jobs, page: p.page, pages: p.pages, total: p.total, newCount: p.newCount, hiddenCount: filter.band === undefined ? p.hiddenCount : 0 };
+function viaSql(s: AppStore, filter: JobFilter, pageAsked: number, size: number, newAfterMs: number, decideFrom: string): PageOut {
+  const p = s.listJobsPage(filter, { page: pageAsked, size, newAfterMs, decideFrom });
+  return { jobs: p.jobs, page: p.page, pages: p.pages, total: p.total, newCount: p.newCount, hiddenCount: filter.band === undefined ? p.hiddenCount : 0, toDecide: p.toDecide };
 }
 
 const COMPANY_FILTERS: readonly CompanyJobs[] = [
@@ -73,7 +77,7 @@ describe('listJobsPage: the jobs list in SQL is exactly the old JS path', () => 
           const filter: JobFilter = { ...(band ? { band } : {}), ...(floorInr !== undefined ? { floorInr } : {}), ...(duplicates ? { duplicates } : {}) };
           for (const page of [1, 2, 3, 99]) {
             const what = JSON.stringify({ filter, page });
-            expect(viaSql(app, filter, page, 25, 0), what).toEqual(legacy(app, filter, page, 25, 0));
+            expect(viaSql(app, filter, page, 25, 0, DECIDE_FROMS[0] as string), what).toEqual(legacy(app, filter, page, 25, 0, DECIDE_FROMS[0] as string));
           }
         }
       }
@@ -103,15 +107,16 @@ describe('listJobsPage: the jobs list in SQL is exactly the old JS path', () => 
       const size = pick([1, 7, 100]);
       const page = pick([1, 1, 2, 5, 1000]);
       const newAfter = pick([0, Date.parse('2026-10-05T01:30:00.000Z'), Date.parse('2026-10-09T01:30:00.000Z'), Date.parse('2026-10-09T01:30:00.200Z'), Number.MAX_SAFE_INTEGER]);
-      const what = JSON.stringify({ filter, page, size, newAfter });
-      expect(viaSql(app, filter, page, size, newAfter), what).toEqual(legacy(app, filter, page, size, newAfter));
+      const decideFrom = pick(DECIDE_FROMS);
+      const what = JSON.stringify({ filter, page, size, newAfter, decideFrom });
+      expect(viaSql(app, filter, page, size, newAfter, decideFrom), what).toEqual(legacy(app, filter, page, size, newAfter, decideFrom));
     }
   });
 
   it('an empty table: one empty page', () => {
     const empty = AppStore.on(Store.open(':memory:'));
-    expect(viaSql(empty, {}, 3, 100, 0)).toEqual(legacy(empty, {}, 3, 100, 0));
-    expect(viaSql(empty, {}, 3, 100, 0)).toMatchObject({ jobs: [], page: 1, pages: 1, total: 0 });
+    expect(viaSql(empty, {}, 3, 100, 0, DECIDE_FROMS[0] as string)).toEqual(legacy(empty, {}, 3, 100, 0, DECIDE_FROMS[0] as string));
+    expect(viaSql(empty, {}, 3, 100, 0, DECIDE_FROMS[0] as string)).toMatchObject({ jobs: [], page: 1, pages: 1, total: 0 });
   });
 
   it('never reads the description column', () => {
@@ -123,7 +128,7 @@ describe('listJobsPage: the jobs list in SQL is exactly the old JS path', () => 
       return prepare(sql);
     }) as typeof db.prepare;
     try {
-      app.listJobsPage({ text: 'eng', status: ['new'], minScore: 1 }, { page: 1, size: 100, newAfterMs: 0 });
+      app.listJobsPage({ text: 'eng', status: ['new'], minScore: 1 }, { page: 1, size: 100, newAfterMs: 0, decideFrom: '2026-10-01T00:00:00.000Z' });
     } finally {
       db.prepare = prepare;
     }

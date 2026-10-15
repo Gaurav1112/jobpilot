@@ -1,0 +1,12 @@
+{
+ "name": "writer-role.md",
+ "path": "writer-role.md",
+ "sha": "0000000000000000000000000000000000000001",
+ "size": 261,
+ "url": "https://api.github.com/repos/draftdev/jobs/contents/writer-role.md?ref=main",
+ "html_url": "https://github.com/draftdev/jobs/blob/main/writer-role.md",
+ "type": "file",
+ "encoding": "base64",
+ "content": "IyBUZWNobmljYWwgV3JpdGVyIGF0IFtEcmFmdC5kZXZdKGh0dHBzOi8vZHJhZnQuZGV2LykKPiAk\nNjAgLSAkODAgVVNEL2hvdXIsIDEwIGhvdXJzL3dlZWssIFJlbW90ZSAoR2xvYmFsKQoKRHJhZnQu\nZGV2IGlzIGhpcmluZyBhICoqVGVjaG5pY2FsIFdyaXRlcioqIHRvIGVkaXQgZGV2ZWxvcGVyIHR1\ndG9yaWFscyBmb3IgaXRzIGNsaWVudHMuCgojIyMjIFtTVUJNSVQgWU9VUiBBUFBMSUNBVElPTiBU\nT0RBWV0oaHR0cHM6Ly9leGFtcGxlLmNvbS9hcHBseSkK\n",
+ "_note": "SYNTHETIC: an open role in the same format as the recorded files, written for this test (2026-10-15); not a real posting."
+}

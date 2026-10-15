@@ -197,3 +197,32 @@ describe('deferrals on the dashboard (carry 10)', () => {
     expect(html).toContain('Input rejected');
   });
 });
+
+describe('projectCoverage: freehire-sourced boards (D3)', () => {
+  it('a failed verdict becomes Proposed, its reasons kept with "not verified: " before the first, for both freehire sources', () => {
+    const app = open();
+    for (const source of ['freehire', 'freehire-discovery'] as const) {
+      const c = cand(`fh-${source}.freehire`, source);
+      const v = { ...verdict(c, 'failed'), reasons: ['board not found (404): greenhouse x', 'second'] };
+      const p = projectCoverage(app, { verdicts: [v], unlocated: [], at: W1, countFailures: true });
+      expect(p.registry.failed).toBe(0);
+      expect(row(app, c.companyKey)).toMatchObject({ status: 'proposed', source, failWeeks: 0 });
+      expect(row(app, c.companyKey)?.reasons).toEqual(['not verified: board not found (404): greenhouse x', 'second']);
+    }
+  });
+
+  it('a live freehire company that fails later is a failed week, as for any company', () => {
+    const app = open();
+    const c = cand('fh-live.freehire', 'freehire');
+    projectCoverage(app, { verdicts: [verdict(c, 'verified')], unlocated: [], at: W1, countFailures: true });
+    projectCoverage(app, { verdicts: [verdict(c, 'failed')], unlocated: [], at: W2, countFailures: true });
+    expect(row(app, c.companyKey)).toMatchObject({ status: 'verified', failWeeks: 1 });
+  });
+
+  it('a failed verdict of another source is still failed', () => {
+    const app = open();
+    const c = cand('plain.test', 'yc');
+    projectCoverage(app, { verdicts: [verdict(c, 'failed')], unlocated: [], at: W1, countFailures: true });
+    expect(row(app, 'plain.test')).toMatchObject({ status: 'failed' });
+  });
+});

@@ -103,7 +103,7 @@ const seededRows = (home: string): unknown => {
 };
 
 describe.skipIf(pdftotext === undefined)('runs migrate a behind schema under the run lock', () => {
-  it('the freelance run upgrades a real v22 database to 23 under its lock, keeping the gig documents and snapshots', async () => {
+  it('the freelance run upgrades a real v22 database (to 23, then 24) under its lock, keeping the gig documents and snapshots', async () => {
     const home = v22Home();
     expect(version(home)).toBe(22);
     const rows = seededRows(home);
@@ -119,7 +119,7 @@ describe.skipIf(pdftotext === undefined)('runs migrate a behind schema under the
     });
     expect(locked).toBe(true);
     expect(r.exitCode).toBe(0);
-    expect(version(home)).toBe(23);
+    expect(version(home)).toBe(24);
     expect(seededRows(home)).toEqual(rows);
     const d = new Database(join(home, 'jobpilot.db'), { readonly: true });
     try {

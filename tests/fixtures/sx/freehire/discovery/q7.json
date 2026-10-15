@@ -1,0 +1,33 @@
+{
+ "data": [
+  {
+   "source": "lever",
+   "external_id": "jobgether:994b085d-7a99-4f46-809f-ceb8304320ec",
+   "url": "https://jobs.lever.co/jobgether/994b085d-7a99-4f46-809f-ceb8304320ec?utm_source=freehire.me",
+   "title": "Senior Software Engineer 1 (Java Fullstack)",
+   "company": "jobgether",
+   "location": "India",
+   "posted_at": "2026-10-14T01:28:01Z",
+   "created_at": "2026-10-14T05:17:35Z",
+   "last_seen_at": "2026-10-14T05:17:35Z",
+   "closed_at": null
+  },
+  {
+   "source": "oracle",
+   "external_id": "fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/CX:4080",
+   "url": "https://fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/4080?utm_source=freehire.me",
+   "title": "Senior Software Development Engineer in Test",
+   "company": "fa-extu-saasfaprod1.fa.ocs.oraclecloud.com/CX",
+   "location": "India",
+   "posted_at": "2026-10-13T00:00:00Z",
+   "created_at": "2026-10-14T01:07:27Z",
+   "last_seen_at": "2026-10-14T01:07:27Z",
+   "closed_at": null
+  }
+ ],
+ "meta": {
+  "limit": 100,
+  "offset": 0,
+  "total": 2
+ }
+}

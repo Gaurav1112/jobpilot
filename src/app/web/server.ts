@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -23,8 +23,9 @@ import { NamingSchema, type Fact, type Pack } from '../pack/schema.js';
 import { diskDocCheck } from '../docs-check.js';
 import { overrideFact } from '../project.js';
 import { istDate, istMonth } from '../run.js';
-import { AppStore, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
+import { AppStore, DEFAULT_BANDS, SchemaBehindError, type Band, type JobFilter, type JobsPage, type JobStatus } from '../store/app-store.js';
 import { JOB_STATUSES } from '../store/schema.js';
+import { toDecideFrom } from '../triage.js';
 import { dateText, daysBetween, istTimeText } from './format.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
@@ -89,7 +90,7 @@ export interface DashboardTestHooks {
   /** Called each time the dashboard opens its (shared) database connection. */
   readonly onOpen?: () => void;
   /** Replaces `listJobsPage` for `GET /` (the equivalence test runs the pre-fix-2 JS path through the real route). */
-  readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number }) => JobsPage;
+  readonly jobsPage?: (s: AppStore, filter: JobFilter, opts: { readonly page: number; readonly size: number; readonly newAfterMs: number; readonly decideFrom: string }) => JobsPage;
 }
 
 /** A download record is best-effort: it waits this long for a lock, then is skipped. */
@@ -113,17 +114,38 @@ const JOB_KEY = /^[0-9a-f]{16}$/;
 const DOC_NAME = /^(resume|cover)\.(pdf|docx|html)$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const FX_STALE_DAYS = 30;
+/** A8: a list URL the job page may link and redirect back to: the jobs list and its query only. */
+export function safeFrom(raw: string | undefined): string | undefined {
+  return raw !== undefined && raw.length <= 600 && /^\/(\?[^#\s\\]*)?$/.test(raw) ? raw : undefined;
+}
+
+/** A1: the jobs list's statuses when the query names none: everything but Not for me and Not selected. */
+export const DEFAULT_STATUSES: readonly JobStatus[] = JOB_STATUSES.filter((s) => s !== 'skipped' && s !== 'rejected');
+
+/** Whether status `to` takes a job out of the list at `from` (its status filter, or the default one). */
+function leavesList(from: string, to: JobStatus): boolean {
+  const q = new URLSearchParams(from.includes('?') ? from.slice(from.indexOf('?') + 1) : '');
+  const asked = q.getAll('status').filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s));
+  return !(asked.length > 0 ? asked : DEFAULT_STATUSES).includes(to);
+}
+/** The same members, regardless of order or repeats. */
+function sameSet<T>(a: readonly T[], b: readonly T[]): boolean {
+  const x = new Set(a);
+  const y = new Set(b);
+  return x.size === y.size && [...x].every((v) => y.has(v));
+}
 const PAGE_SIZE = 100;
 
 const STATIC_DIR = join(import.meta.dirname, 'static');
 const require = createRequire(import.meta.url);
 
 /** The vendored htmx (pinned in package.json), read from the installed package once: no CDN. */
-function staticFiles(): Record<string, { body: string; type: string }> {
+function staticFiles(): Record<string, { body: string; type: string; etag: string }> {
+  const file = (body: string, type: string) => ({ body, type, etag: `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"` });
   return {
-    'app.css': { body: readFileSync(join(STATIC_DIR, 'app.css'), 'utf8'), type: 'text/css; charset=utf-8' },
-    'app.js': { body: readFileSync(join(STATIC_DIR, 'app.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
-    'htmx.min.js': { body: readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
+    'app.css': file(readFileSync(join(STATIC_DIR, 'app.css'), 'utf8'), 'text/css; charset=utf-8'),
+    'app.js': file(readFileSync(join(STATIC_DIR, 'app.js'), 'utf8'), 'text/javascript; charset=utf-8'),
+    'htmx.min.js': file(readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'), 'text/javascript; charset=utf-8'),
   };
 }
 
@@ -178,10 +200,10 @@ export function redactor(naming: Pick<NamingRules, 'forbiddenTerms'>): { text: (
   return { text, deep };
 }
 
-/** The subject of "<X> reads PDF best", by ATS profile id. */
-const ATS_SENTENCE: Readonly<Record<string, string>> = {
+/** Who the recommended format is for, mid-sentence: "Recommended for Greenhouse: PDF." */
+const ATS_FOR: Readonly<Record<string, string>> = {
   greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workday: 'Workday', icims: 'iCIMS', taleo: 'Taleo',
-  smartrecruiters: 'SmartRecruiters', careers: 'A careers site', feed: 'Most applicant systems', unknown: 'Most applicant systems',
+  smartrecruiters: 'SmartRecruiters', careers: 'a careers site', feed: 'most applicant systems', unknown: 'most applicant systems',
 };
 
 const humanKey = (k: string): string => {
@@ -219,10 +241,33 @@ export function withFactTooltips(page: string): string {
     .replace(/<p data-facts="([^"<>]*)">/g, '<p data-facts="$1" title="Facts $1">');
 }
 
+/** A2 (amendment 5): a current preview looks like the paper the employer gets, in any theme; the file on disk is unchanged. */
+const PREVIEW_LIGHT = '<meta name="color-scheme" content="light"><style>:root{color-scheme:light;--fg:#111;--bg:#fff;--muted:#444;--rule:#ccc}</style>';
+export function withPreviewLight(page: string): string {
+  const i = page.indexOf('</head>');
+  return i < 0 ? page : `${page.slice(0, i)}${PREVIEW_LIGHT}${page.slice(i)}`;
+}
+
 const asciiSlug = (s: string): string =>
   s.normalize('NFKD').replace(/[^\x20-\x7E]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
-type Env = { Variables: { sid: string } };
+export type Env = { Variables: { sid: string } };
+
+/** The pages a new dashboard renders once before serving (amendment 2): code compiled, the pack read, DB pages cached. */
+export const WARM_PATHS: readonly string[] = ['/', '/jobs/0000000000000000', '/facts', '/runs', '/freelance', '/freelance?tab=review', '/freelance/networks', '/companies'];
+
+/** Requests each of WARM_PATHS once with `host`; never throws. Returns the time it took in ms. */
+export async function warmDashboard(app: Hono<Env>, host: string): Promise<number> {
+  const t0 = performance.now();
+  for (const path of WARM_PATHS) {
+    try {
+      await (await app.request(path, { headers: { host } })).text();
+    } catch {
+      // a page that cannot render now renders on its first real request instead
+    }
+  }
+  return Math.max(performance.now() - t0, 0.001);
+}
 
 export function createDashboard(deps: DashboardDeps): Hono<Env> {
   return buildDashboard(deps, {});
@@ -340,10 +385,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const csrf = (c: Context<Env>): string => sessions.token(c.get('sid'));
   const now = (): string => deps.clock.now();
 
+  // A13: revalidated with an ETag, so the 77 KB of static files is not downloaded again on every view
   app.get('/static/:file', (c) => {
     const f = Object.hasOwn(files, c.req.param('file')) ? files[c.req.param('file')] : undefined;
     if (!f) return c.text('Not found', 404);
-    return c.body(f.body, 200, { 'content-type': f.type, 'cache-control': 'no-cache' });
+    const headers = { 'content-type': f.type, 'cache-control': 'no-cache', etag: f.etag };
+    const asked = (c.req.header('if-none-match') ?? '').split(',').map((x) => x.trim());
+    return asked.includes(f.etag) ? c.body(null, 304, headers) : c.body(f.body, 200, headers);
   });
 
   // --- jobs list ------------------------------------------------------------------------------------------------------
@@ -351,9 +399,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const at = now();
     const ps = packState(deps.home, at);
     const r = redactor(ps.naming);
-    const statuses = c.req.queries('status')?.filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s)) ?? [];
+    const asked = c.req.queries('status')?.filter((s): s is JobStatus => (JOB_STATUSES as readonly string[]).includes(s)) ?? [];
+    const statuses = asked.length > 0 ? asked : DEFAULT_STATUSES;
     const ALL: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
     const bands = c.req.queries('band')?.filter((b): b is Band => (ALL as readonly string[]).includes(b)) ?? [];
+    // A8/A1: "default" means the set equals the default one, not "absent": the form sends its ticked defaults back
+    const statusesDefault = sameSet(asked, DEFAULT_STATUSES) || asked.length === 0;
+    const bandsDefault = bands.length === 0 || sameSet(bands, DEFAULT_BANDS);
     const minRaw = c.req.query('min')?.trim() ?? '';
     const min = /^\d{1,3}(\.\d+)?$/.test(minRaw) ? Number(minRaw) : undefined;
     const q = (c.req.query('q') ?? '').trim().slice(0, 100);
@@ -368,7 +420,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const floor = ps.pack?.offers.floor;
     const floorInr = floor ? floor.amount * (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
     const filter: JobFilter = {
-      ...(statuses.length > 0 ? { status: statuses } : {}),
+      status: statuses,
       ...(bands.length > 0 ? { band: bands } : {}),
       ...(min !== undefined ? { minScore: min } : {}),
       ...(q !== '' ? { text: q } : {}),
@@ -385,24 +437,26 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
 
     // dashboard-perf fix 2: the page, its counts and the hidden count in SQL over the covering index (`listJobsPage`)
-    const { jobs, hidden, overrides, total, newCount, pageNo, pages } = withStore((s) => {
-      const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev };
+    const { jobs, hidden, overrides, total, newCount, toDecide, pageNo, pages, lastRun } = withStore((s) => {
+      const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev, decideFrom: toDecideFrom(at) };
       const p = hooks.jobsPage !== undefined ? hooks.jobsPage(s, filter, opts) : s.listJobsPage(filter, opts);
       const hist = s.histories(p.jobs.map((j) => j.jobKey));
       return {
         // rereview R6: the list never shows the description, so it is dropped before the (strict, per-string) redaction
         jobs: p.jobs.map((j): ListedJob => ({ ...j, jdText: '', isNew: Date.parse(j.firstSeen) > prev, history: hist[j.jobKey] ?? [] })),
-        hidden: bands.length === 0 ? p.hiddenCount : 0,
+        hidden: bandsDefault ? p.hiddenCount : 0,
         overrides: s.factOverrides(),
         total: p.total,
         newCount: p.newCount,
+        toDecide: p.toDecide,
         pageNo: p.page,
         pages: p.pages,
+        lastRun: ((run) => (run === undefined ? null : { at: run.at, problems: (run.problems ?? []).length }))(s.latestRun('daily-')),
       };
     });
     const pageHref = (n: number): string => {
       const qs = new URLSearchParams();
-      for (const v of statuses) qs.append('status', v);
+      for (const v of asked) qs.append('status', v);
       for (const v of bands) qs.append('band', v);
       if (min !== undefined) qs.set('min', String(min));
       if (q !== '') qs.set('q', q);
@@ -412,8 +466,8 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, hiddenCount: hidden, istDay: istDate,
-      page: pageNo, pages, total, newCount, pageHref,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bandsDefault, defaultStatuses: statusesDefault, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
+      page: pageNo, pages, total, newCount, toDecide, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
   });
@@ -445,7 +499,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const displays = new Map(groups.map((g) => [g.key, g.display ?? g.key]));
     const display = (k: string): string => r.text(displays.get(k) ?? k);
     const profile = profileFor(data.job.ats, data.job.url);
-    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, atsName: ATS_SENTENCE[profile.id] ?? 'Most applicant systems' };
+    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, for: ATS_FOR[profile.id] ?? 'most applicant systems' };
     const answers = ps.pack ? withCoverNote(ps.pack.answers, data.plan).map(([k, v]) => [r.text(humanKey(k)), r.text(typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v))] as const) : null;
     const banners = commonBanners(ps, istDate(at), data.overrides);
     if (job.unplaced.length > 0) {
@@ -453,7 +507,12 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     }
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
-    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, ...(flash !== undefined ? { flash } : {}) });
+    const from = safeFrom(c.req.query('from'));
+    const nextQ = c.req.query('next');
+    const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
+    const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
+    const cited = data.job.citedFacts === null ? null : data.job.citedFacts.map((id) => ({ id: r.text(id), claim: r.text(ps.pack?.facts.find((f) => f.id === id)?.claim ?? 'no longer in your fact list') }));
+    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -490,9 +549,21 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return { job: s.getJob(key), sent: sentData(s, c, key), notice };
     });
     if (!result?.job) return c.text('No such job', 404);
-    if (!isHx(c)) return c.redirect(`/jobs/${key}${result.notice !== undefined ? `?notice=${result.notice}` : ''}#status`, 303);
+    const from = safeFrom(typeof body['from'] === 'string' ? body['from'] : undefined);
+    const next = typeof body['next'] === 'string' && JOB_KEY.test(body['next']) ? body['next'] : undefined;
+    if (!isHx(c)) {
+      // A notice (no documents kept, or Keep a copy) is only told on the job page: it never yields to the next row.
+      if (from !== undefined && result.notice === undefined && leavesList(from, to as JobStatus)) return c.redirect(`${from}${next !== undefined ? `#job-${next}` : '#jobs'}`, 303);
+      const qs = new URLSearchParams();
+      if (from !== undefined) qs.set('from', from);
+      if (from !== undefined && next !== undefined) qs.set('next', next);
+      if (result.notice !== undefined) qs.set('notice', result.notice);
+      const q = qs.toString();
+      return c.redirect(`/jobs/${key}${q === '' ? '' : `?${q}`}#status`, 303);
+    }
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
-    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash)}${sentSection(result.sent, true)}`.value);
+    const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
+    return c.html(html`${statusSection(result.job, { csrf: csrf(c), istDay: istDate, now: at, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) })}${sentSection(result.sent, true)}`.value);
   });
 
   // "Keep a copy of these documents now": the snapshot an apply could not make (applied elsewhere, or a failed copy).
@@ -546,7 +617,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     if (ext === 'html') {
       headers['content-security-policy'] = PREVIEW_CSP;
       headers['content-disposition'] = 'inline';
-      return c.body(exact ? new Uint8Array(read.bytes) : withFactTooltips(Buffer.from(read.bytes).toString('utf8')), 200, headers);
+      return c.body(exact ? new Uint8Array(read.bytes) : withPreviewLight(withFactTooltips(Buffer.from(read.bytes).toString('utf8'))), 200, headers);
     }
     headers['content-security-policy'] = FILE_CSP;
     headers['content-disposition'] = `attachment; filename="${downloadName}"`;
@@ -762,5 +833,6 @@ export function serveDashboard(deps: Omit<DashboardDeps, 'port'> & { readonly po
   return serve({ fetch: app.fetch, hostname: '127.0.0.1', port: deps.port ?? DEFAULT_PORT }, (info) => {
     bound = info.port;
     onListen?.(`http://127.0.0.1:${info.port}/`);
+    void warmDashboard(app, `127.0.0.1:${info.port}`).then((ms) => console.error(`jobpilot dashboard: warmed up in ${Math.round(ms)} ms`));
   });
 }

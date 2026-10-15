@@ -27,13 +27,22 @@ const WITH_PLATFORMS = [
   { platform: 'pinpoint', company: 'Example', ref: 'example' },
   { platform: 'rippling', company: 'Example', ref: 'example' },
   { platform: 'gem', company: 'Example', ref: 'example' },
+  // Sources expansion, Task 2, the listing-pages adapters
+  { platform: 'jazzhr', company: 'Example', ref: 'example' },
+  { platform: 'freshteam', company: 'Example', ref: 'example' },
+  // Sources expansion, Task 3, the Zoho Recruit feed board
+  { platform: 'zohorecruit', company: 'Example', ref: 'example.zohorecruit.com' },
+  // Sources expansion, Task 4, the Manatal paged feed board
+  { platform: 'manatal', company: 'Example', ref: 'example' },
 ] as const;
+/** Sources expansion, Task 9: a stored lead includes `src-freehire-leads` (its contract names no egress, so the export is exact). */
+const WITH_LEADS = [{ leadKey: 'example:1', source: 'example', url: 'https://example.com/1', title: 'Example', company: null, location: null, postedAt: null, evidence: 'india', queryId: 'q1', firstWeek: '2026-10-11', lastWeek: '2026-10-11' }] as const;
 
 /**
  * Every agent whose contract is exported to `contracts-out/` (`contracts export`) and drift-checked (`contracts
  * check`, part of `node --run verify`): the demo agents, every agent of the daily pipeline (sources, src-workday, src-eightfold, src-oracle, the Task 8 page adapters, normalizer,
  * eligibility, scorer and the writing team) and every agent of the freelance pipeline (`freelanceAgents`: the gig
  * sources, gig normalizer, rate normalizer, gig eligibility, gig risk, gig scorer and the gig writing team) and every
- * agent of the weekly coverage pipeline (company-seed, careers-locator, platform-detector, board-verifier).
+ * agent of the weekly coverage pipeline (company-seed, src-freehire-discovery, careers-locator, platform-detector, board-verifier).
  */
-export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS, WITH_PLATFORMS), ...freelanceAgents(), ...coverageExportAgents()] as const;
+export const exportedAgents = [...demoAgents, ...dailyAgents(WITH_CAREERS, WITH_PLATFORMS, { leads: WITH_LEADS }), ...freelanceAgents(), ...coverageExportAgents()] as const;

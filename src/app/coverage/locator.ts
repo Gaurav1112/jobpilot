@@ -103,7 +103,7 @@ export function findCareersLink(html: string, base: string, accept: (u: URL) => 
 
 export const careersLocatorContract = defineContract({
   id: 'careers-locator',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Finds a candidate company\'s careers URL by fixed probes that honour robots.txt; a refused host is recorded in the run\'s coverage_host_state',
   skills: ['careers-locator'],
   team: 'coverage-locator',

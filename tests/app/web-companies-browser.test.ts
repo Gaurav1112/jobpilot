@@ -2,7 +2,8 @@ import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, type Browser } from 'playwright';
+import type { Browser } from 'playwright';
+import { launchBrowser } from '../support/browser.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { CompanyVerdict } from '../../src/app/coverage/types.js';
 import { AppStore } from '../../src/app/store/app-store.js';
@@ -16,7 +17,7 @@ const root = join(import.meta.dirname, '../..');
 const AT = '2026-10-11T01:30:00.000Z';
 const LONG = 'Averyveryveryverylongcompanynamewithoutanyspacesatallthatmustwraponaphonescreen Holdings';
 
-const browser: Browser | undefined = await chromium.launch().catch(() => undefined);
+const browser: Browser | undefined = await launchBrowser();
 let home: string;
 let base: string;
 let server: ReturnType<typeof serveDashboard>;
@@ -60,7 +61,7 @@ describe.skipIf(browser === undefined)('companies tab in Chromium', () => {
   it('no page of the tab scrolls sideways at 400 px', async () => {
     const ctx = await (browser as Browser).newContext({ viewport: { width: 400, height: 800 } });
     const page = await ctx.newPage();
-    for (const p of ['/companies', '/companies?done=approved&key=acme.example', '/?companyKey=acme.example&band=rejected&band=disclosed']) {
+    for (const p of ['/companies', '/companies/skipped', '/companies?done=approved&key=acme.example', '/?companyKey=acme.example&band=rejected&band=disclosed']) {
       await page.goto(`${base}${p}`, { waitUntil: 'networkidle' });
       const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
       expect(w.scroll, p).toBeLessThanOrEqual(w.client);

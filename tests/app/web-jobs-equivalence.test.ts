@@ -2,6 +2,7 @@ import { cpSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { isToDecideFrom } from '../../src/app/triage.js';
 import { AppStore, type JobFilter, type JobsPage } from '../../src/app/store/app-store.js';
 import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { Sessions } from '../../src/app/web/security.js';
@@ -18,7 +19,7 @@ const NOW = '2026-10-12T06:30:00.000Z';
 const HIDDEN = ['below-floor', 'rejected'] as const;
 const SID = 'jp_sid=' + 'ab'.repeat(16);
 
-function legacy(s: AppStore, filter: JobFilter, o: { page: number; size: number; newAfterMs: number }): JobsPage {
+function legacy(s: AppStore, filter: JobFilter, o: { page: number; size: number; newAfterMs: number; decideFrom: string }): JobsPage {
   const list = s.listJobs(filter);
   const pages = Math.max(1, Math.ceil(list.length / o.size));
   const page = Math.min(o.page, pages);
@@ -29,6 +30,7 @@ function legacy(s: AppStore, filter: JobFilter, o: { page: number; size: number;
     total: list.length,
     newCount: list.filter((j) => Date.parse(j.firstSeen) > o.newAfterMs).length,
     hiddenCount: s.listJobs({ ...filter, band: [...HIDDEN] }).length,
+    toDecide: list.filter((j) => isToDecideFrom(j, o.decideFrom)).length,
   };
 }
 

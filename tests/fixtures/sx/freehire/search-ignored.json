@@ -1,0 +1,92 @@
+{
+ "data": [
+  {
+   "public_slug": "senior-software-engineer-security-platform-sezzle-fovk5twm",
+   "source": "greenhouse",
+   "manually_added": false,
+   "external_id": "sezzle:8031664003",
+   "url": "https://job-boards.greenhouse.io/sezzle/jobs/8031664003?utm_source=freehire.me",
+   "title": "Senior Software Engineer, Security Platform",
+   "company": "Sezzle",
+   "company_slug": "sezzle",
+   "location": "Argentina, Remote",
+   "description": "",
+   "countries": [
+    "ar",
+    "br",
+    "cl",
+    "co",
+    "in",
+    "mx",
+    "rs",
+    "tr"
+   ],
+   "regions": [
+    "apac",
+    "eu",
+    "latam",
+    "mena"
+   ],
+   "work_mode": "remote",
+   "collections": [],
+   "is_tech": "tech",
+   "auto_apply_available": true,
+   "posted_at": "2026-10-14T19:49:07Z",
+   "created_at": "2026-10-14T02:00:11Z",
+   "updated_at": "2026-10-14T19:52:41Z",
+   "last_seen_at": "2026-10-14T19:52:41Z",
+   "closed_at": null,
+   "enrichment": {},
+   "enriched_at": "2026-10-14T02:52:22Z",
+   "enrichment_version": 2,
+   "view_count": 0,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0
+  },
+  {
+   "public_slug": "staff-software-engineer-l4-twilio-qy63rcdi",
+   "source": "greenhouse",
+   "manually_added": false,
+   "external_id": "twilio:8236865",
+   "url": "https://job-boards.greenhouse.io/twilio/jobs/8236865?utm_source=freehire.me",
+   "title": "Staff Software Engineer (L4)",
+   "company": "Twilio",
+   "company_slug": "twilio",
+   "location": "Remote - India",
+   "description": "",
+   "countries": [
+    "in"
+   ],
+   "regions": [
+    "apac"
+   ],
+   "work_mode": "remote",
+   "collections": [],
+   "is_tech": "tech",
+   "auto_apply_available": true,
+   "posted_at": "2026-10-14T17:12:38Z",
+   "created_at": "2026-10-06T06:13:21Z",
+   "updated_at": "2026-10-14T19:53:19Z",
+   "last_seen_at": "2026-10-14T19:53:19Z",
+   "closed_at": null,
+   "enrichment": {},
+   "enriched_at": "2026-10-07T04:34:55Z",
+   "enrichment_version": 2,
+   "view_count": 7,
+   "applied_count": 0,
+   "upvote_count": 0,
+   "downvote_count": 0,
+   "my_vote": 0
+  }
+ ],
+ "meta": {
+  "limit": 100,
+  "offset": 0,
+  "total": 152,
+  "ignored_params": [
+   "q_feilds"
+  ]
+ }
+}

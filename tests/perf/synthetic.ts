@@ -34,9 +34,51 @@ export interface SynthSpec {
   readonly withRuns?: boolean;
   /** Gigs on the freelance tab (each with a document and Gig@1 / GigRendered@1 envelopes); default none. */
   readonly gigs?: number;
+  /** Review-list gigs (verdict review, rates and hours unclear; keys `e…`, valid `GIG_KEY`s); default none. */
+  readonly reviewGigs?: number;
+  /** Registry companies, mostly failed or verified, for the Companies page; default none. */
+  readonly companies?: number;
+  /** Hosts a coverage run skipped this week (`SKIPPED_RUN`), for the Companies page; default none. */
+  readonly skippedHosts?: number;
 }
 
-export const BUDGET_SPEC: SynthSpec = { jobs: 20_000, envelopes: 300_000, events: 500_000, envelopeBytes: 3_000, runs: 10, seed: 20261014, withRuns: true, gigs: 400 };
+export const REVIEW_GIG_KEY = 'e000000000000000';
+export const SKIPPED_RUN = 'coverage-2026-09-10';
+
+export const BUDGET_SPEC: SynthSpec = { jobs: 20_000, envelopes: 300_000, events: 500_000, envelopeBytes: 3_000, runs: 10, seed: 20261014, withRuns: true, gigs: 400, reviewGigs: 354, companies: 1_500, skippedHosts: 781 };
+
+/**
+ * The pages A0 adds to the gate: review gigs, registry companies and this week's skipped hosts. They use their own
+ * random stream (seed ^ 0x5eed), so every row the gate measured before is byte-identical.
+ */
+function addPageRows(db: Database.Database, spec: SynthSpec, firstAt: string, lastAt: string): void {
+  const rnd = prng(spec.seed ^ 0x5eed);
+  const n = (k: number): string => k.toString(16).padStart(15, '0');
+  const insReview = db.prepare(
+    `INSERT INTO gigs (gig_key, dedupe_key, platform, source_id, url, title, client, kind, budget, hours, verdict, reasons, notes, fit, list, first_seen, last_seen)
+     VALUES (?, ?, 'freelancer', ?, ?, ?, '{}', 'gig', '{}', '{}', 'review', '["rate-unclear"]', '["rate unknown - verify","hours not stated - verify"]', ?, 'review', ?, ?)`,
+  );
+  const STATUSES = [['failed', 0.6], ['verified', 0.25], ['proposed', 0.1], ['failing', 0.05]] as const;
+  const insCompany = db.prepare(
+    `INSERT INTO companies (company_key, name, website, careers_url, platform, platform_slug, board_url, status, reasons, source, jobs_seen, last_verified, failing_since, fail_weeks, user_override, updated_at)
+     VALUES (?, ?, ?, ?, 'workday', ?, ?, ?, '[]', 'remoteintech', 3, ?, NULL, 0, NULL, ?)`,
+  );
+  const insRun = db.prepare(`INSERT INTO runs (run_id, pipeline, policy_hash, started_at, finished_at, status) VALUES (?, 'jobpilot-coverage', ?, ?, ?, 'completed')`);
+  const insHost = db.prepare(`INSERT INTO coverage_host_state (run_key, host, reason, at) VALUES (?, ?, ?, ?)`);
+  db.transaction(() => {
+    for (let i = 0; i < (spec.reviewGigs ?? 0); i++) {
+      insReview.run(`e${n(i)}`, `ed${i}`, `r${i}`, `https://www.freelancer.example/projects/r${i}`, `Review gig ${i}`, 30 + Math.floor(rnd() * 50), firstAt, lastAt);
+    }
+    for (let i = 0; i < (spec.companies ?? 0); i++) {
+      let x = rnd();
+      const status = STATUSES.find(([, w]) => (x -= w) < 0)?.[0] ?? 'failed';
+      const key = `co${i}.example`;
+      insCompany.run(key, `Company ${i}`, `https://${key}`, `https://${key}/careers`, `co${i}/External`, `https://${key}/board`, status, status === 'verified' ? lastAt : null, lastAt);
+    }
+    if ((spec.skippedHosts ?? 0) > 0) insRun.run(SKIPPED_RUN, 'a'.repeat(64), '2026-09-10T00:30:00.000Z', '2026-09-10T01:00:00.000Z');
+    for (let i = 0; i < (spec.skippedHosts ?? 0); i++) insHost.run(SKIPPED_RUN, `careers.host${i}.example`, rnd() < 0.78 ? 'robots-forbidden' : 'challenge', '2026-09-10T00:40:00.000Z');
+  })();
+}
 
 function prng(seed: number): () => number {
   let a = seed >>> 0;
@@ -208,6 +250,7 @@ export function buildSyntheticDb(path: string, spec: SynthSpec = BUDGET_SPEC): {
       }
     }
   }
+  addPageRows(db, spec, iso(DAY0), iso(DAY0 + (spec.runs - 1) * 86_400_000));
   db.pragma('wal_checkpoint(TRUNCATE)');
   db.close();
   return { buildMs: performance.now() - t0, bytes: statSync(path).size };

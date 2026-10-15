@@ -13,6 +13,9 @@ import { fillJobs } from '../support/jobs-fixture.js';
  */
 const NEW_INDEXES = ['jobs_list', 'events_by_run', 'envelopes_rendered_by_job', 'events_step_done', 'envelopes_posting_by_job', 'envelopes_gig_by_key', 'envelopes_gig_rendered_by_key'];
 
+/** The objects of migrations after these (24: sources-x freehire leads): not part of what these migrations must leave alone. */
+const LATER_OBJECTS = ['freehire_leads', 'freehire_leads_by_week', 'sqlite_autoindex_freehire_leads_1'];
+
 /** Every table's rows and every schema object's SQL (except the given new ones), hashed. */
 function dumpHash(db: Database.Database, skipObjects: readonly string[] = []): string {
   const h = createHash('sha256');
@@ -49,8 +52,8 @@ function rendered(kernel: Store, jobKey: string, n: number): void {
 }
 
 describe('migrations 16-22: indexes only', () => {
-  it('the registry has 23 migrations; 16-22 are literals that create one index each', () => {
-    expect(APP_MIGRATIONS.length).toBe(23); // 23: freelance-v2 gig cover letter (tests/app/migration-gig-cover.test.ts)
+  it('the registry has 24 migrations; 16-22 are literals that create one index each', () => {
+    expect(APP_MIGRATIONS.length).toBe(24); // 24: sources-x freehire leads (tests/app/coverage/discovery-store.test.ts); 23: freelance-v2 gig cover letter (tests/app/migration-gig-cover.test.ts)
     for (const [i, name] of NEW_INDEXES.entries()) {
       const m = APP_MIGRATIONS[15 + i];
       expect(typeof m).toBe('string');
@@ -71,9 +74,9 @@ describe('migrations 16-22: indexes only', () => {
     ).run();
     const before = dumpHash(db, ['gig_docs', 'gig_snapshots']);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(23);
+    expect(s.schemaVersion()).toBe(24);
     // migration 23 rebuilds gig_docs and gig_snapshots for the cover letter (its own dumpHash test): their SQL is skipped here
-    expect(dumpHash(db, [...NEW_INDEXES, 'gig_docs', 'gig_snapshots'])).toBe(before);
+    expect(dumpHash(db, [...NEW_INDEXES, 'gig_docs', 'gig_snapshots', ...LATER_OBJECTS])).toBe(before);
     const added = (db.prepare(`SELECT name, tbl_name FROM sqlite_master WHERE name IN (${NEW_INDEXES.map(() => '?').join(', ')}) ORDER BY name`).all(...NEW_INDEXES) as { name: string; tbl_name: string }[]);
     expect(added).toEqual([
       { name: 'envelopes_gig_by_key', tbl_name: 'envelopes' },
@@ -91,7 +94,7 @@ describe('migrations 16-22: indexes only', () => {
   it('an index that already exists (a racing opener built it) is not an error', () => {
     const kernel = v15();
     kernel.db.exec(APP_MIGRATIONS[16] as string);
-    expect(AppStore.on(kernel).schemaVersion()).toBe(23);
+    expect(AppStore.on(kernel).schemaVersion()).toBe(24);
   });
 });
 
@@ -109,15 +112,15 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
       return prepare(sql);
     }) as typeof db.prepare;
     try {
-      app.listJobsPage({ floorInr: 4_000_000 }, { page: 1, size: 100, newAfterMs: 0 });
-      app.listJobsPage({ floorInr: 4_000_000, status: ['new', 'applied'], text: 'eng', minScore: 10 }, { page: 1, size: 100, newAfterMs: 0 });
+      app.listJobsPage({ floorInr: 4_000_000 }, { page: 1, size: 100, newAfterMs: 0, decideFrom: '2026-10-01T00:00:00.000Z' });
+      app.listJobsPage({ floorInr: 4_000_000, status: ['new', 'applied'], text: 'eng', minScore: 10 }, { page: 1, size: 100, newAfterMs: 0, decideFrom: '2026-10-01T00:00:00.000Z' });
     } finally {
       db.prepare = prepare;
     }
     const scans = seen.filter((s) => /GROUP BY band|ORDER BY band/.test(s));
     expect(scans.length).toBe(4);
     for (const sql of scans) {
-      const p = plan(db, sql, { floor: 4_000_000, newAfter: 0, limit: 100, offset: 0, minScore: 10, text: 'eng' });
+      const p = plan(db, sql, { floor: 4_000_000, newAfter: 0, decideFromMs: 0, limit: 100, offset: 0, minScore: 10, text: 'eng' });
       // the default view's `duplicate_of IS NULL` is an equality search on the index's first column, not a full index scan
       expect(p, sql).toMatch(/SEARCH j USING COVERING INDEX jobs_list \(duplicate_of=\?/);
       expect(p, sql).not.toMatch(/SCAN j\b(?! USING COVERING)/);

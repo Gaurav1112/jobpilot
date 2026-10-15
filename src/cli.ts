@@ -340,7 +340,7 @@ program
 
 program
   .command('run-coverage')
-  .description('Run the weekly career-site coverage pipeline: seed companies, locate their careers sites, detect the platform, verify the board, and fill the companies registry. It runs in slices of at most 90 minutes and yields to an owed daily or freelance run; the next start continues the same run. Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
+  .description('Run the weekly career-site coverage pipeline: seed companies, locate their careers sites, detect the platform, verify the board, and fill the companies registry. Each week it also sends 300 boards of the vendored freehire catalogue to the verifier and runs the freehire discovery stage (at most 10 searches; new boards to the verifier, other postings stored as leads for the review band of the Jobs list) unless --no-freehire. It runs in slices of at most 90 minutes and yields to an owed daily or freelance run; the next start continues the same run. Exit 0: clean; 1: some step failed or was quarantined; 2: the run could not run')
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--no-notify', 'do not post the macOS notification')
   .option('--if-due', 'run only if this coverage week\'s run is owed (from Sunday 06:00 IST through Saturday, none completed that week, failed attempts spaced an hour and at most 3 per week); else print why and exit 0. The scheduled job uses this')
@@ -355,7 +355,13 @@ program
     return n;
   })
   .option('--no-yield', 'for checks only: never pause for an owed daily or freelance run (the slice limit still applies)')
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number; yield: boolean }) => {
+  .option('--no-freehire', 'leave out the freehire sources of this run (the vendored board catalogue, 300 new boards a week, sent straight to the verifier)')
+  .option('--catalogue-limit <n>', 'for checks only: send at most <n> catalogue boards to the verifier this week instead of 300', (v: string) => {
+    const n = Number(v);
+    if (!Number.isSafeInteger(n) || n < 0) throw new InvalidArgumentError(`--catalogue-limit must be a whole number, not ${v}`);
+    return n;
+  })
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; limit?: number; sliceMinutes?: number; yield: boolean; freehire: boolean; catalogueLimit?: number }) => {
     process.exitCode = await runCoverageCommand(
       {
         ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}),
@@ -363,6 +369,8 @@ program
         ...(o.ifDue ? { ifDue: true } : {}),
         ...(o.limit !== undefined ? { limit: o.limit } : {}),
         ...(o.sliceMinutes !== undefined ? { sliceMs: Math.round(o.sliceMinutes * 60_000) } : {}),
+        freehire: o.freehire,
+        ...(o.catalogueLimit !== undefined ? { catalogueLimit: o.catalogueLimit } : {}),
       },
       { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), ...(o.yield ? {} : { yieldCheck: () => null }) },
     );
@@ -547,7 +555,7 @@ networks
 const sources = program.command('sources').description('Freelance source tools');
 sources
   .command('probe')
-  .description('Live and read-only: measure each freelance source\'s yield with the fixed score (access + volume + India + pay), polite and sequential. Never part of verify; nothing is submitted or promoted')
+  .description('Live and read-only: measure each freelance source\'s yield (Freelancer.com, Himalayas, Hacker News, Draft.dev, Prime Intellect, Fractional Jobs and the parked ones) with the fixed score (access + volume + India + pay), polite and sequential. Never part of verify; nothing is submitted or promoted')
   .option('--json', 'machine-readable output')
   .option('--record <dir>', 'save every raw response there as a fixture candidate (refused inside ~/.jobpilot, the jobpilot home or the repo\'s tests/ unless --force)')
   .option('--force', 'allow --record into a refused folder')
@@ -593,7 +601,7 @@ storeCmd
 const coverage = program.command('coverage').description('Career-site coverage tools');
 coverage
   .command('probe')
-  .description('Read-only, no network: companies by status and platform, the NEW jobs only the platform adapters found (not on any existing source) and how many pass your rules (the count includes jobs you skipped or rejected and ones no longer listed), and today\'s requests and the latest run\'s problems per platform. Takes the run lock; refuses while another jobpilot process holds it')
+  .description('Read-only, no network: companies by status and platform, the NEW jobs only the platform adapters found (not on any existing source) and how many pass your rules (the count includes jobs you skipped or rejected and ones no longer listed), today\'s requests and the latest run\'s problems per platform, and the freehire line (catalogue: boards verified, proposed and left; discovery: boards and leads). Takes the run lock; refuses while another jobpilot process holds it')
   .option('--json', 'machine-readable output (documented in src/app/coverage/probe.ts, version 1)')
   .option('--days <n>', 'the window for new jobs: the last <n> IST days by first seen (1 to 90, default 7)', (v: string) => {
     try {

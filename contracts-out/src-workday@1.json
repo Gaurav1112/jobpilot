@@ -1,5 +1,5 @@
 {
-  "hash": "46b54ea34ea59202ef3f29893e1561ec57f102f146788faf8a705e9fb9d5da06",
+  "hash": "09afacd21db649662aeb642f1173944011994aba3d8e110d70365d214f71b859",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -40,7 +40,12 @@
               "breezy",
               "pinpoint",
               "rippling",
-              "gem"
+              "gem",
+              "jazzhr",
+              "zohorecruit",
+              "manatal",
+              "freshteam",
+              "freehire"
             ],
             "type": "string"
           },
@@ -138,6 +143,6 @@
     },
     "team": "sourcing-workday",
     "timeoutMs": 900000,
-    "version": "1.4.0"
+    "version": "1.5.0"
   }
 }

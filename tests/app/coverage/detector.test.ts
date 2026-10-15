@@ -5,6 +5,7 @@ import { appEvalSpecs } from '../../../src/app/evals.js';
 import { runEval } from '../../../src/evals/runner.js';
 import { makePlatformDetector, platformDetectorContract, detectorEgressSets, detectorHosts, eightfoldConfigDomain, pageSignals, jobsLink, isSoft404, MAX_SCAN_CHARS } from '../../../src/app/coverage/detector.js';
 import { makeRunGate, memoryHostStateStore } from '../../../src/app/coverage/gate.js';
+import { platformForHost } from '../../../src/app/coverage/platform-hosts.js';
 import { careersLocatorContract, locatorEgressSets, makeCareersLocator } from '../../../src/app/coverage/locator.js';
 import { matchUrl, SIGNATURES } from '../../../src/app/coverage/signatures.js';
 import { CareersSite, CompanyCandidate, Platform, PlatformGuess } from '../../../src/app/coverage/types.js';
@@ -121,6 +122,12 @@ describe('signature table: one example per row, slug and boardUrl', () => {
     ['https://boards.greenhouse.io/embed/job_board/js?for=acme', 'greenhouse', 'acme', 'https://boards-api.greenhouse.io/v1/boards/acme/jobs'],
     ['https://jobs.lever.co/Acme/abc-123/apply', 'lever', 'acme', 'https://api.lever.co/v0/postings/acme'],
     ['https://jobs.ashbyhq.com/Ramp/123', 'ashby', 'Ramp', 'https://api.ashbyhq.com/posting-api/job-board/Ramp'],
+    ['https://acme.applytojob.com/apply/abc/Engineer', 'jazzhr', 'acme', 'https://acme.applytojob.com/apply'],
+    ['https://acme.zohorecruit.eu/jobs/Careers', 'zohorecruit', 'acme.zohorecruit.eu', 'https://acme.zohorecruit.eu/jobs/Careers'],
+    ['https://acme.careers-page.com/', 'manatal', 'acme', 'https://open.api.manatal.com/open/v3/career-page/acme/jobs/'],
+    ['https://open.api.manatal.com/open/v3/career-page/Acme/jobs/', 'manatal', 'acme', 'https://open.api.manatal.com/open/v3/career-page/acme/jobs/'],
+    ['https://acme.freshteam.com/jobs', 'freshteam', 'acme', 'https://acme.freshteam.com/jobs'],
+    ['https://acme.rec.pro.ukg.net/ACM1000/JobBoard/10653576-f6a1-4d69-8a9c-a0a96124abda/', 'ukg', 'acme.rec.pro.ukg.net/acm1000/10653576-f6a1-4d69-8a9c-a0a96124abda', 'https://acme.rec.pro.ukg.net/acm1000/JobBoard/10653576-f6a1-4d69-8a9c-a0a96124abda/'],
   ];
   it.each(cases)('%s -> %s %s', (url, platform, slug, boardUrl) => {
     expect(matchUrl(new URL(url))).toEqual({ platform, board: { slug, boardUrl } });
@@ -706,5 +713,31 @@ describe('R1: a detection resting on an unconfirmed transport error asks the onl
       throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('cert'), { code: 'CERT_HAS_EXPIRED' }) });
     };
     await expect(makePlatformDetector({ gate }).run(s, ctxFor(cert, [s]))).rejects.toMatchObject({ code: 'network' });
+  });
+});
+
+describe('sources-x platforms', () => {
+  const m = (href: string) => matchUrl(new URL(href));
+  it.each([
+    ['https://baxterplanning.applytojob.com/apply/LuHTxCmJVv/Business-Development-Representative', 'jazzhr', 'baxterplanning', 'https://baxterplanning.applytojob.com/apply'],
+    ['https://shurutech.zohorecruit.in/jobs/Careers/156977000027288115', 'zohorecruit', 'shurutech.zohorecruit.in', 'https://shurutech.zohorecruit.in/jobs/Careers'],
+    ['https://acme.zohorecruit.com.au/jobs/Careers', 'zohorecruit', 'acme.zohorecruit.com.au', 'https://acme.zohorecruit.com.au/jobs/Careers'],
+    ['https://www.careers-page.com/pradeepit/job/LRV7X8YR', 'manatal', 'pradeepit', 'https://open.api.manatal.com/open/v3/career-page/pradeepit/jobs/'],
+    ['https://getinz-people.freshteam.com/jobs/-j3B-P8yuEdJ/net-lead', 'freshteam', 'getinz-people', 'https://getinz-people.freshteam.com/jobs'],
+    ['https://recruiting.ultipro.com/EPR1000EPSUS/JobBoard/10653576-f6a1-4d69-8a9c-a0a96124abda/OpportunityDetail?opportunityId=1', 'ukg', 'recruiting.ultipro.com/epr1000epsus/10653576-f6a1-4d69-8a9c-a0a96124abda', 'https://recruiting.ultipro.com/epr1000epsus/JobBoard/10653576-f6a1-4d69-8a9c-a0a96124abda/'],
+  ])('%s -> %s', (href, platform, slug, boardUrl) => {
+    expect(m(href)).toEqual({ platform, board: { slug, boardUrl } });
+  });
+  it('vendor sites and asset hosts are not boards', () => {
+    expect(m('https://www.applytojob.com/')).toBeNull();
+    expect(m('https://www.freshteam.com/pricing')).toBeNull();
+    expect(m('https://www.zohorecruit.com/')).toBeNull();
+    expect(m('https://cdn.freshteam.com/x.js')).toEqual({ platform: 'freshteam', board: 'slugless' });
+    expect(m('https://recruiting.ultipro.com/robots.txt')).toEqual({ platform: 'ukg', board: 'slugless' });
+  });
+  it('platformForHost knows the new hosts on a dot boundary', () => {
+    expect(platformForHost('acme.applytojob.com')).toBe('jazzhr');
+    expect(platformForHost('notapplytojob.com')).toBeNull();
+    expect(platformForHost('acme.zohorecruit.eu')).toBe('zohorecruit');
   });
 });

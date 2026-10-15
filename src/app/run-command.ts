@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { type FetchLike, nodeFetch } from '../kernel/providers.js';
@@ -7,6 +8,7 @@ import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js
 import { problemTally, writeRunSummaryJson } from './run-summary.js';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
+import { CATALOGUE_SEED } from './coverage/catalogue.js';
 import { formatCoverageSummary, runCoverage } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
@@ -263,7 +265,7 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'> 
  * Saturday, `coverage-attempts.json`). `--limit <n>` is for checks: every pick plus the first n other candidates.
  */
 export async function runCoverageCommand(
-  o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number; readonly sliceMs?: number },
+  o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number; readonly sliceMs?: number; readonly freehire?: boolean; readonly catalogueLimit?: number },
   d: RunCommandDeps & { readonly yieldCheck?: (now: string) => string | null },
 ): Promise<0 | 1 | 2> {
   // A scheduled start never takes the lock while the daily or freelance run is owed: they get it first.
@@ -292,6 +294,8 @@ export async function runCoverageCommand(
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
       ...(o.limit !== undefined ? { limit: o.limit } : {}),
       ...(o.sliceMs !== undefined ? { sliceMs: o.sliceMs } : {}),
+      // sources-x: the vendored freehire catalogue goes to the verifier unless --no-freehire; absent here (tests, library callers): neither
+      ...(o.freehire === true ? { freehire: { catalogue: fileURLToPath(CATALOGUE_SEED), discovery: true, ...(o.catalogueLimit !== undefined ? { perWeek: o.catalogueLimit } : {}) } } : {}),
       ...(d.yieldCheck !== undefined ? { yieldCheck: d.yieldCheck } : {}),
       ...hooks,
     });

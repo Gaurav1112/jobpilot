@@ -45,7 +45,8 @@ export function layout(d: LayoutData): Html {
 </header>
 <main id="main">
 <p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
-${d.banners.map((b) => html`<p class="banner banner-${b.tone}" role="${b.tone === 'info' ? 'status' : 'alert'}">${b.text}</p>`)}
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+${d.banners.map((b) => html`<p class="banner banner-${b.tone}" role="${b.tone === 'critical' ? 'alert' : 'status'}">${b.text}</p>`)}
 ${d.body}
 </main>
 </body>

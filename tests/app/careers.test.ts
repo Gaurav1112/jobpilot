@@ -613,10 +613,8 @@ describe('src-careers through the supervisor', () => {
  */
 // Real Chromium: retried twice, since a loaded machine can still stretch a settle past its shortened cap (final review).
 describe('src-careers with real chromium', { retry: 2 }, async () => {
-  const { chromium } = await import('playwright');
-  const { existsSync } = await import('node:fs');
-  const installed = existsSync(chromium.executablePath());
-  if (!installed) console.warn(`[careers] chromium headless shell not installed at ${chromium.executablePath()}: skipping the real-browser test`);
+  const { browserInstalled } = await import('../support/browser.js');
+  const installed = browserInstalled();
   const fixtures = resolve(import.meta.dirname, '../fixtures/careers');
   const hits: string[] = [];
   let server: Server;

@@ -2,6 +2,8 @@ import { idScope, type AtsIdPlatform } from '../text/ats-id.js';
 
 /** Sources that are the employer's own ATS or career site; their listing is preferred over a feed's (the v1 rule). */
 export const ATS_SOURCES: ReadonlySet<string> = new Set(['greenhouse', 'lever', 'ashby', 'careers']);
+/** Sources that only point at a posting elsewhere (freehire leads): ranked after every source that read the job itself. */
+export const LEAD_SOURCES: ReadonlySet<string> = new Set(['freehire']);
 
 /** One job row as the linker sees it. */
 export interface LinkRow {
@@ -25,7 +27,7 @@ const cmp = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /** The v1 order: an ATS source over a feed, then the earliest first_seen, then the job key. */
 export function preferred(a: Pick<LinkRow, 'source' | 'firstSeen' | 'jobKey'>, b: Pick<LinkRow, 'source' | 'firstSeen' | 'jobKey'>): number {
-  const rank = (s: string) => (ATS_SOURCES.has(s) ? 0 : 1);
+  const rank = (s: string) => (ATS_SOURCES.has(s) ? 0 : LEAD_SOURCES.has(s) ? 2 : 1);
   return rank(a.source) - rank(b.source) || cmp(a.firstSeen, b.firstSeen) || cmp(a.jobKey, b.jobKey);
 }
 
@@ -219,7 +221,7 @@ export function linkJobs(
   }
 
   // 3. one primary per component
-  const rank = (r: LinkRow): number => (ATS_SOURCES.has(r.source) || joined.has(r.jobKey) ? 0 : 1);
+  const rank = (r: LinkRow): number => (ATS_SOURCES.has(r.source) || joined.has(r.jobKey) ? 0 : LEAD_SOURCES.has(r.source) ? 2 : 1);
   const duplicateOf = new Map<string, string | null>();
   for (const c of comps.values()) {
     const members = c.members.map((k) => byKey.get(k) as LinkRow);

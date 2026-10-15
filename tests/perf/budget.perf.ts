@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,7 +9,8 @@ import { AppStore } from '../../src/app/store/app-store.js';
 import { DEFAULT_RETENTION, planCompaction } from '../../src/app/store/retention.js';
 import { createDashboard } from '../../src/app/web/server.js';
 import { Sessions } from '../../src/app/web/security.js';
-import { BUDGET_SPEC, buildSyntheticDb } from './synthetic.js';
+import { countText } from '../../src/app/web/format.js';
+import { BUDGET_SPEC, buildSyntheticDb, REVIEW_GIG_KEY } from './synthetic.js';
 
 /**
  * dashboard-perf governance: the performance budget gate (`node --run perf`, part of `node --run verify`).
@@ -48,6 +50,15 @@ export const CONTRACT_POSTINGS_MS = 500;
 export const RETENTION_PLAN_MS = 10_000;
 /** Heap left per request (heapUsed after minus before, after a forced GC): measured 12-33 MB; the old code ~400 MB. */
 export const HEAP_PER_REQUEST_MB = 64;
+/** Every page, fresh (best of 3 new dashboards) and warm (p95 of 20), within 150 ms (spec §3). */
+export const PAGE_MS = 150;
+export const PAGE_HEAP_MB = 64;
+/**
+ * Routes over 150 ms when the gate first covered them (UX upgrade A0), with the task that fixes each. That task deletes
+ * the entry first (its failing test). A route that is over budget and not listed here fails the gate.
+ */
+export const KNOWN_SLOW: Readonly<Record<string, { readonly ms: number; readonly fixedIn: string }>> = {};
+const budgetOf = (route: string): number => KNOWN_SLOW[route]?.ms ?? PAGE_MS;
 const WARM_N = 20;
 /** A fresh-connection time is the best of this many fresh dashboards (one sample is at the mercy of the machine). */
 const FRESH_TRIES = 3;
@@ -60,6 +71,7 @@ const gc = runInNewContext('gc') as () => void;
 const root = join(import.meta.dirname, '../..');
 const NOW = '2026-09-10T06:30:00.000Z';
 let home: string;
+let readyJobKey: string;
 
 type App = ReturnType<typeof createDashboard>;
 const fresh = (): App => createDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) });
@@ -117,6 +129,12 @@ beforeAll(() => {
   cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
   const built = buildSyntheticDb(join(home, 'jobpilot.db'), BUDGET_SPEC);
   console.log(`perf synthetic DB: ${(built.bytes / 1e9).toFixed(2)} GB in ${(built.buildMs / 1000).toFixed(1)} s`);
+  const store = AppStore.open(join(home, 'jobpilot.db'));
+  try {
+    readyJobKey = (store.kernel.db.prepare("SELECT job_key FROM jobs WHERE docs_state = 'ready' AND duplicate_of IS NULL ORDER BY job_key LIMIT 1").get() as { job_key: string }).job_key;
+  } finally {
+    store.close();
+  }
 }, 300_000);
 afterAll(() => rmSync(home, { recursive: true, force: true }));
 
@@ -165,8 +183,8 @@ describe('performance budget on the large synthetic DB', () => {
 
   it('GET /runs: the first view after a run, then a fresh dashboard, then warm', async () => {
     const afterRun = await timed(fresh(), '/runs');
-    expect(afterRun.body).toMatch(/Audit log intact: <span class="num">500000<\/span> events/);
-    expect(afterRun.body).toMatch(/the <span class="num">50000<\/span> newer events/);
+    expect(afterRun.body).toMatch(new RegExp(`Audit log intact: <span class="num">${countText(BUDGET_SPEC.events)}</span> events`));
+    expect(afterRun.body).toMatch(new RegExp(`the <span class="num">${countText(BUDGET_SPEC.events / BUDGET_SPEC.runs)}</span> newer events`));
     within('/runs', 'first view after a run', afterRun.ms, RUNS_AFTER_RUN_MS);
     const firsts = [];
     for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), '/runs'));
@@ -174,4 +192,57 @@ describe('performance budget on the large synthetic DB', () => {
     within('/runs', 'heap per request', Math.max(...firsts.map((f) => f.heapMb)), HEAP_PER_REQUEST_MB, 'MB');
     await warm(fresh(), '/runs', RUNS_WARM_P95_MS);
   });
+});
+
+async function gate(route: string, check: (body: string) => void): Promise<void> {
+  await timed(fresh(), '/facts'); // a warm process, as a dashboard that has served any page
+  const firsts = [];
+  for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), route));
+  check(firsts[0]?.body ?? '');
+  within(route, 'fresh connection (best of 3)', Math.min(...firsts.map((f) => f.ms)), budgetOf(route));
+  within(route, 'heap per request', Math.max(...firsts.map((f) => f.heapMb)), PAGE_HEAP_MB, 'MB');
+  await warm(fresh(), route, budgetOf(route), PAGE_HEAP_MB);
+}
+
+describe('every page within budget (UX upgrade A0)', () => {
+  it('GET /freelance?tab=review (354 review gigs)', async () => {
+    await gate('/freelance?tab=review', (b) => expect((b.match(/data-gig="e/g) ?? []).length).toBe(50));
+  });
+  it('GET /companies (1,500 companies, 781 skipped hosts)', async () => {
+    await gate('/companies', (b) => expect(b).toMatch(/data-company="/));
+  });
+  it('GET /companies/skipped (781 hosts, page 1)', async () => {
+    await gate('/companies/skipped', (b) => expect((b.match(/data-host="/g) ?? []).length).toBe(50));
+  });
+  it('GET /facts', async () => {
+    await gate('/facts', (b) => expect(b).toMatch(/<ol class="facts"/));
+  });
+  it('GET /jobs/:key (a ready job)', async () => {
+    await gate(`/jobs/${readyJobKey}`, (b) => expect(b).toMatch(/<h1>/));
+  });
+  it('GET /freelance/:key (a review gig)', async () => {
+    await gate(`/freelance/${REVIEW_GIG_KEY}`, (b) => expect(b).toMatch(/Before you bid/));
+  });
+  it('KNOWN_SLOW names only routes this gate times', () => {
+    const timedRoutes = ['/freelance?tab=review', '/companies', '/companies/skipped', '/facts', '/', '/runs', '/freelance'];
+    expect(Object.keys(KNOWN_SLOW).filter((r) => !timedRoutes.includes(r))).toEqual([]);
+  });
+});
+
+const FRESH_CHILD = join(root, 'tests/perf/fresh-child.ts');
+/** One route as the first request of a new process (code not loaded) after `warmDashboard`; the OS cache is warm. */
+function coldFirst(route: string): { status: number; ms: number; warmMs: number } {
+  const out = execFileSync(process.execPath, ['--import', 'tsx', FRESH_CHILD, home, NOW, route], { cwd: root, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'inherit'] });
+  return JSON.parse(out.trim().split('\n').at(-1) as string) as { status: number; ms: number; warmMs: number };
+}
+
+describe('fresh means a cold process (amendment 2)', () => {
+  for (const route of ['/', '/facts', '/freelance', '/freelance?tab=review', '/companies', '/companies/skipped', '/runs']) {
+    it(`GET ${route}: the first request of a new, warmed-up process`, () => {
+      const r = coldFirst(route);
+      expect(r.status).toBe(200);
+      console.log(`perf ${route} warm-up: ${Math.round(r.warmMs)}ms`);
+      within(route, 'cold process, first request', r.ms, budgetOf(route));
+    });
+  }
 });

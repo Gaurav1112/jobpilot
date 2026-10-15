@@ -10,6 +10,7 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { srcAshby } from './agents/sources/ashby.js';
 import { CAREERS_RENDER_INTERVAL_MS, careersHosts, srcCareersJob, srcCareersList } from './agents/sources/careers.js';
 import { SOURCE_TIMEOUT_MS } from './agents/sources/common.js';
+import { makeSrcFreehireLeads } from './agents/sources/freehire-leads.js';
 import { srcGreenhouse } from './agents/sources/greenhouse.js';
 import { HIMALAYAS_FEED, HIMALAYAS_MAX_PAGES, HIMALAYAS_TIMEOUT_MS, srcHimalayas } from './agents/sources/himalayas.js';
 import { JOBICY_FEED, JOBICY_MAX_REQUESTS, JOBICY_TIMEOUT_MS, srcJobicy } from './agents/sources/jobicy.js';
@@ -21,6 +22,9 @@ import type { PageLedger } from './agents/sources/platforms/shared.js';
 import { SMALL_PLATFORMS } from './agents/sources/platforms/small.js';
 import type { FeedBoard } from './agents/sources/platforms/feed-board.js';
 import { FEED_MAX_REQUESTS, FEED_TIMEOUT_MS } from './agents/sources/platforms/feed-board.js';
+import { freshteam, FRESHTEAM_EGRESS, freshteamBoardOfUrl, freshteamHost, parseFreshteamRef } from './agents/sources/platforms/freshteam.js';
+import { jazzhr, JAZZHR_EGRESS, jazzhrBoardOfUrl, jazzhrHost, parseJazzhrRef } from './agents/sources/platforms/jazzhr.js';
+import { LISTING_MAX_REQUESTS, LISTING_TIMEOUT_MS } from './agents/sources/platforms/listing-pages.js';
 import { icimsBoardOfUrl, ICIMS_EGRESS, ICIMS_MAX_REQUESTS, ICIMS_TIMEOUT_MS, makeSrcIcims, parseIcimsRef } from './agents/sources/platforms/icims.js';
 import { jsonLdBoardOfUrl, jsonLdRef, JSONLD_EGRESS, JSONLD_MAX_REQUESTS, JSONLD_TIMEOUT_MS, makeSrcJsonLd, parseJsonLdRef } from './agents/sources/platforms/jsonld-sitemap.js';
 import type { PageState } from './agents/sources/platforms/pages.js';
@@ -33,6 +37,7 @@ import { qaGate } from './agents/writing/qa-gate.js';
 import { renderer } from './agents/writing/renderer.js';
 import { capabilityProblems } from './allow-list.js';
 import type { Feeds, WatchEntry } from './pack/schema.js';
+import type { FreehireLead } from './store/app-store.js';
 import { CoverPlan, DiscoveryRequest, knownAts } from './types.js';
 import { FEED_SOURCES, knownFeeds } from './feeds.js';
 
@@ -71,6 +76,9 @@ const TEAM_ORDER = [
   'sourcing-smartrecruiters',
   'sourcing-jsonld',
   ...SMALL_PLATFORMS.map((p) => p.spec.team),
+  'sourcing-jazzhr',
+  'sourcing-freshteam',
+  'sourcing-freehire',
   'understanding',
   'evaluation',
   'writing',
@@ -154,6 +162,13 @@ const REGISTRY_PLATFORMS = {
   pinpoint: small('pinpoint'),
   rippling: small('rippling'),
   gem: small('gem'),
+  // Sources expansion, Task 3: Zoho Recruit, a strict-rule feed board
+  zohorecruit: small('zohorecruit'),
+  // Sources expansion, Task 4: Manatal, a strict-rule paged feed board
+  manatal: small('manatal'),
+  // Sources expansion, Task 2: the listing-pages adapters (an HTML listing and JSON-LD job pages)
+  jazzhr: { ref: (url: string) => jazzhrBoardOfUrl(url), hosts: (ref: string) => one(mapNull(parseJazzhrRef(ref), jazzhrHost)), egress: JAZZHR_EGRESS },
+  freshteam: { ref: (url: string) => freshteamBoardOfUrl(url), hosts: (ref: string) => one(mapNull(parseFreshteamRef(ref), freshteamHost)), egress: FRESHTEAM_EGRESS },
   // Task 11b: the watchlist's own API adapters, unchanged; no symbolic egress (each contract names its one API host)
   greenhouse: { ref: apiBoardRef('boards-api.greenhouse.io', /^\/v1\/boards\/([^/]+)\/jobs\/?$/u, true), hosts: (): string[] => [], egress: null },
   lever: { ref: apiBoardRef('api.lever.co', /^\/v0\/postings\/([^/]+)\/?$/u, true), hosts: (): string[] => [], egress: null },
@@ -247,7 +262,7 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
 export function dailyAgents(
   watchlist: readonly WatchLike[],
   boards: readonly RegistryBoard[] = [],
-  o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState; readonly jobPageLedger?: PageLedger } = {},
+  o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState; readonly jobPageLedger?: PageLedger; readonly leads?: readonly FreehireLead[] } = {},
 ): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   // one adapter per platform with a verified company, each on its own fresh host state (robots.txt, disabled hosts)
@@ -268,6 +283,11 @@ export function dailyAgents(
     ...(has('jsonld-sitemap') ? [makeSrcJsonLd(pages())] : []),
     // Task 9: each small platform on its own host state (a documented API: no robots.txt; the others: the strict rule)
     ...SMALL_PLATFORMS.filter((f) => has(f.spec.platform as RegistryPlatform)).map((f) => f.make({ hosts: dailyFeedHosts(f.spec.documented) })),
+    // Sources expansion, Task 2: the listing-pages adapters, on the page state and the strict page rule
+    ...(has('jazzhr') ? [jazzhr.make(pages())] : []),
+    ...(has('freshteam') ? [freshteam.make(pages())] : []),
+    // Sources expansion, Task 9: the stored freehire leads, fed by the app layer (no network); only when there are leads
+    ...(o.leads !== undefined && o.leads.length > 0 ? [makeSrcFreehireLeads(o.leads)] : []),
   ];
   return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }
@@ -310,7 +330,7 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
     ...(has('src-workday') ? [{ type: 'DiscoveryRequest@1', to: 'src-workday' }] : []),
     ...(has('src-eightfold') ? [{ type: 'DiscoveryRequest@1', to: 'src-eightfold' }] : []),
     ...(has('src-oracle') ? [{ type: 'DiscoveryRequest@1', to: 'src-oracle' }] : []),
-    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap', ...SMALL_PLATFORMS.map((f) => f.contract.id)] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
+    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap', ...SMALL_PLATFORMS.map((f) => f.contract.id), 'src-jazzhr', 'src-freshteam', 'src-freehire-leads'] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
     { type: 'RawPosting@1', to: 'normalizer' },
     { type: 'Posting@1', to: 'eligibility' },
     { type: 'EligibilityVerdict@1', to: 'scorer-lexicon' },
@@ -389,6 +409,9 @@ const HTTP_BUDGETS: readonly {
   { agent: 'src-smartrecruiters', perRequestMs: Math.floor(SR_TIMEOUT_MS / SR_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'smartrecruiters') },
   { agent: 'src-jsonld-sitemap', perRequestMs: Math.floor(JSONLD_TIMEOUT_MS / JSONLD_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'jsonld-sitemap') },
   // Task 9: robots.txt and the feed (at most FEED_MAX_PAGES list pages), each at least 2 s apart
+  // Sources expansion, Task 2: robots.txt, the listing pages and at most 40 job pages with their redirects
+  { agent: 'src-jazzhr', perRequestMs: Math.floor(LISTING_TIMEOUT_MS / LISTING_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'jazzhr') },
+  { agent: 'src-freshteam', perRequestMs: Math.floor(LISTING_TIMEOUT_MS / LISTING_MAX_REQUESTS), applies: (_w, _f, b) => b.some((x) => x.platform === 'freshteam') },
   ...SMALL_PLATFORMS.map((f) => ({ agent: f.contract.id, perRequestMs: Math.floor(FEED_TIMEOUT_MS / FEED_MAX_REQUESTS), applies: (_w: readonly WatchLike[], _f: readonly string[], b: readonly RegistryBoard[]) => b.some((x) => x.platform === f.spec.platform) })),
 ];
 
@@ -422,7 +445,8 @@ export function pacingProblems(
 
 /**
  * The run's seeds: one request per watchlist entry, then one per enabled feed, then one per registry board (`boards`,
- * `registryBoards`: `{ats: <platform>, slug: <ref>, company}`, Workday, Eightfold, then Oracle), each dated `runDate` (the IST date).
+ * `registryBoards`: `{ats: <platform>, slug: <ref>, company}`, Workday, Eightfold, then Oracle), then `{ats: 'freehire',
+ * slug: 'leads'}` when `hasLeads` (Task 9, src-freehire-leads), each dated `runDate` (the IST date).
  * Identical entries are sent once. `attempt` (the run's ordinal on its date, from `run --refresh`) is set only when it
  * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. An unknown feed cannot get here
  * (`loadPack` refuses it) and throws.
@@ -432,6 +456,7 @@ export function dailySeeds(
   runDate: string,
   attempt?: number,
   boards: readonly RegistryBoard[] = [],
+  hasLeads = false,
 ): DiscoveryRequest[] {
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
@@ -460,5 +485,7 @@ export function dailySeeds(
     }
     add({ ats: b.platform, slug: b.ref, company: b.company, runDate });
   }
+  // Task 9: the stored freehire leads are one more request, only when there are leads (else the seeds are as before)
+  if (hasLeads) add({ ats: 'freehire', slug: 'leads', company: 'freehire', runDate });
   return seeds;
 }

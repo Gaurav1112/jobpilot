@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Skipped sites · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance">Freelance</a><a href="/companies" aria-current="page">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+
+<div class="page-head">
+<p class="crumbs"><a href="/companies#skipped-h">Companies</a></p>
+<h1>Sites skipped this week</h1>
+<p class="lede"><span class="num">4</span> sites refused or blocked jobpilot this week. They're tried again next week.</p>
+</div>
+<ul class="plain co-deferred"><li data-host="careers.acme.example"><span><code>careers.acme.example</code> rate-limited (HTTP 429) <span class="muted">(http-429)</span></span></li><li data-host="jobs.hooli.example"><span><code>jobs.hooli.example</code> answered with a bot challenge <span class="muted">(challenge)</span></span></li><li data-host="umbrella.example"><span><code>umbrella.example</code> robots.txt refused <span class="muted">(robots-forbidden)</span></span></li><li data-host="vandelay.example"><span><code>vandelay.example</code> robots.txt refused <span class="muted">(robots-forbidden)</span></span></li></ul>
+</main>
+</body>
+</html>

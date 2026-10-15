@@ -1,8 +1,8 @@
 import type { Band, DocsState, JobStatus, JobView } from '../../store/app-store.js';
 import { JOB_STATUSES } from '../../store/schema.js';
-import { compText } from '../format.js';
+import { compText, countText, scoreText } from '../format.js';
 import { remoteText } from '../copy.js';
-import { html, type Html } from '../html.js';
+import { Html, html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
 import { NOTE_B2B, NOTE_OFFICE_PREFIX } from '../../agents/eligibility.js';
 
@@ -50,7 +50,7 @@ export const docsPill = (d: DocsState): Html => pill(DOCS_LABEL[d], DOCS_TONE[d]
 /** "Remote · India", "Hybrid", "Remote unclear", from the posting's structured field and countries. */
 export function remotePill(remote: JobView['remote']): Html {
   const r = remoteText(remote);
-  return pill(r.label, r.tone, r.title);
+  return pill(r.label, r.tone);
 }
 
 export function compCell(j: Pick<JobView, 'comp' | 'compMinInr' | 'compMaxInr'>): Html {
@@ -71,3 +71,56 @@ export const officePill = (notes: readonly string[]): Html | '' => {
   const note = notes.find((n) => n.startsWith(NOTE_OFFICE_PREFIX));
   return note === undefined ? '' : pill(note, 'accent');
 };
+
+/** Parts joined by a middle dot; empty parts are dropped, so a separator never dangles ("GitLab · · via …", A6). */
+export function meta(parts: readonly (Html | string | null | undefined | false)[]): Html {
+  const kept = parts.filter((p): p is Html | string => (typeof p === 'string' ? p.trim() !== '' : p instanceof Html && p.value.trim() !== ''));
+  return html`${kept.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${typeof p === 'string' ? html`<span>${p}</span>` : p}`)}`;
+}
+
+/** The raw codes behind a verdict, for whoever wants them: closed by default, never the first thing read. */
+export const techDetail = (codes: readonly string[]): Html | '' =>
+  codes.length === 0 ? '' : html`<details class="tech"><summary>Technical detail</summary><ul class="plain">${codes.map((c) => html`<li><code>${c}</code></li>`)}</ul></details>`;
+
+export interface Exception {
+  readonly label: string;
+  readonly tone: Tone;
+}
+
+/**
+ * A5: the one non-default state a list row shows, first match wins (plan decision 11). A missing pill means "normal":
+ * To do, documents ready and pay at or above the minimum never get one. Colours (amendment 6): blocked is critical,
+ * "you decide" is warn, everything else neutral or muted.
+ */
+export function rowException(j: Pick<JobView, 'docsState' | 'verdict' | 'notes' | 'band'>): Exception | null {
+  if (j.docsState === 'blocked') return { label: 'Documents blocked', tone: 'critical' };
+  if (j.docsState === 'stale') return { label: 'Documents out of date', tone: 'warn' };
+  if (j.docsState === 'missing') return { label: 'Documents missing', tone: 'warn' };
+  if (j.verdict === 'review') return { label: 'Check before applying', tone: 'warn' };
+  if (j.notes.includes(NOTE_B2B)) return { label: 'Contract (B2B)', tone: 'neutral' };
+  const office = j.notes.find((n) => n.startsWith(NOTE_OFFICE_PREFIX));
+  if (office !== undefined) return { label: 'Office: ' + office.slice(NOTE_OFFICE_PREFIX.length), tone: 'neutral' };
+  if (j.band === 'undisclosed') return { label: 'Pay not listed', tone: 'neutral' };
+  if (j.band === 'below-floor') return { label: 'Pay under your minimum', tone: 'muted' };
+  if (j.band === 'rejected') return { label: 'Not a match', tone: 'muted' };
+  return null;
+}
+
+export const exceptionPill = (e: Exception | null): Html | '' => (e === null ? '' : html`<span class="pill pill-${e.tone}" data-exception="1">${e.label}</span>`);
+
+/** A7: the fit score with a visible "fit" caption and its scale for screen readers. No tier words until U5 (Phase B). */
+export function fitChip(score: number | null): Html {
+  return score === null
+    ? html`<span class="fit-chip"><span class="fit-num" aria-hidden="true">–</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Not scored</span></span>`
+    : html`<span class="fit-chip"><span class="fit-num num" aria-hidden="true">${scoreText(score)}</span><span class="fit-cap" aria-hidden="true">fit</span><span class="visually-hidden">Fit score ${scoreText(score)} out of 100</span></span>`;
+}
+
+/** The Previous / Page N of M / Next navigation under a paged list; nothing when there is one page or none. */
+export function pager(d: { readonly page: number; readonly pages: number; readonly href: (n: number) => string }): Html | '' {
+  if (d.pages <= 1) return '';
+  return html`<nav class="pager" aria-label="Pages">${
+    d.page > 1 ? html`<a class="btn" href="${d.href(d.page - 1)}" rel="prev">Previous</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Previous</span>`
+  }<span class="num">Page ${countText(d.page)} of ${countText(d.pages)}</span>${
+    d.page < d.pages ? html`<a class="btn" href="${d.href(d.page + 1)}" rel="next">Next</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Next</span>`
+  }</nav>`;
+}

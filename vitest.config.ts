@@ -5,7 +5,7 @@ import { defineConfig } from 'vitest/config';
  * flaked (final review), so they run in their own project, after every other file has finished (`groupOrder`), one
  * file at a time (`fileParallelism: false`).
  */
-const REAL_BROWSER = ['tests/app/careers.test.ts', 'tests/app/web-browser.test.ts', 'tests/app/web-freelance-browser.test.ts', 'tests/app/web-companies-browser.test.ts'];
+const REAL_BROWSER = ['tests/app/careers.test.ts', 'tests/app/web-browser.test.ts', 'tests/app/web-freelance-browser.test.ts', 'tests/app/web-companies-browser.test.ts', 'tests/app/web-narrow-browser.test.ts', 'tests/app/web-preview-browser.test.ts', 'tests/app/web-a11y-browser.test.ts'];
 
 export default defineConfig({
   test: {
@@ -16,6 +16,8 @@ export default defineConfig({
     hookTimeout: 60_000,
     // fail closed on real network access (README "Development"): opt in per test with allowRealNetwork()
     setupFiles: ['tests/support/net-guard.ts'],
+    // one private temp root per run (TMPDIR), removed at the end: tests cannot leak into the real os.tmpdir()
+    globalSetup: ['tests/support/tmp-global-setup.ts'],
     projects: [
       { extends: true, test: { name: 'unit', include: ['tests/**/*.test.ts'], exclude: REAL_BROWSER, sequence: { groupOrder: 0 } } },
       { extends: true, test: { name: 'real-browser', include: REAL_BROWSER, fileParallelism: false, sequence: { groupOrder: 1 } } },
