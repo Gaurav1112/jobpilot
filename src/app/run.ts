@@ -1,4 +1,5 @@
 import type { Clock } from '../kernel/clock.js';
+import type { HostPacer } from '../kernel/broker.js';
 import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
 import type { Store } from '../kernel/store/store.js';
@@ -144,6 +145,12 @@ export interface RunOptions {
   readonly onLocked?: () => void;
   /** Test hook: the code fingerprint in every step key (review I4); default `codeHash()` of this checkout. */
   readonly codeHash?: string;
+  /**
+   * The HTTPS online check (`pacedHttpsOnline`), given the supervisor's per-host pacer, which its probes must wait on: a
+   * network failure while it says offline is not final; the step is re-queued once it passes (the supervisor's wake
+   * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
+   */
+  readonly online?: (pacer: HostPacer) => Promise<boolean>;
 }
 
 /**
@@ -207,7 +214,7 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'daily');
       // the verified registry companies whose platform has a daily adapter (none: the run is exactly as before)
       const boards = registryBoards(app.verifiedCompanies());
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), boards, pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), boards, pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];

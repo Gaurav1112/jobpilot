@@ -14,6 +14,8 @@ export default defineConfig({
     // a test on the 5 s default. Run `node --run verify` with a tool timeout above 180 s.
     testTimeout: 60_000,
     hookTimeout: 60_000,
+    // fail closed on real network access (README "Development"): opt in per test with allowRealNetwork()
+    setupFiles: ['tests/support/net-guard.ts'],
     projects: [
       { extends: true, test: { name: 'unit', include: ['tests/**/*.test.ts'], exclude: REAL_BROWSER, sequence: { groupOrder: 0 } } },
       { extends: true, test: { name: 'real-browser', include: REAL_BROWSER, fileParallelism: false, sequence: { groupOrder: 1 } } },

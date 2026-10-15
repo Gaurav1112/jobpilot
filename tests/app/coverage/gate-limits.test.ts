@@ -83,6 +83,26 @@ describe('the gate\'s request timeout and candidate deadline', () => {
     expect(calls).toHaveLength(3);
   });
 
+  it('the candidate deadline counts awake time: time the context spent asleep does not use it up', async () => {
+    const c = cand('acme.test');
+    let t = Date.parse('2026-10-11T01:30:00.000Z');
+    let slept = 0;
+    // as above, but each request's 40 s were a sleeping Mac (the step's awake clock detected them)
+    const calls: string[] = [];
+    const fetch: FetchLike = async (url) => {
+      calls.push(url);
+      t += 40_000;
+      slept += 40_000;
+      return url.endsWith('/robots.txt') ? { status: 404, headers: { get: () => null }, text: async () => 'Not Found' } : { status: 301, headers: { get: () => null }, text: async () => '' };
+    };
+    const clock: Clock = { now: () => new Date(t).toISOString() };
+    const ctx = issueContext({ contract: careersLocatorContract, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock, signal: new AbortController().signal, egressSets: locatorEgressSets([c]), sleptMs: () => slept });
+    const [site] = await makeCareersLocator({ runKey: 'r', store: memoryHostStateStore() }).run(c, ctx);
+    const s = CareersSite.schema.parse(site);
+    expect(s.reasons).not.toContain('budget-exhausted:time');
+    expect(calls.length).toBeGreaterThan(3);
+  });
+
   it('the request-count budget keeps its own reason', async () => {
     const c = cand('acme.test');
     const fetch: FetchLike = async (url) => (url.endsWith('/robots.txt') ? { status: 404, text: async () => '' } : { status: 301, headers: { get: () => null }, text: async () => '' });

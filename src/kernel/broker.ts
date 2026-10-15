@@ -1,3 +1,4 @@
+import { type AwakeClock, systemAwake } from './awake.js';
 import type { Clock } from './clock.js';
 import { isSymbolicEgress, type AnyContract, type SymbolicEgress } from './contract.js';
 import type { DataClass } from './data-class.js';
@@ -241,6 +242,11 @@ export interface LlmTool {
 export interface AgentContext {
   readonly clock: Clock;
   readonly signal: AbortSignal;
+  /**
+   * The ms this attempt spent suspended (a sleeping Mac) so far, as its awake clock detected them. A deadline an agent
+   * measures on `clock` subtracts it, so a sleep does not use the deadline up. Absent in hand-made contexts: 0.
+   */
+  readonly sleptMs?: () => number;
   readonly http?: HttpTool;
   readonly llm?: LlmTool;
   /** Present only when the contract declares `capabilities.browser`. */
@@ -276,6 +282,10 @@ export interface IssueArgs {
   readonly providers: Providers;
   readonly clock: Clock;
   readonly signal: AbortSignal;
+  /** The awake-time clock of per-request timeouts (`RequestOptions.timeoutMs`); default the process's `systemAwake`. */
+  readonly awake?: AwakeClock;
+  /** The ms this attempt spent suspended so far (`AgentContext.sleptMs`); default none. */
+  readonly sleptMs?: () => number;
   /** What the run had already paid before this context was issued: by this agent, and in total. */
   readonly priorSpend?: { readonly agentUsd: number; readonly runUsd: number; readonly maxCallUsd?: number };
   /** The pack this contract may read (public or full), already frozen by `freezePack`; ignored unless the contract declares capabilities.pack. */
@@ -384,6 +394,7 @@ export function issueContext(a: IssueArgs): AgentContext {
   const ctx: { -readonly [K in keyof AgentContext]: AgentContext[K] } = {
     clock: a.clock,
     signal: a.signal,
+    ...(a.sleptMs !== undefined ? { sleptMs: a.sleptMs } : {}),
     spent: () => ({ usd, inputTokens, outputTokens }),
     maxCall: () => maxCallUsd,
     denials: () => [...denied],
@@ -440,17 +451,21 @@ export function issueContext(a: IssueArgs): AgentContext {
       if (timeoutMs === undefined) return { signal: a.signal, timedOut: () => false, done: () => {} };
       const c = new AbortController();
       let fired = false;
-      const timer = setTimeout(() => {
+      // awake time: a request frozen by a sleeping Mac is not timed out when it wakes
+      const timer = (a.awake ?? systemAwake).timeout(timeoutMs, () => new DOMException('request timeout', 'TimeoutError'));
+      const onTimer = (): void => {
         fired = true;
-        c.abort(new DOMException('request timeout', 'TimeoutError'));
-      }, timeoutMs);
+        c.abort(timer.signal.reason);
+      };
+      timer.signal.addEventListener('abort', onTimer, { once: true });
       const onStep = (): void => c.abort(a.signal.reason);
       a.signal.addEventListener('abort', onStep, { once: true });
       return {
         signal: c.signal,
         timedOut: () => fired && !a.signal.aborted,
         done: () => {
-          clearTimeout(timer);
+          timer.clear();
+          timer.signal.removeEventListener('abort', onTimer);
           a.signal.removeEventListener('abort', onStep);
         },
       };

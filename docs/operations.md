@@ -309,6 +309,17 @@ in India time whatever your Mac's time zone (each plist sets `TZ=Asia/Kolkata`),
 above are IST. Run `install` again after changing Node versions (the jobs use the Node that was
 running at install).
 
+**Sleep and a closed lid.** A run survives the Mac going to sleep mid-run. Step, request and
+browser time limits count only the time the Mac is awake, so a step paused by sleep carries on
+where it stopped when the Mac wakes instead of failing with `timeout`. A network step that fails
+just after a wake (within 2 minutes; Wi-Fi is often not back yet), or while the HTTPS online
+check says the Mac is offline, is not a failure yet: it is asked again later in the same run
+once the online check passes, at most 3 times. The run's events record each wake
+(`resumed_from_sleep`) and each such retry (`wake_retry_due`, `wake_requeued`). On battery,
+macOS always sleeps when the lid closes, whatever `caffeinate` asks. The run then waits until
+the Mac wakes, so it finishes later. For the fastest runs, keep the Mac on power or open around
+07:00.
+
 ## 5. The dashboard
 
 ```sh
