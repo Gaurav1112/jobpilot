@@ -12,7 +12,7 @@ import { forbiddenTermStrict } from '../pack/rules.js';
 import type { Naming } from '../pack/schema.js';
 import { runProblems, safeLine, skipNoteProblems, sourceSkipWarnings, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
-import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
+import { exitCodeOf, HOME_NETWORK_NOTE, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
 import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
 import { foreignSourceStep, recordSourceHealth } from './health.js';
 import { GMAIL_LABEL_MISSING } from './mail/google.js';
@@ -47,6 +47,12 @@ export interface FreelanceRunOptions {
   readonly sleep?: (ms: number) => Promise<void>;
   readonly pdftotext?: string;
   readonly afterStep?: (count: number) => void;
+  /** A cooperative stop between steps (hosted: SIGTERM at the deadline): the reason, or null to go on. The run pauses and a later run resumes it. */
+  readonly stop?: () => string | null;
+  /** The half the run is for; default `halfOf(now)`. `--windows am` sets 'am' so a late start still runs the am window. */
+  readonly half?: 'am' | 'pm';
+  /** Hosted only (spec S11): `freelance:<platform>` entries drop that platform's seeds, one warning each. */
+  readonly skipSources?: readonly string[];
   readonly afterProject?: () => void;
   readonly onLocked?: () => void;
   readonly codeHash?: string;
@@ -68,6 +74,8 @@ export interface FreelanceSummary {
   readonly runId: string;
   readonly runDate: string;
   readonly half: 'am' | 'pm';
+  /** How Gmail stood for this run: read (`connected`), not configured or off (`off`), or it could not be prepared (`failed`). */
+  readonly gmail: 'connected' | 'off' | 'failed';
   readonly asOf: string;
   readonly resumed: boolean;
   readonly report: RunReport;
@@ -191,18 +199,20 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
     try {
       const now = o.clock.now();
       const runDate = istDate(now);
-      const half = halfOf(now);
+      const half = o.half ?? halfOf(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'freelance');
       const rules = loaded.pack.freelance;
       let gmail: GmailRunAccess = GMAIL_OFF;
+      let gmailFailed = false;
       if (rules.platforms.gmail.enabled && o.gmail !== undefined) {
         try {
           gmail = o.gmail();
         } catch (e) {
+          gmailFailed = true;
           gmail = { ...GMAIL_OFF, reason: `Gmail could not be prepared (${e instanceof Error ? e.message : String(e)}); Gmail skipped` };
         }
       }
-      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}) });
+      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.stop ? { pauseBefore: o.stop } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];
@@ -215,7 +225,10 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const boards = rules.platforms.boards.enabled ? app.contractPostings(new Date(Date.parse(now) - BOARD_SEED_DAYS * 86_400_000).toISOString()) : { postings: [], missing: [] };
       if (boards.missing.length > 0) warnings.push(`${plural(boards.missing.length, 'stored contract job has', 'stored contract jobs have')} no stored posting (a Desk import) and ${boards.missing.length === 1 ? 'is' : 'are'} not seeded`);
       if (rules.platforms.gmail.enabled && !gmail.connected) warnings.push(gmail.reason ?? GMAIL_OFF.reason ?? 'Gmail is off');
-      const seeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting), { gmailConnected: gmail.connected });
+      const allSeeds = freelanceSeeds(rules, runDate, half, boards.postings.map((p) => p.posting), { gmailConnected: gmail.connected });
+      const skippedPlatforms = new Set(o.skipSources ?? []);
+      const seeds = allSeeds.filter((s) => !skippedPlatforms.has(`freelance:${s.platform}`));
+      for (const platform of new Set(allSeeds.filter((s) => skippedPlatforms.has(`freelance:${s.platform}`)).map((s) => s.platform))) warnings.push(`${HOME_NETWORK_NOTE} (freelance:${platform})`);
       if (seeds.length === 0) warnings.push('no gig platform is enabled: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       // One transaction: the gig rows and the run's source health are written together, or neither is.
@@ -254,7 +267,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       }
       app.recordGigRun({ runId, at: now, counts, packHash: loaded.freelancePackHash, policyHash: k.policyHash, warnings, problems });
       return {
-        runId, runDate, half, asOf: loaded.asOf, resumed: resume, report, counts, projection, problems, notification, notified,
+        runId, runDate, half, gmail: gmailFailed ? 'failed' : gmail.connected ? 'connected' : 'off', asOf: loaded.asOf, resumed: resume, report, counts, projection, problems, notification, notified,
         packHash: loaded.freelancePackHash, fullPackHash: loaded.freelanceFullPackHash, policyHash: k.policyHash, warnings, exitCode: exitCodeOf(report, problems),
       };
     } finally {

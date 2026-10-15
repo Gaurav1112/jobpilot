@@ -1,5 +1,6 @@
 import type { Envelope } from '../kernel/envelope.js';
 import type { Store } from '../kernel/store/store.js';
+import { runEnv } from './run-env.js';
 import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
 import { PLATFORM_NOTE_PREFIXES } from './agents/sources/platforms/shared.js';
@@ -13,6 +14,9 @@ export function safeLine(t: string, naming: Pick<Naming, 'forbiddenTerms'>): str
   const line = oneLine(t);
   return forbiddenTermStrict(t, naming) === undefined && forbiddenTermStrict(line, naming) === undefined ? line : '[hidden: contains a forbidden term]';
 }
+
+/** Appended to a `challenged` failure's reason when the run is on the hosted runner. */
+export const HOSTED_RUNNER_SUFFIX = ' (hosted runner)';
 
 /**
  * One item the run did not carry through: a failed step (with `gone` and `input_rejected` told apart), a quarantined
@@ -245,7 +249,10 @@ export function runProblems(
     } catch {
       item = `envelope ${q.envelope_id}`;
     }
-    out.push({ kind, agent: q.agent_id, item: safe(item), reason: safe(reasonOf(e, kernel)) });
+    // spec §3.5: on the hosted runner a bot wall is named as such, so the shadow report can attribute it (appended after
+    // the one-line cut so it is never trimmed away)
+    const hostedNote = error === 'challenged' && runEnv() === 'hosted' ? HOSTED_RUNNER_SUFFIX : '';
+    out.push({ kind, agent: q.agent_id, item: safe(item), reason: `${safe(reasonOf(e, kernel))}${hostedNote}` });
   }
   out.push(...qaBlocks(kernel, events, safe));
   return out;
