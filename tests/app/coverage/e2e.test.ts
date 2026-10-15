@@ -293,6 +293,12 @@ describe('coverage e2e: the freehire catalogue seed goes straight to the verifie
     expect(s.catalogue).toEqual({ checked: 2, verified: 1, proposed: 1, left: 1 });
     expect(s.notification).toContain('Catalogue: 2 checked (1 verified, 1 proposed) · 1 left for later weeks');
     expect(Object.keys(registry(home))).not.toContain(keyOf('ashby', 'ghostboard'));
+    // a second run the same week: the week's limit is used up, the third is not selected (nothing is sent)
+    const same = net();
+    const sTue = done(await withSeed(home, W1_TUE, same.fetch, { catalogue: SEED, perWeek: 2, discovery: false }));
+    expect(same.calls.filter((u) => u.includes('ghostboard'))).toEqual([]);
+    expect(sTue.catalogue).toEqual({ checked: 0, verified: 0, proposed: 0, left: 1 });
+    expect(Object.keys(registry(home))).not.toContain(keyOf('ashby', 'ghostboard'));
     // next week the third is picked up
     const s2 = done(await withSeed(home, W2, net().fetch, { catalogue: SEED, perWeek: 2, discovery: false }));
     expect(s2.catalogue).toEqual({ checked: 1, verified: 0, proposed: 1, left: 0 });

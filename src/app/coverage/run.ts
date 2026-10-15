@@ -299,6 +299,20 @@ const METHODS: readonly CareersSite['method'][] = ['listed', 'homepage-link', 'p
 const SOURCES: readonly CandidateSource[] = ['pick', 'remoteintech', 'yc', 'jobs'];
 
 /** Whether another coverage run already projected its verdicts in this coverage week (then failures are not counted again). */
+/** The catalogue board keys the other coverage runs of `week` selected (D4: the weekly limit spans every run of the week). */
+function catalogueKeysThisWeek(app: AppStore, week: string, runId: string): string[] {
+  const runs = app.kernel.db.prepare(`SELECT run_id FROM runs WHERE pipeline = ? AND run_id <> ?`).all(PIPELINE, runId) as { run_id: string }[];
+  const keys = new Set<string>();
+  for (const r of runs) {
+    for (const e of app.kernel.events(r.run_id)) {
+      if (e.kind !== CATALOGUE_SELECTED) continue;
+      const d = JSON.parse(e.data) as { week?: unknown; keys?: unknown };
+      if (d.week === week && Array.isArray(d.keys)) for (const k of d.keys) if (typeof k === 'string') keys.add(k);
+    }
+  }
+  return [...keys];
+}
+
 function weekAlreadyProjected(app: AppStore, week: string, runId: string): boolean {
   const runs = app.kernel.db.prepare(`SELECT run_id FROM runs WHERE pipeline = ? AND run_id <> ?`).all(PIPELINE, runId) as { run_id: string }[];
   return runs.some((r) => app.kernel.events(r.run_id).some((e) => e.kind === PROJECTED && (JSON.parse(e.data) as { week?: unknown }).week === week));
@@ -401,9 +415,12 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
           catalogueLeft = d.left;
           return freehireGuesses(entries, d.keys, week);
         }
-        const { guesses, left } = catalogueGuesses(entries, new Set([...app.registryBoardKeys(), ...taken]), week, o.freehire?.perWeek ?? CATALOGUE_PER_WEEK);
+        // D4's limit is per coverage week, not per run: an earlier run of this week used part of it already
+        const earlier = catalogueKeysThisWeek(app, week, runId);
+        const limit = Math.max(0, (o.freehire?.perWeek ?? CATALOGUE_PER_WEEK) - earlier.length);
+        const { guesses, left } = catalogueGuesses(entries, new Set([...app.registryBoardKeys(), ...taken, ...earlier]), week, limit);
         catalogueLeft = left;
-        app.kernel.appendEvent(runId, o.clock.now(), CATALOGUE_SELECTED, { keys: guesses.map((g) => boardKey(g.platform as string, g.slug ?? '')), left }, pHash);
+        app.kernel.appendEvent(runId, o.clock.now(), CATALOGUE_SELECTED, { week, keys: guesses.map((g) => boardKey(g.platform as string, g.slug ?? '')), left }, pHash);
         return guesses;
       };
       const outcome = await runCoverageStages({
