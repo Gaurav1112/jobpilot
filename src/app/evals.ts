@@ -15,6 +15,7 @@ import { evidenceMatcher } from './agents/writing/evidence-matcher.js';
 import { resumePlanner } from './agents/writing/resume-planner.js';
 import { detectorEgressSets, makePlatformDetector, platformDetectorContract } from './coverage/detector.js';
 import { memoryHostStateStore } from './coverage/gate.js';
+import { freehireRowClassifier } from './coverage/freehire-api.js';
 import { companyNameMatcher } from './coverage/names.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
@@ -29,6 +30,7 @@ import { appGuardrails, G_FILL, G_GROUND } from './guardrails.js';
 import { offlineProviders } from './offline.js';
 import { loadPack } from './pack/load.js';
 import type { GigDocsPlan, GigVerdict, RatedGig, RiskedGig, ScoredGig } from './freelance/types.js';
+import type { RowClass } from './coverage/freehire-api.js';
 import type { CareersSite, NameMatch, PlatformGuess } from './coverage/types.js';
 import type { EligibilityVerdict, Evidence, Scored } from './types.js';
 
@@ -284,6 +286,16 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: companyNameMatcher,
       cases: loadJsonl(join(datasetDir, 'coverage-names.jsonl')),
       project: (outs) => one(outs, (o: NameMatch) => ({ same: o.same })),
+      metric: 'exactMatch',
+      min: 1,
+    },
+    {
+      // A recorded freehire search row to board / lead / drop (jobpilot's own reading of the raw title and location, never
+      // freehire's LLM-filled fields); the labels are hand-written from the rules in freehire-api.ts.
+      name: 'freehire-rows',
+      agent: freehireRowClassifier,
+      cases: loadJsonl(join(datasetDir, 'freehire-rows.jsonl')),
+      project: (outs) => one(outs, (o: { class: RowClass }) => ({ class: o.class })),
       metric: 'exactMatch',
       min: 1,
     },
