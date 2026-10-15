@@ -40,7 +40,7 @@
 <section id="status" class="card" data-live="Status set to Not started." aria-labelledby="status-h">
 <h2 id="status-h">Your status <span class="pill pill-neutral">Not started</span></h2>
 
-<form class="status-form" method="post" action="/jobs/1111111111111111/status" hx-post="/jobs/1111111111111111/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
+<form class="status-form" method="post" action="/jobs/1111111111111111/status" hx-post="/jobs/1111111111111111/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
 <input type="hidden" name="_csrf" value="x">
 
 <div class="btn-row"><button id="status-to-new" class="btn btn-current" name="to" value="new" aria-pressed="true">Not started</button><button id="status-to-approved" class="btn" name="to" value="approved" aria-pressed="false">Shortlisted</button><button id="status-to-applied" class="btn" name="to" value="applied" aria-pressed="false">Applied</button><button id="status-to-interview" class="btn" name="to" value="interview" aria-pressed="false">Interviewing</button><button id="status-to-offer" class="btn" name="to" value="offer" aria-pressed="false">Offer</button><button id="status-to-rejected" class="btn" name="to" value="rejected" aria-pressed="false">Not selected</button><button id="status-to-skipped" class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
@@ -48,7 +48,7 @@
 
 
 </section>
-<section class="card wide" id="send" aria-labelledby="send-h"><h2 id="send-h">Send your application</h2>
+<section class="card wide" id="apply-kit" aria-labelledby="apply-kit-h"><h2 id="apply-kit-h">Send your application</h2>
 <p class="hint">Recommended for Greenhouse: PDF.</p>
 <div class="doc-grid"><div class="doc"><h3>Resume</h3><div class="downloads"><a class="btn" href="/jobs/1111111111111111/files/resume.pdf" download>Download PDF<span class="visually-hidden"> of the resume</span> (recommended)</a><a class="btn" href="/jobs/1111111111111111/files/resume.docx" download>Download Word (DOCX)<span class="visually-hidden"> of the resume</span></a></div></div><div class="doc"><h3>Cover letter</h3><div class="downloads"><a class="btn" href="/jobs/1111111111111111/files/cover.pdf" download>Download PDF<span class="visually-hidden"> of the cover letter</span> (recommended)</a><a class="btn" href="/jobs/1111111111111111/files/cover.docx" download>Download Word (DOCX)<span class="visually-hidden"> of the cover letter</span></a></div></div></div>
 </section>

@@ -453,7 +453,8 @@ input[type="url"], input[type="text"] {
   :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
 }
 @media (pointer: coarse) {
-  .btn, .top nav a, .tabs a, .chip, details > summary { min-height: 2.75rem; display: inline-flex; align-items: center; }
+  .btn, .top nav a, .tabs a, .chip { min-height: 2.75rem; display: inline-flex; align-items: center; }
+  details > summary { min-height: 2.75rem; padding-block: 0.625rem; box-sizing: border-box; }
   .chip input { width: 1.5rem; height: 1.5rem; }
   input[type="search"], input[type="number"], input[type="url"], input[type="text"], textarea { font-size: 1rem; min-height: 2.75rem; }
 }

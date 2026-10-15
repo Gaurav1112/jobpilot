@@ -115,7 +115,7 @@ export function jobsBody(d: JobsPageData): Html {
 <h1>Jobs</h1>
 <p class="lede"><span class="num">${countText(d.total)}</span> job${d.total === 1 ? '' : 's'} · <span class="num">${countText(d.toDecide)}</span> to decide${
     markNew ? html`, <span class="num">${countText(d.newCount)}</span> new since your last visit` : ''
-  } · sorted by best fit, then pay.${
+  } · eligible first, then best fit, then pay.${
     d.defaultBands && d.hiddenCount > 0
       ? html` <span class="muted"><span class="num">${countText(d.hiddenCount)}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
       : ''

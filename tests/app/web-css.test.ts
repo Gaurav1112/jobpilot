@@ -58,6 +58,10 @@ describe('A12: the stylesheet', () => {
     const block = css.slice(css.indexOf('@media (pointer: coarse) {'));
     expect(block).toMatch(/min-height: 2\.75rem/);
     expect(block).toMatch(/font-size: 1rem/);
+    // the summary keeps display: list-item, or the disclosure marker disappears on touch screens
+    expect(block).not.toMatch(/details > summary[^{]*\{[^}]*display:/);
+    expect(block).toMatch(/details > summary \{[^}]*min-height: 2\.75rem/);
+    expect(block).not.toMatch(/\.chip, details > summary/);
   });
   it('rings a focused preview frame, and marks busy htmx controls', () => {
     expect(rule('.preview:focus-visible')).toContain('outline: 2px solid var(--accent)');

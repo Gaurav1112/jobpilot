@@ -34,9 +34,6 @@ export interface JobPageData {
 }
 
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
-// The anchor id of the send card. Built in two parts so the read-only Gmail guard (tests/app/freelance/mail.test.ts)
-// does not mistake the dashboard HTML id for a Gmail write call.
-const SEND_ID = ['se', 'nd'].join('');
 const KIND_NAME = { resume: 'Resume', cover: 'Cover letter' } as const;
 
 function header(j: JobDetail, back?: JobPageData['back']): Html {
@@ -130,7 +127,7 @@ function terms(j: JobDetail, display: (k: string) => string): Html | '' {
 function sendCard(d: JobPageData): Html {
   const j = d.job;
   const reason = docsReason(j);
-  return html`<section class="card wide" id="${SEND_ID}" aria-labelledby="${SEND_ID}-h"><h2 id="${SEND_ID}-h">Send your application</h2>
+  return html`<section class="card wide" id="apply-kit" aria-labelledby="apply-kit-h"><h2 id="apply-kit-h">Send your application</h2>
 ${
   reason !== null || j.docs.length === 0
     ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
@@ -213,7 +210,7 @@ export function statusSection(
   return html`<section id="status" class="card" data-live="Status set to ${STATUS_LABEL[j.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${statusPill(j.status)}</h2>
 ${j.appliedAt !== null ? html`<p class="muted">You applied to ${j.company} ${appliedAgo(j.appliedAt, o.now)} (${dateText(istDay(j.appliedAt))}).${j.status === 'applied' && isFollowUpDue(j.appliedAt, null, o.now) ? html` <strong>Follow-up due.</strong>` : ''}</p>` : ''}
-<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
+<form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
 ${csrfField(csrf)}
 ${back !== undefined ? html`<input type="hidden" name="from" value="${back.from}">${back.next !== undefined ? html`<input type="hidden" name="next" value="${back.next}">` : ''}` : ''}
 <div class="btn-row">${STATUSES.map(

@@ -336,7 +336,7 @@ describe('A1: the jobs list defaults and order', () => {
     });
     const { body } = await get('/');
     expect(order(body)).toEqual([K3, K1, 'c2c2c2c2c2c2c2c2', 'c1c1c1c1c1c1c1c1', 'c3c3c3c3c3c3c3c3', K2, K10, K9, K7, K11, K4]);
-    expect(textOf(body)).toContain('sorted by best fit, then pay');
+    expect(textOf(body)).toContain('eligible first, then best fit, then pay');
   });
 
   it('counts To decide with the U9 predicate (new, eligible or check first, first seen in the last 7 IST days)', async () => {
@@ -1302,8 +1302,8 @@ describe('A2: the job page follows the apply sequence', () => {
     const body = (await get(`/jobs/${K1}`)).body;
     const at = (needle: string): number => body.indexOf(needle);
     expect(at('id="status"')).toBeGreaterThan(-1);
-    expect(at('id="status"')).toBeLessThan(at('id="send"'));
-    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeGreaterThan(at('id="send"'));
+    expect(at('id="status"')).toBeLessThan(at('id="apply-kit"'));
+    expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeGreaterThan(at('id="apply-kit"'));
     expect(at(`/jobs/${K1}/files/resume.pdf`)).toBeLessThan(at('<iframe'));
     expect(at('id="ans"')).toBeLessThan(at('id="why"'));
   });
@@ -1318,7 +1318,7 @@ describe('A2: the job page follows the apply sequence', () => {
     expect(textOf((await get(`/jobs/${K1}`)).body)).toContain('Keep a copy of these documents now');
   });
   it('a job with blocked documents still says why, in the send card', async () => {
-    expect(textOf(elementsWith((await get(`/jobs/${K10}`)).body, 'id', 'send')[0] ?? '')).toContain('documents blocked: unrenderable character U+5C71 in the company name');
+    expect(textOf(elementsWith((await get(`/jobs/${K10}`)).body, 'id', 'apply-kit')[0] ?? '')).toContain('documents blocked: unrenderable character U+5C71 in the company name');
   });
 });
 
@@ -1366,7 +1366,11 @@ describe('A12: the interactive layer for keyboards and screen readers', () => {
   it('status buttons keep stable ids; htmx forms disable their buttons while busy; the fragment says what changed', async () => {
     const body = (await get(`/jobs/${K1}`)).body;
     for (const s of ['new', 'approved', 'applied', 'interview', 'offer', 'rejected', 'skipped']) expect(elementsWith(body, 'id', `status-to-${s}`), s).toHaveLength(1);
-    for (const f of elementsWith(body, 'hx-post')) expect(attrsOf(f)['hx-disabled-elt'], attrsOf(f)['hx-post']).toBe('find button');
+    // htmx 2 `find` is querySelector (first match only): a form with several buttons names them all with a scoped selector
+    for (const f of elementsWith(body, 'hx-post')) {
+      const multi = (f.match(/<button/g) ?? []).length > 1;
+      expect(attrsOf(f)['hx-disabled-elt'], attrsOf(f)['hx-post']).toBe(multi ? '#status button' : 'find button');
+    }
     const frag = await (await post(`/jobs/${K1}/status`, { _csrf: token, to: 'approved' }, hx)).text();
     expect(attrsOf(frag)['data-live']).toBe('Status set to Shortlisted.');
     expect(elementsWith(frag, 'id', 'status-to-approved')).toHaveLength(1);

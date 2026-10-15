@@ -332,7 +332,7 @@ export function gigStatusSection(g: Pick<GigView, 'gigKey' | 'status' | 'applied
   return html`<section id="status" class="card" data-live="Status set to ${GIG_STATUS_LABEL[g.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${gigStatusPill(g.status)}</h2>
 ${g.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(g.appliedAt))}</p>` : ''}
-<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
+<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
 ${csrfField(csrf)}
 <div class="btn-row">${GIG_STATUSES.map(
     (s) => html`<button id="gig-to-${s}" class="btn${s === g.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === g.status ? 'true' : 'false'}">${GIG_STATUS_LABEL[s]}</button>`,
@@ -443,13 +443,13 @@ export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updat
     : '';
   const action = "/freelance/networks/" + n.id + "/status";
   const quick = n.status === 'todo' && n.notOpen !== true
-    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="find button">
+    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="#net-status-${n.id} button">
 ${csrfField(csrf)}<button id="net-${n.id}-quick" class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
     : '';
   return html`<div class="net-status" id="net-status-${n.id}" data-live="Network status set to ${NETWORK_LABEL[n.status]}.">
 <p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${since}</p>
 ${quick}
-<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(csrf)}
+<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="#net-status-${n.id} button">${csrfField(csrf)}
 <div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button id="net-${n.id}-to-${s}" class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
 </form></div>`;
 }
