@@ -18,6 +18,7 @@ export const GenRecord = z.strictObject({
   lastDone: LastDone,
   at: z.iso.datetime(),
 });
+export type GenRecord = z.infer<typeof GenRecord>;
 export const Lease = z.strictObject({ holder: z.string().regex(/^(?:actions:\d{1,20}|laptop:[0-9a-f]{8})$/), until: z.iso.datetime() });
 export const Pointer = z.strictObject({
   v: z.literal(1),
