@@ -1,8 +1,9 @@
 import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-store.js';
-import { countText, dateText, scoreText } from '../format.js';
+import { appliedAgo, countText, dateText, istTimeText } from '../format.js';
+import { isFollowUpDue } from '../../triage.js';
 import { html, type Html } from '../html.js';
 import { reasonText, remoteText, sourceName } from '../copy.js';
-import { meta, pager, BAND_LABEL, compCell, exceptionPill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { meta, pager, BAND_LABEL, compCell, exceptionPill, pill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -32,6 +33,9 @@ export interface JobsPageData {
   /** New since the last visit, across all pages. */
   readonly newCount: number;
   readonly istDay: (iso: string) => string;
+  /** A14: the current instant, and the newest daily run (null before the first). */
+  readonly now: string;
+  readonly lastRun: { readonly at: string; readonly problems: number } | null;
   /** Pagination: this page (1-based), the page count, the total shown across pages, and the href of a page. */
   readonly page: number;
   readonly pages: number;
@@ -79,7 +83,7 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
   )}${j.history.length > imported.length ? html` · ${countText(j.history.length - imported.length)} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
 }
 
-function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean, from: string, next: string | undefined): Html {
+function row(j: ListedJob, istDay: (iso: string) => string, now: string, markNew: boolean, from: string, next: string | undefined): Html {
   return html`<li class="job" id="job-${j.jobKey}" data-job="${j.jobKey}">
 <div class="job-main">
 <h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="${jobHref(j.jobKey, from, next)}">${j.title}</a></h2>
@@ -95,7 +99,13 @@ ${historyLine(j, istDay)}
 </div>
 <div class="job-comp">${compCell(j)}</div>
 <div class="job-score">${fitChip(j.score)}</div>
-<div class="job-status">${j.status === 'new' ? '' : statusPill(j.status)}</div>
+<div class="job-status">${
+    j.status === 'new'
+      ? ''
+      : j.status === 'applied' && j.appliedAt !== null
+        ? html`${pill('Applied ' + appliedAgo(j.appliedAt, now), 'good')}${isFollowUpDue(j.appliedAt, null, now) ? html`<p class="followup">Follow-up due</p>` : ''}`
+        : statusPill(j.status)
+  }</div>
 </li>`;
 }
 
@@ -110,11 +120,16 @@ export function jobsBody(d: JobsPageData): Html {
       ? html` <span class="muted"><span class="num">${countText(d.hiddenCount)}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
       : ''
   }${d.defaultStatuses ? html` <span class="muted">Not for me and Not selected are hidden: <a href="/?status=skipped&amp;status=rejected">show them</a>.</span>` : ''}</p>
+<p class="run-line">${
+    d.lastRun === null
+      ? 'No daily run yet. It starts at 07:00 IST.'
+      : html`Last run ${istTimeText(d.lastRun.at)} · ${d.lastRun.problems === 0 ? 'no problems' : html`<span class="num">${countText(d.lastRun.problems)}</span> problem${d.lastRun.problems === 1 ? '' : 's'}`} → <a href="/runs">Runs</a>`
+  }</p>
 </div>
 ${filterForm(d.filter, d.defaultBands, d.defaultStatuses)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(j, d.istDay, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager({ page: d.page, pages: d.pages, href: d.pageHref })}`
+    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(j, d.istDay, d.now, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager({ page: d.page, pages: d.pages, href: d.pageHref })}`
 }`;
 }

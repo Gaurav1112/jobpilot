@@ -428,7 +428,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     setCookie(c, VISIT_COOKIE, `${prev}.${nowMs}`, { httpOnly: true, sameSite: 'Strict', path: '/', maxAge: 400 * 86_400 });
 
     // dashboard-perf fix 2: the page, its counts and the hidden count in SQL over the covering index (`listJobsPage`)
-    const { jobs, hidden, overrides, total, newCount, toDecide, pageNo, pages } = withStore((s) => {
+    const { jobs, hidden, overrides, total, newCount, toDecide, pageNo, pages, lastRun } = withStore((s) => {
       const opts = { page: pageAsked, size: PAGE_SIZE, newAfterMs: prev, decideFrom: toDecideFrom(at) };
       const p = hooks.jobsPage !== undefined ? hooks.jobsPage(s, filter, opts) : s.listJobsPage(filter, opts);
       const hist = s.histories(p.jobs.map((j) => j.jobKey));
@@ -442,6 +442,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
         toDecide: p.toDecide,
         pageNo: p.page,
         pages: p.pages,
+        lastRun: ((run) => (run === undefined ? null : { at: run.at, problems: (run.problems ?? []).length }))(s.latestRun('daily-')),
       };
     });
     const pageHref = (n: number): string => {
@@ -456,7 +457,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
       return t === '' ? '/' : `/?${t}`;
     };
     const body = jobsBody({
-      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, defaultStatuses: asked.length === 0, hiddenCount: hidden, istDay: istDate,
+      jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bands.length === 0, defaultStatuses: asked.length === 0, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
       page: pageNo, pages, total, newCount, toDecide, pageHref,
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
@@ -502,7 +503,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
     const cited = data.job.citedFacts === null ? null : data.job.citedFacts.map((id) => ({ id: r.text(id), claim: r.text(ps.pack?.facts.find((f) => f.id === id)?.claim ?? 'no longer in your fact list') }));
-    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
+    const body = jobBody({ job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
     return page(c, 'jobs', job.title, banners, body);
   });
 
@@ -552,7 +553,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     }
     const flash = result.notice !== undefined ? NOTICE[result.notice] : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
-    return c.html(html`${statusSection(result.job, csrf(c), istDate, flash, back)}${sentSection(result.sent, true)}`.value);
+    return c.html(html`${statusSection(result.job, { csrf: csrf(c), istDay: istDate, now: at, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) })}${sentSection(result.sent, true)}`.value);
   });
 
   // "Keep a copy of these documents now": the snapshot an apply could not make (applied elsewhere, or a failed copy).

@@ -1,5 +1,6 @@
 import type { JobDetail, JobStatus, Snapshot } from '../../store/app-store.js';
-import { countText, dateText, scoreText } from '../format.js';
+import { appliedAgo, countText, dateText, scoreText } from '../format.js';
+import { isFollowUpDue } from '../../triage.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
 import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
@@ -22,6 +23,8 @@ export interface JobPageData {
   /** The preferred listing, when this row is another listing of it. */
   readonly preferred: { readonly jobKey: string; readonly source: string } | null;
   readonly istDay: (iso: string) => string;
+  /** The current instant (A14: how long ago it was applied). */
+  readonly now: string;
   /** A one-off message after a status change (a snapshot that could not be made). */
   readonly flash?: string;
   /** A8: the list this job was opened from, and the row after it. */
@@ -201,11 +204,15 @@ ${d.snapshots.map(
 }
 
 /** The status block: the current status, a button per status, and any message. Returned alone to htmx. */
-export function statusSection(j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history'>, csrf: string, istDay: (iso: string) => string, flash?: string, back?: JobPageData['back']): Html {
+export function statusSection(
+  j: Pick<JobDetail, 'jobKey' | 'status' | 'appliedAt' | 'history' | 'company'>,
+  o: { csrf: string; istDay: (iso: string) => string; now: string; flash?: string; back?: JobPageData['back'] },
+): Html {
+  const { csrf, istDay, flash, back } = o;
   const last = j.history.at(-1);
   return html`<section id="status" class="card" data-live="Status set to ${STATUS_LABEL[j.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${statusPill(j.status)}</h2>
-${j.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(j.appliedAt))}</p>` : ''}
+${j.appliedAt !== null ? html`<p class="muted">You applied to ${j.company} ${appliedAgo(j.appliedAt, o.now)} (${dateText(istDay(j.appliedAt))}).${j.status === 'applied' && isFollowUpDue(j.appliedAt, null, o.now) ? html` <strong>Follow-up due.</strong>` : ''}</p>` : ''}
 <form class="status-form" method="post" action="/jobs/${j.jobKey}/status" hx-post="/jobs/${j.jobKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="find button">
 ${csrfField(csrf)}
 ${back !== undefined ? html`<input type="hidden" name="from" value="${back.from}">${back.next !== undefined ? html`<input type="hidden" name="next" value="${back.next}">` : ''}` : ''}
@@ -245,7 +252,7 @@ export function jobBody(d: JobPageData): Html {
   return html`${header(j, d.back)}
 ${duplicates(j, d.preferred)}
 <div class="job-grid">
-${statusSection(j, d.csrf, d.istDay, d.flash, d.back)}
+${statusSection(j, { csrf: d.csrf, istDay: d.istDay, now: d.now, ...(d.flash !== undefined ? { flash: d.flash } : {}), ...(d.back !== undefined ? { back: d.back } : {}) })}
 ${sendCard(d)}
 ${answers(d.answers)}
 ${whyMatched(j, d.display)}

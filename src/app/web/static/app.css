@@ -453,3 +453,6 @@ input[type="url"], input[type="text"] {
   .chip input { width: 1.5rem; height: 1.5rem; }
   input[type="search"], input[type="number"], input[type="url"], input[type="text"], textarea { font-size: 1rem; min-height: 2.75rem; }
 }
+
+.followup { color: var(--warn); font-size: var(--fs-xs); font-weight: 600; margin: var(--space-1) 0 0; }
+.run-line { font-size: var(--fs-sm); color: var(--text-2); margin: 0 0 var(--space-2); }

@@ -1355,3 +1355,27 @@ describe('A12: the interactive layer for keyboards and screen readers', () => {
     expect(attrsOf(warn)['role']).toBe('status');
   });
 });
+
+describe('A14: when you applied, and when the last run was', () => {
+  it('an applied row says how long ago, and flags a due follow-up (U9: 5 days after applying)', async () => {
+    const r = textOf(rowOf((await get('/')).body, 'data-job', K9));
+    expect(r).toContain('Applied 27 days ago');
+    expect(r).toContain('Follow-up due');
+    withStore((s) => s.setStatus(K1, 'applied', 'user', '2026-10-07T06:30:00.000Z'));
+    const k1 = textOf(rowOf((await get('/')).body, 'data-job', K1));
+    expect(k1).toContain('Applied 2 days ago');
+    expect(k1).not.toContain('Follow-up due');
+  });
+  it('the job page says "You applied to <company> N days ago"', async () => {
+    expect(textOf((await get(`/jobs/${K9}`)).body)).toContain('You applied to Initrode 27 days ago (12 Sep 2026). Follow-up due.');
+  });
+  it('the jobs page names the last daily run and its problems, linking to Runs', async () => {
+    const line = elementsWith((await get('/')).body, 'class', 'run-line')[0] as string;
+    expect(textOf(line)).toBe('Last run 9 Oct 2026, 07:00 IST · 1 problem → Runs');
+    expect(linksOf(line).map((l) => l.href)).toEqual(['/runs']);
+  });
+  it('before any daily run, it says when the first one starts', async () => {
+    withStore((s) => s.kernel.db.prepare('DELETE FROM runs_summary').run());
+    expect(textOf(elementsWith((await get('/')).body, 'class', 'run-line')[0] ?? '')).toBe('No daily run yet. It starts at 07:00 IST.');
+  });
+});
