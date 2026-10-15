@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statfsSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, statfsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
@@ -7,7 +7,7 @@ import { canonicalJson } from '../../kernel/canonical.js';
 import { runEnv } from '../run-env.js';
 import { secretsFor, type Secrets } from '../secrets.js';
 import { cliClock } from '../test-clock.js';
-import { ledgerPath, parseLedger } from './budget.js';
+import { ledgerPath, parseLedger, type LedgerEntry } from './budget.js';
 import { loadHostedConfig, parseCodeLock, type HostedConfig } from './config.js';
 import { digestFileName, digestJson, digestRun, runOn, type Digest } from './digest.js';
 import { verifyGeneration, type VerifyRecord } from './generations.js';
@@ -17,7 +17,9 @@ import { realish, refuseDefaultHome } from './home-guard.js';
 import { keysNew, packPush, PACK_KEY_SECRET, secretsSync, STATE_KEY_SECRET, storedKey } from './keys.js';
 import { seedAndPublish } from './seed.js';
 import { spawnPipeline } from './spawn.js';
-import { rollbackTo } from './state.js';
+import { compareDay, dates, readDigests } from './shadow/compare.js';
+import { evaluate, renderJson, renderMarkdown } from './shadow/report.js';
+import { appendStateFiles, rollbackTo } from './state.js';
 import { laptopHolder, pullHome, pushHome, type PublishOutcome } from './sync.js';
 import { lintWorkflow } from './workflow-lint.js';
 import { runHosted } from './wrapper.js';
@@ -76,8 +78,55 @@ interface DigestOpts {
   codeSha?: string;
 }
 
-/** `jobpilot shadow …` (H1: `digest`; H2 adds `compare`). */
-export function registerShadow(program: Command, deps: ShadowDeps = realDeps): void {
+interface CompareOpts {
+  mac: string;
+  hosted: string;
+  ledger: string;
+  verify: string;
+  from: string;
+  days: number;
+  out: string;
+}
+
+const VERIFY_FILE = /^verify-g\d{6}\.json$/;
+const needDir = (label: string, dir: string): string => {
+  const d = resolve(dir);
+  if (!existsSync(d) || !statSync(d).isDirectory()) throw new Error(`--${label} ${d}: not a folder`);
+  return d;
+};
+const readVerify = (dir: string): VerifyRecord[] =>
+  readdirSync(dir)
+    .filter((n) => VERIFY_FILE.test(n))
+    .sort()
+    .map((n) => {
+      let rec: unknown;
+      try {
+        rec = JSON.parse(readFileSync(join(dir, n), 'utf8'));
+      } catch {
+        throw new Error(`${n}: not valid JSON`);
+      }
+      const r = rec as Partial<VerifyRecord> | null;
+      const c = r?.checks;
+      if (r === null || typeof r !== 'object' || r.v !== 1 || !Number.isInteger(r.gen) || typeof r.ok !== 'boolean' || c === undefined || typeof c !== 'object' || c === null ||
+        !(['sha256', 'decrypt', 'quickCheck', 'audit'] as const).every((k) => typeof c[k] === 'boolean') || !(r.code === null || typeof r.code === 'string')) {
+        throw new Error(`${n}: not a verify record`);
+      }
+      return r as VerifyRecord;
+    });
+const readLedgerDir = (dir: string): LedgerEntry[] =>
+  readdirSync(dir)
+    .filter((n) => n.endsWith('.jsonl'))
+    .sort()
+    .flatMap((n) => {
+      try {
+        return parseLedger(readFileSync(join(dir, n), 'utf8'));
+      } catch (e) {
+        throw new Error(`${n}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+
+/** `jobpilot shadow …` (H1: `digest`; H2: `compare`, `push`). */
+export function registerShadow(program: Command, deps: ShadowDeps = realDeps, ghRunner: GhRunner = realGhRunner): void {
   const shadow = program.command('shadow').description('Shadow-week tools: compare what the hosted runner saw with what this machine saw');
   shadow
     .command('digest')
@@ -125,6 +174,80 @@ export function registerShadow(program: Command, deps: ShadowDeps = realDeps): v
         for (const m of missing) deps.out(`no run: ${m}`);
       } catch (err) {
         deps.err(`shadow digest: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  shadow
+    .command('compare')
+    .description('Compare a week of hosted digests with the Mac\'s against the switch criteria; writes report-<from>.md and .json')
+    .requiredOption('--mac <dir>', 'folder of the Mac\'s digests')
+    .requiredOption('--hosted <dir>', 'folder of the hosted digests')
+    .requiredOption('--ledger <dir>', 'folder of the ledger files (*.jsonl)')
+    .requiredOption('--verify <dir>', 'folder of verify-g<N>.json records')
+    .requiredOption('--from <YYYY-MM-DD>', 'the first IST date of the window', day)
+    .option('--days <n>', 'how many days from --from', count, 7)
+    .requiredOption('--out <dir>', 'folder for the report files')
+    .action((o: CompareOpts) => {
+      try {
+        const macDir = needDir('mac', o.mac);
+        const hostedDir = needDir('hosted', o.hosted);
+        const ledgerDir = needDir('ledger', o.ledger);
+        const verifyDir = needDir('verify', o.verify);
+        const mac = readDigests(macDir, 'local');
+        const hosted = readDigests(hostedDir, 'hosted');
+        const ledger = readLedgerDir(ledgerDir);
+        const verify = readVerify(verifyDir);
+        const rows = dates(o.from, o.days).map((date) =>
+          compareDay(date, {
+            mac: mac.get(`${date}-daily`),
+            hosted: hosted.get(`${date}-daily`),
+            macGigs: mac.get(`${date}-freelance`),
+            hostedGigs: hosted.get(`${date}-freelance`),
+          }),
+        );
+        const report = evaluate(rows, ledger, verify, { from: o.from, days: o.days });
+        const out = resolve(o.out);
+        mkdirSync(out, { recursive: true });
+        writeFileSync(join(out, `report-${o.from}.md`), renderMarkdown(report));
+        writeFileSync(join(out, `report-${o.from}.json`), renderJson(report));
+        deps.out(`side-by-side ${o.from}: ${report.overall === 'PASS' ? 'PASS' : `FAIL (${report.failed.length > 0 ? report.failed.join(', ') : 'window'})`}`);
+      } catch (err) {
+        deps.err(`shadow compare: ${err instanceof Error ? err.message : String(err)}`);
+        process.exitCode = 1;
+      }
+    });
+
+  shadow
+    .command('push')
+    .description('Write each file of a folder (digests or a report) under shadow/mac or shadow in the data repo state, in one commit')
+    .requiredOption('--repo <owner/name>', 'the private data repo', repoArg)
+    .requiredOption('--dir <dir>', 'folder whose files are written')
+    .requiredOption('--to <path>', 'shadow/mac (the Mac\'s digests) or shadow (a report)', (v: string) => {
+      if (v !== 'shadow/mac' && v !== 'shadow') throw new InvalidArgumentError('expected shadow/mac or shadow');
+      return v;
+    })
+    .option('--github-dir <dir>', 'check-only: use a folder as the GitHub backend (refused on GitHub Actions)')
+    .action(async (o: { repo: string; dir: string; to: string; githubDir?: string }) => {
+      try {
+        const dir = needDir('dir', o.dir);
+        const files: Record<string, string> = {};
+        for (const name of readdirSync(dir).sort()) {
+          if (name.startsWith('.') || !statSync(join(dir, name)).isFile()) continue;
+          files[`${o.to}/${name}`] = readFileSync(join(dir, name), 'utf8');
+        }
+        if (Object.keys(files).length === 0) throw new Error(`${dir}: no files to push`);
+        let gh: GitHubClient;
+        if (o.githubDir !== undefined) {
+          if (process.env['GITHUB_ACTIONS'] === 'true') throw new Error('--github-dir is a check-only flag; it is refused on GitHub Actions');
+          gh = dirGitHub(resolve(o.githubDir), { now: () => cliClock().now() });
+        } else {
+          gh = ghCliClient(o.repo, ghRunner);
+        }
+        await appendStateFiles(gh, () => Promise.resolve(files), `shadow files ${o.to}`);
+        deps.out(`pushed ${Object.keys(files).length} files to ${o.to}`);
+      } catch (err) {
+        deps.err(`shadow push: ${err instanceof Error ? err.message : String(err)}`);
         process.exitCode = 1;
       }
     });

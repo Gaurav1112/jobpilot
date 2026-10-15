@@ -142,6 +142,67 @@ authority: the ledger is an estimate that errs high.
 | Pack decrypt or validation fails | the pack step | stop before any pipeline | `hosted pack push` again |
 | Laptop and Actions at once | the lease | the second one waits or exits "state is in use by ..." | automatic |
 
+## The side-by-side week (H2)
+
+For one week the hosted runner and your Mac both run the daily and the freelance `am` window, and a deterministic
+report compares them against the switch criteria. Nothing is switched by the report: it is a result you read.
+
+Rules of the week:
+
+- The Mac runs as it is. Do not change its schedule or its code.
+- **No `store compact` on the Mac during the week.** Compaction changes what the Mac's database keeps, and the Mac
+  digests are read from it.
+- A pack change is pushed to the hosted pack the same day (`hosted pack push`, then commit and push the data repo), or
+  that day is not comparable (the digests carry a pack hash, and a day whose hashes differ is left out).
+- `skipSources` in `hosted.yaml` stays empty until the report proposes an entry.
+
+At the end of the week (the first day was 2026-11-02 in these examples):
+
+```
+# 1. the Mac's digests, read-only, written outside the home
+node --run jobpilot -- shadow digest --home ~/.jobpilot --from 2026-11-02 --days 7 --env local --out ~/shadow/mac
+# 2. send them to the data repo state, under shadow/mac/
+node --run jobpilot -- shadow push --repo example-user/jobpilot-data --dir ~/shadow/mac --to shadow/mac
+# 3. fetch the hosted side: the digests (shadow/hosted/) and the ledger (ledger/) are files on the state branch
+git clone --quiet --branch state --single-branch https://github.com/example-user/jobpilot-data.git ~/shadow/state
+mkdir -p ~/shadow/hosted ~/shadow/ledger
+cp ~/shadow/state/shadow/hosted/*.json ~/shadow/hosted/ && cp ~/shadow/state/ledger/*.jsonl ~/shadow/ledger/
+node --run jobpilot -- hosted verify --repo example-user/jobpilot-data --all --out ~/shadow/verify
+# 4. compare
+node --run jobpilot -- shadow compare --mac ~/shadow/mac --hosted ~/shadow/hosted --ledger ~/shadow/ledger \
+  --verify ~/shadow/verify --from 2026-11-02 --days 7 --out ~/shadow/report
+# 5. keep the report with the state
+node --run jobpilot -- shadow push --repo example-user/jobpilot-data --dir ~/shadow/report --to shadow
+```
+
+`shadow compare` prints `side-by-side 2026-11-02: PASS` or `side-by-side 2026-11-02: FAIL (C3)` and exits 0 either way:
+a FAIL is a result, not an error. A missing folder or a malformed file exits 1 and names it. It writes
+`report-2026-11-02.md` (read this) and `report-2026-11-02.json` (the same facts, for tools). The same input gives the
+same bytes.
+
+How to read each criterion in the report table:
+
+| # | Question | PASS when |
+|---|---|---|
+| C1 | Did hosted commit every day? | all 7 days committed, both pipelines finished or were cleanly skipped, and at least 6 by 10:00 IST |
+| C2 | Does hosted find what the Mac found that is eligible? | recall 0.95 or better on at least 6 days, and 0.97 or better over the week |
+| C3 | Does each busy source deliver? | every source the Mac averaged 5 a day or more on gives hosted at least 0.900 of the Mac's postings; a failing source is allowed only if it held 3.0% or less of the Mac's eligible jobs, and then the report proposes it for `skipSources` |
+| C4 | Does hosted find the Mac's gigs (am window)? | week recall 0.95 or better |
+| C5 | Will the minutes last a 31-day month? | 31 x (p90 billed minutes + 1) is 1,750 or less |
+| C6 | Did anything leak into logs? | zero log-audit hits and zero non-template log lines (the snapshot scan is not evaluated until H3) |
+| C7 | Is every committed generation sound? | every generation committed in the week verifies |
+| C8 | Does triage work? | not evaluated until H4 |
+
+A criterion that compares (C2 to C4) fails when fewer than 7 days are comparable; the report lists which days were not
+and why (pack differs, or one side is missing).
+
+What a FAIL means: the Mac stays primary and nothing is lost. Hosted keeps running in shadow; fix the named cause and
+run another week, or accept the proposed `skipSources` and re-compare. The report never changes any state by itself.
+
+Applying a proposed `skipSources` entry: edit `hosted.yaml` in the data repo, add the source id under `skipSources`,
+commit and push. From the next run, that source is not fetched on the runner and the hosted run carries the note
+"home network only: not run on the hosted runner". Keep that source running on the Mac.
+
 ## What never leaves the encrypted state
 
 The pack (your profile, contact details, answers, offers), the database, the generated documents and the notes live only
