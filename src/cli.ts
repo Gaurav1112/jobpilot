@@ -43,7 +43,8 @@ import { coverageProbeCommand, parseDays } from './app/coverage/probe.js';
 import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app/freelance/mail/connect.js';
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
-import { keychain } from './app/secrets.js';
+import { keychain, realSecretsRunner } from './app/secrets.js';
+import { profileKeychainService } from './app/profiles/keychain.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -311,7 +312,7 @@ program
   .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
     process.exitCode = await runFreelanceCommand(
       { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain()) },
+      { home: jobpilotHome(), clock: systemClock, notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain(realSecretsRunner, profileKeychainService())) },
     );
   });
 
@@ -610,7 +611,7 @@ gmail
   .description('Sign in to Google in your browser (gmail.readonly only) and keep the OAuth client and refresh token in the macOS Keychain; reads ~/.jobpilot/secrets/google-oauth-client.json once and offers to delete it')
   .action(() =>
     guarded(async () => {
-      await connectGmail({ home: jobpilotHome(), secrets: keychain(), post: realFormPost, open: openInBrowser, ask: askLine, out: (l) => console.log(l) });
+      await connectGmail({ home: jobpilotHome(), secrets: keychain(realSecretsRunner, profileKeychainService()), post: realFormPost, open: openInBrowser, ask: askLine, out: (l) => console.log(l) });
     }),
   );
 gmail
@@ -618,7 +619,7 @@ gmail
   .description('Whether Gmail is connected, the label read and the alert parsers; never shows a token')
   .action(() =>
     guarded(() => {
-      for (const l of gmailStatus({ home: jobpilotHome(), secrets: keychain() })) console.log(l);
+      for (const l of gmailStatus({ home: jobpilotHome(), secrets: keychain(realSecretsRunner, profileKeychainService()) })) console.log(l);
     }),
   );
 gmail
@@ -626,7 +627,7 @@ gmail
   .description('Delete the Gmail items from the Keychain (the client and the refresh token)')
   .action(() =>
     guarded(() => {
-      for (const l of disconnectGmail({ home: jobpilotHome(), secrets: keychain() })) console.log(l);
+      for (const l of disconnectGmail({ home: jobpilotHome(), secrets: keychain(realSecretsRunner, profileKeychainService()) })) console.log(l);
     }),
   );
 
@@ -650,7 +651,7 @@ program
     guarded(() => {
       const port = /^\d{1,5}$/.test(o.port) ? Number(o.port) : Number.NaN;
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be a number from 1 to 65535');
-      const secrets = keychain();
+      const secrets = keychain(realSecretsRunner, profileKeychainService());
       const gmailConnected = (): boolean => {
         try {
           return secrets.has(SECRET.refresh);
