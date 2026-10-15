@@ -1,4 +1,4 @@
-import { periodText } from '../format.js';
+import { countText, periodText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { csrfField, meta, pill, type Tone } from './common.js';
 
@@ -65,7 +65,7 @@ export function factsBody(d: FactsPageData): Html {
   return html`<div class="page-head">
 <h1>Your facts</h1>
 <p class="lede">Every claim your documents can make comes from one of these. Only verified facts and facts you stated go into a resume or cover letter.${
-    pending > 0 ? html` <strong><span class="num">${pending}</span> waiting for you to verify.</strong>` : ''
+    pending > 0 ? html` <strong><span class="num">${countText(pending)}</span> waiting for you to verify.</strong>` : ''
   }</p>
 <p class="note">Verify and Reject change only the fact's status here (your facts.yaml is never edited). The next run makes the affected documents again.</p>
 </div>

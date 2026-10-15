@@ -91,6 +91,7 @@ function jobDocs(out: string, key: string): Doc[] {
 }
 
 const NO_CLIENT = { name: null, country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null };
+const CONTRACT_GIG: Partial<Gig> = { platform: 'hn-freelancer', kind: 'contract', title: 'Contract backend engineer', budget: { type: 'hourly', min: 70, max: 70, currency: 'USD', usdPerUnit: null }, hoursPerWeek: { min: 15, max: 15, source: 'text' }, timezone: { required: null, overlapText: '4 hours overlap with US Eastern' }, bids: null };
 function gigOf(key: string, over: Partial<Gig> = {}): Gig {
   return {
     gigKey: key, dedupeKey: key, platform: 'freelancer', sourceId: key, url: `https://www.freelancer.example/projects/${key}`, title: `Gig ${key}`,
@@ -172,7 +173,7 @@ export function buildWebHome(): WebHome {
       problems: [{ kind: 'quarantined', agent: 'evidence-matcher', item: 'Hooli — Platform Engineer', reason: 'G-GROUND: bullet 2 is not a fact claim' }],
     });
 
-    const c1 = gigOf(GIG.contract, { platform: 'hn-freelancer', kind: 'contract', title: 'Contract backend engineer', budget: { type: 'hourly', min: 70, max: 70, currency: 'USD', usdPerUnit: null }, hoursPerWeek: { min: 15, max: 15, source: 'text' }, timezone: { required: null, overlapText: '4 hours overlap with US Eastern' }, bids: null });
+    const c1 = gigOf(GIG.contract, CONTRACT_GIG);
     const g2 = gigOf(GIG.proposal, { title: 'Order service fixes', description: 'About 60 hours of work.' });
     const r5 = gigOf(GIG.review, { title: 'Hourly in CAD', budget: { type: 'hourly', min: 60, max: 68, currency: 'CAD', usdPerUnit: 0.73 } });
     const b1 = gigOf(GIG.role, { platform: 'boards', kind: 'contract', title: 'Contract platform engineer', location: { countries: ['india'], worldwide: false, text: 'Remote - India' }, bids: null });
@@ -206,7 +207,7 @@ export function buildWebHome(): WebHome {
     }
   });
   const g2Docs = withStore(home, (s) => s.getGig(GIG.proposal)?.docs ?? []);
-  for (const g of [GIG.contract, GIG.proposal, GIG.review, GIG.role]) seedEnvelope(home, 'Gig@1', gigOf(g));
+  for (const g of [GIG.contract, GIG.proposal, GIG.review, GIG.role]) seedEnvelope(home, 'Gig@1', gigOf(g, g === GIG.contract ? CONTRACT_GIG : {}));
   seedEnvelope(home, 'GigRendered@1', {
     gigKey: GIG.proposal, files: g2Docs,
     plan: { gigKey: GIG.proposal, scored: {}, platform: 'freelancer', proposal: { hook: { text: 'Your order service needs a careful hand.', quote: null, title: null }, evidenceIntro: '', evidence: [{ text: 'At Contoso Retail I built the payments service in Java.', factIds: ['f-nw-01'] }], planIntro: '', plan: [], availability: '', question: '' }, pitch: null, resume: {}, covered: ['java', 'kafka'], missing: ['kubernetes'] },

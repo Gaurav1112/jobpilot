@@ -14,6 +14,9 @@ function trim(n: number, digits: number): string {
   return n.toFixed(digits).replace(/\.?0+$/, '');
 }
 
+/** A count shown on a page, en-IN grouped: 570418 → "5,70,418". */
+export const countText = (n: number): string => groupIndian(n);
+
 /** Indian digit grouping: 1234567 → "12,34,567". */
 export function groupIndian(n: number): string {
   const s = String(Math.round(Math.abs(n)));

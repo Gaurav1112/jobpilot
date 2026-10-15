@@ -1,4 +1,4 @@
-import { dateText } from '../format.js';
+import { countText, dateText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { csrfField, meta, pill, type Tone } from './common.js';
 
@@ -161,14 +161,14 @@ ${flash}
 
 function section(list: Exclude<CompanyList, 'deferred'>, d: CompaniesPageData, lede: string, empty: string): Html {
   const rows = d.lists[list];
-  return html`<section class="card wide" aria-labelledby="${list}-h"><h2 id="${list}-h">${LIST_LABEL[list]} <span class="num tab-count">${rows.length}</span></h2>
+  return html`<section class="card wide" aria-labelledby="${list}-h"><h2 id="${list}-h">${LIST_LABEL[list]} <span class="num tab-count">${countText(rows.length)}</span></h2>
 <p class="note">${lede}</p>
 ${rows.length === 0 ? html`<p class="muted">${empty}</p>` : html`<ul class="cos">${rows.map((c) => row(c, list, d))}</ul>`}
 </section>`;
 }
 
 function deferredSection(d: CompaniesPageData): Html {
-  return html`<section class="card wide" aria-labelledby="deferred-h"><h2 id="deferred-h">${LIST_LABEL.deferred} <span class="num tab-count">${d.deferred.length}</span></h2>
+  return html`<section class="card wide" aria-labelledby="deferred-h"><h2 id="deferred-h">${LIST_LABEL.deferred} <span class="num tab-count">${countText(d.deferred.length)}</span></h2>
 <p class="note">Hosts this week's coverage run stopped asking (a refusal is never retried around). Their companies keep last week's state and are asked again next week.</p>
 ${
   d.deferred.length === 0
@@ -202,7 +202,7 @@ export function companiesBody(d: CompaniesPageData): Html {
   return html`<div class="page-head">
 <h1>Companies</h1>
 <p class="lede">The companies whose own career sites jobpilot reads. The weekly coverage run finds and checks them; the daily run reads the verified ones (and the ones you approved).</p>
-<nav class="tabs" aria-label="Company lists">${counts.map(([l, n]) => html`<a href="#${l}-h">${LIST_LABEL[l]} <span class="num tab-count">${n}</span></a>`)}</nav>
+<nav class="tabs" aria-label="Company lists">${counts.map(([l, n]) => html`<a href="#${l}-h">${LIST_LABEL[l]} <span class="num tab-count">${countText(n)}</span></a>`)}</nav>
 </div>
 ${d.flash !== null && d.flash.key === null ? html`<p class="banner banner-${d.flash.tone}" role="status">${d.flash.text}</p>` : ''}
 <div class="stack">

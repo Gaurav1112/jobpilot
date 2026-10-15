@@ -219,7 +219,7 @@ describe('freelance tabs: the rows', () => {
     const t = text(body);
     expect(t).toContain('$70/h stated');
     expect(t).toContain('15 h/week');
-    expect(t).toContain('IST overlap: 4 hours overlap with US Eastern');
+    expect(t).toContain('Overlap: 4 hours overlap with US Eastern');
     expect(t).toContain('covered 6/8 · missing: Kubernetes, terraform');
     expect(t).toMatch(/Payment verified/);
   });
@@ -230,7 +230,7 @@ describe('freelance tabs: the rows', () => {
     const t = text(body);
     expect(t).toContain('1 below the fit floor and 1 not eligible are not shown');
     expect(t).toContain('posted 5 h ago');
-    expect(t).toContain('7 bids');
+    expect(t).toContain('Bids: 7');
   });
 
   it('review shows its rows with each note as a muted line', async () => {
@@ -250,7 +250,7 @@ describe('freelance tabs: the rows', () => {
     const t = text((await get('/freelance?tab=gigs')).body) + text((await get('/freelance?tab=review')).body);
     expect(t).toContain('$75/h derived from 2 weeks (the basis is not on record)');
     expect(t).toContain('$50/h from ~60 hours stated');
-    expect(t).toContain('rate unknown - fixed budget $750');
+    expect(t).toContain('rate unknown – fixed budget $750');
     expect(t).toContain('$43.80–49.64/h stated · via platform FX');
   });
 
@@ -262,8 +262,8 @@ describe('freelance tabs: the rows', () => {
     expect(rateLabel(r({ minUsdH: 50, maxUsdH: 50, method: 'fixed÷stated-hours', budgetUsd: 3000 }), { description: 'About 60 hours of work.', weeks: null, hours: null, budgetType: 'fixed' })).toBe('$50/h from ~60 hours stated');
     expect(rateLabel(r({ minUsdH: 25, maxUsdH: 25, method: 'fixed÷stated-hours', budgetUsd: 1500 }), { description: '', weeks: 3, hours: 20, budgetType: 'fixed' })).toBe('$25/h from 3 weeks × 20 h stated');
     expect(rateLabel(r({ minUsdH: 46.19, maxUsdH: 46.19, method: 'monthly÷hours', budgetUsd: 4000 }), { description: '', weeks: null, hours: 20, budgetType: 'monthly' })).toBe('$46.19/h from a monthly $4,000 at 20 h/week stated');
-    expect(rateLabel(r({ budgetUsd: 750 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $750');
-    expect(rateLabel(r({ budgetUsd: 1500, fxSource: 'platform' }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $1,500 · via platform FX');
+    expect(rateLabel(r({ budgetUsd: 750 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown – fixed budget $750');
+    expect(rateLabel(r({ budgetUsd: 1500, fxSource: 'platform' }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown – fixed budget $1,500 · via platform FX');
     // a preset tier is labelled as one (final review I1)
     expect(rateLabel(r({ budgetUsd: 1500 }), { description: '', weeks: null, hours: null, budgetType: 'fixed', presetTier: { lo: 750, hi: 1500 } })).toBe('preset tier $750–1,500 (client picked a range; bids may exceed it)');
     const preset = { notes: ['preset bracket - bids may exceed it'], budget: { type: 'fixed', min: 750, max: 1500, currency: 'USD' }, rate: r({ budgetUsd: 1500 }) };
@@ -458,7 +458,7 @@ describe('freelance: sources', () => {
       expect(t).toContain('Reddit needs your OAuth script app');
       // freelance-boost: Remotive is off, with its named reason.
       expect(t).toContain('Remotive robots.txt disallows /api (2026-10-15)');
-      expect(t).toContain('Gmail not connected - run jobpilot gmail connect');
+      expect(t).toContain('Gmail not connected – run jobpilot gmail connect');
       expect(t).toContain('freelancer: 3 requests skipped after 5 failures');
       expect(t).not.toContain('freelancer q6');
       expect(t).toContain('source remotive looks dead');
@@ -473,7 +473,7 @@ describe('freelance: sources', () => {
     app = wrap(createDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)), gmailConnected: () => true }));
     const t = text((await get('/freelance/sources')).body);
     expect(t).not.toContain('Gmail not connected');
-    expect(t).toContain('Gmail reads the label jobpilot/gigs; alert parsers: none yet - send one alert email per sender to enable');
+    expect(t).toContain('Gmail reads the label jobpilot/gigs; alert parsers: none yet – send one alert email per sender to enable');
   });
 });
 

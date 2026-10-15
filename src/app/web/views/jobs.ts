@@ -1,5 +1,5 @@
 import type { Band, HistoryEntry, JobStatus, JobView } from '../../store/app-store.js';
-import { dateText, scoreText } from '../format.js';
+import { countText, dateText, scoreText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { reasonText, remoteText, sourceName } from '../copy.js';
 import { meta, BAND_LABEL, compCell, exceptionPill, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
@@ -64,7 +64,7 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
   if (imported.length === 0) return '';
   return html`<p class="job-history">From your Application Desk: ${imported.map(
     (h, i) => html`${i > 0 ? ', ' : ''}${STATUS_LABEL[h.to]} on ${dateText(istDay(h.at))}`,
-  )}${j.history.length > imported.length ? html` · ${j.history.length - imported.length} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
+  )}${j.history.length > imported.length ? html` · ${countText(j.history.length - imported.length)} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
 }
 
 function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): Html {
@@ -91,7 +91,7 @@ function pager(d: JobsPageData): Html | '' {
   if (d.pages <= 1) return '';
   return html`<nav class="pager" aria-label="Pages">${
     d.page > 1 ? html`<a class="btn" href="${d.pageHref(d.page - 1)}" rel="prev">Previous</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Previous</span>`
-  }<span class="num">Page ${d.page} of ${d.pages}</span>${
+  }<span class="num">Page ${countText(d.page)} of ${countText(d.pages)}</span>${
     d.page < d.pages ? html`<a class="btn" href="${d.pageHref(d.page + 1)}" rel="next">Next</a>` : html`<span class="btn btn-disabled" aria-disabled="true">Next</span>`
   }</nav>`;
 }
@@ -100,11 +100,11 @@ export function jobsBody(d: JobsPageData): Html {
   const markNew = d.newCount > 0 && d.newCount < d.total;
   return html`<div class="page-head">
 <h1>Jobs</h1>
-<p class="lede"><span class="num">${d.total}</span> job${d.total === 1 ? '' : 's'} · <span class="num">${d.toDecide}</span> to decide${
-    markNew ? html`, <span class="num">${d.newCount}</span> new since your last visit` : ''
+<p class="lede"><span class="num">${countText(d.total)}</span> job${d.total === 1 ? '' : 's'} · <span class="num">${countText(d.toDecide)}</span> to decide${
+    markNew ? html`, <span class="num">${countText(d.newCount)}</span> new since your last visit` : ''
   } · sorted by best fit, then pay.${
     d.defaultBands && d.hiddenCount > 0
-      ? html` <span class="muted"><span class="num">${d.hiddenCount}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
+      ? html` <span class="muted"><span class="num">${countText(d.hiddenCount)}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
       : ''
   }${d.defaultStatuses ? html` <span class="muted">Not for me and Not selected are hidden: <a href="/?status=skipped&amp;status=rejected">show them</a>.</span>` : ''}</p>
 </div>

@@ -9,6 +9,7 @@ import { AppStore } from '../../src/app/store/app-store.js';
 import { DEFAULT_RETENTION, planCompaction } from '../../src/app/store/retention.js';
 import { createDashboard } from '../../src/app/web/server.js';
 import { Sessions } from '../../src/app/web/security.js';
+import { countText } from '../../src/app/web/format.js';
 import { BUDGET_SPEC, buildSyntheticDb, REVIEW_GIG_KEY } from './synthetic.js';
 
 /**
@@ -185,8 +186,8 @@ describe('performance budget on the large synthetic DB', () => {
 
   it('GET /runs: the first view after a run, then a fresh dashboard, then warm', async () => {
     const afterRun = await timed(fresh(), '/runs');
-    expect(afterRun.body).toMatch(/Audit log intact: <span class="num">500000<\/span> events/);
-    expect(afterRun.body).toMatch(/the <span class="num">50000<\/span> newer events/);
+    expect(afterRun.body).toMatch(new RegExp(`Audit log intact: <span class="num">${countText(BUDGET_SPEC.events)}</span> events`));
+    expect(afterRun.body).toMatch(new RegExp(`the <span class="num">${countText(BUDGET_SPEC.events / BUDGET_SPEC.runs)}</span> newer events`));
     within('/runs', 'first view after a run', afterRun.ms, RUNS_AFTER_RUN_MS);
     const firsts = [];
     for (let i = 0; i < FRESH_TRIES; i++) firsts.push(await timed(fresh(), '/runs'));

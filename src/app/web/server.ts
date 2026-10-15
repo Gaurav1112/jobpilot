@@ -182,10 +182,10 @@ export function redactor(naming: Pick<NamingRules, 'forbiddenTerms'>): { text: (
   return { text, deep };
 }
 
-/** The subject of "<X> reads PDF best", by ATS profile id. */
-const ATS_SENTENCE: Readonly<Record<string, string>> = {
+/** Who the recommended format is for, mid-sentence: "Recommended for Greenhouse: PDF." */
+const ATS_FOR: Readonly<Record<string, string>> = {
   greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workday: 'Workday', icims: 'iCIMS', taleo: 'Taleo',
-  smartrecruiters: 'SmartRecruiters', careers: 'A careers site', feed: 'Most applicant systems', unknown: 'Most applicant systems',
+  smartrecruiters: 'SmartRecruiters', careers: 'a careers site', feed: 'most applicant systems', unknown: 'most applicant systems',
 };
 
 const humanKey = (k: string): string => {
@@ -470,7 +470,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const displays = new Map(groups.map((g) => [g.key, g.display ?? g.key]));
     const display = (k: string): string => r.text(displays.get(k) ?? k);
     const profile = profileFor(data.job.ats, data.job.url);
-    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, atsName: ATS_SENTENCE[profile.id] ?? 'Most applicant systems' };
+    const recommended: Recommended = { format: data.job.recommendedFormat ?? profile.recommended, for: ATS_FOR[profile.id] ?? 'most applicant systems' };
     const answers = ps.pack ? withCoverNote(ps.pack.answers, data.plan).map(([k, v]) => [r.text(humanKey(k)), r.text(typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v))] as const) : null;
     const banners = commonBanners(ps, istDate(at), data.overrides);
     if (job.unplaced.length > 0) {

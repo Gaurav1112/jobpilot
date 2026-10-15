@@ -1,4 +1,5 @@
 import type { RunSummary } from '../../store/app-store.js';
+import { countText } from '../format.js';
 import { html, type Html } from '../html.js';
 import { meta, pill } from './common.js';
 import type { ChainCheck } from '../../chain-status.js';
@@ -21,10 +22,10 @@ export const FULL_CHECK_STALE_DAYS = 8;
 function chainLine(d: RunsPageData): Html {
   const c = d.chain;
   if (!c.ok) return html`Audit log broken: ${c.reason}`;
-  const intact = html`Audit log intact: <span class="num">${c.events}</span> events, every one chained to the last.`;
+  const intact = html`Audit log intact: <span class="num">${countText(c.events)}</span> events, every one chained to the last.`;
   if (c.check === undefined) return intact;
   if (c.check.kind === 'full-now') return html`${intact} Full check: just now.`;
-  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${c.check.through}</span> (it runs weekly with coverage, or run <code>jobpilot audit verify</code>); the <span class="num">${c.check.newer}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.`;
+  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${countText(c.check.through)}</span> (it runs weekly with coverage, or run <code>jobpilot audit verify</code>); the <span class="num">${countText(c.check.newer)}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.`;
 }
 
 const BASE_COLUMNS: readonly (readonly [key: string, label: string])[] = [
@@ -72,17 +73,17 @@ function counts(c: unknown): Html {
     return html`<tr><th scope="row"><code>${a}</code></th>${COLUMNS.map(([k]) => {
       const v = n(r[k]);
       const bad = v > 0 && (k === 'failed' || k === 'quarantined');
-      return html`<td class="num${v === 0 ? ' zero' : ''}${bad ? ' bad' : ''}">${v}</td>`;
+      return html`<td class="num${v === 0 ? ' zero' : ''}${bad ? ' bad' : ''}">${countText(v)}</td>`;
     })}</tr>`;
   })}</tbody>
-<tfoot><tr><th scope="row">Total</th>${COLUMNS.map(([k]) => html`<td class="num">${n(totals[k])}</td>`)}</tr></tfoot>
+<tfoot><tr><th scope="row">Total</th>${COLUMNS.map(([k]) => html`<td class="num">${countText(n(totals[k]))}</td>`)}</tr></tfoot>
 </table></div>`;
 }
 
 function problems(ps: readonly unknown[] | undefined): Html {
   const list = (ps ?? []).filter(isObj);
   if (list.length === 0) return html`<p class="good-text">No problems.</p>`;
-  return html`<h3>Problems <span class="num">(${list.length})</span></h3><ul class="problems">${list.map(
+  return html`<h3>Problems <span class="num">(${countText(list.length)})</span></h3><ul class="problems">${list.map(
     (p) =>
       html`<li><span class="problem-kind">${problemLabel(p)}</span> <code>${s(p['agent'])}</code> <span class="problem-item">${s(p['item'])}</span><span class="problem-reason">${s(p['reason'])}</span></li>`,
   )}</ul>`;
@@ -92,7 +93,7 @@ function run(r: RunSummary, istTime: (iso: string) => string): Html {
   const probs = r.problems ?? [];
   const warns = r.warnings ?? [];
   return html`<section class="card wide run" aria-labelledby="run-${r.runId}">
-<h2 id="run-${r.runId}"><code>${r.runId}</code> ${probs.length > 0 ? pill(String(probs.length) + (probs.length === 1 ? ' problem' : ' problems'), 'critical') : pill('Clean', 'good')}</h2>
+<h2 id="run-${r.runId}"><code>${r.runId}</code> ${probs.length > 0 ? pill(countText(probs.length) + (probs.length === 1 ? ' problem' : ' problems'), 'critical') : pill('Clean', 'good')}</h2>
 <p class="run-meta">${meta([istTime(r.at), html`<span>pack <code title="${r.packHash}">${r.packHash.slice(0, 12)}</code></span>`, html`<span>policy <code title="${r.policyHash}">${r.policyHash.slice(0, 12)}</code></span>`])}</p>
 ${counts(r.counts)}
 ${problems(probs)}
@@ -103,7 +104,7 @@ ${warns.length > 0 ? html`<h3>Warnings</h3><ul class="plain warnings">${warns.ma
 export function runsBody(d: RunsPageData): Html {
   return html`<div class="page-head">
 <h1>Runs</h1>
-<p class="lede">The last ${d.runs.length === 14 ? '14' : String(d.runs.length)} run${d.runs.length === 1 ? '' : 's'}, newest first.</p>
+<p class="lede">The last ${countText(d.runs.length)} run${d.runs.length === 1 ? '' : 's'}, newest first.</p>
 <p class="${d.chain.ok ? 'chain chain-ok' : 'chain chain-bad'}" role="status">${
 chainLine(d)}</p>
 </div>

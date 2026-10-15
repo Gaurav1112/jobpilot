@@ -1,6 +1,6 @@
 import type { GigDoc, GigHistoryEntry, GigSnapshot, GigStatus, GigView, NetworkStatus, SourceHealthRow } from '../../store/app-store.js';
 import { GIG_STATUSES, NETWORK_STATUSES } from '../../store/schema.js';
-import { dateText, groupWestern, scoreText } from '../format.js';
+import { countText, dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { gigReasonText, platformName } from '../copy.js';
 import { csrfField, meta, pill, techDetail, type Tone } from './common.js';
@@ -58,8 +58,8 @@ export type TabCounts = Partial<Record<FreelanceTab | 'roles', number>>;
 
 function tabsNav(here: FreelanceTab, counts: TabCounts): Html {
   return html`<nav class="tabs" aria-label="Freelance">${(Object.keys(TAB_LABEL) as FreelanceTab[]).map(
-    (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${counts[t]}</span>` : ''}</a>`,
-  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${counts.roles}</span></a>` : ''}</nav>`;
+    (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${countText(counts[t] as number)}</span>` : ''}</a>`,
+  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${countText(counts.roles)}</span></a>` : ''}</nav>`;
 }
 
 function head(here: FreelanceTab, counts: TabCounts, lede: Html | string): Html {
@@ -80,10 +80,12 @@ const noteLine = (n: GigRowView['notes'][number]): Html => (n.amber ? html`<li c
 const flagPills = (v: GigRowView): Html => html`${v.flags.map((f) => html`<span class="pill pill-${f.tone}" title="${f.title}">${f.label}</span>`)}`;
 
 function factsLine(v: GigRowView): Html {
-  const parts: Html[] = [html`<span>${v.hours}</span>`, html`<span>IST overlap: ${v.overlap ?? 'not stated'} <span class="muted">(your window ${v.istWindow})</span></span>`];
-  if (v.age !== null) parts.push(html`<span>${v.age}</span>`);
-  if (v.bids !== null) parts.push(html`<span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>`);
-  return html`<p class="gig-facts">${meta(parts)}</p>`;
+  return html`<p class="gig-facts">${meta([
+    html`<span>Hours: ${v.hours}</span>`,
+    html`<span>Overlap: ${v.overlap ?? 'not stated'} <span class="muted">(your hours ${v.istWindow})</span></span>`,
+    v.age,
+    v.bids === null ? null : html`<span>Bids: <span class="num">${countText(v.bids)}</span></span>`,
+  ])}</p>`;
 }
 
 function gigRow(v: GigRowView): Html {
@@ -178,7 +180,7 @@ ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopen
  */
 export function contractRolesSection(d: ContractRolesData): Html {
   return html`<section class="card wide roles" id="contract-roles" aria-labelledby="roles-h">
-<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${d.rows.length}</span></h2>
+<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${countText(d.rows.length)}</span></h2>
 <p class="hint">Contract roles from employer job boards (Himalayas and the daily boards) with fit <span class="num">${scoreText(d.fitFloor)}</span> or more. Their pay or hours are not stated, so they stay in Review: ask before you apply. Best fit first, then newest.</p>
 ${d.rows.length === 0 ? html`<p class="empty">No contract role from an employer job board is at or above your fit floor yet.</p>` : html`<ol class="roles-list" aria-label="Contract roles">${d.rows.map(roleRow)}</ol>`}
 </section>`;
@@ -270,7 +272,7 @@ function pasteSection(d: GigPageData): Html {
 <div class="paste-bar">
 <button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/${g.gigKey}/files/${txt?.kind ?? p.kind}.txt" data-copy-target="paste" hidden>Copy</button>
 <span class="copy-status" role="status" aria-live="polite"></span>
-<span class="char-count num${over ? ' over' : ''}">${groupWestern(p.chars)}${p.max !== null ? html` / ${groupWestern(p.max)}` : ''} characters</span>
+<span class="char-count num${over ? ' over' : ''}">${countText(p.chars)}${p.max !== null ? html` / ${countText(p.max)}` : ''} characters</span>
 </div>
 <pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
 <p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
@@ -517,7 +519,7 @@ function sourceTable(t: SourceTable): Html {
 <div class="table-wrap"><table class="counts"><thead><tr><td></td><th scope="colgroup" colspan="2">Runs</th><th scope="colgroup" colspan="4">Shortlisted and the rest: summed per run</th><th scope="colgroup" colspan="3">Applied and the rest: distinct gigs, from your status changes</th></tr>
 <tr><th scope="col">Week</th>${HEALTH_COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}<th scope="col" class="num">Applied</th><th scope="col" class="num">Replied</th><th scope="col" class="num">Won</th></tr></thead>
 <tbody>${t.rows.map(
-    (r) => html`<tr><th scope="row" class="num">${r.week}</th>${HEALTH_COLUMNS.map(([k]) => html`<td class="num${r[k] === 0 ? ' zero' : ''}${k === 'failedRuns' && r[k] > 0 ? ' bad' : ''}">${r[k]}</td>`)}${(['applied', 'replied', 'won'] as const).map((k) => html`<td class="num${r.outcomes[k] === 0 ? ' zero' : ''}">${r.outcomes[k]}</td>`)}</tr>`,
+    (r) => html`<tr><th scope="row" class="num">${r.week}</th>${HEALTH_COLUMNS.map(([k]) => html`<td class="num${r[k] === 0 ? ' zero' : ''}${k === 'failedRuns' && r[k] > 0 ? ' bad' : ''}">${countText(r[k])}</td>`)}${(['applied', 'replied', 'won'] as const).map((k) => html`<td class="num${r.outcomes[k] === 0 ? ' zero' : ''}">${countText(r.outcomes[k])}</td>`)}</tr>`,
   )}</tbody></table></div></section>`;
 }
 

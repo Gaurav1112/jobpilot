@@ -354,10 +354,10 @@ describe('dashboard: job page', () => {
     expect(elementsWith(body, 'id', 'main').length).toBe(1);
     expect(textOf(body.slice(body.indexOf('<h1'), body.indexOf('</h1>') + 5))).toBe('Senior Backend Engineer');
     expect(linksOf(body).find((l) => l.href === 'https://boards.example.test/acme/jobs/1001')?.attrs['rel']).toBe('noopener noreferrer');
-    for (const s of ['Why it matched', 'Core skill: Java', "Asks for PHP, which you don't list", 'Eligibility', 'Greenhouse reads PDF best', 'Missing terms are never added to your resume', 'distributed systems', 'Screening answers', 'Notice period days', 'Also listed on Himalayas', 'via Greenhouse']) expect(t).toContain(s);
+    for (const s of ['Why it matched', 'Core skill: Java', "Asks for PHP, which you don't list", 'Eligibility', 'Recommended for Greenhouse: PDF.', 'Missing terms are never added to your resume', 'distributed systems', 'Screening answers', 'Notice period days', 'Also listed on Himalayas', 'via Greenhouse']) expect(t).toContain(s);
     expect(attrsOf(elementsWith(body, 'src', `/jobs/${K1}/files/resume.html`)[0] ?? '')).toMatchObject({ class: 'preview preview-resume', sandbox: '' });
-    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.pdf`).map((l) => l.text)).toEqual(['Download PDF recommended']);
-    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.docx`).map((l) => l.text)).toEqual(['Download Word (DOCX)']);
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.pdf`).map((l) => l.text)).toEqual(['Download PDF of the resume (recommended)']);
+    expect(linksOf(body).filter((l) => l.href === `/jobs/${K1}/files/resume.docx`).map((l) => l.text)).toEqual(['Download Word (DOCX) of the resume']);
     expect(body).toMatch(/name="to" value="applied"/);
     expect(elementsWith(body, 'id', 'note')).toHaveLength(1);
   });

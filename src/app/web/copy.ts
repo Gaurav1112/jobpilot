@@ -22,7 +22,8 @@ const titleCase = (s: string): string => s.replace(/\b[a-z]/g, (c) => c.toUpperC
 /** The remote verdict of a posting as a label and tone: India first (the user's country), then how many more. */
 export function remoteText(remote: JobView['remote']): { label: string; tone: Tone } {
   if (remote === null) return { label: 'Location unclear', tone: 'warn' };
-  const cs = [...remote.countries].sort((a, b) => Number(b === 'india') - Number(a === 'india'));
+  const rank = (c: string): number => (c === 'india' ? 0 : 1);
+  const cs = [...remote.countries].sort((a, b) => rank(a) - rank(b));
   const where = cs.length === 0 ? '' : `${titleCase(cs[0] as string)}${cs.length > 1 ? ` +${cs.length - 1}` : ''}`;
   switch (remote.structured) {
     case 'remote':
@@ -167,7 +168,7 @@ export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
     const t = basis.presetTier ?? null;
     if (t !== null) return `preset tier ${usdText(Math.round(t.lo))}–${usdText(Math.round(t.hi)).slice(1)} (client picked a range; bids may exceed it)${fx}`;
     const kind = basis.budgetType === 'monthly' ? 'monthly' : basis.budgetType === 'fixed' ? 'fixed' : null;
-    return b !== null && kind !== null ? `rate unknown - ${kind} budget ${usdText(b)}${fx}` : `rate unknown${fx}`;
+    return b !== null && kind !== null ? `rate unknown – ${kind} budget ${usdText(b)}${fx}` : `rate unknown${fx}`;
   }
   const pay = perHour(rate);
   const missing = ' (the basis is not on record)';
@@ -228,11 +229,11 @@ export const platformName = (id: string): string => PLATFORM_NAME[id] ?? id;
 export const DISABLED_REASON: Readonly<Record<string, string>> = {
   upwork: 'API key pending approval',
   reddit: 'needs your OAuth script app',
-  gmail: 'not connected - run jobpilot gmail connect',
+  gmail: 'not connected – run jobpilot gmail connect',
 };
 
 /** Shown for Gmail when it is connected but no sender has an alert parser yet (Task 13). */
-export const GMAIL_NO_PARSERS = 'reads the label jobpilot/gigs; alert parsers: none yet - send one alert email per sender to enable';
+export const GMAIL_NO_PARSERS = 'reads the label jobpilot/gigs; alert parsers: none yet – send one alert email per sender to enable';
 
 /** "covered 6/8 · missing: Kubernetes, Terraform" (display names); null when the gig has no plan on record. */
 export function coverageText(covered: readonly string[], missing: readonly string[], display: (k: string) => string): string {
@@ -240,9 +241,9 @@ export function coverageText(covered: readonly string[], missing: readonly strin
   return `covered ${covered.length}/${total}${missing.length > 0 ? ` · missing: ${missing.map(display).join(', ')}` : ''}`;
 }
 
-/** Stated hours per week ("15 h/week", "10–20 h/week") or "hours not stated". */
+/** Stated hours per week ("15 h/week", "10–20 h/week") or "not stated" (the row labels it "Hours:"). */
 export function hoursText(h: { readonly min: number | null; readonly max: number | null } | null): string {
-  if (h === null || (h.min === null && h.max === null)) return 'hours not stated';
+  if (h === null || (h.min === null && h.max === null)) return 'not stated';
   if (h.min !== null && h.max !== null && h.min !== h.max) return `${num1(h.min)}–${num1(h.max)} h/week`;
   return `${num1((h.max ?? h.min) as number)} h/week`;
 }

@@ -1,5 +1,8 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { gigReasonText, GIG_REASON_CODES, reasonText } from '../../src/app/web/copy.js';
+import { countText } from '../../src/app/web/format.js';
 import { meta } from '../../src/app/web/views/common.js';
 import { html } from '../../src/app/web/html.js';
 import { elementsWith, textOf } from '../support/dom.js';
@@ -46,5 +49,34 @@ describe('A6: reasons in words, codes only under Technical detail', () => {
     const gig = await page(`/freelance/${GIG.review}`);
     expect(textOf(gig)).toContain('The client picked a preset budget range');
     expect(elementsWith(gig, 'class', 'tech')).toHaveLength(1);
+  });
+});
+
+describe('A6: numbers, the recommended format, gig labels and dashes', () => {
+  it('counts use en-IN grouping', () => {
+    expect([countText(7), countText(12_044), countText(570_418), countText(10_000_000)]).toEqual(['7', '12,044', '5,70,418', '1,00,00,000']);
+  });
+  it('the job page says which format to send and labels each download', async () => {
+    const t = textOf(await page(`/jobs/${JOB.ready}`));
+    expect(t).toContain('Recommended for Greenhouse: PDF.');
+    expect(t).not.toMatch(/reads (PDF|Word)/);
+    expect(t).toContain('Download PDF of the resume (recommended)');
+    expect(t).toContain('Download Word (DOCX) of the cover letter');
+  });
+  it('gig rows label their facts, and the dashboard joins with a real dash', async () => {
+    const t = textOf(await page('/freelance'));
+    expect(t).toContain('Hours: 15 h/week');
+    expect(t).toContain('Overlap: 4 hours overlap with US Eastern (your hours 18:00–00:00 IST)');
+    expect(textOf(await page('/freelance?tab=gigs'))).toContain('Bids: 7');
+  });
+  it('the dashboard\'s own strings never join with " - " (§6.3); run-written notes are mapped in Phase B9', () => {
+    const dir = join(import.meta.dirname, '../../src/app/web');
+    const files = ['copy.ts', 'server.ts', 'freelance.ts', 'companies.ts', ...readdirSync(join(dir, 'views')).map((f) => `views/${f}`)];
+    const offenders = files.flatMap((f) => {
+      // comments and template expressions are code, not copy
+      const src = readFileSync(join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').replace(/\$\{[^}]*\}/g, '');
+      return [...src.matchAll(/(['`])[^'`\n]*\s-\s[^'`\n]*\1/g)].map((m) => `${f}: ${m[0]}`);
+    });
+    expect(offenders).toEqual([]);
   });
 });

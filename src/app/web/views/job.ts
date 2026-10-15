@@ -6,8 +6,8 @@ import { b2bPill, officePill, bandPill, compCell, csrfField, docsPill, meta, pil
 
 export interface Recommended {
   readonly format: 'pdf' | 'docx';
-  /** "Greenhouse", "Workday", "Most applicant systems". */
-  readonly atsName: string;
+  /** Who it is for, mid-sentence: "Greenhouse", "most applicant systems", "a careers site". */
+  readonly for: string;
 }
 
 export interface JobPageData {
@@ -85,7 +85,7 @@ function downloads(j: JobDetail, kind: 'resume' | 'cover', rec: Recommended): Ht
   const files = j.docs.filter((d) => d.kind === kind && d.format !== 'html').sort((a, b) => Number(b.format === rec.format) - Number(a.format === rec.format));
   return html`<div class="downloads">${files.map((d) => {
     const isRec = d.format === rec.format;
-    return html`<a class="btn${isRec ? ' btn-primary' : ''}" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}${isRec ? html` <span class="rec">recommended</span>` : ''}</a>`;
+    return html`<a class="btn${isRec ? ' btn-primary' : ''}" href="/jobs/${j.jobKey}/files/${d.kind}.${d.format}" download>Download ${FORMAT_NAME[d.format]}<span class="visually-hidden"> of the ${kind === 'resume' ? 'resume' : 'cover letter'}</span>${isRec ? ' (recommended)' : ''}</a>`;
   })}</div>`;
 }
 
@@ -111,7 +111,7 @@ function documents(d: JobPageData): Html {
   const body =
     reason !== null || j.docs.length === 0
       ? html`<p class="blocked">${reason ?? 'No documents yet.'}</p>`
-      : html`<p class="hint">${d.recommended.atsName} reads ${FORMAT_NAME[d.recommended.format]} best. Hover a resume bullet to see the fact it comes from.</p>
+      : html`<p class="hint">Recommended for ${d.recommended.for}: ${FORMAT_NAME[d.recommended.format]}. Hover a resume bullet to see the fact it comes from.</p>
 <div class="doc-grid">
 <div class="doc"><h3>Resume</h3>${downloads(j, 'resume', d.recommended)}${preview(j, 'resume')}</div>
 <div class="doc"><h3>Cover letter</h3>${downloads(j, 'cover', d.recommended)}${preview(j, 'cover')}</div>
