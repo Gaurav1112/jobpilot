@@ -26,6 +26,7 @@
   --surface-2: #f0f0ed;
   --border: #e1e1dc;
   --border-strong: #c9c9c2;
+  --border-control: #8a8d92;
   --text: #1b1c1e;
   --text-2: #4f5358;
   --text-3: #63676d;
@@ -49,6 +50,7 @@
     --surface-2: #212226;
     --border: #2c2e33;
     --border-strong: #42454b;
+    --border-control: #7a7e85;
     --text: #e7e8ea;
     --text-2: #b3b6bb;
     --text-3: #979ba1;
@@ -78,9 +80,9 @@ a { color: var(--accent); text-underline-offset: 2px; }
 a:hover { text-decoration-thickness: 2px; }
 code, .mono { font-family: var(--mono); font-size: 0.92em; }
 h1, h2, h3 { line-height: 1.25; margin: 0; }
-h1 { font-size: var(--fs-2xl); font-weight: 650; letter-spacing: -0.01em; }
-h2 { font-size: var(--fs-lg); font-weight: 650; }
-h3 { font-size: var(--fs-md); font-weight: 650; margin: var(--space-3) 0 var(--space-2); }
+h1 { font-size: var(--fs-2xl); font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: var(--fs-lg); font-weight: 600; }
+h3 { font-size: var(--fs-md); font-weight: 600; margin: var(--space-3) 0 var(--space-2); }
 p { margin: 0 0 var(--space-2); }
 .num { font-variant-numeric: tabular-nums; }
 .muted, .hint { color: var(--text-3); }
@@ -101,7 +103,7 @@ p { margin: 0 0 var(--space-2); }
   max-width: 72rem; margin: 0 auto; padding: var(--space-2) var(--space-4);
   display: flex; align-items: center; gap: var(--space-5); flex-wrap: wrap;
 }
-.brand { font-weight: 700; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
+.brand { font-weight: 600; color: var(--text); text-decoration: none; letter-spacing: -0.01em; }
 .top nav { display: flex; gap: var(--space-1); flex-wrap: wrap; }
 .top nav a {
   color: var(--text-2); text-decoration: none; padding: var(--space-1) var(--space-2); border-radius: var(--radius);
@@ -139,9 +141,9 @@ h2 .pill { margin-left: var(--space-2); }
 
 .btn {
   display: inline-flex; align-items: center; gap: var(--space-1);
-  font: inherit; font-size: var(--fs-sm); font-weight: 550; line-height: 1.4;
+  font: inherit; font-size: var(--fs-sm); font-weight: 500; line-height: 1.4;
   color: var(--text); background: var(--surface); text-decoration: none; cursor: pointer;
-  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0.3125rem var(--space-3);
+  border: 1px solid var(--border-control); border-radius: var(--radius); padding: 0.3125rem var(--space-3);
 }
 .btn:hover { background: var(--surface-2); }
 .btn-primary { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
@@ -166,13 +168,13 @@ h2 .pill { margin-left: var(--space-2); }
 .filter-body { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
 input[type="search"], input[type="number"], textarea {
   font: inherit; font-size: var(--fs-md); color: var(--text); background: var(--surface);
-  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;
+  border: 1px solid var(--border-control); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;
 }
 textarea { resize: vertical; min-height: 5rem; margin-bottom: var(--space-2); }
 fieldset { border: 0; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-2); align-items: center; }
 legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); margin-right: var(--space-2); min-width: 5rem; }
 .chip { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-sm); color: var(--text-2); cursor: pointer; }
-.chip input { accent-color: var(--accent); margin: 0; }
+.chip input { accent-color: var(--accent); margin: 0; border-color: var(--border-control); }
 
 /* --- jobs list -------------------------------------------------------------------------------------------------- */
 .jobs { list-style: none; margin: 0; padding: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
@@ -188,7 +190,7 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
 .job:first-child { border-top: 0; }
 .job:hover { background: var(--surface-2); }
 .job-comp { grid-area: comp; display: grid; gap: 2px; justify-items: start; }
-.comp-main { font-weight: 650; }
+.comp-main { font-weight: 600; }
 .comp-inr, .comp-caveat { font-size: var(--fs-xs); color: var(--text-3); }
 .job-band { margin-top: 2px; }
 .job-score { grid-area: score; }
@@ -198,7 +200,7 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
 .job-title a:hover { color: var(--accent); text-decoration: underline; }
 .new-dot { color: var(--text-2); font-size: 0.75em; margin-right: var(--space-1); vertical-align: 0.1em; }
 .job-sub { color: var(--text-2); font-size: var(--fs-sm); margin-bottom: var(--space-1); overflow-wrap: anywhere; }
-.job-company { color: var(--text); font-weight: 550; }
+.job-company { color: var(--text); font-weight: 500; }
 .job-pills { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0; }
 .job-history { font-size: var(--fs-xs); color: var(--text-3); margin: var(--space-1) 0 0; }
 .job-status { grid-area: status; text-align: right; }
@@ -216,7 +218,7 @@ legend { float: left; font-size: var(--fs-xs); font-weight: 600; color: var(--te
   padding: var(--space-2) var(--space-3); display: grid; gap: 2px; align-content: start; justify-items: start;
 }
 .label { font-size: var(--fs-xs); font-weight: 600; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.04em; }
-.big { font-size: var(--fs-2xl); font-weight: 650; line-height: 1.1; }
+.big { font-size: var(--fs-2xl); font-weight: 600; line-height: 1.1; }
 .job-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-3); align-items: start; }
 .card {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
@@ -253,10 +255,10 @@ table { border-collapse: collapse; width: 100%; font-size: var(--fs-sm); }
 th, td { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--border); vertical-align: top; }
 th.num, td.num { text-align: right; }
 thead th { color: var(--text-3); font-weight: 600; font-size: var(--fs-xs); text-transform: uppercase; letter-spacing: 0.04em; }
-tfoot th, tfoot td { font-weight: 700; border-bottom: 0; }
+tfoot th, tfoot td { font-weight: 600; border-bottom: 0; }
 tr.neg td { color: var(--critical); }
 td.zero { color: var(--text-3); }
-td.bad { color: var(--critical); font-weight: 700; }
+td.bad { color: var(--critical); font-weight: 600; }
 ul.plain { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-1); }
 ul.notes { color: var(--text-2); }
 .answers { margin: 0; display: grid; gap: var(--space-2); }
@@ -294,7 +296,7 @@ details summary { cursor: pointer; color: var(--accent); }
 .audit > summary { font-size: var(--fs-sm); }
 .problems { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .problems li { display: grid; grid-template-columns: auto auto minmax(0, 1fr); gap: 2px var(--space-2); font-size: var(--fs-sm); align-items: baseline; }
-.problem-kind { font-weight: 700; color: var(--critical); }
+.problem-kind { font-weight: 600; color: var(--critical); }
 .problem-item { overflow-wrap: anywhere; }
 .problem-reason { grid-column: 1 / -1; color: var(--text-2); overflow-wrap: anywhere; }
 .good-text { color: var(--good); }
@@ -351,7 +353,7 @@ details summary { cursor: pointer; color: var(--accent); }
 .gig:first-child { border-top: 0; }
 .gig:hover { background: var(--surface-2); }
 .gig-rate { grid-area: rate; min-width: 0; }
-.rate-label { font-weight: 650; overflow-wrap: anywhere; }
+.rate-label { font-weight: 600; overflow-wrap: anywhere; }
 .gig-fit { grid-area: fit; cursor: help; }
 .job-score, .gig-fit { text-align: right; line-height: 1.1; }
 .fit-chip { display: inline-grid; justify-items: end; }
@@ -371,7 +373,7 @@ details summary { cursor: pointer; color: var(--accent); }
 .copy-btn[hidden] { display: none; }
 .copy-status { color: var(--good); font-size: var(--fs-sm); }
 .char-count { margin-left: auto; color: var(--text-2); font-size: var(--fs-sm); }
-.char-count.over { color: var(--critical); font-weight: 700; }
+.char-count.over { color: var(--critical); font-weight: 600; }
 pre.paste, pre.checklist {
   font-family: var(--mono); font-size: var(--fs-sm); line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); margin: 0 0 var(--space-2);
@@ -419,7 +421,7 @@ pre.paste, pre.checklist {
 /* --- companies (career-sites Task 11) ------------------------------------------------------------------------- */
 input[type="url"], input[type="text"] {
   font: inherit; font-size: var(--fs-md); color: var(--text); background: var(--surface);
-  border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;
+  border: 1px solid var(--border-control); border-radius: var(--radius); padding: 0.3125rem var(--space-2); width: 100%;
 }
 .filter-company { font-size: var(--fs-sm); margin: 0; overflow-wrap: anywhere; }
 .job-reasons { font-size: var(--fs-sm); color: var(--critical); margin: var(--space-1) 0 0; overflow-wrap: anywhere; }
@@ -438,3 +440,16 @@ input[type="url"], input[type="text"] {
 .tech { margin-top: var(--space-2); font-size: var(--fs-sm); }
 .tech summary { color: var(--text-2); }
 .net-flag { margin: 0 0 var(--space-2); }
+
+/* --- UX upgrade A12: focus, busy state, forced colors, touch ------------------------------------------------------ */
+.preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.htmx-request .btn, .btn[disabled] { opacity: 0.6; cursor: progress; }
+@media (forced-colors: active) {
+  [aria-pressed="true"], [aria-current] { outline: 2px solid Highlight; outline-offset: 2px; }
+  .btn, .pill { border: 1px solid ButtonText; }
+}
+@media (pointer: coarse) {
+  .btn, .top nav a, .tabs a, .chip, details > summary { min-height: 2.75rem; display: inline-flex; align-items: center; }
+  .chip input { width: 1.5rem; height: 1.5rem; }
+  input[type="search"], input[type="number"], input[type="url"], input[type="text"], textarea { font-size: 1rem; min-height: 2.75rem; }
+}
