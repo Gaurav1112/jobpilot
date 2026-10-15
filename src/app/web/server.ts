@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
@@ -119,11 +119,12 @@ const STATIC_DIR = join(import.meta.dirname, 'static');
 const require = createRequire(import.meta.url);
 
 /** The vendored htmx (pinned in package.json), read from the installed package once: no CDN. */
-function staticFiles(): Record<string, { body: string; type: string }> {
+function staticFiles(): Record<string, { body: string; type: string; etag: string }> {
+  const file = (body: string, type: string) => ({ body, type, etag: `"${createHash('sha256').update(body).digest('hex').slice(0, 32)}"` });
   return {
-    'app.css': { body: readFileSync(join(STATIC_DIR, 'app.css'), 'utf8'), type: 'text/css; charset=utf-8' },
-    'app.js': { body: readFileSync(join(STATIC_DIR, 'app.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
-    'htmx.min.js': { body: readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'), type: 'text/javascript; charset=utf-8' },
+    'app.css': file(readFileSync(join(STATIC_DIR, 'app.css'), 'utf8'), 'text/css; charset=utf-8'),
+    'app.js': file(readFileSync(join(STATIC_DIR, 'app.js'), 'utf8'), 'text/javascript; charset=utf-8'),
+    'htmx.min.js': file(readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8'), 'text/javascript; charset=utf-8'),
   };
 }
 
@@ -356,10 +357,13 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
   const csrf = (c: Context<Env>): string => sessions.token(c.get('sid'));
   const now = (): string => deps.clock.now();
 
+  // A13: revalidated with an ETag, so the 77 KB of static files is not downloaded again on every view
   app.get('/static/:file', (c) => {
     const f = Object.hasOwn(files, c.req.param('file')) ? files[c.req.param('file')] : undefined;
     if (!f) return c.text('Not found', 404);
-    return c.body(f.body, 200, { 'content-type': f.type, 'cache-control': 'no-cache' });
+    const headers = { 'content-type': f.type, 'cache-control': 'no-cache', etag: f.etag };
+    const asked = (c.req.header('if-none-match') ?? '').split(',').map((x) => x.trim());
+    return asked.includes(f.etag) ? c.body(null, 304, headers) : c.body(f.body, 200, headers);
   });
 
   // --- jobs list ------------------------------------------------------------------------------------------------------

@@ -810,6 +810,24 @@ describe('dashboard: banners and headers', () => {
   });
 });
 
+describe('A13: static files carry an ETag', () => {
+  it('a matching If-None-Match gets 304 with no body; anything else gets the file', async () => {
+    const first = await get('/static/app.css');
+    const etag = first.headers.get('etag') as string;
+    expect(etag).toMatch(/^"[0-9a-f]{32}"$/);
+    expect(etag).toBe(`"${createHash('sha256').update(first.body).digest('hex').slice(0, 32)}"`);
+    expect(first.headers.get('cache-control')).toBe('no-cache');
+    const again = await app.request('/static/app.css', { headers: { cookie, 'if-none-match': etag } });
+    expect(again.status).toBe(304);
+    expect(await again.text()).toBe('');
+    expect(again.headers.get('etag')).toBe(etag);
+    expect(again.headers.get('content-security-policy')).toContain("default-src 'self'");
+    expect((await app.request('/static/app.css', { headers: { cookie, 'if-none-match': `"0", ${etag}` } })).status).toBe(304);
+    expect((await app.request('/static/app.css', { headers: { cookie, 'if-none-match': '"0"' } })).status).toBe(200);
+    expect((await get('/static/app.js')).headers.get('etag')).not.toBe(etag);
+  });
+});
+
 describe('dashboard: fix round 1', () => {
   it('C1: Referrer-Policy is same-origin in the header and the meta tag, so browsers send a same-origin Origin on form posts', async () => {
     const { headers, body } = await get('/');
