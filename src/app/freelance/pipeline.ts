@@ -11,6 +11,7 @@ import { GMAIL_LABEL, GMAIL_MAX_INTERVAL_MS, GMAIL_MAX_REQUESTS } from './mail/g
 import { rateNormalizer } from './rate.js';
 import { makeSrcDraftdev } from './sources/draftdev.js';
 import { makeGithubHosts } from './sources/github.js';
+import { makeSrcFractionalJobs } from './sources/fractional-jobs.js';
 import { makeSrcPrimeIntellect } from './sources/prime-intellect.js';
 import { makeSrcHimalayasGigs } from './sources/himalayas-gigs.js';
 import { gigSources } from './sources/index.js';
@@ -43,7 +44,7 @@ export function freelanceAgents(): AnyAgent[] {
   const github = makeGithubHosts();
   return [
     // The Himalayas source holds the run's host state (robots.txt once, a disabled host): a fresh one per wiring.
-    ...gigSources.map((a) => (a.contract.id === 'src-himalayas-gigs' ? makeSrcHimalayasGigs() : a.contract.id === 'src-draftdev' ? makeSrcDraftdev(github) : a.contract.id === 'src-prime-intellect' ? makeSrcPrimeIntellect(github) : a)),
+    ...gigSources.map((a) => (a.contract.id === 'src-himalayas-gigs' ? makeSrcHimalayasGigs() : a.contract.id === 'src-draftdev' ? makeSrcDraftdev(github) : a.contract.id === 'src-prime-intellect' ? makeSrcPrimeIntellect(github) : a.contract.id === 'src-fractional-jobs' ? makeSrcFractionalJobs() : a)),
     gigNormalizer, rateNormalizer, gigEligibility, gigRisk, gigScorer, proposalPlanner, gigRenderer, gigQa,
   ];
 }
@@ -111,9 +112,6 @@ export const PLATFORM_AGENT: Readonly<Partial<Record<Platform, string>>> = {
   'fractional-jobs': 'src-fractional-jobs',
 };
 
-/** Platforms planned in this plan whose source agent does not exist yet (Task 12 removes it): never seeded. */
-const NO_SOURCE_YET: ReadonlySet<Platform> = new Set<Platform>(['fractional-jobs']);
-
 /**
  * The run's seeds, all dated `runDate` and `half`, in this order: Freelancer one request per pack query (each query
  * once), Remotive one, HN two (hn-freelancer, hn-hiring), Gmail one (the label `jobpilot/gigs`, only when
@@ -130,7 +128,7 @@ export function freelanceSeeds(
   boardPostings: readonly unknown[],
   o: { readonly gmailConnected?: boolean } = {},
 ): GigRequest[] {
-  const on = (p: Platform) => rules.platforms[p].enabled && ROBOTS_OFF[p] === undefined && !NO_SOURCE_YET.has(p);
+  const on = (p: Platform) => rules.platforms[p].enabled && ROBOTS_OFF[p] === undefined;
   const seeds: GigRequest[] = [];
   const at = { runDate, half };
   if (on('freelancer')) for (const query of [...new Set(rules.platforms.freelancer.queries)]) seeds.push({ platform: 'freelancer', query, ...at });

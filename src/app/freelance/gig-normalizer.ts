@@ -3,6 +3,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { htmlToText } from '../text/html.js';
 import { countriesIn, postedAtOf } from '../text/norm.js';
+import { FJ_HOST } from './sources/fractional-jobs.js';
 import { bountyAmount } from './sources/prime-intellect.js';
 import { Posting } from '../types.js';
 import { gigDedupeKey, gigKey } from './keys.js';
@@ -41,6 +42,13 @@ import { Gig, RawGig } from './types.js';
  *   (`bountyAmount`: min = max, USD, `from: 'description'`), else `unknown`. Hours are never stated (unknown). Location:
  *   worldwide only when the issue text says anyone, open access, worldwide or anywhere (the program's own words), else not
  *   stated (review). Client Prime Intellect, `postedAt` the issue's `created_at` date.
+ * - fractional-jobs (sources-expansion, `src-fractional-jobs`): a role card of fractionaljobs.io's homepage. `kind` is `contract`,
+ *   `url` is the role's own page (`/jobs/<jobId>`), client the card's company, `postedAt` the card date ("October 12,
+ *   2026" is 2026-10-12). Hours: "15 - 20 hrs" / "16 hrs" are hours PER WEEK (D10); anything else ("10+ hrs") is unknown.
+ *   Budget: `fjPay` on the card's pay field only ("$8K - $9.5K / mo" monthly, "$150 - $200 / hr" hourly, one figure
+ *   min = max, `from: 'platform'`); "Unknown", yearly, another unit or an unreadable figure is `unknown` (review).
+ *   Location: "Remote (Global|Worldwide|Anywhere)" is worldwide; bare "Remote" states no scope (review, `location not stated -
+ *   verify`); anything else ("Remote (USA only)", "Hybrid (London only)") keeps its text for the "ONLY" rule.
  * - gmail: one job of an alert email as its sender's parser read it (`mail/parsers`): `title`, `url`, `description`,
  *   `company`, `location`, `pay`, `postedAt` and `kind` (`contract`, `gig` or `network-alert`), each copied. Pay is
  *   read from `pay` and the description by the same rule.
@@ -392,6 +400,73 @@ function primeIntellect(r: RawGig, o: Rec): Draft {
   };
 }
 
+/** The card's weekly hours: "15 - 20 hrs" is 15-20, "16 hrs" is 16-16; anything else (a "+", a reversed range) is unknown. */
+const FJ_HOURS = /^(\d{1,2})(?:\s?-\s?(\d{1,2}))?\s?hrs?$/;
+export function fjHours(s: string | null): Gig['hoursPerWeek'] {
+  const m = s === null || s.length > 40 ? null : FJ_HOURS.exec(s.trim());
+  const min = m === null ? 0 : Number(m[1]);
+  const max = m === null ? 0 : Number(m[2] ?? m[1]);
+  return m !== null && min > 0 && max >= min ? { min, max, source: 'text' } : { min: null, max: null, source: null };
+}
+
+/**
+ * The card's pay field IS the pay (the shared `payOf` needs a pay word beside a monthly figure): sign, one figure or a
+ * range with an optional K, then "/ mo" or "/ hr". The range's second sign, when given, must be the first's.
+ */
+const FJ_PAY = /^([$€£])\s?(\d+(?:\.\d+)?)(K)?(?:\s?-\s?([$€£])?\s?(\d+(?:\.\d+)?)(K)?)?\s?\/\s?(mo|hr)$/;
+const FJ_SIGN: Readonly<Record<string, Currency>> = { $: 'USD', '€': 'EUR', '£': 'GBP' };
+export function fjPay(s: string | null): Budget {
+  const m = s === null || s.length > 60 ? null : FJ_PAY.exec(s.trim());
+  if (m === null || (m[4] !== undefined && m[4] !== m[1])) return UNKNOWN_BUDGET;
+  const figure = (n: string | undefined, k: string | undefined): number => Math.round(Number(n) * (k === undefined ? 1 : 1000) * 100) / 100;
+  const min = figure(m[2], m[3]);
+  const max = m[5] === undefined ? min : figure(m[5], m[6]);
+  const currency = FJ_SIGN[m[1] ?? ''];
+  if (!(min > 0 && max >= min) || currency === undefined) return UNKNOWN_BUDGET;
+  return { type: m[7] === 'mo' ? 'monthly' : 'hourly', min, max, currency, usdPerUnit: null, from: 'platform' };
+}
+
+const FJ_GLOBAL = /^remote\s*\((?:global|worldwide|anywhere)\)$/i;
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+/** "October 12, 2026" -> "2026-10-12"; anything else is null (a date is never guessed). */
+function fjDate(v: string | null): string | null {
+  const m = v === null ? null : /^([A-Za-z]{3,9}) (\d{1,2}), (\d{4})$/.exec(v.trim());
+  const mo = m === null ? -1 : MONTHS.indexOf((m[1] ?? '').toLowerCase());
+  return m === null || mo === -1 ? null : postedAtOf(`${m[3]}-${String(mo + 1).padStart(2, '0')}-${String(m[2]).padStart(2, '0')}`);
+}
+
+function fractionalJobs(r: RawGig, o: Rec): Draft {
+  const title = collapse(nonBlank(o.title) ?? '');
+  if (title === '') throw fail(r, 'missing title');
+  const jobId = nonBlank(o.jobId);
+  if (jobId === null || !/^[A-Za-z0-9][A-Za-z0-9._~-]*$/.test(jobId)) throw fail(r, 'missing job id');
+  const text = (v: unknown): string | null => (nonBlank(v) === null ? null : collapse(String(v)));
+  const company = text(o.company);
+  const place = text(o.location);
+  const location: Gig['location'] =
+    place === null ? { countries: [], worldwide: false, text: null }
+    : FJ_GLOBAL.test(place) ? { countries: [], worldwide: true, text: place }
+    : /^remote$/i.test(place) ? { countries: [], worldwide: false, text: place }
+    : { ...placesOf(place), text: place };
+  const hours = text(o.hours);
+  const pay = text(o.pay);
+  const fn = text(o.function);
+  const description = collapse(`${title}${company === null ? '' : ` at ${company}`}. Fractional${fn === null ? '' : ` ${fn}`} role.${hours === null ? '' : ` Hours: ${hours}.`}${pay === null ? '' : ` Pay: ${pay}.`}${place === null ? '' : ` Location: ${place}.`}`);
+  return {
+    url: `https://${FJ_HOST}/jobs/${jobId}`,
+    title,
+    description,
+    clientName: company,
+    kind: 'contract',
+    budget: fjPay(pay),
+    location,
+    skills: [],
+    postedAt: fjDate(text(o.date)),
+    bids: null,
+    hours: fjHours(hours),
+  };
+}
+
 const GMAIL_KINDS: readonly string[] = ['contract', 'gig', 'network-alert'];
 
 function gmail(r: RawGig, o: Rec): Draft {
@@ -494,7 +569,7 @@ const fmtZone = (z: number): string => `${z >= 0 ? '+' : '−'}${Math.floor(Math
 
 /** Maps one RawGig; throws `invalid_output` naming the field for a missing title or url, an unsupported platform or a raw of the wrong shape. */
 export function normalizeGig(r: RawGig): Gig {
-  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas' && r.platform !== 'draftdev' && r.platform !== 'prime-intellect') {
+  if (r.platform !== 'freelancer' && r.platform !== 'remotive' && r.platform !== 'hn-freelancer' && r.platform !== 'hn-hiring' && r.platform !== 'boards' && r.platform !== 'gmail' && r.platform !== 'himalayas' && r.platform !== 'draftdev' && r.platform !== 'prime-intellect' && r.platform !== 'fractional-jobs') {
     throw new KernelError('invalid_output', `gig-normalizer: unsupported platform ${r.platform}`);
   }
   if (r.platform !== 'boards' && !isRec(r.raw)) throw fail(r, 'raw is not an object');
@@ -507,6 +582,7 @@ export function normalizeGig(r: RawGig): Gig {
     : r.platform === 'himalayas' ? himalayas(r, o)
     : r.platform === 'draftdev' ? draftdev(r, o)
     : r.platform === 'prime-intellect' ? primeIntellect(r, o)
+    : r.platform === 'fractional-jobs' ? fractionalJobs(r, o)
     : hn(r, o);
   const text = `${d.title}\n${d.description}`;
   return {
