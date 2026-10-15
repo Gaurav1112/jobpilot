@@ -75,15 +75,16 @@ function staleMigration(db: Database.Database): void {
 }
 
 /**
- * Rebuilds `table` from its own stored SQL with each `[old, new]` CHECK replaced, keeping every column, row (rowid
+ * Rebuilds `table` (its stored SQL `CREATE TABLE t (` or, after an earlier rebuild, `CREATE TABLE "t" (`) from its own stored SQL with each `[old, new]` CHECK replaced, keeping every column, row (rowid
  * included), index and trigger (SQLite's documented table-rebuild procedure). Refuses (throws) when the stored SQL does
  * not hold each old CHECK exactly once, so a schema that is not the expected one is never rewritten.
  */
-function rebuildChecks(db: Database.Database, table: string, checks: readonly (readonly [string, string])[]): void {
+export function rebuildChecks(db: Database.Database, table: string, checks: readonly (readonly [string, string])[]): void {
   const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) as { sql: string } | undefined;
   if (!row) throw new Error(`migration: no ${table} table`);
-  const head = `CREATE TABLE ${table} (`;
-  if (!row.sql.startsWith(head)) throw new Error(`migration: the ${table} table is not the expected shape`);
+  // A table made by CREATE TABLE keeps its name bare; one a rebuild renamed into place is stored quoted ("gig_docs").
+  const head = [`CREATE TABLE ${table} (`, `CREATE TABLE "${table}" (`].find((h) => row.sql.startsWith(h));
+  if (head === undefined) throw new Error(`migration: the ${table} table is not the expected shape`);
   let sql = row.sql;
   for (const [from, to] of checks) {
     if (sql.split(from).length !== 2) throw new Error(`migration: the ${table} table is not the expected shape`);

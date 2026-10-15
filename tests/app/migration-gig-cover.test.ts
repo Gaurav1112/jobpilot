@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { AppStore } from '../../src/app/store/app-store.js';
-import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
+import { APP_MIGRATIONS, rebuildChecks } from '../../src/app/store/schema.js';
 import { Store } from '../../src/kernel/store/store.js';
 
 /**
@@ -113,5 +113,27 @@ describe('migration 23: gig documents allow the cover letter', () => {
     const migrated = AppStore.on(v22()).kernel.db;
     const sql = (db: Database.Database) => db.prepare(`SELECT name, sql FROM sqlite_master WHERE tbl_name IN ('gig_docs', 'gig_snapshots') ORDER BY type, name`).all();
     expect(sql(migrated)).toEqual(sql(fresh));
+  });
+});
+
+describe('rebuildChecks accepts the quoted table name a rename leaves (a future rebuild)', () => {
+  it('a migrated gig_docs (CREATE TABLE "gig_docs") rebuilds again, rows and CHECKs kept; an unexpected shape is refused', () => {
+    const s = AppStore.on(v22());
+    const db = s.kernel.db;
+    const sqlOf = () => (db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'gig_docs'`).get() as { sql: string }).sql;
+    expect(sqlOf()).toMatch(/^CREATE TABLE "gig_docs" \(/);
+    const before = dumpHash(db, TABLES);
+    db.pragma('foreign_keys = OFF');
+    rebuildChecks(db, 'gig_docs', [["CHECK (kind IN ('proposal', 'pitch', 'resume', 'cover'))", "CHECK (kind IN ('proposal', 'pitch', 'resume', 'cover'))"]]);
+    db.pragma('foreign_keys = ON');
+    expect(dumpHash(db, TABLES)).toBe(before);
+    expect(sqlOf()).toContain("CHECK (format IN ('txt', 'pdf', 'docx', 'html'))");
+    // the unquoted form a fresh CREATE leaves works too
+    db.exec(`CREATE TABLE plain_t (k TEXT CHECK (k IN ('a')))`);
+    db.exec(`INSERT INTO plain_t VALUES ('a')`);
+    rebuildChecks(db, 'plain_t', [["CHECK (k IN ('a'))", "CHECK (k IN ('a', 'b'))"]]);
+    db.exec(`INSERT INTO plain_t VALUES ('b')`);
+    expect(db.prepare(`SELECT k FROM plain_t ORDER BY rowid`).all()).toEqual([{ k: 'a' }, { k: 'b' }]);
+    expect(() => rebuildChecks(db, 'plain_t', [["CHECK (k IN ('zzz'))", 'x']])).toThrow(/not the expected shape/);
   });
 });
