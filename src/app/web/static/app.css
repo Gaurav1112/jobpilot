@@ -445,8 +445,12 @@ input[type="url"], input[type="text"] {
 .preview:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .htmx-request .btn, .btn[disabled] { opacity: 0.6; cursor: progress; }
 @media (forced-colors: active) {
-  [aria-pressed="true"], [aria-current] { outline: 2px solid Highlight; outline-offset: 2px; }
+  /* the states take their own shape, never the focus ring's: an underline for current, a double border for pressed */
   .btn, .pill { border: 1px solid ButtonText; }
+  /* the nav and tab links set text-decoration: none at higher specificity, so they are named here to win */
+  [aria-current], .top nav a[aria-current], .tabs a[aria-current] { text-decoration: underline 2px; text-underline-offset: 0.3em; }
+  [aria-pressed="true"] { border: 3px double Highlight; }
+  :focus-visible { outline: 3px solid Highlight; outline-offset: 3px; }
 }
 @media (pointer: coarse) {
   .btn, .top nav a, .tabs a, .chip, details > summary { min-height: 2.75rem; display: inline-flex; align-items: center; }

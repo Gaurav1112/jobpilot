@@ -40,8 +40,19 @@ describe('A12: the stylesheet', () => {
     const weights = [...css.matchAll(/font-weight:\s*(\d+)/g)].map((m) => m[1]);
     expect(weights.filter((w) => !['400', '500', '600'].includes(w as string))).toEqual([]);
   });
-  it('shows pressed and current states in forced colors', () => {
-    expect(css).toMatch(/@media \(forced-colors: active\) \{[\s\S]*?\[aria-pressed="true"\], \[aria-current\] \{ outline: 2px solid Highlight;/);
+  it('shows pressed and current states in forced colors, each unlike the focus ring', () => {
+    const block = css.slice(css.indexOf('@media (forced-colors: active) {'), css.indexOf('@media (pointer: coarse) {'));
+    // the nav and tab links (`.top nav a`, `.tabs a`) set text-decoration: none at higher specificity: they are named
+    expect(block).toMatch(/\[aria-current\], \.top nav a\[aria-current\], \.tabs a\[aria-current\] \{ text-decoration: underline 2px;/);
+    expect(block).toMatch(/\[aria-pressed="true"\] \{ border: 3px double Highlight; \}/);
+    expect(block).toMatch(/:focus-visible \{ outline: 3px solid Highlight; outline-offset: 3px; \}/);
+    // WCAG 2.4.7 / F78: no state is drawn as an outline, so the focus ring stays the one outline and always shows
+    expect(block.replace(/:focus-visible \{[^}]*\}/, '')).not.toMatch(/outline/);
+  });
+  it('draws the forced-colors focus ring after the pressed and current states, so it wins at equal specificity', () => {
+    const block = css.slice(css.indexOf('@media (forced-colors: active) {'), css.indexOf('@media (pointer: coarse) {'));
+    expect(block.indexOf(':focus-visible')).toBeGreaterThan(block.indexOf('[aria-pressed="true"]'));
+    expect(block.indexOf(':focus-visible')).toBeGreaterThan(block.indexOf('[aria-current]'));
   });
   it('gives touch screens 44 px targets and 16 px inputs', () => {
     const block = css.slice(css.indexOf('@media (pointer: coarse) {'));
