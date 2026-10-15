@@ -115,6 +115,10 @@ describe('classifyRow', () => {
     expect(classifyRow(row('greenhouse', 'sezzle:1', 'Software Engineer', 'Argentina, Remote'))).toBe('drop');
     expect(classifyRow({ ...row('greenhouse', 'twilio:1', 'Software Engineer', 'India'), closed_at: '2026-10-01T00:00:00Z' })).toBe('drop');
   });
+  it("a posting from one of jobpilot's own feeds (himalayas, jobicy) drops: jobpilot reads it already, under the feed switch", () => {
+    expect(classifyRow(row('himalayas', ':https://himalayas.app/companies/x/jobs/senior-ml-engineer', 'Senior ML Engineer', 'India'))).toBe('drop');
+    expect(classifyRow(row('jobicy', '123', 'Senior Backend Engineer', 'India'))).toBe('drop');
+  });
 });
 
 describe('the freehire-rows eval', () => {

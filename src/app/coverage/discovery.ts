@@ -5,7 +5,7 @@ import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
 import { platformClient } from '../agents/sources/platforms/client.js';
 import { isChallenge } from '../challenge.js';
 import { officeCity } from '../text/norm.js';
-import { boardOfRow, checkPage, evidenceOf, FREEHIRE_API, FREEHIRE_HOST, LEAD_SOURCE_DENY, stripTracking } from './freehire-api.js';
+import { boardOfRow, checkPage, evidenceOf, FREEHIRE_API, FREEHIRE_HOST, isOwnFeedSource, LEAD_SOURCE_DENY, stripTracking } from './freehire-api.js';
 import { isRealCompanyName, refOfFreehireBoard } from './freehire-boards.js';
 import type { RunGate } from './gate.js';
 import { FreehireFinding, FreehireQuery } from './types.js';
@@ -171,7 +171,7 @@ export function makeSrcFreehireDiscovery(opts: { readonly gate?: RunGate } = {})
       } catch {
         host = '';
       }
-      if (LEAD_SOURCE_DENY.test(row.source) || host === '' || hostDenied(PRODUCT_POLICY_V1, host)) {
+      if (LEAD_SOURCE_DENY.test(row.source) || isOwnFeedSource(row.source) || host === '' || hostDenied(PRODUCT_POLICY_V1, host)) {
         denied++;
         continue;
       }

@@ -122,6 +122,22 @@ describe('src-freehire-discovery: a recorded page', () => {
     expect(f.map((x) => x.kind)).toEqual(['board', 'board', 'board', 'lead', 'lead']);
   });
 
+  it("a posting from one of jobpilot's own feeds (himalayas, jobicy) is never a lead: counted as denied", async () => {
+    const base = { url: 'https://himalayas.app/companies/acme/jobs/senior-ml-engineer?utm_source=freehire.me', company: 'Acme', location: 'India', posted_at: '2026-10-07T00:00:00Z', created_at: '2026-10-07T00:00:00Z', last_seen_at: '2026-10-08T00:00:00Z', closed_at: null };
+    const body = JSON.stringify({
+      data: [
+        { ...base, source: 'himalayas', external_id: ':https://himalayas.app/companies/acme/jobs/senior-ml-engineer', title: 'Senior ML Engineer - India' },
+        { ...base, source: 'jobicy', external_id: '991', url: 'https://jobicy.com/jobs/991-senior-backend-engineer', title: 'Senior Backend Engineer' },
+        { ...base, source: 'ukg', external_id: 'recruiting.ultipro.com/x/y:1', url: 'https://recruiting.ultipro.com/x/JobBoard/y/OpportunityDetail?opportunityId=1', title: 'Senior Software Engineer' },
+      ],
+      meta: { limit: 100, offset: 0, total: 3 },
+    });
+    const ctx = ctxFor(freehire({ q4: { status: 200, body } }));
+    const f = await makeSrcFreehireDiscovery().run(q('q4'), ctx);
+    expect(leads(f).map((l) => l.source)).toEqual(['ukg']);
+    expect(ctx.skips()[0]).toBe('freehire q4: 3 rows, 0 boards, 1 leads, 2 dropped (0 not India/worldwide tech, 0 unnamed, 2 denied)');
+  });
+
   it('every fixture query page parses without an outage', async () => {
     const agent = makeSrcFreehireDiscovery();
     const f = freehire();

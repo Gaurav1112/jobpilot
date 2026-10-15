@@ -3,6 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { defineType } from '../../kernel/types.js';
 import { namesIndia } from '../agents/sources/platforms/shared.js';
+import { FEED_SOURCES } from '../feeds.js';
 import { countriesIn, excludedPlaces } from '../text/norm.js';
 import { refOfFreehireBoard } from './freehire-boards.js';
 import type { Platform } from './types.js';
@@ -103,6 +104,13 @@ export const FREEHIRE_PLATFORMS: Readonly<Record<string, Platform>> = {
 /** freehire sources whose rows are re-syndicated listings with no employer link: never a lead (fixed list). */
 export const LEAD_SOURCE_DENY = /^(?:whatjobs(?:-[a-z]{2})?|adzuna|powertofly)$/u;
 
+/**
+ * A freehire source that is one of jobpilot's own feeds (`FEED_SOURCES`: himalayas, jobicy): never a lead. jobpilot reads
+ * the feed itself (so the posting is not "on a platform jobpilot cannot read"), and only when feeds.yaml enables it: a
+ * lead would carry it past the user's feed switch.
+ */
+export const isOwnFeedSource = (source: string): boolean => Object.hasOwn(FEED_SOURCES, source);
+
 /** A tech title (fixed word list, word-bounded). */
 export const TECH_TITLE = /\b(?:engineer(?:ing)?|developer|programmer|architect|sre|devops|back[\s-]?end|full[\s-]?stack|platform|software|sde|swe|data|ml|machine learning|ai|security|infrastructure|cloud)\b/iu;
 /** A location open to anyone (fixed words, word-bounded): "Worldwide", "Anywhere in the World", "Remote - Global". */
@@ -136,13 +144,14 @@ export type RowClass = 'board' | 'lead' | 'drop';
 
 /**
  * What a search row is worth (deterministic, from the fields above only):
- * - `drop`: closed, no India/worldwide tech evidence of its own (`evidenceOf`), or a re-syndicated source;
+ * - `drop`: closed, no India/worldwide tech evidence of its own (`evidenceOf`), a re-syndicated source, or one of
+ *   jobpilot's own feeds (`isOwnFeedSource`);
  * - `board`: a supported platform whose board id jobpilot can translate to a readable ref (`refOfFreehireBoard`);
  * - `lead`: everything else with evidence (an unsupported platform, or a board shape jobpilot cannot read).
  */
 export function classifyRow(row: Pick<FreehireRow, 'source' | 'external_id' | 'title' | 'location'> & { readonly closed_at?: string | null | undefined }): RowClass {
   if (row.closed_at !== null && row.closed_at !== undefined && row.closed_at !== '') return 'drop';
-  if (evidenceOf(row) === null || LEAD_SOURCE_DENY.test(row.source)) return 'drop';
+  if (evidenceOf(row) === null || LEAD_SOURCE_DENY.test(row.source) || isOwnFeedSource(row.source)) return 'drop';
   const b = boardOfRow(row);
   if (b !== null && refOfFreehireBoard(b.platform, b.board) !== null) return 'board';
   return 'lead';
