@@ -9,6 +9,7 @@
  *   Spend of a finished attempt is recorded before the retry sleep, so a crash between attempts loses none.
  */
 import type { AnyAgent } from './agent.js';
+import { type AwakeClock, systemAwake } from './awake.js';
 import { type EgressSets, type HostPacer, issueContext } from './broker.js';
 import type { Clock } from './clock.js';
 import { contractHash } from './contract.js';
@@ -54,6 +55,11 @@ export interface ExecutorDeps {
    * simulates a crash at that point: the step stays done and its files stay staged until a replay or a recovery.
    */
   readonly beforeCommit?: (agentId: string, stepKey: string) => void;
+  /**
+   * The awake-time clock of step and request timeouts (a sleeping Mac must not time a frozen step out); default the
+   * process's `systemAwake`. Tests inject one on `manualTimers`.
+   */
+  readonly awake?: AwakeClock;
 }
 
 /** Where a writing contract's files are staged and committed; undefined for an agent that writes nothing. */
@@ -306,7 +312,11 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
       if (attempt > 0 && overCall()) return fail('budget_exceeded', overCallDetail);
       if (attempt > 0 && overBudget()) return fail('budget_exceeded', 'G-BUDGET: retry would exceed the run budget');
       deps.store.markRunning(running);
-      const signal = AbortSignal.timeout(c.timeoutMs);
+      // Awake time, not wall time: a step frozen by a sleeping Mac is not timed out when it wakes (2026-10-14).
+      const awake = deps.awake ?? systemAwake;
+      const timeout = awake.timeout(c.timeoutMs);
+      const signal = timeout.signal;
+      const slept0 = awake.sleptMs();
       // Each attempt stages into its own directory, sealed when the attempt ends; only the final one is committed.
       const pendingFiles = staging === undefined ? undefined : openPending(staging.root, stepKey, attempt);
       const priorSpend = {
@@ -321,6 +331,8 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         providers: deps.providers,
         clock: deps.clock,
         signal,
+        awake,
+        sleptMs: () => awake.sleptMs() - slept0,
         priorSpend,
         ...(agentPack !== undefined ? { pack: agentPack } : {}),
         ...(deps.hostPacer ? { hostPacer: deps.hostPacer } : {}),
@@ -336,6 +348,9 @@ async function runStep(deps: ExecutorDeps, runId: string, agent: AnyAgent, input
         result = { ok: true, items };
       } catch (err) {
         result = { ok: false, err: mapFs(err) };
+      } finally {
+        // never left running: a finished attempt's timer must not keep the event loop alive
+        timeout.clear();
       }
       pendingFiles?.seal();
       // Read after the abort too: a model call in flight at the timeout has already been charged its reservation.

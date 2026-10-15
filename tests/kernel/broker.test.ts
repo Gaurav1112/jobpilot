@@ -4,7 +4,8 @@ import { createHostPacer, freezePack, issueContext } from '../../src/kernel/brok
 import { fixedClock } from '../../src/kernel/clock.js';
 import { defineContract } from '../../src/kernel/contract.js';
 import { KernelError } from '../../src/kernel/errors.js';
-import { fakeFetch, fakeLlm } from '../../src/kernel/fakes.js';
+import { AwakeClock } from '../../src/kernel/awake.js';
+import { fakeFetch, fakeLlm, manualTimers } from '../../src/kernel/fakes.js';
 import type { FetchLike, LlmProvider } from '../../src/kernel/providers.js';
 import { PRODUCT_POLICY_V1 } from '../../src/kernel/policy.js';
 import { defineType } from '../../src/kernel/types.js';
@@ -630,6 +631,30 @@ describe('per-request timeout (coverage: getPage and getJson take { timeoutMs })
     const ctx = ctxWith(hanging(5));
     await expect(ctx.http!.getPage('https://api.example.com/ok', { timeoutMs: 1000 })).resolves.toMatchObject({ status: 200, body: 'late' });
     await expect(ctxWith(hanging(40)).http!.getPage('https://api.example.com/ok')).resolves.toMatchObject({ status: 200 });
+  });
+
+  it('the request timeout counts awake time: a 10-minute sleep mid-request does not time it out', async () => {
+    const t = manualTimers();
+    let answer: ((v: { status: number; text: () => Promise<string> }) => void) | undefined;
+    const fetch: FetchLike = (_url, init) =>
+      new Promise((resolve, reject) => {
+        answer = resolve;
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+      });
+    const ctx = issueContext({ contract: { ...fetcher, egress: ['api.example.com'] }, policy: PRODUCT_POLICY_V1, inputClass: 'P0', providers: { fetch }, clock: fixedClock('2026-10-08T00:00:00Z'), signal: new AbortController().signal, awake: new AwakeClock(t) });
+    const slept = ctx.http!.getPage('https://api.example.com/slow', { timeoutMs: 15_000 });
+    await new Promise((r) => setImmediate(r));
+    t.advance(10_000);
+    t.suspend(10 * 60_000);
+    t.advance(1_000); // a DarkWake
+    answer?.({ status: 200, text: async () => 'after wake' });
+    await expect(slept).resolves.toMatchObject({ status: 200, body: 'after wake' });
+    expect(t.pending()).toBe(0);
+    // a genuinely slow request still times out on awake time
+    const slow = ctx.http!.getPage('https://api.example.com/slow', { timeoutMs: 15_000 });
+    await new Promise((r) => setImmediate(r));
+    t.advance(15_000);
+    await expect(slow).rejects.toMatchObject({ code: 'timeout', message: expect.stringContaining('api.example.com') });
   });
 
   it('the step timeout still wins: an aborted step signal is not reported as a request timeout', async () => {

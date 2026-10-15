@@ -44,3 +44,54 @@ export function fakeBrowser(
     },
   };
 }
+
+/** Timers driven by hand (`AwakeTimers`): `advance` runs what falls due, in order; `suspend` moves the clock on and runs nothing, like a Mac asleep. */
+export interface ManualTimers {
+  now(): number;
+  setTimeout(fn: () => void, ms: number): unknown;
+  clearTimeout(handle: unknown): void;
+  /** Moves the clock `ms` on, running every timer due by then in order (an overdue one runs at the current time). */
+  advance(ms: number): void;
+  /** Moves the clock `ms` on and runs nothing: the process was suspended. The overdue timers run at the next `advance`. */
+  suspend(ms: number): void;
+  /** Timers still scheduled. */
+  pending(): number;
+}
+
+export function manualTimers(start = 0): ManualTimers {
+  let now = start;
+  let seq = 0;
+  const queue = new Map<number, { at: number; fn: () => void }>();
+  const nextDue = (target: number): number | undefined => {
+    let best: number | undefined;
+    for (const [id, e] of queue) {
+      if (e.at > target) continue;
+      const b = best === undefined ? undefined : queue.get(best);
+      if (b === undefined || e.at < b.at) best = id;
+    }
+    return best;
+  };
+  return {
+    now: () => now,
+    setTimeout: (fn, ms) => {
+      const id = ++seq;
+      queue.set(id, { at: now + Math.max(0, ms), fn });
+      return id;
+    },
+    clearTimeout: (handle) => void queue.delete(handle as number),
+    advance(ms) {
+      const target = now + ms;
+      for (let id = nextDue(target); id !== undefined; id = nextDue(target)) {
+        const e = queue.get(id) as { at: number; fn: () => void };
+        queue.delete(id);
+        now = Math.max(now, e.at);
+        e.fn();
+      }
+      now = target;
+    },
+    suspend(ms) {
+      now += ms;
+    },
+    pending: () => queue.size,
+  };
+}
