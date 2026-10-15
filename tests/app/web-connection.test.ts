@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdtempSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
@@ -10,6 +10,7 @@ import { offlineProviders } from '../../src/app/offline.js';
 import { upgradeUnderLock } from '../../src/app/upgrade.js';
 import { APP_MIGRATIONS } from '../../src/app/store/schema.js';
 import { SharedStore } from '../../src/app/web/connection.js';
+import { createDashboard, warmDashboard } from '../../src/app/web/server.js';
 import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { jobRow } from '../support/app-fixtures.js';
@@ -358,3 +359,30 @@ describe('SharedStore guards', () => {
   });
 });
 
+
+describe('warm-up at startup (UX upgrade A0, amendment 2)', () => {
+  it('opens the shared connection once and renders each warm page, so the first request reuses it', async () => {
+    let n = 0;
+    const warmApp = createTestDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)) }, { onOpen: () => (n += 1) });
+    const ms = await warmDashboard(warmApp, 'localhost');
+    expect(ms).toBeGreaterThan(0);
+    expect(n).toBe(1);
+    expect((await warmApp.request('/', { headers: { host: 'localhost' } })).status).toBe(200);
+    expect(n).toBe(1);
+  });
+  it('never throws: a home without a database warms to 503 pages and still serves', async () => {
+    const empty = mkdtempSync(join(tmpdir(), 'jobpilot-warm-'));
+    try {
+      cpSync(join(root, 'tests/fixtures/pack'), join(empty, 'pack'), { recursive: true });
+      const emptyApp = createDashboard({ home: empty, clock: { now: () => NOW } });
+      await expect(warmDashboard(emptyApp, 'localhost')).resolves.toBeGreaterThan(0);
+      expect((await emptyApp.request('/', { headers: { host: 'localhost' } })).status).toBe(503);
+    } finally {
+      rmSync(empty, { recursive: true, force: true });
+    }
+  });
+  it('serveDashboard warms up as soon as it listens', () => {
+    const src = readFileSync(join(root, 'src/app/web/server.ts'), 'utf8');
+    expect(src).toMatch(/bound = info\.port;[\s\S]{0,200}warmDashboard\(app, `127\.0\.0\.1:\$\{info\.port\}`\)/);
+  });
+});

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -225,4 +226,22 @@ describe('every page within budget (UX upgrade A0)', () => {
     const timedRoutes = ['/freelance?tab=review', '/companies', '/facts', '/', '/runs', '/freelance'];
     expect(Object.keys(KNOWN_SLOW).filter((r) => !timedRoutes.includes(r))).toEqual([]);
   });
+});
+
+const FRESH_CHILD = join(root, 'tests/perf/fresh-child.ts');
+/** One route as the first request of a new process (code not loaded) after `warmDashboard`; the OS cache is warm. */
+function coldFirst(route: string): { status: number; ms: number; warmMs: number } {
+  const out = execFileSync(process.execPath, ['--import', 'tsx', FRESH_CHILD, home, NOW, route], { cwd: root, encoding: 'utf8', timeout: 120_000, stdio: ['ignore', 'pipe', 'inherit'] });
+  return JSON.parse(out.trim().split('\n').at(-1) as string) as { status: number; ms: number; warmMs: number };
+}
+
+describe('fresh means a cold process (amendment 2)', () => {
+  for (const route of ['/', '/facts', '/freelance', '/freelance?tab=review', '/companies', '/runs']) {
+    it(`GET ${route}: the first request of a new, warmed-up process`, () => {
+      const r = coldFirst(route);
+      expect(r.status).toBe(200);
+      console.log(`perf ${route} warm-up: ${Math.round(r.warmMs)}ms`);
+      within(route, 'cold process, first request', r.ms, budgetOf(route));
+    });
+  }
 });

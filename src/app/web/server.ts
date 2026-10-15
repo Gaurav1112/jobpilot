@@ -222,7 +222,23 @@ export function withFactTooltips(page: string): string {
 const asciiSlug = (s: string): string =>
   s.normalize('NFKD').replace(/[^\x20-\x7E]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
 
-type Env = { Variables: { sid: string } };
+export type Env = { Variables: { sid: string } };
+
+/** The pages a new dashboard renders once before serving (amendment 2): code compiled, the pack read, DB pages cached. */
+export const WARM_PATHS: readonly string[] = ['/', '/jobs/0000000000000000', '/facts', '/runs', '/freelance', '/freelance?tab=review', '/freelance/networks', '/companies'];
+
+/** Requests each of WARM_PATHS once with `host`; never throws. Returns the time it took in ms. */
+export async function warmDashboard(app: Hono<Env>, host: string): Promise<number> {
+  const t0 = performance.now();
+  for (const path of WARM_PATHS) {
+    try {
+      await (await app.request(path, { headers: { host } })).text();
+    } catch {
+      // a page that cannot render now renders on its first real request instead
+    }
+  }
+  return Math.max(performance.now() - t0, 0.001);
+}
 
 export function createDashboard(deps: DashboardDeps): Hono<Env> {
   return buildDashboard(deps, {});
@@ -762,5 +778,6 @@ export function serveDashboard(deps: Omit<DashboardDeps, 'port'> & { readonly po
   return serve({ fetch: app.fetch, hostname: '127.0.0.1', port: deps.port ?? DEFAULT_PORT }, (info) => {
     bound = info.port;
     onListen?.(`http://127.0.0.1:${info.port}/`);
+    void warmDashboard(app, `127.0.0.1:${info.port}`).then((ms) => console.error(`jobpilot dashboard: warmed up in ${Math.round(ms)} ms`));
   });
 }
