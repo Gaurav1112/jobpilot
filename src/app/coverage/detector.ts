@@ -25,7 +25,7 @@ import { CareersSite, PlatformGuess } from './types.js';
  * ones too); JobPosting JSON-LD; the page markers (Phenom, `gh_jid=`, Teamtailor and SuccessFactors assets on the
  * company's host, an Eightfold script on a `/careers?domain=` page). Only the first MAX_SCAN_CHARS of a page are read.
  *
- * A listed careersUrl that is itself a board URL (as written: `job-boards.greenhouse.io/<slug>`,
+ * A listed careersUrl that is itself a board URL on a platform host (as written: `job-boards.greenhouse.io/<slug>`,
  * `ats.rippling.com/<slug>/jobs`, any row of the signature table) whose redirects the locator followed off every
  * platform host (to the company's marketing careers page) is not fetched at all: the board it names is the guess
  * (`<platform>:listed`), and the verifier reads it through the platform's API (`listedBoard`).
@@ -428,21 +428,27 @@ export interface ListedBoard {
   readonly note: string;
 }
 
+/** `a` or `an` before a platform id (`an ashby`, `a greenhouse`). */
+const article = (word: string): string => (/^[aeiou]/u.test(word) ? 'an' : 'a');
+
 /**
- * The board the candidate's own careersUrl names AS WRITTEN, when the locator took that URL (`listed`) and its
- * redirects led off every platform host (a board URL answering 302/307 to the company's marketing careers page): the
- * page reached says nothing about the board, the URL the user or the list gave does. Null otherwise: a listed URL that
- * names no board, a located URL still on a platform host (the same board, the vendor's not-found page, another ATS:
+ * The board the candidate's own careersUrl names AS WRITTEN, when the locator took that URL (`listed`), the URL as
+ * written is on a platform host, and its redirects led off every platform host (a board URL answering 302/307 to the
+ * company's marketing careers page): the page reached says nothing about the board, the URL the user or the list gave
+ * does. Null otherwise: a listed URL that names no board, one that answered itself (no redirect), one on the company's
+ * own host (an Eightfold API path), a located URL still on a platform host (the same board, the vendor's not-found page, another ATS:
  * the page fetch decides, as for any site), or a site another probe found. Pure: no request.
  */
 export function listedBoard(site: CareersSite): ListedBoard | null {
   if (site.method !== 'listed' || site.careersUrl === null || site.candidate.careersUrl === null) return null;
   const written = asHttps(site.candidate.careersUrl);
   const located = asHttps(site.careersUrl);
-  if (written === null || located === null || platformForHost(located.hostname) !== null) return null;
+  if (written === null || located === null) return null;
+  // a real redirect, from an ATS host to a page on none (an API path on the company's own host that answered is no shortcut)
+  if (written.href === located.href || platformForHost(written.hostname) === null || platformForHost(located.hostname) !== null) return null;
   const s = urlSignal(written, 'url');
   if (s === null || s.slug === null || s.boardUrl === null) return null;
-  const note = `listed careersUrl is a ${s.platform} board (${s.slug}); the redirect to ${short(located.href)} was not followed for detection`;
+  const note = `listed careersUrl names ${article(s.platform)} ${s.platform} board (${s.slug}); the redirect to ${short(located.href)} was not followed for detection`;
   return { platform: s.platform, slug: s.slug, boardUrl: s.boardUrl, note };
 }
 

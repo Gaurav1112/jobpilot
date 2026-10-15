@@ -87,6 +87,9 @@ export const PlatformGuess = defineType(
 );
 export type PlatformGuess = z.infer<typeof PlatformGuess.schema>;
 
+/** True when the guess is the board a listed careersUrl names as written (`<platform>:listed`, see `listedBoard`). */
+export const listedGuess = (g: Pick<PlatformGuess, 'platform' | 'signature'>): boolean => g.platform !== null && g.signature === `${g.platform}:listed`;
+
 export const CompanyVerdict = defineType(
   'CompanyVerdict',
   1,

@@ -6,5 +6,8 @@
   "https://ats.rippling.com/bravo/jobs": { "status": 307, "location": "https://www.bravo.test/careers" },
   "https://www.bravo.test/careers": "bravo-careers.html",
   "https://boards-api.greenhouse.io/v1/boards/acmecloud/jobs?content=true&pay_transparency=true": "gh-acmecloud.json",
-  "https://api.rippling.com/platform/api/ats/v1/board/bravo/jobs": "rippling-bravo.json"
+  "https://api.rippling.com/platform/api/ats/v1/board/bravo/jobs": "rippling-bravo.json",
+  "https://charlie.wd5.myworkdayjobs.com/en-US/Careers": { "status": 302, "location": "https://www.charlie.test/careers" },
+  "https://www.charlie.test/careers": "charlie-careers.html",
+  "https://charlie.wd5.myworkdayjobs.com/wday/cxs/charlie/Careers/jobs": "wd-charlie-cxs.json"
 }

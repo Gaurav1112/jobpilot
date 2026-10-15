@@ -1,0 +1,3 @@
+# One pick whose careersUrl is a Workday board URL (tenant and site) that redirects (302) to the company's own careers page.
+companies:
+  - {name: Charlie, website: 'https://charlie.test', careersUrl: 'https://charlie.wd5.myworkdayjobs.com/en-US/Careers'}

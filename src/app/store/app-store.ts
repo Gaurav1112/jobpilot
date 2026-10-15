@@ -6,7 +6,7 @@ import { dirname } from 'node:path';
 import { MIGRATIONS } from '../../kernel/store/migrations.js';
 import { Store } from '../../kernel/store/store.js';
 import { checkHome, fileWarning, homeWarning, warnOnce } from '../home.js';
-import type { CompanyVerdict, Platform } from '../coverage/types.js';
+import { listedGuess, type CompanyVerdict, type Platform } from '../coverage/types.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
@@ -1547,7 +1547,9 @@ export class AppStore {
         )
         .run({
           key: cand.companyKey, name: cand.name, website: cand.website,
-          careersUrl: v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
+          // a board taken from the listed careersUrl as written (`<platform>:listed`) keeps that URL, not the page its
+          // redirect landed on, so a re-seed from the registry (`registryPickItems`) names the same board again
+          careersUrl: (listedGuess(v.guess) ? cand.careersUrl : null) ?? v.guess.site.careersUrl ?? cand.careersUrl ?? (failed ? (prev?.careers_url ?? null) : null),
           platform: keep(v.guess.platform, prev?.platform), slug: keep(v.guess.slug, prev?.platform_slug), boardUrl: keep(v.guess.boardUrl, prev?.board_url),
           status, reasons: JSON.stringify(v.reasons), source: cand.source, jobsSeen: keep(v.jobsSeen, prev?.jobs_seen),
           lastVerified, failingSince, failWeeks, override: prev?.user_override ?? null, at, natural,

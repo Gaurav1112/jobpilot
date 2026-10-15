@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, cpSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -22,17 +22,22 @@ const root = join(import.meta.dirname, '../../..');
 const FIX = join(root, 'tests/fixtures/coverage/listed-ats');
 const GH_API = 'https://boards-api.greenhouse.io/v1/boards/acmecloud/jobs?content=true&pay_transparency=true';
 const RIPPLING_API = 'https://api.rippling.com/platform/api/ats/v1/board/bravo/jobs';
+const WD_CXS = 'https://charlie.wd5.myworkdayjobs.com/wday/cxs/charlie/Careers/jobs';
+// Sundays 07:00 IST (01:30Z) of two coverage weeks
 const W1 = '2026-10-11T01:30:00.000Z';
+const W2 = '2026-10-18T01:30:00.000Z';
+/** companies.yaml with only Bravo: Acme Cloud left the file, its registry row seeds it (`registryPickItems`). */
+const BRAVO_ONLY = "companies:\n  - {name: Bravo, website: 'https://bravo.test', careersUrl: 'https://ats.rippling.com/bravo/jobs'}\n";
 
 const homes: string[] = [];
 afterEach(() => {
   for (const h of homes.splice(0)) rmSync(h, { recursive: true, force: true });
 });
-function newHome(): string {
+function newHome(yaml = 'companies.yaml'): string {
   const home = mkdtempSync(join(tmpdir(), 'jobpilot-cov-listed-'));
   homes.push(home);
   cpSync(join(root, 'tests/fixtures/pack'), join(home, 'pack'), { recursive: true });
-  copyFileSync(join(FIX, 'companies.yaml'), join(home, 'pack', 'companies.yaml'));
+  copyFileSync(join(FIX, yaml), join(home, 'pack', 'companies.yaml'));
   return home;
 }
 
@@ -54,15 +59,15 @@ function done(r: CoverageResult): CoverageSummary {
   if (r.status !== 'completed') throw new Error(`expected a completed run, got ${r.status} (${r.reason})`);
   return r;
 }
-async function run(home: string, fetch: FetchLike): Promise<CoverageSummary> {
-  let t = Date.parse(W1);
+async function run(home: string, fetch: FetchLike, week: string = W1): Promise<CoverageSummary> {
+  let t = Date.parse(week);
   return done(await runCoverage({ home, clock: { now: () => new Date((t += 1000)).toISOString() }, fetch, sleep: async () => {}, codeHash: 'listed', yieldCheck: () => null }));
 }
 
-function registry(home: string): Record<string, Pick<Company, 'status' | 'platform' | 'platformSlug'> & { reasons: string }> {
+function registry(home: string): Record<string, Pick<Company, 'status' | 'platform' | 'platformSlug' | 'failWeeks' | 'careersUrl'> & { reasons: string }> {
   const app = AppStore.open(join(home, 'jobpilot.db'));
   try {
-    return Object.fromEntries(app.listCompanies().map((c) => [c.companyKey, { status: c.status, platform: c.platform, platformSlug: c.platformSlug, reasons: c.reasons.join(' | ') }]));
+    return Object.fromEntries(app.listCompanies().map((c) => [c.companyKey, { status: c.status, platform: c.platform, platformSlug: c.platformSlug, failWeeks: c.failWeeks, careersUrl: c.careersUrl, reasons: c.reasons.join(' | ') }]));
   } finally {
     app.close();
   }
@@ -81,9 +86,9 @@ describe('coverage: a listed careersUrl that is an ATS board redirecting to a ma
 
     const r = registry(home);
     expect(r['acme.test']).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'acmecloud' });
-    expect(r['acme.test']?.reasons).toContain('listed careersUrl is a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection');
+    expect(r['acme.test']?.reasons).toContain('listed careersUrl names a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection');
     expect(r['bravo.test']).toMatchObject({ status: 'verified', platform: 'rippling', platformSlug: 'bravo' });
-    expect(r['bravo.test']?.reasons).toContain('listed careersUrl is a rippling board (bravo); the redirect to https://www.bravo.test/careers was not followed for detection');
+    expect(r['bravo.test']?.reasons).toContain('listed careersUrl names a rippling board (bravo); the redirect to https://www.bravo.test/careers was not followed for detection');
 
     // politeness: each board API read once, robots.txt once per host, and the detector asks no page again
     expect(n.calls.filter((u) => u === GH_API)).toHaveLength(1);
@@ -101,8 +106,8 @@ describe('coverage: a listed careersUrl that is an ATS board redirecting to a ma
     expect(s.verdicts).toEqual({ verified: 0, proposed: 2, failed: 0 });
     const r = registry(home);
     expect(r['acme.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'acmecloud' });
-    expect(r['acme.test']?.reasons).toMatch(/board not found \(404\): greenhouse acmecloud/);
-    expect(r['acme.test']?.reasons).toContain('listed careersUrl is a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection');
+    expect(r['acme.test']?.reasons).toMatch(/^board not found \(404\): greenhouse acmecloud, please confirm \| listed careersUrl/);
+    expect(r['acme.test']?.reasons).toContain('listed careersUrl names a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection');
     expect(r['bravo.test']).toMatchObject({ status: 'proposed', platform: 'rippling', platformSlug: 'bravo' });
     expect(r['bravo.test']?.reasons).toMatch(/board not found \(404\): rippling bravo/);
   });
@@ -113,8 +118,68 @@ describe('coverage: a listed careersUrl that is an ATS board redirecting to a ma
     expect(s.verdicts).toEqual({ verified: 0, proposed: 2, failed: 0 });
     const r = registry(home);
     expect(r['acme.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'acmecloud' });
-    expect(r['acme.test']?.reasons).toMatch(/^greenhouse board acmecloud: /);
-    expect(r['acme.test']?.reasons).toContain('listed careersUrl is a greenhouse board (acmecloud)');
+    // the same ending as the 404's reason
+    expect(r['acme.test']?.reasons).toMatch(/^greenhouse board acmecloud: [^|]*, please confirm \| listed careersUrl/);
+    expect(r['acme.test']?.reasons).toContain('listed careersUrl names a greenhouse board (acmecloud)');
+  });
+
+  it('a listed board whose name is another company stays Proposed', async () => {
+    const home = newHome();
+    const other = JSON.stringify({ jobs: [{ id: 5001, title: 'Platform Engineer', company_name: 'Zenith Mining', absolute_url: 'https://job-boards.greenhouse.io/acmecloud/jobs/5001', location: { name: 'Remote' }, updated_at: '2026-10-01T00:00:00-04:00', content: 'A fictional role.' }], meta: { total: 1 } });
+    const s = await run(home, net([], { [GH_API]: other }).fetch);
+    expect(s.verdicts).toEqual({ verified: 1, proposed: 1, failed: 0 });
+    const r = registry(home);
+    expect(r['acme.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'acmecloud' });
+    expect(r['acme.test']?.reasons).toMatch(/^board name 'Zenith Mining' ≈ 'Acme Cloud', please confirm \| listed careersUrl names a greenhouse board/);
+  });
+
+  it('a listed board with 0 open jobs follows the 0-jobs rule: Proposed', async () => {
+    const home = newHome();
+    const s = await run(home, net([], { [GH_API]: '{"jobs":[],"meta":{"total":0}}' }).fetch);
+    expect(s.verdicts).toEqual({ verified: 1, proposed: 1, failed: 0 });
+    const r = registry(home);
+    expect(r['acme.test']).toMatchObject({ status: 'proposed', platform: 'greenhouse', platformSlug: 'acmecloud' });
+    expect(r['acme.test']?.reasons).toMatch(/board has 0 open jobs/);
+  });
+
+  it('a listed Workday URL with tenant and site, redirected to the marketing page: verified through the CXS API', async () => {
+    const home = newHome('companies-workday.yaml');
+    const n = net();
+    const s = await run(home, n.fetch);
+    expect(s.problems).toEqual([]);
+    expect(s.platforms).toEqual({ workday: 1 });
+    expect(s.verdicts).toEqual({ verified: 1, proposed: 0, failed: 0 });
+    const r = registry(home);
+    expect(r['charlie.test']).toMatchObject({ status: 'verified', platform: 'workday', platformSlug: 'charlie/Careers' });
+    expect(r['charlie.test']?.reasons).toContain('listed careersUrl names a workday board (charlie/Careers)');
+    expect(n.calls.filter((u) => u === WD_CXS)).toHaveLength(1);
+  });
+
+  it('a pick that left companies.yaml is re-seeded from the URL as written: still verified next week, no failed week', async () => {
+    const home = newHome();
+    const w1 = net();
+    await run(home, w1.fetch, W1);
+    expect(registry(home)['acme.test']).toMatchObject({ status: 'verified', failWeeks: 0, careersUrl: 'https://job-boards.greenhouse.io/acmecloud' });
+    expect(w1.calls.filter((u) => u === GH_API)).toHaveLength(1);
+
+    writeFileSync(join(home, 'pack', 'companies.yaml'), BRAVO_ONLY);
+    const w2 = net();
+    const s = await run(home, w2.fetch, W2);
+    expect(s.verdicts).toEqual({ verified: 2, proposed: 0, failed: 0 });
+    const r = registry(home);
+    expect(r['acme.test']).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'acmecloud', failWeeks: 0, careersUrl: 'https://job-boards.greenhouse.io/acmecloud' });
+    expect(w2.calls.filter((u) => u === GH_API)).toHaveLength(1);
+  });
+
+  it('a live company whose listed board 404s the next week gets a failed week, not a demotion', async () => {
+    const home = newHome();
+    await run(home, net().fetch, W1);
+    expect(registry(home)['acme.test']).toMatchObject({ status: 'verified', failWeeks: 0 });
+    const s = await run(home, net([GH_API]).fetch, W2);
+    expect(s.verdicts).toMatchObject({ verified: 1 });
+    const r = registry(home);
+    expect(r['acme.test']).toMatchObject({ status: 'verified', platform: 'greenhouse', platformSlug: 'acmecloud', failWeeks: 1 });
+    expect(r['acme.test']?.reasons).toMatch(/^platform signal changed, please confirm \| board not found \(404\): greenhouse acmecloud, please confirm/);
   });
 });
 
@@ -150,8 +215,12 @@ describe('platform detector: the listed careersUrl as written', () => {
     const net = serve({});
     const g = await detect(site('https://job-boards.greenhouse.io/AcmeCloud?gh_src=x', 'https://www.acme.test/careers'), net.fetch);
     expect(g).toMatchObject({ platform: 'greenhouse', slug: 'acmecloud', boardUrl: 'https://boards-api.greenhouse.io/v1/boards/acmecloud/jobs', signature: 'greenhouse:listed', routedFrom: null });
-    expect(g.evidence).toEqual(['detected: greenhouse acmecloud', 'listed careersUrl is a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection']);
+    expect(g.evidence).toEqual(['detected: greenhouse acmecloud', 'listed careersUrl names a greenhouse board (acmecloud); the redirect to https://www.acme.test/careers was not followed for detection']);
     expect(net.calls).toEqual([]);
+    // the note's article reads right for every platform
+    const e = await detect(site('https://acme.eightfold.ai/careers?domain=acme.test', 'https://www.acme.test/careers'), serve({}).fetch);
+    expect(e).toMatchObject({ platform: 'eightfold', signature: 'eightfold:listed' });
+    expect(e.evidence[1]).toMatch(/^listed careersUrl names an eightfold board \(acme\.eightfold\.ai\/acme\.test\); /);
   });
 
   it('unchanged: a listed board that stayed on its platform, a redirect to another platform, a slugless listed URL, a site not found by `listed`', async () => {
@@ -170,5 +239,17 @@ describe('platform detector: the listed careersUrl as written', () => {
     // a careers URL found by another probe: the listed URL was not what was located
     const path = serve({ 'https://www.acme.test/careers': html });
     expect(await detect(site('https://job-boards.greenhouse.io/acmecloud', 'https://www.acme.test/careers', 'path'), path.fetch)).toMatchObject({ platform: null });
+  });
+
+  it('no shortcut without a real redirect off an ATS host: an Eightfold API path on the company\'s own host is fetched', async () => {
+    const api = 'https://careers.acme.test/api/apply/v2/jobs?domain=acme.test';
+    // it answered 200 itself (no redirect): the page fetch decides
+    const direct = serve({ [api]: '{"positions":[]}' });
+    expect((await detect(site(api, api), direct.fetch)).signature).not.toBe('eightfold:listed');
+    expect(direct.calls).toContain(api);
+    // it redirected, but the URL as written is on the company's own host, not an ATS host
+    const moved = serve({ 'https://www.acme.test/careers': '<html><body>none</body></html>' });
+    expect(await detect(site(api, 'https://www.acme.test/careers'), moved.fetch)).toMatchObject({ platform: null });
+    expect(moved.calls).toContain('https://www.acme.test/careers');
   });
 });

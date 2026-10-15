@@ -8,7 +8,7 @@ import { listedBoard } from './detector.js';
 import { gateOf, HOST_DISABLED, REFUSALS, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 import { sameCompany } from './names.js';
-import { CompanyVerdict, PlatformGuess } from './types.js';
+import { CompanyVerdict, listedGuess, PlatformGuess } from './types.js';
 
 /**
  * The board verifier (spec §3, D2): for one detected platform and board slug, read the board ONCE through the
@@ -26,8 +26,10 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  *   of a dead board ends here, never verified. A 5xx, a network failure or a timeout is NOT a verdict (C1): the step
  *   fails with that transport code (the breaker sees an outage; the coverage run asks again later), so an outage
  *   never adds a failed week to a registry company. Exception: a board the detector took from a listed careersUrl as
- *   written (`<platform>:listed`, its redirect off the platform not followed) is `proposed` on a 404 or a wrong shape,
- *   with the reason; every verdict on such a board also carries the detector's note.
+ *   written (`<platform>:listed`, its redirect off the platform not followed) is `proposed`, not failed, on a 404 or a
+ *   wrong shape, the reason ending `, please confirm` (nothing but the URL as written pointed at it); every verdict on
+ *   such a board also carries the detector's note. For a company already live (verified or failing) the projection's
+ *   `keepLive` turns that Proposed into a FAILED week (`project.ts`): a live board is never demoted by one week.
  *
  * Politeness and memo safety (the run's shared gate, `gate.ts`): the read host of a platform is a public job-board API
  * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not), except
@@ -135,7 +137,7 @@ const deferred = (why: string, host: string, detail: string): KernelError => new
  * the URL as written ever pointed at it.
  */
 function listedNote(g: PlatformGuess): string | null {
-  if (g.platform === null || g.signature !== `${g.platform}:listed`) return null;
+  if (!listedGuess(g)) return null;
   const l = listedBoard(g.site);
   return l !== null && l.platform === g.platform && l.slug === g.slug ? l.note : null;
 }
@@ -188,7 +190,7 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
       throw deferred('challenge', host, 'it answered with a challenge page');
     }
     if (e instanceof KernelError && e.code === 'gone') return listed === null ? verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]) : verdict('proposed', [`board not found (404): ${g.platform} ${g.slug}, please confirm`]);
-    if (e instanceof KernelError && e.code === 'invalid_output') return verdict(listed === null ? 'failed' : 'proposed', [`${g.platform} board ${g.slug}: ${e.message}`]);
+    if (e instanceof KernelError && e.code === 'invalid_output') return listed === null ? verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]) : verdict('proposed', [`${g.platform} board ${g.slug}: ${e.message}, please confirm`]);
     // C1: an outage, a timeout or an overloaded board is not a verdict: the step fails with its transport code
     if (e instanceof KernelError && (e.code === 'overloaded' || e.code === 'network' || e.code === 'timeout')) throw new KernelError(e.code, `${g.platform} board ${g.slug}: ${e.message}`, e.sysCode);
     throw e;
