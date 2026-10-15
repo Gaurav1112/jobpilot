@@ -1,4 +1,6 @@
+import { refuseRealNetwork } from '../../kernel/no-network.js';
 import { chromium, type Browser, type BrowserContext, type Page, type Request, type Route } from 'playwright';
+import { type AwakeClock, type AwakeStopwatch, systemAwake } from '../../kernel/awake.js';
 import { HTTP_HEADERS } from '../../kernel/broker.js';
 import { challengeReason } from '../../kernel/challenge.js';
 import { KernelError } from '../../kernel/errors.js';
@@ -75,6 +77,8 @@ export interface PlaywrightProviderOptions {
    */
   readonly resolveToLoopbackForTests?: readonly string[];
   readonly timing?: Partial<RenderTiming>;
+  /** The awake-time clock every render budget is measured on (a sleeping Mac uses none of it); default `systemAwake`. */
+  readonly awake?: AwakeClock;
 }
 
 /** What one render learned from its route handler. */
@@ -88,13 +92,19 @@ interface RenderState {
   handlerError: unknown;
   early: BrowserPage | undefined;
   headers: Record<string, string>;
-  /** When document loading must be done (navigationMs from the start of the render). */
-  deadline: number;
+  /** Awake time since the render started: document loading must be done within navigationMs of it. */
+  readonly nav: AwakeStopwatch;
   readonly requested: Set<string>;
   readonly inflight: Set<Request>;
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * What is left of a navigation budget after `sw`'s awake time (at least 1 ms, Playwright's smallest timeout). Awake
+ * time, not wall time: a render frozen by a sleeping Mac starts its next hop with the budget it had.
+ */
+export const budgetLeft = (sw: AwakeStopwatch, budgetMs: number): number => Math.max(1, budgetMs - sw.elapsed());
 
 /**
  * The real `BrowserProvider`: headless Chromium (the headless shell) via Playwright.
@@ -129,9 +139,11 @@ const NO_UNROUTED_WORKERS = `(() => {
 export class PlaywrightBrowserProvider implements BrowserProvider {
   private browser: Promise<Browser> | undefined;
   private readonly timing: RenderTiming;
+  private readonly awake: AwakeClock;
 
   constructor(private readonly opts: PlaywrightProviderOptions = {}) {
     this.timing = { ...DEFAULT_TIMING, ...(opts.timing ?? {}) };
+    this.awake = opts.awake ?? systemAwake;
   }
 
   private launch(): Promise<Browser> {
@@ -159,6 +171,8 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 
   async render(req: BrowserRenderRequest): Promise<BrowserPage> {
     if (req.signal.aborted) throw req.signal.reason;
+    // JOBPILOT_NO_NETWORK=1 (the test suite): only a loopback page, or a host the test maps to loopback, is rendered
+    if (!(this.opts.resolveToLoopbackForTests ?? []).includes(new URL(req.url).hostname)) refuseRealNetwork(req.url);
     const browser = await this.launch();
     const context = await browser.newContext({
       userAgent: HTTP_HEADERS['user-agent'] as string,
@@ -170,12 +184,13 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     req.signal.addEventListener('abort', onAbort, { once: true });
     const state: RenderState = {
       current: undefined, blockedNavigation: undefined, redirectTo: undefined, repeated: undefined, readOnly: undefined,
-      tooBig: false, handlerError: undefined, early: undefined, headers: {}, deadline: Date.now() + this.timing.navigationMs, requested: new Set(), inflight: new Set(),
+      tooBig: false, handlerError: undefined, early: undefined, headers: {}, nav: this.awake.stopwatch(), requested: new Set(), inflight: new Set(),
     };
     try {
       await this.guard(context, req, state);
       return await this.load(context, req, state);
     } finally {
+      state.nav.stop();
       req.signal.removeEventListener('abort', onAbort);
       await context.close().catch(() => undefined);
     }
@@ -311,7 +326,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
     state.requested.add(url.href);
     let res;
     try {
-      res = await route.fetch({ maxRedirects: 0, timeout: Math.max(1, state.deadline - Date.now()), headers: { ...route.request().headers(), accept: HTTP_HEADERS['accept'] as string } });
+      res = await route.fetch({ maxRedirects: 0, timeout: budgetLeft(state.nav, this.timing.navigationMs), headers: { ...route.request().headers(), accept: HTTP_HEADERS['accept'] as string } });
     } catch {
       // The navigation then fails in page.goto with a network error, which the broker maps.
       return route.abort('failed');
@@ -358,7 +373,6 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
   }
 
   private async load(context: BrowserContext, req: BrowserRenderRequest, state: RenderState): Promise<BrowserPage> {
-    const deadline = state.deadline;
     let response;
     let page: Page | undefined;
     for (let target = req.url, hops = 0; ; hops++) {
@@ -369,7 +383,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       state.current = page;
       state.redirectTo = undefined;
       try {
-        response = await page.goto(target, { waitUntil: 'domcontentloaded', timeout: Math.max(1, deadline - Date.now()) });
+        response = await page.goto(target, { waitUntil: 'domcontentloaded', timeout: budgetLeft(state.nav, this.timing.navigationMs) });
       } catch (e) {
         const stop = this.verdict(state);
         if (stop) return stop;
@@ -457,16 +471,21 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
 
   private async settle(minMs: number, capMs: number, state: RenderState, sample: () => Promise<number>): Promise<boolean> {
     const t = this.timing;
-    const start = Date.now();
-    const values: number[] = [];
-    for (;;) {
-      await sleep(t.pollMs);
-      values.push(await sample());
-      const last = values.slice(-t.stableSamples);
-      const stable = last.length === t.stableSamples && last.every((n) => n === last[0] && n >= 0) && state.inflight.size === 0;
-      const elapsed = Date.now() - start;
-      if (stable && elapsed >= minMs) return true;
-      if (elapsed >= capMs) return false;
+    // awake time: a page watched across a sleeping Mac is not "still changing at the cap" when it wakes
+    const sw = this.awake.stopwatch();
+    try {
+      const values: number[] = [];
+      for (;;) {
+        await sleep(t.pollMs);
+        values.push(await sample());
+        const last = values.slice(-t.stableSamples);
+        const stable = last.length === t.stableSamples && last.every((n) => n === last[0] && n >= 0) && state.inflight.size === 0;
+        const elapsed = sw.elapsed();
+        if (stable && elapsed >= minMs) return true;
+        if (elapsed >= capMs) return false;
+      }
+    } finally {
+      sw.stop();
     }
   }
 
@@ -477,13 +496,23 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
    */
   private async expand(page: Page, state: RenderState, links: LinkRule, url: string): Promise<{ clicks: number; scrolls: number; capReached: boolean; settled: boolean }> {
     const t = this.timing;
-    const until = Date.now() + t.expandBudgetMs;
+    // awake time, like every render budget
+    const sw = this.awake.stopwatch();
+    try {
+      return await this.expandWithin(page, state, links, url, () => sw.elapsed() >= t.expandBudgetMs);
+    } finally {
+      sw.stop();
+    }
+  }
+
+  private async expandWithin(page: Page, state: RenderState, links: LinkRule, url: string, spent: () => boolean): Promise<{ clicks: number; scrolls: number; capReached: boolean; settled: boolean }> {
+    const t = this.timing;
     const labels = { loadMore: LOAD_MORE_LABEL.source, showAll: SHOW_ALL_LABEL.source };
     let clicks = 0;
     for (;;) {
       const target = await page.evaluate(nextExpandable, labels);
       if (target === null) break;
-      if (clicks >= t.maxClicks || Date.now() >= until) return { clicks, scrolls: 0, capReached: true, settled: true };
+      if (clicks >= t.maxClicks || spent()) return { clicks, scrolls: 0, capReached: true, settled: true };
       const before = await jobLinks(page, links, true);
       try {
         await page.click(`[data-jobpilot-expand="${target.id}"]`, { timeout: 5_000 });
@@ -506,7 +535,7 @@ export class PlaywrightBrowserProvider implements BrowserProvider {
       if (!settled) return { clicks, scrolls, capReached: false, settled: false };
       if ((await jobLinks(page, links, true)) <= before) break;
       scrolls += 1;
-      if (scrolls >= t.maxScrolls || Date.now() >= until) return { clicks, scrolls, capReached: true, settled: true };
+      if (scrolls >= t.maxScrolls || spent()) return { clicks, scrolls, capReached: true, settled: true };
     }
     return { clicks, scrolls, capReached: false, settled: true };
   }

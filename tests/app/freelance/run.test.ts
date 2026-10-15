@@ -37,7 +37,9 @@ describe.skipIf(pdftotext === undefined)('one dead platform never silences the o
   it('Freelancer down in am: HN and Remotive are fetched and projected; the streak reaches 4 and "looks dead" appears at 3', async () => {
     const home = newHome();
     const off = offlineProviders(FIXTURES);
+    const asked: string[] = [];
     const fetch: FetchLike = async (url, init) => {
+      asked.push(url);
       if (isFreelancer(url)) throw new Error('ECONNRESET');
       return off.fetch(url, init);
     };
@@ -46,14 +48,16 @@ describe.skipIf(pdftotext === undefined)('one dead platform never silences the o
       runs.push(await runFreelance({ home, clock: { now: () => at }, fetch, sleep: async () => {}, pdftotext: pdftotext as string }));
     }
     const [am] = runs as [FreelanceSummary];
-    for (const agent of ['src-hn', 'src-remotive']) expect(am.counts.byAgent[agent], agent).toMatchObject({ failed: 0, skipped: 0 });
+    expect(am.counts.byAgent['src-hn']).toMatchObject({ failed: 0, skipped: 0 });
+    // Remotive is off (its robots.txt disallows /api/*): never seeded, never asked.
+    expect(asked.some((u) => u.startsWith('https://remotive.com/api'))).toBe(false);
     expect(am.counts.byAgent['src-freelancer']?.failed).toBeGreaterThan(0);
     const app = AppStore.open(join(home, 'jobpilot.db'));
     try {
       const platforms = new Set(app.listGigs({ duplicates: true }).map((g) => g.platform));
-      expect(platforms).toEqual(new Set(['remotive', 'hn-freelancer', 'hn-hiring']));
+      expect(platforms).toEqual(new Set(['hn-freelancer', 'hn-hiring']));
       expect(app.sourceHealth('freelancer').map((r) => [r.week, r.probeFailures, r.runs])).toEqual([['2026-W42', 4, 4]]);
-      expect(app.sourceHealth('remotive')[0]).toMatchObject({ probeFailures: 0, failedRuns: 0 });
+      expect(app.sourceHealth('remotive')).toEqual([]);
     } finally {
       app.close();
     }

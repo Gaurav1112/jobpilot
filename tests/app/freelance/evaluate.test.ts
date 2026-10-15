@@ -238,7 +238,14 @@ describe('gig-eligibility: rules', () => {
 
   it('a wrong reject is the dangerous direction: ambiguous text is review, never rejected', () => {
     const noHours = { min: null, max: null, source: null } as const;
-    const text = (description: string, over: Partial<Gig> = {}) => decide(rated({ hoursPerWeek: noHours, description, ...over }));
+    // On a non-Freelancer platform: a Freelancer hourly contract at or above the floor with no hours figure passes the
+    // hours rule with a note since freelance-boost (the approved rule, user 2026-10-14), so it is checked apart below.
+    const text = (description: string, over: Partial<Gig> = {}) => decide(rated({ hoursPerWeek: noHours, description, platform: 'remotive', ...over }));
+    // ... but only with no full-time wording at all (review round 2026-10-15): any "full-time" keeps the review.
+    expect(decide(rated({ hoursPerWeek: noHours, description: 'Dedicated resource for our team.' }))).toEqual({ verdict: 'eligible', reasons: [], notes: ['hours not stated; you set them'] });
+    for (const d of ['We are a full-time remote team of engineers.', 'Full time or part time role.']) {
+      expect(decide(rated({ hoursPerWeek: noHours, description: d })), d).toMatchObject({ verdict: 'review', reasons: ['hours-unclear'] });
+    }
     for (const d of [
       'We are a full-time remote team of engineers.',
       'Full time or part time role.',
@@ -254,7 +261,7 @@ describe('gig-eligibility: rules', () => {
     for (const d of ['We work 40 hours per week.', 'Our team is available 40 hours per week for calls.', 'If you can do 40 hours per week, even better.', 'Ideally 40 hours per week.']) {
       expect(decide(rated({ hoursPerWeek: { min: 40, max: 40, source: 'text' }, description: d })).verdict, d).toBe('review');
     }
-    expect(decide(rated({ hoursPerWeek: noHours, description: 'As a contractor you will work alongside our full-time engineers.' })).verdict).toBe('review');
+    expect(decide(rated({ hoursPerWeek: noHours, platform: 'remotive', description: 'As a contractor you will work alongside our full-time engineers.' })).verdict).toBe('review');
     expect(decide(rated({ description: 'We are available 9am-5pm PST for questions.' })).verdict).toBe('eligible');
     expect(decide(rated({ location: { countries: ['europe'], worldwide: false, text: null } })).verdict).toBe('review');
     expect(decide(rated({ location: { countries: ['united states'], worldwide: false, text: 'USA preferred' } })).verdict).toBe('review');

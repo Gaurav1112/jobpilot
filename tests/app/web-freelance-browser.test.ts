@@ -16,6 +16,8 @@ const root = join(import.meta.dirname, '../..');
 const G = 'a2a2a2a2a2a2a2a2';
 const TEXT = 'Hi — your “order service” needs care.\n\nI built a <payments> service & more.\n  1. Read the code.\nI send updates every two days.\n';
 const sha = (b: string): string => createHash('sha256').update(b).digest('hex');
+const B = 'b1b1b1b1b1b1b1b1';
+const COVER = 'Dear Hiring Team,\nI’m applying for the role — with “quotes” & <angle> text.\n\nSincerely,\nAsha Rao\n';
 
 const browser: Browser | undefined = await chromium.launch().catch(() => undefined);
 let home: string;
@@ -38,6 +40,17 @@ describe.skipIf(browser === undefined)('freelance Copy in Chromium', () => {
       const files: [string, string][] = [['proposal.txt', TEXT], ['resume.pdf', 'pdf'], ['resume.docx', 'docx']];
       for (const [f, b] of files) writeFileSync(join(home, 'out', 'gigs', G, f), b);
       s.putGigDocs(G, files.map(([f, b]) => ({ kind: f.split('.')[0] as 'proposal' | 'resume', format: f.split('.')[1] as 'txt' | 'pdf' | 'docx', path: `gigs/${G}/${f}`, sha256: sha(b), pages: null })));
+      // freelance-v2: a review contract from an employer job board with its cover letter, long words included
+      s.upsertGig({
+        gigKey: B, dedupeKey: B, platform: 'boards', sourceId: '2', url: 'https://jobs.example.com/roles/2', title: 'Senior Backend Engineer - Java/Spring Boot/Kafka/PostgreSQL/Kubernetes (6-month contract, remote India)', description: 'x',
+        client: { name: 'Example Robotics International Holdings Private Limited' }, kind: 'contract', budget: { type: 'unknown' }, rate: { minUsdH: null, maxUsdH: null, method: 'unknown', fxDate: null, fxSource: null, budgetUsd: null }, hours: { min: null, max: null },
+        verdict: 'review', reasons: ['rate-unclear', 'hours-unclear'], notes: [], flags: [], fit: 72, breakdown: { base: 30 },
+        list: 'review', docsState: 'ready', docsDetail: null, postedAt: '2026-10-11T09:00:00.000Z', at: '2026-10-12T14:00:00.000Z',
+      });
+      mkdirSync(join(home, 'out', 'gigs', B), { recursive: true });
+      const coverFiles: [string, string][] = [['pitch.txt', 'Pitch.\n'], ['resume.pdf', 'pdf'], ['resume.docx', 'docx'], ['cover.txt', COVER], ['cover.pdf', 'cpdf'], ['cover.docx', 'cdocx'], ['cover.html', '<p>c</p>']];
+      for (const [f, b] of coverFiles) writeFileSync(join(home, 'out', 'gigs', B, f), b);
+      s.putGigDocs(B, coverFiles.map(([f, b]) => ({ kind: f.split('.')[0] as 'pitch' | 'resume' | 'cover', format: f.split('.')[1] as 'txt' | 'pdf' | 'docx' | 'html', path: `gigs/${B}/${f}`, sha256: sha(b), pages: null })));
     } finally {
       s.close();
     }
@@ -67,6 +80,20 @@ describe.skipIf(browser === undefined)('freelance Copy in Chromium', () => {
     await ctx.close();
   });
 
+  it('the cover letter Copy puts exactly cover.txt on the clipboard (freelance-v2)', async () => {
+    const ctx = await (browser as Browser).newContext();
+    await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: base });
+    const page = await ctx.newPage();
+    await page.goto(`${base}/freelance/${B}`, { waitUntil: 'networkidle' });
+    const button = page.locator('button.copy-btn[data-copy-target="cover-text"]');
+    await expect.poll(() => button.isVisible()).toBe(true);
+    await button.click();
+    await expect.poll(() => page.locator('#cover-h ~ .paste-bar .copy-status').textContent()).toContain('Copied');
+    const copied = await page.evaluate(() => navigator.clipboard.readText());
+    expect(Buffer.from(copied, 'utf8').equals(readFileSync(join(home, 'out', 'gigs', B, 'cover.txt')))).toBe(true);
+    await ctx.close();
+  });
+
   it('JavaScript off: no Copy button is shown, the .txt link is', async () => {
     const ctx = await (browser as Browser).newContext({ javaScriptEnabled: false });
     const page = await ctx.newPage();
@@ -79,7 +106,7 @@ describe.skipIf(browser === undefined)('freelance Copy in Chromium', () => {
   it('no page of the tab scrolls sideways at 400 px', async () => {
     const ctx = await (browser as Browser).newContext({ viewport: { width: 400, height: 800 } });
     const page = await ctx.newPage();
-    for (const p of ['/freelance?tab=gigs', `/freelance/${G}`, '/freelance/networks', '/freelance/sources']) {
+    for (const p of ['/freelance', '/freelance?tab=gigs', '/freelance?tab=review', `/freelance/${G}`, `/freelance/${B}`, '/freelance/networks', '/freelance/sources']) {
       await page.goto(`${base}${p}`, { waitUntil: 'networkidle' });
       const w = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, client: document.documentElement.clientWidth }));
       expect(w.scroll, p).toBeLessThanOrEqual(w.client);

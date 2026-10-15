@@ -42,6 +42,10 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *      in its clause. "We're a full-time remote team", "our full-time engineers", "hiring full-time employees" fit
  *      no shape and count for nothing; anything else is `hours not stated - verify`;
  *    - "dedicated" alone never rejects.
+ *    - freelance-boost (the one approved rule change, user 2026-10-14): a Freelancer.com hourly contract with a
+ *      `stated` rate whose `maxUsdH` (after FX) is at or above `rateFloorUsdHour`, with no per-week hours figure
+ *      anywhere in its text (not even an ambiguous one) and no full-time wording tied to it, passes the hours rule with the note `hours not stated; you set them` (Freelancer
+ *      bills the hours the freelancer logs). Stated full-time still rejects; a hedged full-time mention stays review.
  * 6. overlap-outside-ist-window: only a CLOSED requirement sentence on the candidate (see "closed requirement sentences"
  *    below): "You must be online 9am-5pm PST", "Must be available ...", "We need you to be online ...", "Working hours
  *    ... are required". Fixed offsets (EST -5, EDT -4, ET -4, CST -6, PST -8, PDT -7, PT -7, CET +1, CEST +2, GMT/UTC 0,
@@ -60,6 +64,10 @@ import { GigVerdict, RatedGig, type Gig } from './types.js';
  *    and maximum are exactly one of the platform's `platformRules.<platform>.presetBrackets` is no stated budget: it is
  *    review (`budget-preset`, note `preset bracket - bids may exceed it`), never rejected; at or above the floor
  *    (user decision 2026-10-13) it stays eligible with that note, so every surface labels it a preset tier.
+ * 8b. ceiling (freelance-boost): a `stated-ceiling` rate ("up to $X/hr") below the floor rejects as
+ *    `rate-below-floor:<X>` (a hedge is review, as below); at or above it is review `ceiling-only` with the note
+ *    `pay is a stated ceiling only (up to $X/h) - verify`: a ceiling never passes the floor on its own. A reject from
+ *    another rule still wins.
  * 9. rate-below-floor:<maxUsdH>: `maxUsdH` below `rateFloorUsdHour`, for a `stated` rate, or for a derived one
  *    (`derivedRateCountsForFloor`; when false it is a note). A rate with no maximum cannot be below the floor. An
  *    unknown rate (contract, or a gig with no budget) is `rate unknown - verify`.
@@ -129,6 +137,8 @@ export const NOTE_RATE_NEGOTIABLE = 'rate negotiable - verify';
 export const NOTE_LOCATION_ZONES = 'location field names time zones - verify';
 export const NOTE_RATE_UNKNOWN = 'rate unknown - verify';
 export const NOTE_DERIVED_NOT_COUNTED = 'derived rate below floor - not counted';
+/** freelance-boost: the pay is only a stated ceiling at or above the floor. */
+export const noteCeiling = (max: number): string => `pay is a stated ceiling only (up to $${max}/h) - verify`;
 
 /* ------------------------------------------------------------------ closed requirement sentences */
 /*
@@ -341,7 +351,75 @@ function fullTime(text: string): 'yes' | 'unclear' | 'no' | 'softened' {
   return result;
 }
 
-export function hoursOutcome(g: Gig, cap: number): Outcome {
+/** freelance-boost, the one approved rule change (user, 2026-10-14). */
+export const NOTE_YOU_SET_HOURS = 'hours not stated; you set them';
+
+/**
+ * Freelancer.com bills hourly projects by the hours the freelancer logs, so the freelancer sets the weekly limit: an
+ * hourly Freelancer contract whose stated USD rate (after FX) reaches the floor needs no stated hours (user decision
+ * 2026-10-14). Only that: every other source, and any rate that is not `stated`, keeps the review.
+ *
+ * "Reaches the floor" means the TOP of the stated range (`maxUsdH >= rateFloorUsdHour`), so "$25–50/h" qualifies
+ * (controller decision 2026-10-15): the same test the pay rule (9) and the notification's "K at ≥$X/h" use.
+ */
+export function youSetHours(r: RatedGig, floor: number): boolean {
+  const { gig, rate } = r;
+  return gig.platform === 'freelancer' && gig.kind === 'contract' && gig.budget.type === 'hourly' && rate.method === 'stated' && rate.maxUsdH !== null && rate.maxUsdH >= floor;
+}
+
+/* freelance-boost review round (I1): hours in any unit, and the wording that rules out "not stated". */
+const WEEKS_PER_MONTH = 4.33;
+const DAYS_PER_WEEK = 5;
+const RANGE_SEP = '\\s?(?:-|–|—|to)\\s?';
+/** "160 hours per month", "40-80 hrs/mo", "8 hours a day", "6-8 h/day". */
+const NUM = '\\d{1,3}(?:\\.\\d+)?';
+const HOURS_PER_MONTH = new RegExp(`\\b(${NUM})(?:${RANGE_SEP}(${NUM}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:month|mo)\\b`, 'gi');
+const HOURS_PER_DAY = new RegExp(`\\b(${NUM})(?:${RANGE_SEP}(${NUM}))?\\s?(?:h|hrs|hours)\\s?(?:\\/|per|a|each|every)\\s?(?:day|weekday)\\b`, 'gi');
+/** Any hours figure in any unit or wording: digits or written-out numbers next to "hour(s)", "N hours weekly", "per week ... N hours". */
+const ANY_HOURS =
+  /\b\d{1,3}(?:\.\d+)?\s?(?:\+|(?:-|–|—|to)\s?\d{1,3})?\s?(?:h|hrs?|hours?)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|eighty|hundred|few|several|couple of)(?:[\s-]+(?:one|two|three|four|five|six|seven|eight|nine))?[\s-]+(?:hours?|hrs)\b|\bper\s+(?:week|month|day)\b[^.;\n]{0,40}\b\d{1,3}\s?(?:h|hrs?|hours?)\b/i;
+/** Full-time wording of any shape, or a working-day window: never "hours not stated". */
+const FULL_TIME_ANY = /\bfull[\s-]?time\b|\bentire\s+(?:week|day)\b|\b9\s?(?:am)?\s?(?:-|–|to)\s?[56]\s?(?:pm)?\b|\b\d{1,2}\s?(?:am|pm)\s?(?:-|–|to)\s?\d{1,2}\s?(?:am|pm)\b|\b40\s?(?:h|hrs?|hours?)\b/i;
+
+/** Every per-month or per-day figure in the text, as hours per week (÷ 4.33, × 5), with what it said; null if one is malformed. */
+function convertedAll(text: string): { min: number; max: number; note: string }[] | null {
+  const found = new Map<string, { min: number; max: number; note: string }>();
+  const r1 = (x: number): number => Math.round(x * 10) / 10;
+  for (const m of text.matchAll(HOURS_PER_MONTH)) {
+    const lo = Number(m[1]);
+    const hi = Number(m[2] ?? m[1]);
+    if (!(lo > 0 && hi >= lo)) return null;
+    found.set(`m${lo}-${hi}`, { min: r1(lo / WEEKS_PER_MONTH), max: r1(hi / WEEKS_PER_MONTH), note: `${lo === hi ? lo : `${lo}–${hi}`} hours per month` });
+  }
+  for (const m of text.matchAll(HOURS_PER_DAY)) {
+    const lo = Number(m[1]);
+    const hi = Number(m[2] ?? m[1]);
+    if (!(lo > 0 && hi >= lo)) return null;
+    found.set(`d${lo}-${hi}`, { min: r1(lo * DAYS_PER_WEEK), max: r1(hi * DAYS_PER_WEEK), note: `${lo === hi ? lo : `${lo}–${hi}`} hours per day` });
+  }
+  return [...found.values()];
+}
+
+/** One unambiguous per-month or per-day figure, as hours per week, with what it said; else null. */
+export function convertedHours(text: string): { min: number; max: number; note: string } | null {
+  const all = convertedAll(text);
+  return all !== null && all.length === 1 ? (all[0] ?? null) : null;
+}
+
+export const NOTE_MIXED_UNITS = 'hours stated in several ways; confirm';
+/**
+ * A per-week figure (`week`: the resolved one, a "10+ hours per week" minimum included) next to a per-month or per-day
+ * one that disagrees by over 20%, or either over the cap.
+ */
+function mixedUnits(description: string, week: number | null, cap: number): boolean {
+  const others = convertedAll(description);
+  if (week === null || others === null || others.length === 0) return false;
+  return others.some((o) => week > cap || o.max > cap || Math.abs(o.max - week) > 0.2 * Math.max(o.max, week));
+}
+
+export const noteWideRange = (max: number, cap: number): string => `hours range up to ${max}/week exceeds ${cap}; confirm`;
+
+export function hoursOutcome(g: Gig, cap: number, setByYou = false): Outcome {
   if (g.kind !== 'contract') return PASS;
   const text = `${g.title}\n${g.description}`;
   let min = g.hoursPerWeek.min;
@@ -350,6 +428,9 @@ export function hoursOutcome(g: Gig, cap: number): Outcome {
     if (plus.size === 1) min = [...plus][0] ?? null;
   }
   const ft = fullTime(text);
+  // A per-week figure beside a per-month or per-day one that disagrees (controller decision 2026-10-15): review.
+  // The resolved figure: the normalizer's per-week one, or a single "N+ hours per week" (re-review I6, 2026-10-15).
+  if (min !== null && mixedUnits(g.description, g.hoursPerWeek.max ?? min, cap)) return reviewOf('hours-unclear', NOTE_MIXED_UNITS);
   if (min !== null) {
     if (min > cap) {
       const status = figureStatus(g.description, min);
@@ -360,10 +441,28 @@ export function hoursOutcome(g: Gig, cap: number): Outcome {
       if (end >= 0 && softenedAfter(g.description.slice(end).split(CLAUSES).slice(1), FEWER_HOURS_OK)) return softened();
       return rejectOf('hours-over-cap');
     }
-    return ft === 'yes' ? reviewOf('hours-unclear', NOTE_HOURS_CONFLICT) : PASS;
+    if (ft === 'yes') return reviewOf('hours-unclear', NOTE_HOURS_CONFLICT);
+    // A range whose top is over the cap ("10–39 h/week") is review, never a pass (controller decision 2026-10-15).
+    const max = g.hoursPerWeek.max;
+    if (g.hoursPerWeek.min !== null && max !== null && max > cap) return reviewOf('hours-unclear', noteWideRange(max, cap));
+    return PASS;
   }
   if (ft === 'softened') return softened();
-  return ft === 'yes' ? rejectOf('hours-over-cap') : reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
+  // Hours per month or per day are converted to a week ONLY as a note (controller decision 2026-10-15): the gig is
+  // review either way ("7 days a week", "at least", a launch week at full time... a conversion cannot know), and a
+  // converted figure never rejects.
+  const converted = ft === 'no' ? convertedHours(g.description) : null;
+  if (converted !== null) {
+    const how = `≈${converted.min === converted.max ? converted.min : `${converted.min}–${converted.max}`} h/week from ${converted.note} (assumed ${converted.note.endsWith('month') ? `${WEEKS_PER_MONTH} weeks/month` : `${DAYS_PER_WEEK} days/week`})`;
+    return reviewOf('hours-unclear', converted.max <= cap ? `${how}; confirm` : `${how} - verify`);
+  }
+  if (ft === 'yes') return rejectOf('hours-over-cap');
+  // "Hours not stated" only when the text has NO hours figure in any unit or wording ("160 hours per month", "8
+  // hours a day", "forty hours a week", "per week we need 30 hours") and no full-time wording of any shape ("This is a
+  // full-time job", "your entire week, 9-5", "40 hours"): anything else stays review (review round I1, 2026-10-15).
+  const anyFigure = ANY_HOURS.test(text) || [...text.matchAll(HOURS_PER_WEEK)].length > 0 || [...text.matchAll(PLUS_HOURS)].length > 0;
+  if (ft === 'no' && setByYou && !anyFigure && !FULL_TIME_ANY.test(text)) return noteOf(NOTE_YOU_SET_HOURS);
+  return reviewOf('hours-unclear', NOTE_HOURS_UNKNOWN);
 }
 
 /* ------------------------------------------------------------------ 6. IST overlap */
@@ -565,6 +664,11 @@ const negotiable = (): Outcome => reviewOf('rate-unclear', NOTE_RATE_NEGOTIABLE)
 
 function payOutcome(r: RatedGig, f: GigPack['freelance'], tiers: readonly Tier[]): Outcome {
   const { rate, gig } = r;
+  // freelance-boost: a stated ceiling ("up to $X/hr") can fail the floor but never pass it on its own.
+  if (rate.method === 'stated-ceiling' && rate.maxUsdH !== null) {
+    if (rate.maxUsdH < f.rateFloorUsdHour) return hedged(gig.description) ? negotiable() : rejectOf(`rate-below-floor:${rate.maxUsdH}`);
+    return reviewOf('ceiling-only', noteCeiling(rate.maxUsdH));
+  }
   const preset = isPreset(gig, tiers);
   if (rate.method === 'unknown' || (rate.minUsdH === null && rate.maxUsdH === null)) {
     if (gig.kind === 'gig' && rate.budgetUsd !== null) {
@@ -603,7 +707,7 @@ export function decideGig(r: RatedGig, pack: GigPack): GigDecision {
   const outcomes = [
     roleOutcome,
     locationOutcome(g),
-    hoursOutcome(g, pack.freelance.maxHoursPerWeek),
+    hoursOutcome(g, pack.freelance.maxHoursPerWeek, youSetHours(r, pack.freelance.rateFloorUsdHour)),
     overlapOutcome(g, pack.freelance.istWindow),
     exclusiveOutcome(g),
     licensedOutcome(g),
@@ -625,7 +729,7 @@ function packOf(pack: unknown): GigPack {
 
 export const gigEligibilityContract = defineContract({
   id: 'gig-eligibility',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Decides whether one gig is open to the candidate',
   skills: ['gig-eligibility-rules'],
   team: 'evaluation',

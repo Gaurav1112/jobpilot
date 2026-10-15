@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { canonicalJson } from '../kernel/canonical.js';
 import type { GuardrailVerdict } from '../kernel/envelope.js';
 import { BUILTIN_GUARDRAILS } from '../kernel/guardrails/builtin.js';
@@ -38,7 +39,8 @@ import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermError } from './pack/rules.js';
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
-import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
+import { gigCoverModel, gigFilesOf, gigTexts, isRenderTimeBlock } from './freelance/writing/gig-text.js';
+import { companyOf, coverTitleOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
 import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
 
@@ -226,9 +228,18 @@ export function postingSlotProblems(posting: { readonly title: string; readonly 
   });
 }
 
-/** Every grounding problem of a CoverPlan, its resume included; unsafe posting text first. */
-export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unknown = pack): string[] {
-  const problems = [...postingSlotProblems(cover.resume.evidence.scored.posting), ...resumeProblems(cover.resume, pack, 'resume.', rawPack)];
+/**
+ * Every grounding problem of a CoverPlan, its resume included; unsafe posting text first. `o.budget` is the resume
+ * plan's bullet budget (default: the daily resume's) and `o.paragraphs` the letter's re-derivation (default: the daily
+ * `renderCover(coverSlots(...))`); the gig cover letter passes the compact budget and its contract availability.
+ */
+export function coverProblems(
+  cover: CoverPlan,
+  pack: WritingPack,
+  rawPack: unknown = pack,
+  o: { readonly budget?: BulletBudget; readonly paragraphs?: (resume: ResumePlan) => CoverPlan['paragraphs'] } = {},
+): string[] {
+  const problems = [...postingSlotProblems(cover.resume.evidence.scored.posting), ...resumeProblems(cover.resume, pack, 'resume.', rawPack, o.budget ?? DEFAULT_BUDGET)];
   const byId = new Map(pack.facts.map((f) => [f.id, f]));
   const roles = displayRoles(pack);
   if (cover.jobKey !== cover.resume.jobKey) problems.push("jobKey is not the resume plan's");
@@ -247,7 +258,7 @@ export function coverProblems(cover: CoverPlan, pack: WritingPack, rawPack: unkn
   });
   // Every slot recomputed (headline, years, covered list, employer display, verb form, where I work now), then the
   // templates re-rendered: any difference from the plan, to the byte, trips.
-  const expected = attempt(problems, 'paragraphs', () => renderCover(coverSlots(cover.resume, pack)));
+  const expected = attempt(problems, 'paragraphs', () => (o.paragraphs === undefined ? renderCover(coverSlots(cover.resume, pack)) : o.paragraphs(cover.resume)));
   if (expected !== undefined) {
     for (let i = 0; i < Math.max(expected.length, cover.paragraphs.length); i++) {
       if (!same(expected[i] ?? null, cover.paragraphs[i] ?? null)) {
@@ -337,6 +348,9 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
     }
   }
 
+  if (plan.cover !== undefined) problems.push(...gigCoverProblems(plan, pack, rawPack));
+  if (plan.coverNote !== undefined && (plan.cover !== undefined || !getsCover(gig))) problems.push('coverNote is set, but the gig has a cover letter or never gets one');
+
   const expected = attempt(problems, 'plan', () => planGigDocs(plan.scored, rawPack));
   if (expected !== undefined) {
     const d = firstDiff(expected, plan);
@@ -344,6 +358,34 @@ export function gigDocsProblems(plan: GigDocsPlan, rawPack: unknown): string[] {
   }
   return problems;
 }
+
+/**
+ * The grounding problems of a gig plan's cover letter (freelance-v2), each prefixed `cover.`: only a contract from an
+ * employer job board has one (`getsCover`); its resume plan's posting is the gig's synthetic posting named for the
+ * gig's company (`gigPostingOf`); its jobKey is the contract CV's; then every daily cover check (`coverProblems`: safe
+ * posting slots, the resume plan at the compact budget, every cited fact citeable, placed in a role and in its paragraph
+ * verbatim, every paragraph its template rendering) with the contract availability paragraph (`gigCoverOf`).
+ */
+function gigCoverProblems(plan: GigDocsPlan, pack: WritingPack, rawPack: unknown): string[] {
+  const cover = plan.cover;
+  if (cover === undefined) return [];
+  const problems: string[] = [];
+  const gig = plan.scored.risked.verdict.rated.gig;
+  if (!getsCover(gig)) problems.push('cover: only a contract from an employer job board gets a cover letter');
+  const company = companyOf(gig);
+  if (company === null) problems.push('cover: the gig names no company');
+  else {
+    const want = attempt(problems, 'cover.resume', () => gigPostingOf(gig, pack, company, coverTitleOf(gig.title)));
+    const d = want === undefined ? undefined : firstDiff(want, cover.resume.evidence.scored.posting);
+    if (d !== undefined) problems.push(`cover.resume.evidence.scored.posting is not the gig's synthetic posting named for its company (at ${d})`);
+  }
+  if (cover.jobKey !== plan.resume.jobKey) problems.push("cover.jobKey is not the contract CV's");
+  const rules = attempt(problems, 'cover', () => GigFreelanceRules.parse(rawPack).freelance);
+  if (rules === undefined) return problems;
+  return [...problems, ...coverProblems(cover, pack, rawPack, { budget: COMPACT, paragraphs: (r) => gigCoverOf(r, pack, rules).paragraphs }).map((p) => `cover.${p}`)];
+}
+
+const GigFreelanceRules = z.object({ freelance: z.object({ maxHoursPerWeek: z.number(), istWindow: z.string() }) });
 
 /** G-GROUND on the gig renderer's output: see the module rules. Details name fields and lines, never their text. */
 function gigRenderedProblems(ctx: GuardrailContext): string[] {
@@ -358,10 +400,17 @@ function gigRenderedProblems(ctx: GuardrailContext): string[] {
   if (out.data.gigKey !== input.data.gigKey) problems.push("gigKey is not the input plan's");
   if (!same(out.data.plan, input.data)) problems.push(`plan differs from the input plan (at ${firstDiff(out.data.plan, input.data) ?? '?'})`);
   const want = attempt(problems, 'text', () => gigTexts(input.data, full.data));
+  // freelance-v2 review: a blocked cover letter. Its reason is the one the plan and the full pack give (an unsafe city
+  // or notice), or a render-time one (`isRenderTimeBlock`: glyph, forbidden term, pages, DOCX layer); then no cover text
+  // and no cover file.
+  const blocked = out.data.coverBlocked;
+  if (blocked !== undefined && input.data.cover === undefined) problems.push('coverBlocked is set, but the plan has no cover letter');
+  if (want !== undefined && want.coverBlocked !== undefined && blocked !== want.coverBlocked) problems.push('coverBlocked is not the reason the plan and the full pack give');
+  if (want !== undefined && want.coverBlocked === undefined && blocked !== undefined && !isRenderTimeBlock(blocked)) problems.push('coverBlocked names no render-time reason, but the letter re-renders');
   if (want !== undefined) {
-    for (const k of ['proposal', 'pitch', 'resume'] as const) {
-      const w = want[k];
-      const g = out.data.text[k];
+    for (const k of ['proposal', 'pitch', 'resume', 'cover'] as const) {
+      const w = k === 'cover' && blocked !== undefined ? null : (want[k] ?? null);
+      const g = out.data.text[k] ?? null;
       if (w === g) continue;
       if (w === null || g === null) problems.push(`text.${k} is ${g === null ? 'missing' : 'present'}, the plan gives ${w === null ? 'none' : 'one'}`);
       else {
@@ -371,7 +420,7 @@ function gigRenderedProblems(ctx: GuardrailContext): string[] {
       }
     }
   }
-  const files = gigFilesOf(input.data);
+  const files = gigFilesOf(input.data, input.data.cover !== undefined && blocked === undefined);
   const got = out.data.files.map((f) => ({ kind: f.kind, format: f.format, path: f.path }));
   if (!same(files, got)) problems.push(`files are not the expected gig documents in order (at ${firstDiff(files, got) ?? '?'})`);
   out.data.files.forEach((f, i) => {
@@ -475,6 +524,9 @@ export const SOURCE_POSTING_PATHS: ReadonlySet<string> = new Set([
   // GigDocsPlan@1 and GigRendered@1 (Task 8): the scored gig is source data; the hook quote is checked where it is used.
   'scored.risked',
   'plan.scored.risked',
+  // freelance-v2: the gig cover letter's resume plan embeds the gig's posting named for the company (source data too).
+  'cover.resume.evidence.scored.posting',
+  'plan.cover.resume.evidence.scored.posting',
 ]);
 
 /** A copy of `v` without the values at `SOURCE_POSTING_PATHS`. */
@@ -574,7 +626,8 @@ export const G_FILL: Guardrail = {
     if (ctx.fullPack === undefined || ctx.fullPack === null) return trip('G-FILL', 'no full pack, so the fill cannot be re-derived');
     const pack = RenderPack.safeParse(ctx.fullPack);
     if (!pack.success) return trip('G-FILL', 'the full pack lacks contact, answers or naming');
-    if (ctx.input.type !== CoverPlan.id) return trip('G-FILL', `G-FILL checks the renderer's output for a ${CoverPlan.id} input, not ${ctx.input.type}`);
+    if (ctx.input.type === GigDocsPlan.id) return report('G-FILL', gigFillProblems(ctx, pack.data));
+    if (ctx.input.type !== CoverPlan.id) return trip('G-FILL', `G-FILL checks the renderer's output for a ${CoverPlan.id} or ${GigDocsPlan.id} input, not ${ctx.input.type}`);
     const input = CoverPlan.schema.safeParse(ctx.input.payload);
     const out = Rendered.schema.safeParse(ctx.output.payload);
     if (!input.success) return trip('G-FILL', `the input is not a valid ${CoverPlan.id}`);
@@ -613,6 +666,31 @@ export const G_FILL: Guardrail = {
     return report('G-FILL', problems);
   },
 };
+
+/**
+ * G-FILL on the gig renderer's output (freelance-v2): the only fill a gig document gets from the full pack beyond the
+ * contact block is the cover letter's `{city}`. With a planned cover, the output's plan is the input plan and
+ * `text.cover` is the letter filled from `contact.yaml` city (`gigCoverModel`) and rendered, with no placeholder left;
+ * without one, the output has no cover text. Details never quote the city.
+ */
+function gigFillProblems(ctx: GuardrailContext, full: RenderPack): string[] {
+  const input = GigDocsPlan.schema.safeParse(ctx.input.payload);
+  if (!input.success) return [`the input is not a valid ${GigDocsPlan.id}`];
+  const out = GigRendered.schema.safeParse(ctx.output?.payload);
+  if (!out.success) return [`not a valid ${GigRendered.id}`];
+  const plan = input.data;
+  const got = out.data.text.cover;
+  if (!same(out.data.plan, plan)) return [`plan differs from the input plan (at ${firstDiff(out.data.plan, plan) ?? '?'})`];
+  if (plan.cover === undefined) return got === undefined ? [] : ['text.cover is present, but the plan has no cover letter'];
+  // a blocked letter has no text to fill (G-GROUND checks the reason)
+  if (out.data.coverBlocked !== undefined) return got === undefined ? [] : ['text.cover is present, but the cover letter is blocked'];
+  if (got === undefined) return ['text.cover is missing, but the plan has a cover letter'];
+  const problems: string[] = [];
+  if (hasBrace(got)) problems.push('text.cover still holds a placeholder brace');
+  const want = attempt(problems, 'the cover fill', () => modelText(gigCoverModel(plan.cover as CoverPlan, full)));
+  if (want !== undefined && got !== want) problems.push('text.cover is not the letter filled from contact.yaml and answers.yaml and rendered');
+  return problems;
+}
 
 export const APP_GUARDRAILS: readonly Guardrail[] = [G_GROUND, G_NAMING, G_NO_GAP_CLAIM, G_FILL];
 

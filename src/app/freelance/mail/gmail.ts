@@ -120,7 +120,7 @@ function jobsOf(mail: MailMessage, parsers: readonly AlertParser[]): { jobs: Ale
 export function makeSrcGigMail(parsers: readonly AlertParser[] = ALERT_PARSERS) {
   const contract = defineContract({
     id: 'src-gig-mail',
-    version: '1.0.0',
+    version: '1.1.0',
     description: 'Reads gig alert emails under one Gmail label, read-only',
     skills: ['gig-sourcing'],
     team: 'sourcing',

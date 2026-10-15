@@ -88,7 +88,8 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     expect(first.projection.lists.gigs).toBeGreaterThan(0);
     expect(first.projection.lists.review).toBeGreaterThan(0);
     const gigs = withApp(home, (app) => app.listGigs({ duplicates: true }));
-    expect(new Set(gigs.map((g) => g.platform))).toEqual(new Set(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards']));
+    // No Remotive since 2026-10-15: its robots.txt disallows /api/*, so it is never seeded.
+    expect(new Set(gigs.map((g) => g.platform))).toEqual(new Set(['freelancer', 'hn-freelancer', 'hn-hiring', 'boards']));
     const board = gigs.filter((g) => g.platform === 'boards');
     expect(board.map((g) => g.title)).toEqual(['Backend Contractor (Go, TypeScript)']);
     // One row per gigKey: the four projects both the java and the typescript queries returned are one gig each.
@@ -109,6 +110,18 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     const below = withApp(home, (app) => app.listGigs().filter((g) => g.list === 'below-floor'));
     expect(below.length).toBeGreaterThan(0);
     for (const g of below) expect(existsSync(join(out, 'gigs', g.gigKey))).toBe(false);
+  });
+
+  it('the board contract (an employer job board) also gets the cover letter, on disk with its recorded sha256 (freelance-v2)', () => {
+    const out = join(home, 'out');
+    const board = withApp(home, (app) => app.listGigs().filter((g) => g.platform === 'boards').map((g) => app.getGig(g.gigKey)!));
+    expect(board).toHaveLength(1);
+    const g = board[0]!;
+    expect(g.fit).toBeGreaterThanOrEqual(45);
+    expect(g.docsState, g.docsDetail ?? '').toBe('ready');
+    expect(g.docs.map((d) => `${d.kind}.${d.format}`).sort()).toEqual(['cover.docx', 'cover.html', 'cover.pdf', 'cover.txt', 'pitch.txt', 'resume.docx', 'resume.pdf']);
+    for (const d of g.docs) expect(createHash('sha256').update(readFileSync(join(out, d.path))).digest('hex')).toBe(d.sha256);
+    expect(readFileSync(join(out, 'gigs', g.gigKey, 'cover.txt'), 'utf8')).toMatch(/^Dear Hiring Team,\n/);
   });
 
   it('has 0 forbidden-term hits in every output file', () => {
@@ -139,7 +152,6 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
       'freelancer 2026-W42 runs=1',
       'hn-freelancer 2026-W42 runs=1',
       'hn-hiring 2026-W42 runs=1',
-      'remotive 2026-W42 runs=1',
     ]);
     const fl = rows.find((r) => r.platform === 'freelancer')!;
     expect(fl.fetched).toBeGreaterThan(fl.eligible);
@@ -160,16 +172,16 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     expect(second.projection.inserted).toBe(0);
   });
 
-  it('the pm half fetches again but Remotive does not, and the am Remotive rows are kept', async () => {
+  it('the pm half fetches again; Remotive is never asked (off since 2026-10-15) and has no rows', async () => {
     const before = withApp(home, (app) => app.listGigs({ duplicates: true }).filter((g) => g.platform === 'remotive'));
-    expect(before.length).toBeGreaterThan(0);
+    expect(before).toEqual([]);
     const pm = await runAt(home, PM);
     expect(pm.runId).toBe('freelance-2026-10-12-pm');
     expect(pm.counts.byAgent['src-freelancer']?.replayed).toBe(0);
     const after = withApp(home, (app) => app.listGigs({ duplicates: true }).filter((g) => g.platform === 'remotive'));
     expect(after).toEqual(before);
     const rows = withApp(home, (app) => app.sourceHealth());
-    expect(rows.find((r) => r.platform === 'remotive')?.runs).toBe(1);
+    expect(rows.find((r) => r.platform === 'remotive')).toBeUndefined();
     expect(rows.find((r) => r.platform === 'freelancer')?.runs).toBe(2);
   }, 600_000);
 });
@@ -179,7 +191,9 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
  * Freelancer gigs); the top is the contract (a stated rate ranks before an unknown one), its title cut to 40 characters.
  */
 // 2, not 3, since Task 10 fix round 1: "Cross-Platform Multi-Purpose App Build" backs no term with a fact (covered 0/3) and goes to review.
-const EXPECTED_NOTIFICATION = '2 new gigs, 1 at ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
+// 3, not 2, since freelance-boost (the approved rule, user 2026-10-14): the recorded Freelancer hourly "Java & Python
+// Data Pipelines" ($50/h max, no hours stated) now goes to Contracts with "hours not stated; you set them".
+const EXPECTED_NOTIFICATION = '3 new gigs, 2 at ≥$40/h · top: $70/h SEEKING FREELANCER | Remote, worldwide… (HN)';
 
 describe('run-freelance --if-due', () => {
   const deps = (home: string, at: string, out: string[]) => ({

@@ -1,3 +1,4 @@
+import type { AwakeClock } from '../../kernel/awake.js';
 import type { Clock } from '../../kernel/clock.js';
 import { policyHash } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
@@ -8,7 +9,7 @@ import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
-import { httpsOnline } from '../net.js';
+import { httpsOnline, pacedFetch } from '../net.js';
 import { homePaths } from '../pack/paths.js';
 import { fullChainCheck } from '../chain-status.js';
 import { runProblems, type Problem } from '../problems.js';
@@ -124,6 +125,8 @@ export interface CoverageRunOptions {
   readonly online?: () => Promise<boolean>;
   /** The run's one per-host pacer (every stage and the online probe); default: a new one at the coverage policy's interval. */
   readonly hostPacer?: HostPacer;
+  /** The supervisors' awake clock (step timeouts, wake detection); default the process's. Tests inject one on `manualTimers`. */
+  readonly awake?: AwakeClock;
 }
 
 /**
@@ -131,11 +134,7 @@ export interface CoverageRunOptions {
  * the one every stage's requests use, so a probe host is never asked within the minimum interval of another request.
  */
 export function pacedOnline(fetch: FetchLike, pacer: HostPacer): () => Promise<boolean> {
-  const paced: FetchLike = async (url, init) => {
-    await pacer.wait(new URL(url).hostname);
-    return fetch(url, init);
-  };
-  return () => httpsOnline(paced);
+  return () => httpsOnline(pacedFetch(fetch, pacer));
 }
 
 /** One invocation's time slice: then it pauses between steps and the next `run-coverage` continues the same run. */
@@ -324,7 +323,8 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       }
       if (!resume) app.kernel.startRun(runId, PIPELINE, pHash, now);
       const hostPacer = o.hostPacer ?? createHostPacer(policy.minHostIntervalMs, o.clock, o.sleep ?? realSleep);
-      const gate = makeRunGate({ runKey: runId, store: app, online: o.online ?? pacedOnline(o.fetch, hostPacer) });
+      const online = o.online ?? pacedOnline(o.fetch, hostPacer);
+      const gate = makeRunGate({ runKey: runId, store: app, online });
       const sliceEnd = Date.parse(now) + (o.sliceMs ?? COVERAGE_SLICE_MS);
       const yieldCheck = o.yieldCheck ?? defaultYieldCheck(o.home);
       // the slice limit applies once this invocation has done a step, so every slice makes progress
@@ -354,6 +354,8 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
         pauseBefore,
         retry: true,
         hostPacer,
+        online,
+        ...(o.awake !== undefined ? { awake: o.awake } : {}),
       });
       if ('paused' in outcome) {
         // between steps: nothing is projected or announced; the next invocation resumes this run id

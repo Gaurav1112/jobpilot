@@ -1,9 +1,9 @@
 import { z } from 'zod';
 import { definePredicate } from '../../kernel/predicates.js';
 import { defineType } from '../../kernel/types.js';
-import { IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
+import { CoverPlan, IsoDate, IsoDateOrDateTime, JobKey, RenderedFile, ResumePlan } from '../types.js';
 
-export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit']);
+export const Platform = z.enum(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit', 'himalayas']);
 export type Platform = z.infer<typeof Platform>;
 
 const GigCurrency = z.enum(['USD', 'INR', 'EUR', 'GBP', 'CAD', 'AUD', 'SGD', 'NZD', 'HKD']);
@@ -60,6 +60,15 @@ export const Gig = defineType(
           currency: GigCurrency.nullable(),
           /** USD per unit of `currency` as the platform states it (Freelancer `currency.exchange_rate`, copied); null elsewhere. Used only for a currency the pack fx table lacks. */
           usdPerUnit: z.number().nullable(),
+          /**
+           * Where the pay was read (freelance-boost): `platform` a structured pay field of the source (Himalayas'
+           * `minSalary`/`maxSalary`/`salaryPeriod`), `description` the posting's own text (boards, Himalayas without a
+           * pay field). Absent on the older sources, whose mapping is fixed per platform (Freelancer: its budget
+           * fields; Remotive, HN, Gmail: the text).
+           */
+          from: z.enum(['platform', 'description']).optional(),
+          /** `ceiling`: the text states only an upper bound ("up to $130/hr"): `min` is null, `max` the ceiling. */
+          bound: z.literal('ceiling').optional(),
         })
         .strict(),
       hoursPerWeek: z.object({ min: z.number().nullable(), max: z.number().nullable(), source: z.literal('text').nullable() }).strict(),
@@ -85,7 +94,7 @@ export const RatedGig = defineType(
         .object({
           minUsdH: z.number().nullable(),
           maxUsdH: z.number().nullable(),
-          method: z.enum(['stated', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']),
+          method: z.enum(['stated', 'stated-ceiling', 'fixed÷stated-hours', 'derived-from-duration', 'monthly÷hours', 'unknown']),
           fxDate: IsoDate.nullable(),
           /** Which table converted the money: the pack's, the platform's own rate, or none (USD, or nothing converted). */
           fxSource: z.enum(['pack', 'platform']).nullable(),
@@ -152,6 +161,14 @@ export const GigDocsPlan = defineType(
         .strict()
         .nullable(),
       pitch: z.object({ lines: z.array(FactLine) }).strict().nullable(),
+      /**
+       * freelance-v2: the daily cover letter of a contract role from an employer job board (`writing/gig-cover.ts`),
+       * its resume plan the gig's posting named for the company; its last paragraph keeps `{city}` for the gig
+       * renderer. Absent for every other gig (and when the letter cannot be planned).
+       */
+      cover: CoverPlan.schema.optional(),
+      /** freelance-v2 review: why a contract from an employer job board has no `cover` ("title states pay or hours", ...). */
+      coverNote: z.string().optional(),
       resume: ResumePlan.schema,
       covered: z.array(z.string()),
       missing: z.array(z.string()),
@@ -160,8 +177,11 @@ export const GigDocsPlan = defineType(
 );
 export type GigDocsPlan = z.infer<typeof GigDocsPlan.schema>;
 
-/** A gig file: the paste-ready text (`proposal.txt` or `pitch.txt`) or the contract CV (`resume.pdf`, `resume.docx`). */
-export const GigFile = RenderedFile.extend({ kind: z.enum(['proposal', 'pitch', 'resume']), format: z.enum(['txt', 'pdf', 'docx']) }).strict();
+/**
+ * A gig file: the paste-ready text (`proposal.txt` or `pitch.txt`), the contract CV (`resume.pdf`, `resume.docx`), or
+ * (freelance-v2) the cover letter of a contract role on an employer job board (`cover.txt`, `.pdf`, `.docx`, `.html`).
+ */
+export const GigFile = RenderedFile.extend({ kind: z.enum(['proposal', 'pitch', 'resume', 'cover']), format: z.enum(['txt', 'pdf', 'docx', 'html']) }).strict();
 export type GigFile = z.infer<typeof GigFile>;
 
 /**
@@ -177,7 +197,13 @@ export const GigRendered = defineType(
       gigKey: JobKey,
       files: z.array(GigFile),
       plan: GigDocsPlan.schema,
-      text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string() }).strict(),
+      /** `cover` (freelance-v2): the cover letter's document text (`modelText`, contact block included), only with a planned cover. */
+      text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string(), cover: z.string().optional() }).strict(),
+      /**
+       * freelance-v2 review: why a planned cover letter was not rendered (an unsafe city or notice, a glyph, a forbidden
+       * term, more than one page). The pitch and CV are rendered either way; no cover file or text is listed then.
+       */
+      coverBlocked: z.string().optional(),
     })
     .strict(),
 );

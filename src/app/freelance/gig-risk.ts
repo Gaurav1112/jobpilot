@@ -111,7 +111,7 @@ export function riskFlags(v: GigVerdict): Flag[] {
 
 export const gigRiskContract = defineContract({
   id: 'gig-risk',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Flags payment or scam risk signals on one gig',
   skills: ['gig-risk-flags'],
   team: 'evaluation',

@@ -17,3 +17,6 @@ platforms:
   gmail: { enabled: true, queries: [] }
   upwork: { enabled: false, queries: [] }
   reddit: { enabled: false, queries: [] }
+  # Off in the fixture pack (the shipped default is on, with the default freelance keywords): the offline run fixtures
+  # predate the source. tests/app/freelance/himalayas-gigs.test.ts runs it against its own recordings.
+  himalayas: { enabled: false, queries: [] }

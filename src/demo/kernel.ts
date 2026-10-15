@@ -1,3 +1,4 @@
+import type { AnyAgent } from '../kernel/agent.js';
 import { fixedClock, type Clock } from '../kernel/clock.js';
 import { builtinGuardrails } from '../kernel/guardrails/builtin.js';
 import { mergePolicy, policyHash, PRODUCT_POLICY_V1 } from '../kernel/policy.js';
@@ -18,13 +19,20 @@ export interface DemoKernelOptions {
   readonly afterStep?: SupervisorDeps['afterStep'];
   readonly pauseBefore?: SupervisorDeps['pauseBefore'];
   readonly beforeFinish?: SupervisorDeps['beforeFinish'];
+  readonly awake?: SupervisorDeps['awake'];
+  readonly online?: SupervisorDeps['online'];
+  readonly requeueEvents?: SupervisorDeps['requeueEvents'];
+  /** The demo agents to register (same ids and contracts, other behaviour); default `demoAgents`. */
+  readonly agents?: readonly AnyAgent[];
+  /** Default: no wait at all. */
+  readonly sleep?: SupervisorDeps['sleep'];
 }
 
 /** Wires the demo pipeline end to end; the CLI and the kernel tests both use it. */
 export function demoKernel(o: DemoKernelOptions = {}) {
   const store = o.store ?? Store.open(o.dbPath ?? ':memory:');
   const registry = new Registry();
-  for (const a of demoAgents) registry.register(a);
+  for (const a of o.agents ?? demoAgents) registry.register(a);
   const guardrails = builtinGuardrails();
   const compiled = compileWiring(registry, demoPipeline, guardrails);
   const policy = mergePolicy(PRODUCT_POLICY_V1, o.userPolicy ?? {});
@@ -38,12 +46,15 @@ export function demoKernel(o: DemoKernelOptions = {}) {
     policyHash: pHash,
     providers: { fetch: async () => ({ status: 404, text: async () => '' }), llm: o.llm ?? demoLlm() },
     clock: o.clock ?? fixedClock('2026-10-08T07:00:00.000Z'),
-    sleep: async () => {},
+    sleep: o.sleep ?? (async () => {}),
     trackers: [demoTracker],
     ...(o.onInvoke ? { onInvoke: o.onInvoke } : {}),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
     ...(o.pauseBefore ? { pauseBefore: o.pauseBefore } : {}),
     ...(o.beforeFinish ? { beforeFinish: o.beforeFinish } : {}),
+    ...(o.awake ? { awake: o.awake } : {}),
+    ...(o.online ? { online: o.online } : {}),
+    ...(o.requeueEvents ? { requeueEvents: o.requeueEvents } : {}),
   });
   return { store, registry, compiled, supervisor, policy, policyHash: pHash };
 }

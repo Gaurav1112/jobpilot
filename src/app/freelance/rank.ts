@@ -15,8 +15,9 @@ export function isoMs(s: string | null): number | null {
 /**
  * The deterministic order of the three lists (pure; the projector and the dashboard both call it). Within a list:
  * 1. a gig without a red flag (`off-platform`, `unusual-payment`, `upfront-fee`) before one with;
- * 2. `maxUsdH` descending, null last;
- * 3. `fit` descending;
+ * 2. `maxUsdH × fit` descending, a gig with no known rate last (freelance-boost, research C2: the expected value of a
+ *    gig, so a well-fitting $80/h contract ranks above a barely-fitting $100/h one);
+ * 3. `maxUsdH` descending, null last; then `fit` descending;
  * 4. `postedAt` descending, null last;
  * 5. `gigKey` ascending;
  * 6. the row's canonical JSON ascending (only between rows of one gigKey, so "first wins" is independent of input order).
@@ -48,6 +49,12 @@ function descNullLast(a: number | null, b: number | null): number {
 function compare(a: ScoredGig, b: ScoredGig): number {
   const red = Number(redFlagged(a)) - Number(redFlagged(b));
   if (red !== 0) return red;
+  const value = (r: ScoredGig): number | null => {
+    const x = rateOf(r);
+    return x === null ? null : x * r.fit;
+  };
+  const ev = descNullLast(value(a), value(b));
+  if (ev !== 0) return ev;
   const rate = descNullLast(rateOf(a), rateOf(b));
   if (rate !== 0) return rate;
   if (a.fit !== b.fit) return b.fit - a.fit;

@@ -357,3 +357,62 @@ read); session-browse of any marketplace.
   as its own first task (plan Task 0) with new golden cases; the existing eligibility eval (n=192)
   must stay at 1.000 apart from the cases this decision deliberately flips, each listed in the
   task.
+
+## 14. freelance-boost (2026-10-14, user-approved scope)
+
+Research: `.superpowers/sdd/freelance-research.md`; report: `.superpowers/sdd/freelance-boost-report.md`.
+
+- **Parsing fixes.** Hours ranges accept "–", "—" and "to" ("10–39 hours per week" is 10–39, not 39). Boards gigs read
+  pay from the posting text with the same PAY rule (labelled `budget.from: description`; an annual salary is still no
+  budget). "Upto $X/hr" / "up to $X per hour" is a stated ceiling (`budget.bound: ceiling`, rate method
+  `stated-ceiling`): below the floor it rejects, at or above it is review `ceiling-only`; it never passes alone. A
+  ceiling repeating the top of the one stated range yields to the range; "ranges from $A–$B" is a closed range.
+- **D3 (user, 2026-10-14), the one rule change.** A Freelancer.com hourly contract whose stated rate after FX reaches
+  `rateFloorUsdHour` and whose text states no per-week hours (and no full-time wording tied to it) goes to Contracts
+  with the note "hours not stated; you set them". "Reaches the floor" is the top of the stated range (`maxUsdH`), so
+  "$25–50/h" qualifies (controller, 2026-10-15): the same test as the pay rule and the notification. Kept as they were (user): presets under the budget floor stay in
+  review; boards postings with no pay stay in review.
+- **Source 7b, `src-himalayas-gigs`.** Himalayas' public JSON API, one search per freelance keyword,
+  `employment_type=Contractor,Part Time&country=India`, page 1 only (its robots.txt body disallows `/jobs*&page=`),
+  structured hourly/monthly pay labelled `from: platform`, link back to the Himalayas page, its own team.
+- **Ranking.** Default freelance keywords are backend/AI terms (no `react`, `python`); a Freelancer gig whose skill
+  tags are all off-stack loses 10 fit points (`stack:off`); lists sort by `maxUsdH × fit` after the red-flag rule.
+- **Networks.** A catalogue of 13 networks (India eligibility, rates, hours, link, recommended order; Lemon.io not open
+  to India) joined to `pack/networks/` by id; one-click "Mark applied", logged as `network.status`.
+- **Remotive is off (controller, 2026-10-15).** remotive.com's robots.txt says `Disallow: /api/*` for every agent, so
+  `src-remotive` is never seeded (whatever freelance.yaml says), answers any request with the named skip
+  "robots.txt disallows /api (2026-10-15)" and no request, and the Sources page and `sources probe` show that reason.
+  The code is kept. Remotive was never a daily source.
+- **Daily Himalayas reads page 1 only (controller, 2026-10-15)**: its robots.txt body disallows `/jobs*&page=`.
+- **Review round (2026-10-15).** "Hours not stated" means no hours figure in any unit or wording and no full-time
+  wording ("full-time", "entire week", "9-5", "40 hours"). Hours per month (÷ 4.33) or per day (× 5) convert to a week only
+  as a note (controller, 2026-10-15): the gig is review either way, and a converted figure never rejects. A per-week
+  figure beside a per-month or per-day one that differs by over 20% (or either over the cap) is review: "hours stated in
+  several ways; confirm".
+  An hours range whose top exceeds the cap is review ("hours range up to N/week exceeds 20; confirm"). Structured
+  Himalayas pay needs both ends for a stated range (max only: ceiling; min only: no rate); a figure the text gives per
+  task/day/week/month or as a total/flat/fixed sum, the currency before or after it, voids the hourly label. A Freelancer
+  hourly project with only a maximum is a ceiling. IST in Himalayas time zones means +5.5 exactly.
+
+## 15. freelance-v2 (2026-10-15, user-approved scope)
+
+Research: `.superpowers/sdd/freelance-v2-research.md` (§1, §5); report: `.superpowers/sdd/fv2-report.md`.
+
+- **Contract roles matching your stack (UI only, no rule change).** The top of the Freelance tab (the Contracts tab, the
+  landing page) lists the Review contracts from employer job boards (`boards`, the routed daily contract postings, and
+  `himalayas`) with fit at or above `freelance.fitFloor`, best fit first, then newest posted. Each row: title (link to
+  the gig page), company, remote scope, fit and the first matched skills the user's facts back, what to ask ("Ask pay &
+  hours", "Ask pay", "Ask hours"), the documents (CV, cover letter, pitch) and "Apply on the posting". The rows stay
+  review items: verdicts, lists and eligibility are unchanged, and the Review list still shows each one with an "Also
+  in Contract roles" link (kept complete rather than filtered, so Review stays the whole review queue). The tab bar
+  counts them ("Contract roles N").
+- **Cover letters for contract roles.** A contract from an employer job board also gets the daily cover letter
+  (`planCover`) of its posting named for the real company (title without pictographs), at the compact CV budget, its
+  availability paragraph contract wording from `freelance.yaml` (`maxHoursPerWeek`, `istWindow`, "alongside my current
+  role" only with an ongoing role, `{city}` from contact.yaml). Never pay or hours of the role. Grounded by G-GROUND
+  (re-derivation), G-FILL (the city fill) and G-NAMING; rendered `cover.txt/.pdf/.docx/.html` like the job letters;
+  gig-qa checks them; `gig_docs` and `gig_snapshots` allow kind `cover` and format `html` (app migration 23, a table
+  rebuild that keeps every row). No letter when the gig names no company, its title or company cannot go into a
+  template slot, or no fact backs it. Gate: the `gig-cover-grounding` eval (fictional fixtures, exactMatch 1.000).
+- **Routing (review of freelance-boost).** A stored daily job whose structured employment type is full-time only is
+  never routed to freelance, whatever title label gave its `employment:*` reason.

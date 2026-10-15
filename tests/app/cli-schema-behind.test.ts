@@ -15,8 +15,11 @@ import { jobRow } from '../support/app-fixtures.js';
  * database untouched; the due checks of `--if-due` read it as it is, so the scheduled run can start and migrate it.
  */
 const root = join(import.meta.dirname, '../..');
-/** The index the last app migration creates: dropped (with the version set one back) to make a schema that is behind. */
-const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS.at(-1)))?.[1] as string;
+/** The index the last index migration creates: dropped (with the version set back before it) to make a schema that is behind. */
+const LAST_INDEX_AT = APP_MIGRATIONS.findLastIndex((m) => typeof m === 'string' && /CREATE INDEX IF NOT EXISTS/.test(m));
+const LAST_INDEX = /CREATE INDEX IF NOT EXISTS (\w+)/.exec(String(APP_MIGRATIONS[LAST_INDEX_AT]))?.[1] as string;
+/** The version that leaves the last index migration and every later one (migration 23 re-runs as a no-op) pending. */
+const BEHIND_VERSION = LAST_INDEX_AT;
 let home: string;
 const db = (): string => join(home, 'jobpilot.db');
 const MESSAGE = 'the database needs an upgrade; run `jobpilot facts list` (it takes the run lock)';
@@ -27,7 +30,7 @@ function makeBehind(): void {
   s.upsertJob(jobRow());
   s.close();
   const d = new Database(db());
-  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${APP_MIGRATIONS.length - 1}`);
+  d.exec(`DROP INDEX ${LAST_INDEX}; UPDATE app_schema SET version = ${BEHIND_VERSION}`);
   d.close();
 }
 const state = (): { version: number; index: boolean } => {
@@ -41,7 +44,7 @@ const state = (): { version: number; index: boolean } => {
     d.close();
   }
 };
-const BEHIND = { version: APP_MIGRATIONS.length - 1, index: false };
+const BEHIND = { version: BEHIND_VERSION, index: false };
 const cli = (...args: string[]) =>
   spawnSync(process.execPath, ['--import', 'tsx', join(root, 'src/bin.ts'), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, JOBPILOT_HOME: home, VITEST: 'true' } });
 

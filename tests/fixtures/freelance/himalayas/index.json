@@ -1,0 +1,8 @@
+{
+ "https://himalayas.app/robots.txt": {
+  "status": 404,
+  "file": "robots.txt"
+ },
+ "https://himalayas.app/jobs/api/search?q=backend&employment_type=Contractor%2CPart%20Time&country=India&sort=recent": "backend.json",
+ "https://himalayas.app/jobs/api/search?q=llm&employment_type=Contractor%2CPart%20Time&country=India&sort=recent": "llm.json"
+}

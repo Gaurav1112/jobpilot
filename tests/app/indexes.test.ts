@@ -49,8 +49,8 @@ function rendered(kernel: Store, jobKey: string, n: number): void {
 }
 
 describe('migrations 16-22: indexes only', () => {
-  it('the registry has 22 migrations; 16-22 are literals that create one index each', () => {
-    expect(APP_MIGRATIONS.length).toBe(22);
+  it('the registry has 23 migrations; 16-22 are literals that create one index each', () => {
+    expect(APP_MIGRATIONS.length).toBe(23); // 23: freelance-v2 gig cover letter (tests/app/migration-gig-cover.test.ts)
     for (const [i, name] of NEW_INDEXES.entries()) {
       const m = APP_MIGRATIONS[15 + i];
       expect(typeof m).toBe('string');
@@ -69,10 +69,11 @@ describe('migrations 16-22: indexes only', () => {
     db.prepare(
       `INSERT INTO jobs (job_key, source, source_id, dedupe_key, company, title, url, ats, location, first_seen, last_seen, jd_text, verdict, score) VALUES ('aaaaaaaaaaaaaaaa', 'greenhouse', '1', 'd', 'Acme Robotics', 'SRE', 'https://acme.example/1', 'greenhouse', 'Remote', 't', 't', 'long text', 'eligible', 70)`,
     ).run();
-    const before = dumpHash(db);
+    const before = dumpHash(db, ['gig_docs', 'gig_snapshots']);
     const s = AppStore.on(kernel);
-    expect(s.schemaVersion()).toBe(22);
-    expect(dumpHash(db, NEW_INDEXES)).toBe(before);
+    expect(s.schemaVersion()).toBe(23);
+    // migration 23 rebuilds gig_docs and gig_snapshots for the cover letter (its own dumpHash test): their SQL is skipped here
+    expect(dumpHash(db, [...NEW_INDEXES, 'gig_docs', 'gig_snapshots'])).toBe(before);
     const added = (db.prepare(`SELECT name, tbl_name FROM sqlite_master WHERE name IN (${NEW_INDEXES.map(() => '?').join(', ')}) ORDER BY name`).all(...NEW_INDEXES) as { name: string; tbl_name: string }[]);
     expect(added).toEqual([
       { name: 'envelopes_gig_by_key', tbl_name: 'envelopes' },
@@ -90,7 +91,7 @@ describe('migrations 16-22: indexes only', () => {
   it('an index that already exists (a racing opener built it) is not an error', () => {
     const kernel = v15();
     kernel.db.exec(APP_MIGRATIONS[16] as string);
-    expect(AppStore.on(kernel).schemaVersion()).toBe(22);
+    expect(AppStore.on(kernel).schemaVersion()).toBe(23);
   });
 });
 

@@ -227,6 +227,13 @@ const AVAILABLE_AFTER = 'available after {notice}';
 export const COVER_P4_IMMEDIATE = 'available to start immediately';
 const FULLY_REMOTE = 'a fully remote role';
 
+/**
+ * The availability clause of a notice (freelance-v2, the gig cover letter), in the daily p4's words: "available to start
+ * immediately" for an immediate notice (`isImmediateNotice`), else "available after " and `noticePhrase`.
+ */
+export const availabilityClause = (notice: string): string =>
+  isImmediateNotice(notice) ? COVER_P4_IMMEDIATE : fill(AVAILABLE_AFTER, { notice: noticePhrase(notice) });
+
 /** "A", "A or B", "A, B or C". */
 export const joinOr = (items: readonly string[]): string =>
   items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1] as string}`;

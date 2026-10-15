@@ -4,6 +4,8 @@ import type { RawGig } from '../types.js';
 import { checkGigs, finishGigs, getBoard, gigSourceContract, idOf, isRecord } from './common.js';
 
 /**
+ * OFF since 2026-10-15: see REMOTIVE_OFF. What follows describes the source as it was.
+ *
  * Remotive public API, one request: `https://remotive.com/api/remote-jobs?category=software-dev`. Its notice asks for
  * few calls (at most 2 a day), so the agent answers only the `am` half of an IST day and returns `[]` for `pm`
  * without a request; the pm run reuses the am outputs through the projector.
@@ -18,9 +20,16 @@ export const REMOTIVE_JOB_TYPES: readonly string[] = ['contract', 'freelance', '
 
 export const srcRemotiveContract = gigSourceContract('src-remotive', REMOTIVE_HOST, 'Fetches contract or part-time software jobs from the Remotive feed');
 
-export const srcRemotive = defineAgent(srcRemotiveContract, async (req, ctx) => {
-  if (req.platform !== 'remotive' || req.half !== 'am') return [];
-  const json = await getBoard(ctx, REMOTIVE_URL, 'remotive');
+/**
+ * OFF since 2026-10-15 (controller decision, the user's rule "no scraping against robots.txt"): remotive.com's
+ * robots.txt says `Disallow: /api/*` for every agent. The run never seeds Remotive (`freelanceSeeds`), and this agent
+ * answers any Remotive request it still gets with the named skip REMOTIVE_OFF and no request. The code is kept for the
+ * day the rule changes.
+ */
+export const REMOTIVE_OFF: string | null = 'robots.txt disallows /api (2026-10-15)';
+
+/** The kept parse of one Remotive response (the agent's, before it was switched off): gigs and skipped-job notes. */
+export function remotiveParse(json: unknown): { gigs: RawGig[]; skipped: string[]; total: number } {
   if (!isRecord(json) || !Array.isArray(json.jobs)) throw new KernelError('invalid_output', 'remotive: no jobs array');
   const gigs: RawGig[] = [];
   const skipped: string[] = [];
@@ -32,6 +41,17 @@ export const srcRemotive = defineAgent(srcRemotiveContract, async (req, ctx) => 
     }
     if (typeof job.job_type === 'string' && REMOTIVE_JOB_TYPES.includes(job.job_type)) gigs.push({ platform: 'remotive', sourceId: id, raw: job });
   });
-  checkGigs(ctx, 'remotive', 'jobs', json.jobs.length, skipped);
+  return { gigs, skipped, total: json.jobs.length };
+}
+
+export const srcRemotive = defineAgent(srcRemotiveContract, async (req, ctx) => {
+  if (req.platform !== 'remotive') return [];
+  if (REMOTIVE_OFF !== null) {
+    ctx.skipped([`remotive: ${REMOTIVE_OFF}; not read`]);
+    return [];
+  }
+  if (req.half !== 'am') return [];
+  const { gigs, skipped, total } = remotiveParse(await getBoard(ctx, REMOTIVE_URL, 'remotive'));
+  checkGigs(ctx, 'remotive', 'jobs', total, skipped);
   return finishGigs(gigs);
 });

@@ -74,6 +74,50 @@ function staleMigration(db: Database.Database): void {
   db.exec(`ALTER TABLE jobs ADD COLUMN cited_facts TEXT`);
 }
 
+/**
+ * Rebuilds `table` (its stored SQL `CREATE TABLE t (` or, after an earlier rebuild, `CREATE TABLE "t" (`) from its own stored SQL with each `[old, new]` CHECK replaced, keeping every column, row (rowid
+ * included), index and trigger (SQLite's documented table-rebuild procedure). Refuses (throws) when the stored SQL does
+ * not hold each old CHECK exactly once, so a schema that is not the expected one is never rewritten.
+ */
+export function rebuildChecks(db: Database.Database, table: string, checks: readonly (readonly [string, string])[]): void {
+  const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) as { sql: string } | undefined;
+  if (!row) throw new Error(`migration: no ${table} table`);
+  // A table made by CREATE TABLE keeps its name bare; one a rebuild renamed into place is stored quoted ("gig_docs").
+  const head = [`CREATE TABLE ${table} (`, `CREATE TABLE "${table}" (`].find((h) => row.sql.startsWith(h));
+  if (head === undefined) throw new Error(`migration: the ${table} table is not the expected shape`);
+  let sql = row.sql;
+  for (const [from, to] of checks) {
+    if (sql.split(from).length !== 2) throw new Error(`migration: the ${table} table is not the expected shape`);
+    sql = sql.replace(from, () => to);
+  }
+  const rebuilt = `${table}_rebuilt`;
+  const cols = (db.prepare(`SELECT name FROM pragma_table_info(?) ORDER BY cid`).all(table) as { name: string }[]).map((c) => `"${c.name}"`).join(', ');
+  const extras = (db.prepare(`SELECT sql FROM sqlite_master WHERE type IN ('index', 'trigger') AND tbl_name = ? AND sql IS NOT NULL ORDER BY type, name`).all(table) as { sql: string }[]).map((r) => r.sql);
+  db.exec(`CREATE TABLE ${rebuilt} (${sql.slice(head.length)}`);
+  db.exec(`INSERT INTO ${rebuilt} (rowid, ${cols}) SELECT rowid, ${cols} FROM ${table} ORDER BY rowid`);
+  db.exec(`DROP TABLE ${table}`);
+  db.exec(`ALTER TABLE ${rebuilt} RENAME TO ${table}`);
+  for (const e of extras) db.exec(e);
+}
+
+/**
+ * freelance-v2 (migration 23): the gig documents and their applied snapshots allow the cover letter of a contract role
+ * on an employer job board, kind `cover` in format `txt`, `pdf`, `docx` or `html`. Both CHECKs are literals on purpose:
+ * this migration's SQL must never change. Rows, indexes and triggers are kept as they were.
+ */
+function gigCoverMigration(db: Database.Database): void {
+  const checks = [
+    ["CHECK (kind IN ('proposal', 'pitch', 'resume'))", "CHECK (kind IN ('proposal', 'pitch', 'resume', 'cover'))"],
+    ["CHECK (format IN ('txt', 'pdf', 'docx'))", "CHECK (format IN ('txt', 'pdf', 'docx', 'html'))"],
+  ] as const;
+  for (const table of ['gig_docs', 'gig_snapshots']) {
+    // A table that already has both new CHECKs (an opener that lost a race, or a re-run) is left as it is.
+    const row = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table) as { sql: string } | undefined;
+    if (row !== undefined && checks.every(([from, to]) => row.sql.includes(to) && !row.sql.includes(from))) continue;
+    rebuildChecks(db, table, checks);
+  }
+}
+
 export const APP_MIGRATIONS: readonly AppMigration[] = [
   `
   CREATE TABLE jobs (
@@ -413,4 +457,7 @@ export const APP_MIGRATIONS: readonly AppMigration[] = [
   `CREATE INDEX IF NOT EXISTS envelopes_posting_by_job ON envelopes (json_extract(body, '$.payload.jobKey')) WHERE type = 'Posting@1';`,
   `CREATE INDEX IF NOT EXISTS envelopes_gig_by_key ON envelopes (json_extract(body, '$.payload.gigKey')) WHERE type = 'Gig@1';`,
   `CREATE INDEX IF NOT EXISTS envelopes_gig_rendered_by_key ON envelopes (json_extract(body, '$.payload.gigKey')) WHERE type = 'GigRendered@1';`,
+  // freelance-v2: gig_docs and gig_snapshots allow the cover letter (kind cover, format html): a CHECK change, so a
+  // table rebuild that keeps every row, index and trigger (`gigCoverMigration`).
+  { foreignKeysOff: true, run: gigCoverMigration },
 ];

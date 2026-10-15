@@ -9,6 +9,7 @@ import { renderDocx } from '../render/docx.js';
 import { RenderPack } from '../render/fill.js';
 import { modelText, normText, PAGE_LIMITS, resumeModel } from '../render/model.js';
 import { renderPdf, uncoveredGlyph } from '../render/pdf.js';
+import { catalogueEntry } from './network-catalogue.js';
 import { checklistMarkdown, networkPack, profileCutNotes, profileText } from './networks.js';
 
 /**
@@ -29,9 +30,16 @@ export interface NetworksDeps {
 
 export const NETWORK_FILES = ['resume.pdf', 'resume.docx', 'profile.txt', 'checklist.md'] as const;
 
-/** One line per network: id, name, whether the user checked the file, and the screening stage count. */
+/**
+ * One line per network file: id, name, whether the user checked the file, the screening stage count, and (freelance-
+ * boost) the catalogue's India verdict when it is not "open" (Lemon.io: not open to India).
+ */
 export function networksList(loaded: Pick<RunPack, 'pack'>): string[] {
-  return loaded.pack.networks.map((n) => `${n.id}  ${n.name}  ${n.checkedByUser ? 'checked' : 'not checked by you'}  ${n.screening.length} stages`);
+  const india = (id: string): string => {
+    const c = catalogueEntry(id);
+    return c === undefined || c.india === 'open' ? '' : c.india === 'not-open' ? '  not open to India' : '  India not confirmed';
+  };
+  return loaded.pack.networks.map((n) => `${n.id}  ${n.name}  ${n.checkedByUser ? 'checked' : 'not checked by you'}  ${n.screening.length} stages${india(n.id)}`);
 }
 
 const pdfTextOf = (binary: string, path: string): string => execFileSync(binary, ['-layout', path, '-'], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });

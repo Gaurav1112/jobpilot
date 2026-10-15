@@ -244,3 +244,14 @@ node --run verify      # typecheck, tests, contract drift check, evals
 
 Use `node --run`, not `pnpm <script>`. Tests use the fictional fixture pack in
 `tests/fixtures/pack/`.
+
+The test suite fails closed on real network access. A vitest setup file
+(`tests/support/net-guard.ts`) makes real `fetch`, `net.Socket.connect` and `dns.lookup` throw
+for any host that is not loopback; local fixture servers on `127.0.0.1` or `localhost` still
+work. It also sets `JOBPILOT_NO_NETWORK=1`. With that variable set, jobpilot's own network
+entries (`nodeFetch`, the online probes, the browser provider, the Gmail token post and the
+probe reader) refuse every host that is not loopback. CLI processes spawned by tests inherit it.
+A test that truly needs the network must opt in by name: call `allowRealNetwork()` from the
+setup file and call the function it returns, in a `finally`, to turn the guard back on.
+Chromium's own background traffic is not covered, since it runs in its own process. The browser
+tests render local fixture servers only.

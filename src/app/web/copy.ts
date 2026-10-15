@@ -89,6 +89,7 @@ export function breakdownText(label: string, display: (key: string) => string): 
   if (label === 'title:seniority') return 'Seniority in the title';
   if (label === 'title:family') return 'Job family in the title';
   if (label === 'years>max') return 'Asks for more years than your limit';
+  if (label === 'stack:off') return 'Every skill tag is off your stack';
   const m = /^(strong|medium|gap):(.+)$/.exec(label);
   if (m) {
     const term = display(m[2] as string);
@@ -117,6 +118,8 @@ export interface RateBasis {
   readonly budgetType: string;
   /** The preset tier in USD when the gig was posted in one (`presetTierUsd`), else null or absent. */
   readonly presetTier?: { readonly lo: number; readonly hi: number } | null;
+  /** Where the budget was read (`Gig.budget.from`, freelance-boost): absent on the older sources. */
+  readonly budgetFrom?: string | null;
 }
 
 const num1 = (n: number): string => n.toFixed(1).replace(/\.0$/, '');
@@ -132,7 +135,8 @@ function perHour(r: GigRate): string {
 
 /**
  * The rate as the user reads it, always with how it was reached (spec §5: a derived rate is never shown without its
- * label). `stated`: "$50/h stated"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
+ * label). `stated`: "$50/h stated" (freelance-boost: "… stated in the posting text" or "… stated (pay field)" when the
+ * budget says where it was read); `stated-ceiling`: "up to $130/h (stated ceiling only)"; `derived-from-duration`: "$75/h derived from 2 weeks (the basis is not on record)" (the hours cap the run used is not stored); `fixed÷stated-hours`:
  * "$50/h from ~60 hours stated" or "$25/h from 3 weeks × 20 h stated"; `monthly÷hours`: "$46.19/h from a monthly
  * $4,000 at 20 h/week stated"; `unknown`: "rate unknown - fixed budget $750" (or just "rate unknown"), or for a
  * preset tier (final review I1) "preset tier $750–1,500 (client picked a range; bids may exceed it)". A rate the
@@ -150,9 +154,12 @@ export function rateLabel(rate: GigRate | null, basis: RateBasis): string {
   }
   const pay = perHour(rate);
   const missing = ' (the basis is not on record)';
+  const where = basis.budgetFrom === 'description' ? ' in the posting text' : basis.budgetFrom === 'platform' ? ' (pay field)' : '';
   switch (rate.method) {
     case 'stated':
-      return `${pay} stated${fx}`;
+      return `${pay} stated${where}${fx}`;
+    case 'stated-ceiling':
+      return `up to ${usdText((rate.maxUsdH ?? rate.minUsdH) as number)}/h (stated ceiling only)${where}${fx}`;
     case 'derived-from-duration': {
       // The run divided the budget by weeks × the pack's weekly hours cap at that time. The stored rate keeps neither
       // figure, and the cap is never recomputed from the rate or read from today's pack: only the weeks (from the
@@ -192,7 +199,7 @@ export function flagText(f: { readonly id: string; readonly detail: string }): {
 
 const PLATFORM_NAME: Readonly<Record<string, string>> = {
   freelancer: 'Freelancer.com', remotive: 'Remotive', 'hn-freelancer': 'HN freelancer thread', 'hn-hiring': 'HN who is hiring', boards: 'Job boards (contract roles)',
-  gmail: 'Gmail', upwork: 'Upwork', reddit: 'Reddit',
+  gmail: 'Gmail', upwork: 'Upwork', reddit: 'Reddit', himalayas: 'Himalayas',
 };
 /** A gig platform id as the user reads it. */
 export const platformName = (id: string): string => PLATFORM_NAME[id] ?? id;
@@ -221,6 +228,34 @@ export function hoursText(h: { readonly min: number | null; readonly max: number
   if (h === null || (h.min === null && h.max === null)) return 'hours not stated';
   if (h.min !== null && h.max !== null && h.min !== h.max) return `${num1(h.min)}–${num1(h.max)} h/week`;
   return `${num1((h.max ?? h.min) as number)} h/week`;
+}
+
+/**
+ * Where a contract role may be worked from, from the stored Gig@1 `location` (freelance-v2, Contract roles): the
+ * posting's own text when it names remote work ("Remote - India"), else "Remote: <text>", "Remote, worldwide", or
+ * "Remote: <countries>"; "remote scope not stated" when nothing is on record. Never guessed.
+ */
+export function scopeText(location: unknown): string {
+  if (typeof location !== 'object' || location === null) return 'remote scope not stated';
+  const l = location as { text?: unknown; worldwide?: unknown; countries?: unknown };
+  const t = typeof l.text === 'string' ? l.text.trim() : '';
+  if (t !== '') return /\bremote\b/i.test(t) ? t : `Remote: ${t}`;
+  if (l.worldwide === true) return 'Remote, worldwide';
+  const cs = Array.isArray(l.countries) ? l.countries.filter((c): c is string => typeof c === 'string' && c !== '' && c !== 'worldwide') : [];
+  return cs.length === 0 ? 'remote scope not stated' : `Remote: ${cs.map((c) => c.charAt(0).toUpperCase() + c.slice(1)).join(', ')}`;
+}
+
+/**
+ * What to ask before applying to a contract role whose terms are not stated (freelance-v2, Contract roles): pay when the
+ * verdict says `rate-unclear` or no rate is on record, hours when it says `hours-unclear` or no hours are stated.
+ * "Ask pay & hours", "Ask pay", "Ask hours", or "Ask before you apply" for any other review reason. Never a figure.
+ */
+export function askText(g: { readonly reasons: readonly string[]; readonly rate: unknown; readonly hours: unknown }): string {
+  const rate = typeof g.rate === 'object' && g.rate !== null ? (g.rate as { method?: unknown }).method : undefined;
+  const h = typeof g.hours === 'object' && g.hours !== null ? (g.hours as { min?: unknown; max?: unknown }) : {};
+  const pay = g.reasons.includes('rate-unclear') || rate === undefined || rate === 'unknown';
+  const hours = g.reasons.includes('hours-unclear') || ((h.min ?? null) === null && (h.max ?? null) === null);
+  return pay && hours ? 'Ask pay & hours' : pay ? 'Ask pay' : hours ? 'Ask hours' : 'Ask before you apply';
 }
 
 /** The client's signals, each only when the platform states it. */

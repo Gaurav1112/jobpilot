@@ -147,7 +147,7 @@ describe('the real pipeline decides relevance', () => {
 
 describe('sources probed', () => {
   it('lists the kept sources and the parked ones; GitHub, bounties and Algora are absent', () => {
-    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'freelancer', 'golangprojects', 'hn-freelancer', 'hn-hiring', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
+    expect([...PROBE_SOURCE_IDS].sort()).toEqual(['arbeitnow', 'freelancer', 'golangprojects', 'himalayas', 'hn-freelancer', 'hn-hiring', 'remoteok', 'remotive', 'workingnomads', 'wwr']);
     expect(PARKED_IDS).toEqual(['arbeitnow', 'golangprojects', 'remoteok', 'workingnomads', 'wwr']);
     for (const id of PROBE_SOURCE_IDS) expect(id).not.toMatch(/github|algora|bount/i);
   });
@@ -159,7 +159,9 @@ describe('sources probed', () => {
     app.close();
     expect(report.rows.map((r) => r.id).sort()).toEqual([...PROBE_SOURCE_IDS].sort());
     expect(JSON.stringify(report)).not.toMatch(/github|algora/i);
-    expect(fetch.calls.filter((u) => u.startsWith('https://remotive.com/')).length).toBe(1);
+    // Remotive is off since 2026-10-15 (its robots.txt disallows /api/*): its row says so and nothing is asked.
+    expect(fetch.calls.filter((u) => u.startsWith('https://remotive.com/')).length).toBe(0);
+    expect(report.rows.find((r) => r.id === 'remotive')?.errors).toEqual(['off: robots.txt disallows /api (2026-10-15)']);
     expect(fetch.calls.some((u) => /github|algora/.test(u))).toBe(false);
     const table = formatProbeTable(report);
     expect(table).toMatch(/Source\s+Score\s+Skill-matched\s+Relevant \(hours ok\)\s+Pass all rules\s+Review/);
@@ -184,7 +186,7 @@ describe('--record', () => {
     await runProbe(deps(app, { record }));
     app.close();
     expect(files.size).toBeGreaterThan(5);
-    expect([...files.keys()].some((n) => n.startsWith('remotive'))).toBe(true);
+    expect([...files.keys()].some((n) => n.startsWith('remotive'))).toBe(false);
     expect([...files.keys()].some((n) => n.startsWith('workingnomads'))).toBe(true);
   });
 

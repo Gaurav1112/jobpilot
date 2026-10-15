@@ -1,4 +1,5 @@
 import type { Clock } from '../../kernel/clock.js';
+import type { HostPacer } from '../../kernel/broker.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import type { RunReport } from '../../kernel/supervisor.js';
 import { diskDocCheck } from '../docs-check.js';
@@ -55,6 +56,12 @@ export interface FreelanceRunOptions {
    * goes on.
    */
   readonly gmail?: () => GmailRunAccess;
+  /**
+   * The HTTPS online check (`pacedHttpsOnline`), given the supervisor's per-host pacer, which its probes must wait on: a
+   * network failure while it says offline is not final; the step is re-queued once it passes (the supervisor's wake
+   * rule). Absent (tests, fixtures): only failures just after a detected wake are re-queued.
+   */
+  readonly online?: (pacer: HostPacer) => Promise<boolean>;
 }
 
 export interface FreelanceSummary {
@@ -85,6 +92,7 @@ const PLATFORM_NAME: Readonly<Record<Platform, string>> = {
   gmail: 'Gmail',
   upwork: 'Upwork',
   reddit: 'Reddit',
+  himalayas: 'Himalayas',
 };
 
 const TITLE_MAX = 40;
@@ -194,7 +202,7 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
           gmail = { ...GMAIL_OFF, reason: `Gmail could not be prepared (${e instanceof Error ? e.message : String(e)}); Gmail skipped` };
         }
       }
-      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}) });
+      const k = freelanceKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: gmail.wrap(o.fetch), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}) });
       const prefix = `freelance-${runDate}-${half}`;
       const { runId, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skipped.map((id) => `run ${id} did not complete and used another policy, so it was not resumed; it stays incomplete`)];

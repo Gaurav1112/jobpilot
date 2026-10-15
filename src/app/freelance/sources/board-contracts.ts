@@ -6,13 +6,14 @@ import { GigRequest, RawGig } from '../types.js';
 
 /**
  * Contract postings the daily pipeline already stored. The freelance run seeds one `platform: 'boards'` request per
- * stored daily job whose reasons include `employment:contract`, `employment:freelance` or `employment:part-time`
+ * stored daily job whose reasons route it here (`store/contract-routes.ts`: contract, contractor, freelance, part-time,
+ * temporary, fixed-term, contract-to-hire and a fixed-length "N months" wording)
  * (read through AppStore in the app layer). `item` must be a daily Posting@1; anything else is `invalid_output`.
  * Emits `RawGig{platform: 'boards', sourceId: posting.jobKey, raw: posting}`. Fetches nothing.
  */
 export const srcBoardContractsContract = defineContract({
   id: 'src-board-contracts',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Converts a stored daily contract posting into a raw gig',
   skills: ['gig-sourcing'],
   team: 'sourcing',

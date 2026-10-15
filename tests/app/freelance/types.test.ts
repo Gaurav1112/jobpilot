@@ -48,8 +48,8 @@ describe('freelance types', () => {
     expect(Gig.schema.safeParse({ ...gig, client: { ...gig.client, extra: 1 } }).success).toBe(false);
     expect(RatedGig.schema.safeParse({ ...rated, rate: { ...rated.rate, extra: 1 } }).success).toBe(false);
   });
-  it('Platform lists the eight platforms', () => {
-    expect(Platform.options).toEqual(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit']);
+  it('Platform lists the nine platforms (himalayas: freelance-boost)', () => {
+    expect(Platform.options).toEqual(['freelancer', 'remotive', 'hn-freelancer', 'hn-hiring', 'boards', 'gmail', 'upwork', 'reddit', 'himalayas']);
   });
   it('gigKey is 16 hex, stable, and differs from jobKey', () => {
     const k = gigKey('freelancer', '40752583');

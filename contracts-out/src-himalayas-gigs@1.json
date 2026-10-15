@@ -1,0 +1,132 @@
+{
+  "hash": "c3ee6c9d8ba2e1a6015ebd553c058de85ac0e47c2eb3cb887b7dfe82cf4395c9",
+  "shape": {
+    "breaker": {
+      "consecutiveFailures": 5
+    },
+    "budget": {
+      "usdPerCall": 0,
+      "usdPerRun": 0
+    },
+    "capabilities": {
+      "http": true
+    },
+    "consumes": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "half": {
+            "enum": [
+              "am",
+              "pm"
+            ],
+            "type": "string"
+          },
+          "item": {},
+          "platform": {
+            "enum": [
+              "freelancer",
+              "remotive",
+              "hn-freelancer",
+              "hn-hiring",
+              "boards",
+              "gmail",
+              "upwork",
+              "reddit",
+              "himalayas"
+            ],
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "runDate": {
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "query",
+          "runDate",
+          "half"
+        ],
+        "type": "object"
+      },
+      "type": "GigRequest@1"
+    },
+    "dataClasses": {
+      "in": [
+        "P0"
+      ],
+      "out": [
+        "P0"
+      ]
+    },
+    "egress": [
+      "himalayas.app"
+    ],
+    "guarantees": [],
+    "guardrails": {
+      "in": [],
+      "out": []
+    },
+    "id": "src-himalayas-gigs",
+    "kind": "io",
+    "obligations": {
+      "adds": [],
+      "discharges": []
+    },
+    "produces": {
+      "schema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "platform": {
+            "enum": [
+              "freelancer",
+              "remotive",
+              "hn-freelancer",
+              "hn-hiring",
+              "boards",
+              "gmail",
+              "upwork",
+              "reddit",
+              "himalayas"
+            ],
+            "type": "string"
+          },
+          "raw": {},
+          "sourceId": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "platform",
+          "sourceId",
+          "raw"
+        ],
+        "type": "object"
+      },
+      "type": "RawGig@1"
+    },
+    "redactor": false,
+    "requires": [],
+    "retry": {
+      "backoffMs": [
+        2000,
+        8000
+      ],
+      "max": 2,
+      "on": [
+        "network",
+        "overloaded",
+        "timeout"
+      ]
+    },
+    "team": "sourcing-himalayas",
+    "timeoutMs": 30000,
+    "version": "1.0.0"
+  }
+}

@@ -7,7 +7,8 @@ import { termsIn, type TermGroup } from '../../lexicon.js';
 import { forbiddenTermStrict } from '../../pack/rules.js';
 import type { ResumePlan } from '../../types.js';
 import { type Gig, GigDocsPlan, ScoredGig } from '../types.js';
-import { evidenceFor, syntheticPosting } from './gig-evidence.js';
+import { evidenceFor } from './gig-evidence.js';
+import { gigPostingOf, planGigCover } from './gig-cover.js';
 import { asciiPunct, DOMAIN_KEYS, hasNonAsciiPunct, PHRASES, pick, planCategory, variantOf } from './phrases.js';
 import { pitchOf } from './pitch-planner.js';
 
@@ -45,6 +46,7 @@ import { pitchOf } from './pitch-planner.js';
  *   else `PHRASES.question`; with nothing missing, a scope question.
  * - **Variant** of every slot: `variantOf(gigKey, n)` (`phrases.ts`).
  * - Kind `gig` gets a proposal, kind `contract` a pitch (`pitch-planner.ts`); a bounty or network alert gets no plan.
+ *   A contract from an employer job board also gets a cover letter (`cover`, freelance-v2: `gig-cover.ts`).
  * - **Shortlist (Task 9).** The agent plans nothing for a gig whose fit is under `freelance.fitFloor` (`belowFitFloor`);
  *   `planGigDocs` itself plans any scored gig (the gig-grounding eval runs it on every fixture gig).
  */
@@ -389,14 +391,7 @@ export function gigSlots(scored: ScoredGig, resume: ResumePlan, rawPack: unknown
 export function gigResume(scored: ScoredGig, rawPack: unknown): ResumePlan {
   const pack = writingPackOf(rawPack, 'proposal-planner');
   const gig = scored.risked.verdict.rated.gig;
-  const posting = syntheticPosting({
-    key: gig.gigKey,
-    title: gig.title,
-    company: gig.platform,
-    text: gig.skills.length === 0 ? gig.description : `${gig.description}\n${gig.skills.join(', ')}`,
-    firstSeen: gig.postedAt ?? `${pack.experience.asOf}-01`,
-  });
-  return planResume(evidenceFor(posting, pack, rawPack), pack, COMPACT);
+  return planResume(evidenceFor(gigPostingOf(gig, pack, gig.platform), pack, rawPack), pack, COMPACT);
 }
 
 /** The GigDocsPlan of one scored gig, or undefined for a kind that gets neither a proposal nor a pitch. */
@@ -405,7 +400,13 @@ export function planGigDocs(scored: ScoredGig, rawPack: unknown): GigDocsPlan | 
   if (gig.kind !== 'gig' && gig.kind !== 'contract') return undefined;
   const resume = gigResume(scored, rawPack);
   const base = { gigKey: gig.gigKey, scored, platform: gig.platform, resume, covered: [...resume.covered], missing: [...resume.missing] };
-  if (gig.kind === 'contract') return { ...base, proposal: null, pitch: pitchOf(gigSlots(scored, resume, rawPack, 2)) };
+  if (gig.kind === 'contract') {
+    // freelance-v2: a contract role from an employer job board also gets the daily cover letter (`gig-cover.ts`); the
+    // key is left out for every other gig, so their plans are byte-identical to before.
+    const c = planGigCover(gig, writingPackOf(rawPack, 'proposal-planner'), rawPack, GigRules.parse(rawPack).freelance);
+    const extra = c === undefined ? {} : 'cover' in c ? { cover: c.cover } : { coverNote: c.note };
+    return { ...base, proposal: null, pitch: pitchOf(gigSlots(scored, resume, rawPack, 2)), ...extra };
+  }
   const proposalOf = (s: GigSlots): Proposal => ({
     hook: { ...s.hook },
     evidenceIntro: s.evidenceIntro,
@@ -423,7 +424,7 @@ export function planGigDocs(scored: ScoredGig, rawPack: unknown): GigDocsPlan | 
 
 export const proposalPlannerContract = defineContract({
   id: 'proposal-planner',
-  version: '1.5.0',
+  version: '1.7.0',
   description: 'Plans the grounded screening documents of one gig',
   skills: ['proposal-planning'],
   team: 'writing',

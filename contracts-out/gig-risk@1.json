@@ -1,5 +1,5 @@
 {
-  "hash": "3c6552987bd7c1665eeb7e2cc6ab0286a03bae3c745b254a9a3e7eacf9713bd0",
+  "hash": "b816adb4883966db2f5d9b732b8eb350ca997934940e3eb1a3f43474d0a2d974",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -37,6 +37,10 @@
                   "budget": {
                     "additionalProperties": false,
                     "properties": {
+                      "bound": {
+                        "const": "ceiling",
+                        "type": "string"
+                      },
                       "currency": {
                         "anyOf": [
                           {
@@ -57,6 +61,13 @@
                             "type": "null"
                           }
                         ]
+                      },
+                      "from": {
+                        "enum": [
+                          "platform",
+                          "description"
+                        ],
+                        "type": "string"
                       },
                       "max": {
                         "type": [
@@ -263,7 +274,8 @@
                       "boards",
                       "gmail",
                       "upwork",
-                      "reddit"
+                      "reddit",
+                      "himalayas"
                     ],
                     "type": "string"
                   },
@@ -380,6 +392,7 @@
                   "method": {
                     "enum": [
                       "stated",
+                      "stated-ceiling",
                       "fixed÷stated-hours",
                       "derived-from-duration",
                       "monthly÷hours",
@@ -504,6 +517,10 @@
                       "budget": {
                         "additionalProperties": false,
                         "properties": {
+                          "bound": {
+                            "const": "ceiling",
+                            "type": "string"
+                          },
                           "currency": {
                             "anyOf": [
                               {
@@ -524,6 +541,13 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "from": {
+                            "enum": [
+                              "platform",
+                              "description"
+                            ],
+                            "type": "string"
                           },
                           "max": {
                             "type": [
@@ -730,7 +754,8 @@
                           "boards",
                           "gmail",
                           "upwork",
-                          "reddit"
+                          "reddit",
+                          "himalayas"
                         ],
                         "type": "string"
                       },
@@ -847,6 +872,7 @@
                       "method": {
                         "enum": [
                           "stated",
+                          "stated-ceiling",
                           "fixed÷stated-hours",
                           "derived-from-duration",
                           "monthly÷hours",
@@ -919,6 +945,6 @@
     },
     "team": "evaluation",
     "timeoutMs": 10000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

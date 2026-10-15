@@ -1,14 +1,16 @@
 import type { Context, Hono } from 'hono';
 import { termDisplay } from '../agents/writing/grounded.js';
 import { NETWORK_FILES } from '../freelance/networks-command.js';
+import { catalogueEntry, NETWORKS_CHECKED, orderedNetworkIds } from '../freelance/network-catalogue.js';
 import { isoWeek } from '../freelance/health.js';
 import { ALERT_PARSERS } from '../freelance/mail/parsers/index.js';
-import { PLATFORM_AGENT } from '../freelance/pipeline.js';
+import { PLATFORM_AGENT, ROBOTS_OFF } from '../freelance/pipeline.js';
 import { presetTierUsd } from '../freelance/gig-eligibility.js';
 import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
 import { rankable } from '../freelance/run.js';
 import { Platform, type GigRendered } from '../freelance/types.js';
+import { COVER_PLATFORMS } from '../freelance/writing/gig-cover.js';
 import { FreelanceFile } from '../pack/freelance-schema.js';
 import type { NamingRules } from '../pack/rules.js';
 import type { Pack } from '../pack/schema.js';
@@ -16,7 +18,7 @@ import type { homePaths } from '../pack/paths.js';
 import { istDate } from '../run.js';
 import type { AppStore, GigDoc, GigStatus, GigView, NetworkStatus } from '../store/app-store.js';
 import { GIG_STATUSES, NETWORK_STATUSES } from '../store/schema.js';
-import { breakdownText, clientSignals, coverageText, DISABLED_REASON, flagText, GMAIL_NO_PARSERS, gigDocsReason, hoursText, rateLabel, type GigRate } from './copy.js';
+import { askText, breakdownText, clientSignals, coverageText, DISABLED_REASON, flagText, GMAIL_NO_PARSERS, gigDocsReason, hoursText, rateLabel, scopeText, type GigRate } from './copy.js';
 import { readConfined, readRecorded, snapshotGigApplied, type ReadResult } from './files.js';
 import { ageText, istTimeText } from './format.js';
 import { html, type Html } from './html.js';
@@ -30,11 +32,14 @@ import {
   networksBody,
   networkStatusBlock,
   sourcesBody,
+  type ContractRoleView,
   type FreelanceTab,
+  type GigPageData,
   type GigRowView,
   type NetworkCard,
   type PasteDoc,
   type SourceTable,
+  type TabCounts,
 } from './views/freelance.js';
 import type { Banner, Nav } from './views/layout.js';
 
@@ -77,13 +82,14 @@ export interface FreelanceDeps {
 
 const GIG_KEY = /^[0-9a-f]{16}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
-const GIG_FILE = /^(?:(proposal|pitch)\.txt|resume\.(pdf|docx))$/;
+const GIG_FILE = /^(?:(proposal|pitch)\.txt|resume\.(pdf|docx)|cover\.(txt|pdf|docx|html))$/;
 const NETWORK_ID = /^[a-z][a-z0-9-]*$/;
 const CONTENT_TYPE: Readonly<Record<string, string>> = {
   txt: 'text/plain; charset=utf-8',
   md: 'text/plain; charset=utf-8',
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  html: 'text/html; charset=utf-8',
 };
 /** Breakdown rows the scorer shows but never counts in `fit` (gig-scorer.ts). */
 const SHOWN_ONLY: Readonly<Record<string, string>> = { client: 'Client signals', fresh: 'Hours since posted', bids: 'Bids so far' };
@@ -95,8 +101,13 @@ const NOTICE: Readonly<Record<string, string>> = {
   keepbusy: "Status saved. Couldn't keep a copy of the documents just now; use 'Keep a copy' below.",
 };
 
+/** Code-unit order (locale independent, as every sort in the app). */
+const codeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/** Where a stored budget was read (`Gig.budget.from`), or null when it does not say. */
+const budgetFromOf = (b: unknown): string | null => (isObj(b) && typeof b['from'] === 'string' ? b['from'] : null);
 
 /** A stored rate, or null when the gig was never rated. */
 function rateOf(v: unknown): GigRate | null {
@@ -150,7 +161,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const bids = numOrNull(g.breakdown?.['bids']) ?? numOrNull(x.gig?.['bids']);
     return {
       gig: g,
-      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType, presetTier: presetTierUsd(g) }),
+      rate: rateLabel(rateOf(g.rate), { description: g.description, weeks: numOrNull(duration['weeks']), hours: hours?.max ?? null, budgetType, presetTier: presetTierUsd(g), budgetFrom: budgetFromOf(g.budget) }),
       hours: hoursText(hours),
       overlap: overlap === null ? null : text(overlap),
       istWindow: `${rules.istWindow.replace('-', '–')} IST`,
@@ -174,8 +185,36 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     );
   };
 
-  const countsOf = (gigs: readonly GigView[], fitFloor: number): Partial<Record<FreelanceTab, number>> =>
-    Object.fromEntries(GIG_TABS.map((t) => [t, ranked(gigs, t, fitFloor).length]));
+  const countsOf = (gigs: readonly GigView[], fitFloor: number): TabCounts => ({
+    ...Object.fromEntries(GIG_TABS.map((t) => [t, ranked(gigs, t, fitFloor).length])),
+    roles: contractRoles(gigs, fitFloor).length,
+  });
+
+  /**
+   * "Contract roles matching your stack" (freelance-v2, Feature 1; a view, no rule): the Review contracts from employer
+   * job boards (`COVER_PLATFORMS`: boards, Himalayas) with a fit at or above the fit floor, best fit first, then newest
+   * posted (unknown last), then gig key. Duplicate listings are already left out by `listGigs`.
+   */
+  const contractRoles = (gigs: readonly GigView[], fitFloor: number): GigView[] =>
+    gigs
+      .filter((g) => g.list === 'review' && g.kind === 'contract' && COVER_PLATFORMS.includes(g.platform as Platform) && g.fit !== null && g.fit >= fitFloor)
+      .sort((a, b) => (b.fit as number) - (a.fit as number) || codeUnits(b.postedAt ?? '', a.postedAt ?? '') || codeUnits(a.gigKey, b.gigKey));
+
+  /** One Contract roles row, in the user's words (redacted by the caller). */
+  const roleView = (g: GigView, x: Extras, docs: readonly GigDoc[], pack: Pack | undefined, now: string, text: (s: string) => string): ContractRoleView => {
+    const covered = x.rendered?.plan?.covered;
+    const name = isObj(g.client) && typeof g.client['name'] === 'string' && g.client['name'].trim() !== '' ? text(g.client['name']) : null;
+    return {
+      gig: g,
+      company: name,
+      scope: text(scopeText(x.gig?.['location'])),
+      skills: Array.isArray(covered) ? covered.slice(0, 3).map(displayOf(pack, text)) : [],
+      ask: askText(g),
+      age: ageText(g.postedAt, now),
+      files: g.docsState === 'ready' ? docs : [],
+      docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
+    };
+  };
 
   /** The rows of one list, in rankGigs order. */
   const ranked = (gigs: readonly GigView[], list: (typeof GIG_TABS)[number], fitFloor: number): GigView[] => {
@@ -215,41 +254,69 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const data = d.withStore((s) => {
       const gigs = s.listGigs();
       const rows = ranked(gigs, list, fitFloor);
-      return { gigs, rows, extras: extrasOf(s, rows.map((g) => g.gigKey)), lastRun: lastRunText(s) };
+      // The Contract roles section heads the Contracts tab (the Freelance landing tab).
+      const roles = list === 'contracts' ? contractRoles(gigs, fitFloor) : [];
+      const keys = [...new Set([...rows, ...roles].map((g) => g.gigKey))];
+      return { gigs, rows, roles, extras: extrasOf(s, keys), docs: s.gigDocsFor(roles.map((g) => g.gigKey)), lastRun: lastRunText(s) };
     });
-    const rows = data.rows.map((g) => rowView(r.deep(g), data.extras[g.gigKey] as Extras, ps.pack, at, r.text));
-    const body = gigListBody({ tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hiddenText(data.gigs, list), fitFloor, lastRun: data.lastRun });
+    const inRoles = new Set(contractRoles(data.gigs, fitFloor).map((g) => g.gigKey));
+    const rows = data.rows.map((g) => ({ ...rowView(r.deep(g), data.extras[g.gigKey] as Extras, ps.pack, at, r.text), ...(list === 'review' && inRoles.has(g.gigKey) ? { alsoInRoles: true } : {}) }));
+    const roles = data.roles.map((g) => roleView(r.deep(g), data.extras[g.gigKey] as Extras, data.docs[g.gigKey] ?? [], ps.pack, at, r.text));
+    const body = gigListBody({
+      tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hiddenText(data.gigs, list), fitFloor, lastRun: data.lastRun,
+      ...(list === 'contracts' ? { roles: { rows: roles, fitFloor } } : {}),
+    });
     return d.page(c, 'freelance', 'Freelance', packBanner(ps), body);
   });
 
   const packBanner = (ps: { error: string | undefined }): Banner[] => (ps.error !== undefined ? [{ tone: 'critical', text: `Your pack could not be read: ${ps.error}` }] : []);
 
   // --- networks --------------------------------------------------------------------------------------------------------
-  const networkCards = (pack: Pack | undefined, statuses: Record<string, { status: NetworkStatus; updatedAt: string }>, text: (s: string) => string): NetworkCard[] =>
-    [...(pack?.networks ?? [])]
-      .sort((a, b) => {
-        // by name, case folded, then id; code-unit order (no locale)
-        const x = a.name.toLowerCase();
-        const y = b.name.toLowerCase();
-        return x < y ? -1 : x > y ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-      })
-      .map((n) => {
-        const files = NETWORK_FILES.filter((f) => readConfined(d.paths.out, `networks/${n.id}/${f}`).ok);
-        const cl = readConfined(d.paths.out, `networks/${n.id}/checklist.md`);
-        return {
-          id: n.id, name: text(n.name), checkedByUser: n.checkedByUser, stages: n.screening.map((s) => text(s.stage)),
-          status: statuses[n.id]?.status ?? 'todo', updatedAt: statuses[n.id]?.updatedAt ?? null, files,
-          checklist: cl.ok ? text(Buffer.from(cl.bytes).toString('utf8')) : null,
-        };
-      });
+  /**
+   * The Networks section (freelance-boost): the catalogue's networks and the user's own network files, joined by id, in
+   * the recommended order (`orderedNetworkIds`). A catalogue network without a file has no application pack; a file the
+   * catalogue does not know has no verified facts.
+   */
+  const networkCards = (
+    pack: Pack | undefined,
+    statuses: Record<string, { status: NetworkStatus; updatedAt: string }>,
+    applied: ReadonlyMap<string, string>,
+    text: (s: string) => string,
+  ): NetworkCard[] => {
+    const files = new Map((pack?.networks ?? []).map((n) => [n.id, n]));
+    return orderedNetworkIds(pack?.networks ?? []).map((id) => {
+      const n = files.get(id);
+      const c = catalogueEntry(id);
+      const onDisk = n === undefined ? [] : NETWORK_FILES.filter((f) => readConfined(d.paths.out, `networks/${id}/${f}`).ok);
+      const cl = n === undefined ? { ok: false as const } : readConfined(d.paths.out, `networks/${id}/checklist.md`);
+      return {
+        id, name: text(n?.name ?? c?.name ?? id), hasFile: n !== undefined, checkedByUser: n?.checkedByUser ?? false, stages: (n?.screening ?? []).map((s) => text(s.stage)),
+        status: statuses[id]?.status ?? 'todo', updatedAt: statuses[id]?.updatedAt ?? null, appliedAt: applied.get(id) ?? null, files: onDisk,
+        checklist: cl.ok ? text(Buffer.from(cl.bytes).toString('utf8')) : null,
+        facts: c === undefined ? null : { applyUrl: c.applyUrl, india: c.india, indiaNote: c.indiaNote, rates: c.rates, hours: c.hours, process: c.process, order: c.order },
+      };
+    });
+  };
+  /** When each network was last marked applied, from the logged `network.status` actions (the latest wins). */
+  const appliedDates = (s: AppStore): Map<string, string> => {
+    const out = new Map<string, string>();
+    for (const a of s.userActions()) {
+      const x = a.data as { networkId?: unknown; to?: unknown } | null;
+      if (a.kind === 'network.status' && x !== null && typeof x.networkId === 'string' && x.to === 'applied') out.set(x.networkId, a.at);
+    }
+    return out;
+  };
+  /** A network the dashboard knows: one of the user's files or one of the catalogue's. */
+  const knownNetwork = (pack: Pack | undefined, id: string): boolean => (pack?.networks.some((n) => n.id === id) ?? false) || catalogueEntry(id) !== undefined;
 
   const networksPage = (c: Context<Env>) => {
     const at = d.now();
     const ps = d.packState(at);
     const r = d.redactor(ps.naming);
-    const { statuses, gigs } = d.withStore((s) => ({ statuses: s.networkStatuses(), gigs: s.listGigs() }));
-    const counts = { ...countsOf(gigs, rulesOf(ps.pack).fitFloor), networks: ps.pack?.networks.length ?? 0 };
-    const body = networksBody({ cards: networkCards(ps.pack, statuses, r.text), counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
+    const { statuses, gigs, applied } = d.withStore((s) => ({ statuses: s.networkStatuses(), gigs: s.listGigs(), applied: appliedDates(s) }));
+    const cards = networkCards(ps.pack, statuses, applied, r.text);
+    const counts = { ...countsOf(gigs, rulesOf(ps.pack).fitFloor), networks: cards.length };
+    const body = networksBody({ checked: NETWORKS_CHECKED, cards, counts, csrf: d.csrf(c), istDay: istDate, packError: ps.error ?? null });
     return d.page(c, 'freelance', 'Freelance networks', packBanner(ps), body);
   };
   app.get('/freelance/networks', (c) => networksPage(c));
@@ -268,13 +335,23 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     if (!NETWORK_ID.test(id) || typeof to !== 'string' || !(NETWORK_STATUSES as readonly string[]).includes(to)) return c.text('Bad request', 400);
     const at = d.now();
     const ps = d.packState(at);
-    if (!ps.pack?.networks.some((n) => n.id === id)) return c.text('No such network', 404);
-    const st = d.withStore((s) => {
-      s.setNetworkStatus(id, to as NetworkStatus, at);
-      return s.networkStatuses()[id];
-    });
+    if (!knownNetwork(ps.pack, id)) return c.text('No such network', 404);
+    // A network that does not take people in India cannot be marked applied (the page offers no button either).
+    if (to === 'applied' && catalogueEntry(id)?.india === 'not-open') return c.text('This network is not open to India', 409);
+    const { st, applied } = d.withStore((s) =>
+      s.tx(() => {
+        const from = s.networkStatuses()[id]?.status ?? 'todo';
+        if (from !== to) {
+          s.setNetworkStatus(id, to as NetworkStatus, at);
+          // Logged in the hash-chained user-action log, like every other dashboard action.
+          s.logUserAction('network.status', { networkId: id, from, to }, at);
+        }
+        return { st: s.networkStatuses()[id], applied: appliedDates(s).get(id) ?? null };
+      }),
+    );
     if (!d.isHx(c)) return c.redirect(`/freelance/networks#net-${id}`, 303);
-    return c.html(networkStatusBlock({ id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null }, d.csrf(c), istDate).value);
+    const notOpen = catalogueEntry(id)?.india === 'not-open';
+    return c.html(networkStatusBlock({ id, status: st?.status ?? 'todo', updatedAt: st?.updatedAt ?? null, appliedAt: applied, notOpen }, d.csrf(c), istDate).value);
   });
 
   // --- sources ---------------------------------------------------------------------------------------------------------
@@ -298,6 +375,8 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
       return { platform: p, probeFailures: rows[0]?.probeFailures ?? 0, rows: rows.map((h) => ({ ...h, outcomes: { applied: count(p, h.week, 'applied'), replied: count(p, h.week, 'replied'), won: count(p, h.week, 'won') } })) };
     });
     const disabled = Platform.options.flatMap((p) => {
+      const robots = ROBOTS_OFF[p];
+      if (robots !== undefined) return [{ platform: p, reason: robots }];
       const known = DISABLED_REASON[p];
       if (known !== undefined && PLATFORM_AGENT[p] === undefined) return [{ platform: p, reason: known }];
       if (!rules.platforms[p].enabled) return [{ platform: p, reason: 'turned off in your freelance.yaml' }];
@@ -318,7 +397,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
 
   /** The paste-ready text from the recorded `.txt` file, split where a line cites facts. */
   const pasteOf = (g: GigView & { docs: GigDoc[] }, x: Extras, pack: Pack | undefined, text: (s: string) => string): { paste: PasteDoc | null; problem: string | null } => {
-    const txt = g.docs.find((f) => f.format === 'txt');
+    const txt = g.docs.find((f) => f.format === 'txt' && (f.kind === 'pitch' || f.kind === 'proposal'));
     if (g.docsState !== 'ready' || txt === undefined) return { paste: null, problem: null };
     const read = readRecorded(d.paths.out, txt.path, txt.sha256);
     if (!read.ok) return { paste: null, problem: read.why === 'changed' ? 'The text file changed on disk after it was made, so it is not shown. The next run makes it again.' : 'The text file is not on disk. The next run makes it again.' };
@@ -338,6 +417,29 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     if (at < body.length) segments.push({ text: body.slice(at), facts: null });
     const rule = pack?.platformRules[g.platform as Platform];
     return { paste: { kind: txt.kind === 'pitch' ? 'pitch' : 'proposal', segments, chars: [...body.replace(/\n$/, '')].length, max: rule?.maxChars ?? null }, problem: null };
+  };
+
+  /**
+   * freelance-v2: the cover letter card's data: null when the gig has no cover file; else the recorded `cover.txt`
+   * (sha256 checked; a text naming a forbidden term is not shown), or why not, and the gig's cover files.
+   */
+  const coverOf = (g: GigView & { docs: GigDoc[] }, x: Extras, text: (s: string) => string): NonNullable<GigPageData['cover']> | null => {
+    const files = g.docs.filter((f) => f.kind === 'cover');
+    const txt = files.find((f) => f.format === 'txt');
+    if (txt === undefined) {
+      // review: say why a contract from an employer board has no letter (the renderer's block, or the planner's note)
+      const blocked = x.rendered?.coverBlocked;
+      const note = x.rendered?.plan?.coverNote;
+      if (typeof blocked === 'string') return { text: null, problem: text(`Cover letter blocked: ${blocked}`), files: [] };
+      if (typeof note === 'string') return { text: null, problem: text(`No cover letter: ${note}`), files: [] };
+      return null;
+    }
+    if (g.docsState !== 'ready') return { text: null, problem: gigDocsReason(g.docsState, g.docsDetail, g.list), files: [] };
+    const read = readRecorded(d.paths.out, txt.path, txt.sha256);
+    if (!read.ok) return { text: null, problem: read.why === 'changed' ? 'The cover letter file changed on disk after it was made, so it is not shown. The next run makes it again.' : 'The cover letter file is not on disk. The next run makes it again.', files: [] };
+    const body = Buffer.from(read.bytes).toString('utf8');
+    if (text(body) !== body) return { text: null, problem: 'The cover letter names a forbidden term, so it is not shown here and cannot be copied. Check naming.yaml and the posting.', files: [] };
+    return { text: body, problem: null, files };
   };
 
   /** Applied, documents ready and no snapshot yet: the keep-now offer (as v1 `keepable`). */
@@ -366,7 +468,7 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     const notice = c.req.query('notice');
     const flash = notice !== undefined && Object.hasOwn(NOTICE, notice) ? NOTICE[notice] : undefined;
     const body = gigBody({
-      row, csrf: d.csrf(c), paste, pasteProblem: problem, files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
+      row, csrf: d.csrf(c), paste, pasteProblem: problem, cover: coverOf(data.g, data.extras, r.text), files: paste === null ? [] : data.g.docs, docsReason: gigDocsReason(g.docsState, g.docsDetail, g.list),
       history: data.history, sent: data.sent, reasons: g.reasons, duplicateOf: g.duplicateOf, istDay: istDate,
       breakdown: Object.entries(g.breakdown ?? {}).map(([k, p]) => ({ label: SHOWN_ONLY[k] ?? rowLabel(k, display, coveredOf(data.extras)), points: p, shown: Object.hasOwn(SHOWN_ONLY, k) })),
       ...(flash !== undefined ? { flash } : {}),
@@ -449,18 +551,18 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
   };
 
   /**
-   * Whether the gig's files may NOT be served: its paste text (the `.txt` among `files`) names a forbidden term, or
+   * Whether the gig's files may NOT be served: a paste text (any `.txt` among `files`) names a forbidden term, or
    * cannot be read as recorded (absent, changed, refused). Fail closed: then none of its files is served (403), the PDF
    * and DOCX included, since they were written from the same plan. Files without any `.txt` are judged by their own read.
    */
-  const tainted = (files: readonly Pick<GigDoc, 'format' | 'path' | 'sha256'>[], text: (s: string) => string): boolean => {
-    const txt = files.find((f) => f.format === 'txt');
-    if (txt === undefined) return false;
-    const read = readRecorded(d.paths.out, txt.path, txt.sha256);
-    if (!read.ok) return true;
-    const body = Buffer.from(read.bytes).toString('utf8');
-    return text(body) !== body;
-  };
+  const tainted = (files: readonly Pick<GigDoc, 'format' | 'path' | 'sha256'>[], text: (s: string) => string): boolean =>
+    // every .txt among them (the pitch or proposal, and the cover letter's, freelance-v2): one bad text refuses all
+    files.filter((f) => f.format === 'txt').some((txt) => {
+      const read = readRecorded(d.paths.out, txt.path, txt.sha256);
+      if (!read.ok) return true;
+      const body = Buffer.from(read.bytes).toString('utf8');
+      return text(body) !== body;
+    });
   const TAINTED = 'Not served: the text of this gig names a forbidden term, or is missing or changed on disk, so none of its documents leave the dashboard. The next run makes them again; check naming.yaml and the posting.';
 
   app.get('/freelance/:key/files/:name', (c) => {

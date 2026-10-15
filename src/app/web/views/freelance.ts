@@ -27,7 +27,8 @@ const GIG_STATUS_TONE: Readonly<Record<GigStatus, Tone>> = {
 };
 const gigStatusPill = (s: GigStatus): Html => pill(GIG_STATUS_LABEL[s], GIG_STATUS_TONE[s]);
 
-const NETWORK_LABEL: Readonly<Record<NetworkStatus, string>> = { todo: 'Not applied', applied: 'Applied', screening: 'In screening', passed: 'Passed', rejected: 'Not accepted' };
+// `passed` reads "Accepted" since freelance-boost (the stored value is unchanged).
+const NETWORK_LABEL: Readonly<Record<NetworkStatus, string>> = { todo: 'Not applied', applied: 'Applied', screening: 'In screening', passed: 'Accepted', rejected: 'Not accepted' };
 const NETWORK_TONE: Readonly<Record<NetworkStatus, Tone>> = { todo: 'neutral', applied: 'accent', screening: 'accent', passed: 'good', rejected: 'critical' };
 
 /** One gig as a list row or page header shows it; every text already in the user's words. */
@@ -48,15 +49,20 @@ export interface GigRowView {
   readonly client: readonly string[];
   readonly age: string | null;
   readonly bids: number | null;
+  /** freelance-v2: also listed in "Contract roles matching your stack" (a Review row only). */
+  readonly alsoInRoles?: boolean;
 }
 
-function tabsNav(here: FreelanceTab, counts: Partial<Record<FreelanceTab, number>>): Html {
+/** The tab counts, plus (freelance-v2) the Contract roles count, a link to the section at the top of the Freelance tab. */
+export type TabCounts = Partial<Record<FreelanceTab | 'roles', number>>;
+
+function tabsNav(here: FreelanceTab, counts: TabCounts): Html {
   return html`<nav class="tabs" aria-label="Freelance">${(Object.keys(TAB_LABEL) as FreelanceTab[]).map(
     (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${counts[t]}</span>` : ''}</a>`,
-  )}</nav>`;
+  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${counts.roles}</span></a>` : ''}</nav>`;
 }
 
-function head(here: FreelanceTab, counts: Partial<Record<FreelanceTab, number>>, lede: Html | string): Html {
+function head(here: FreelanceTab, counts: TabCounts, lede: Html | string): Html {
   return html`<div class="page-head">
 <h1>Freelance</h1>
 <p class="lede">${lede}</p>
@@ -92,15 +98,40 @@ ${factsLine(v)}
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
+${v.alsoInRoles === true ? html`<p class="gig-also"><a class="pill pill-accent" href="/freelance#contract-roles">Also in Contract roles</a></p>` : ''}
 </div>
 <div class="gig-status">${gigStatusPill(g.status)}</div>
 </li>`;
 }
 
+/** One row of "Contract roles matching your stack" (freelance-v2): every text already in the user's words. */
+export interface ContractRoleView {
+  readonly gig: GigView;
+  readonly company: string | null;
+  /** Where it may be worked from (`scopeText`). */
+  readonly scope: string;
+  /** The first matched skills the user's facts back (the plan's covered terms, by display), or [] with no plan on record. */
+  readonly skills: readonly string[];
+  /** What to ask before applying (`askText`). */
+  readonly ask: string;
+  readonly age: string | null;
+  /** The recorded documents when they are ready, else []. */
+  readonly files: readonly GigDoc[];
+  /** Why there are no documents, when there are none. */
+  readonly docsReason: string | null;
+}
+
+export interface ContractRolesData {
+  readonly rows: readonly ContractRoleView[];
+  readonly fitFloor: number;
+}
+
 export interface GigListData {
+  /** freelance-v2: the Contract roles section, shown at the top of the Contracts tab (the Freelance landing tab). */
+  readonly roles?: ContractRolesData;
   readonly tab: (typeof GIG_TABS)[number];
   readonly rows: readonly GigRowView[];
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
   /** "1 below the fit floor and 1 not eligible are not shown", or null. */
   readonly hidden: string | null;
   readonly fitFloor: number;
@@ -113,9 +144,50 @@ const LEDE: Readonly<Record<GigListData['tab'], string>> = {
   review: 'Review holds gigs that need your judgement; the fit floor applies to Contracts and Gigs only.',
 };
 
+const ROLE_FILE_LABEL = (d: Pick<GigDoc, 'kind' | 'format'>): string => (d.kind === 'resume' ? (d.format === 'docx' ? 'CV (Word, DOCX)' : 'CV (PDF)') : FILE_LABEL(d));
+/** The order the documents are offered in a role row: the CV, the cover letter, then the pitch; never the HTML preview. */
+const ROLE_FILE_ORDER = ['resume.pdf', 'resume.docx', 'cover.pdf', 'cover.docx', 'cover.txt', 'pitch.txt', 'proposal.txt'];
+
+function roleRow(r: ContractRoleView): Html {
+  const g = r.gig;
+  const files = ROLE_FILE_ORDER.flatMap((n) => r.files.filter((f) => f.kind + '.' + f.format === n));
+  const sub: Html[] = [
+    html`<span>${r.company ?? html`<span class="muted">company not stated</span>`}</span>`,
+    html`<span>${r.scope}</span>`,
+    html`<span>${platformName(g.platform)}</span>`,
+    ...(r.age !== null ? [html`<span>${r.age}</span>`] : []),
+  ];
+  const url = externalUrl(g.url);
+  return html`<li class="role" data-role="${g.gigKey}">
+<div class="gig-fit num" title="Fit">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
+<div class="gig-main">
+<h3 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h3>
+<p class="gig-sub">${sub.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>
+<p class="role-skills">${r.skills.length > 0 ? html`Matches your facts: ${r.skills.join(', ')}` : html`<span class="muted">Matched skills not on record yet</span>`}</p>
+<p class="role-ask">${pill(r.ask, 'warn', 'The posting does not state these: ask the employer before you apply')}</p>
+${files.length > 0 ? html`<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${ROLE_FILE_LABEL(f)}</a>`)}</div>` : html`<p class="muted">${r.docsReason ?? 'No documents yet.'}</p>`}
+${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}
+</div>
+</li>`;
+}
+
+/**
+ * "Contract roles matching your stack" (freelance-v2, Feature 1; UI only, no rule change): the Review contracts from
+ * employer job boards at or above the fit floor, best fit first, then newest. They stay review items (pay or hours not
+ * stated); the Review list still shows each, marked "Also in Contract roles".
+ */
+export function contractRolesSection(d: ContractRolesData): Html {
+  return html`<section class="card wide roles" id="contract-roles" aria-labelledby="roles-h">
+<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${d.rows.length}</span></h2>
+<p class="hint">Contract roles from employer job boards (Himalayas and the daily boards) with fit <span class="num">${scoreText(d.fitFloor)}</span> or more. Their pay or hours are not stated, so they stay in Review: ask before you apply. Best fit first, then newest.</p>
+${d.rows.length === 0 ? html`<p class="empty">No contract role from an employer job board is at or above your fit floor yet.</p>` : html`<ol class="roles-list" aria-label="Contract roles">${d.rows.map(roleRow)}</ol>`}
+</section>`;
+}
+
 export function gigListBody(d: GigListData): Html {
   const lede = html`${LEDE[d.tab]}${d.tab === 'review' ? '' : html` Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.`}${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
   return html`${head(d.tab, d.counts, lede)}
+${d.roles !== undefined ? contractRolesSection(d.roles) : ''}
 ${d.hidden !== null ? html`<p class="note">${d.hidden}</p>` : ''}
 ${d.rows.length === 0 ? html`<p class="empty">Nothing here yet. The next freelance run fills this list.</p>` : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>`}
 <p class="hint">jobpilot never bids or applies for you: open the posting, paste the text, and mark the status here.</p>`;
@@ -147,6 +219,8 @@ export interface GigPageData {
   /** The paste-ready text, or why it is not shown. */
   readonly paste: PasteDoc | null;
   readonly pasteProblem: string | null;
+  /** freelance-v2: the cover letter's paste text (`cover.txt`) or why it is not shown, and its files; null without a cover. */
+  readonly cover?: { readonly text: string | null; readonly problem: string | null; readonly files: readonly GigDoc[] } | null;
   readonly files: readonly GigDoc[];
   readonly docsReason: string | null;
   readonly history: readonly GigHistoryEntry[];
@@ -159,7 +233,28 @@ export interface GigPageData {
 }
 
 const FILE_LABEL = (d: Pick<GigDoc, 'kind' | 'format'>): string =>
-  d.format === 'txt' ? (d.kind === 'pitch' ? 'Pitch (.txt)' : 'Proposal (.txt)') : d.format === 'pdf' ? 'Contract CV (PDF)' : 'Contract CV (Word, DOCX)';
+  d.kind === 'cover'
+    ? d.format === 'txt' ? 'Cover letter (.txt)' : d.format === 'pdf' ? 'Cover letter (PDF)' : d.format === 'docx' ? 'Cover letter (Word, DOCX)' : 'Cover letter (web page, HTML)'
+    : d.format === 'txt' ? (d.kind === 'pitch' ? 'Pitch (.txt)' : 'Proposal (.txt)') : d.format === 'pdf' ? 'Contract CV (PDF)' : 'Contract CV (Word, DOCX)';
+
+/** freelance-v2: the cover letter card, with Copy (the exact `cover.txt`) and its downloads (PDF, DOCX, .txt, HTML). */
+function coverSection(d: GigPageData): Html | '' {
+  const c = d.cover;
+  if (c === undefined || c === null) return '';
+  const g = d.row.gig;
+  const files = ['pdf', 'docx', 'txt', 'html'].flatMap((f) => c.files.filter((x) => x.kind === 'cover' && x.format === f));
+  if (c.text === null) return html`<section class="card wide" aria-labelledby="cover-h"><h2 id="cover-h">Your cover letter</h2><p class="blocked">${c.problem ?? 'No cover letter yet.'}</p></section>`;
+  return html`<section class="card wide" aria-labelledby="cover-h">
+<h2 id="cover-h">Your cover letter</h2>
+<div class="paste-bar">
+<button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/${g.gigKey}/files/cover.txt" data-copy-target="cover-text" hidden>Copy</button>
+<span class="copy-status" role="status" aria-live="polite"></span>
+</div>
+<pre class="paste" id="cover-text">${c.text}</pre>
+<p class="hint">Built only from your verified facts, for the employer's own application form. Copy pastes exactly the .txt file; the letter never states pay or hours.</p>
+<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
+</section>`;
+}
 
 function pasteSection(d: GigPageData): Html {
   const g = d.row.gig;
@@ -169,7 +264,7 @@ function pasteSection(d: GigPageData): Html {
     return html`<section class="card wide" aria-labelledby="paste-h"><h2 id="paste-h">${title}</h2><p class="blocked">${d.pasteProblem ?? d.docsReason ?? 'No documents yet.'}</p></section>`;
   }
   const over = p.max !== null && p.chars > p.max;
-  const txt = d.files.find((f) => f.format === 'txt');
+  const txt = d.files.find((f) => f.format === 'txt' && f.kind !== 'cover');
   return html`<section class="card wide" aria-labelledby="paste-h">
 <h2 id="paste-h">${title}</h2>
 <div class="paste-bar">
@@ -179,7 +274,7 @@ function pasteSection(d: GigPageData): Html {
 </div>
 <pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
 <p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
-<div class="downloads">${d.files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
+<div class="downloads">${d.files.filter((f) => f.kind !== 'cover').map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
 </section>`;
 }
 
@@ -260,6 +355,7 @@ ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 ${d.duplicateOf !== null ? html`<p class="note">This is another listing of <a href="/freelance/${d.duplicateOf}">the same gig</a>.</p>` : ''}
 <div class="job-grid">
 ${pasteSection(d)}
+${coverSection(d)}
 ${gigSentSection(d.sent)}
 ${checksSection(d)}
 ${gigStatusSection(g, d.history, d.csrf, d.istDay, d.flash)}
@@ -274,10 +370,24 @@ ${fitSection(d)}
 export interface NetworkCard {
   readonly id: string;
   readonly name: string;
+  /** Whether the user's pack has a network file for it (screening stages, application pack). */
+  readonly hasFile: boolean;
   readonly checkedByUser: boolean;
   readonly stages: readonly string[];
   readonly status: NetworkStatus;
   readonly updatedAt: string | null;
+  /** When the user last marked it applied (the logged action), or null. */
+  readonly appliedAt: string | null;
+  /** What the research verified (the catalogue), or null for a network only the user's pack knows. */
+  readonly facts: {
+    readonly applyUrl: string;
+    readonly india: 'open' | 'not-open' | 'unverified';
+    readonly indiaNote: string;
+    readonly rates: string;
+    readonly hours: string;
+    readonly process: string;
+    readonly order: number | null;
+  } | null;
   /** The pack files on disk (`resume.pdf`, …), in NETWORK_FILES order. */
   readonly files: readonly string[];
   /** checklist.md as written, or null when there is no pack yet. */
@@ -288,50 +398,92 @@ const NETWORK_FILE_LABEL: Readonly<Record<string, string>> = {
   'resume.pdf': 'CV (PDF)', 'resume.docx': 'CV (Word, DOCX)', 'profile.txt': 'Profile text', 'checklist.md': 'Vetting checklist',
 };
 
-export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updatedAt'>, csrf: string, istDay: (iso: string) => string): Html {
+/**
+ * The status block, returned alone to htmx: the status with its date ("Applied on 15 Oct 2026"; a later status keeps
+ * "applied on …"), a one-click "Mark applied" while not applied yet (never for a network not open to India), and every
+ * status as a button. Each POST carries the CSRF token and is logged (`network.status`).
+ */
+export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updatedAt' | 'appliedAt'> & { readonly notOpen?: boolean }, csrf: string, istDay: (iso: string) => string): Html {
+  const since =
+    n.status === 'applied' && (n.appliedAt ?? n.updatedAt) !== null ? html` <span>on ${dateText(istDay((n.appliedAt ?? n.updatedAt) as string))}</span>`
+    : n.status !== 'todo' && n.appliedAt !== null ? html` <span class="hint">since ${n.updatedAt !== null ? dateText(istDay(n.updatedAt)) : ''}; applied on ${dateText(istDay(n.appliedAt))}</span>`
+    : n.updatedAt !== null && n.status !== 'todo' ? html` <span class="hint">since ${dateText(istDay(n.updatedAt))}</span>`
+    : '';
+  const action = "/freelance/networks/" + n.id + "/status";
+  const quick = n.status === 'todo' && n.notOpen !== true
+    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">
+${csrfField(csrf)}<button class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
+    : '';
   return html`<div class="net-status" id="net-status-${n.id}">
-<p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${n.updatedAt !== null ? html` <span class="hint">since ${dateText(istDay(n.updatedAt))}</span>` : ''}</p>
-<form method="post" action="/freelance/networks/${n.id}/status" hx-post="/freelance/networks/${n.id}/status" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
+<p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${since}</p>
+${quick}
+<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
 <div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
 </form></div>`;
 }
 
+const INDIA_PILL: Readonly<Record<'open' | 'not-open' | 'unverified', Html>> = {
+  open: pill('Open to India', 'good'),
+  'not-open': pill('Not open to India', 'critical'),
+  unverified: pill('India not confirmed', 'warn'),
+};
+
+function networkFacts(n: NetworkCard): Html {
+  const f = n.facts;
+  if (f === null) return html`<p class="muted">Not in jobpilot's network list: only your network file is known.</p>`;
+  const url = externalUrl(f.applyUrl);
+  return html`<p>${INDIA_PILL[f.india]}${f.order !== null ? html` <span class="hint">#${f.order} in the recommended order</span>` : ''}</p>
+<p class="hint">${f.indiaNote}</p>
+<dl class="net-facts"><dt>Typical rates</dt><dd>${f.rates}</dd><dt>Hours</dt><dd>${f.hours}</dd><dt>How</dt><dd>${f.process}</dd></dl>
+${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on ${n.name}<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}`;
+}
+
 function networkCard(n: NetworkCard, csrf: string, istDay: (iso: string) => string): Html {
+  const unchecked = n.hasFile && !n.checkedByUser;
   return html`<section class="card net" id="net-${n.id}" data-network="${n.id}" aria-labelledby="net-h-${n.id}">
-<h2 id="net-h-${n.id}">${n.name}${n.checkedByUser ? '' : pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page')}</h2>
-${n.checkedByUser ? '' : html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>`}
-${networkStatusBlock(n, csrf, istDay)}
+<h2 id="net-h-${n.id}">${n.name}${unchecked ? pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page') : ''}</h2>
+${networkFacts(n)}
+${unchecked ? html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>` : ''}
+${networkStatusBlock({ ...n, notOpen: n.facts?.india === 'not-open' }, csrf, istDay)}
 <h3>Your pack</h3>
 ${
-  n.files.length === 0
+  !n.hasFile
+    ? html`<p class="muted">No network file: add <code>pack/networks/${n.id}.yaml</code> to build an application pack for it.</p>`
+    : n.files.length === 0
     ? html`<p class="muted">No pack yet: run <code>jobpilot networks pack ${n.id}</code>.</p>`
     : html`<div class="downloads">${n.files.map((f) => html`<a class="btn" href="/freelance/networks/${n.id}/files/${f}" download>${NETWORK_FILE_LABEL[f] ?? f}</a>`)}</div>`
 }
-<h3>Checklist</h3>
+${
+  !n.hasFile
+    ? ''
+    : html`<h3>Checklist</h3>
 ${
   n.checklist !== null
     ? html`<pre class="checklist">${n.checklist}</pre>`
     : n.stages.length > 0
       ? html`<ol class="stages">${n.stages.map((s) => html`<li>${s}</li>`)}</ol>`
       : html`<p class="muted">No screening stages in the network file.</p>`
+}`
 }
 </section>`;
 }
 
 export interface NetworksData {
+  /** The date the catalogue's facts were checked (NETWORKS_CHECKED). */
+  readonly checked: string;
   readonly cards: readonly NetworkCard[];
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
   readonly csrf: string;
   readonly istDay: (iso: string) => string;
   readonly packError: string | null;
 }
 
 export function networksBody(d: NetworksData): Html {
-  const lede = html`Vetted networks you apply to once. Each pack is built only from your verified facts.`;
+  const lede = html`Vetted networks you apply to once; after that they send you matching work. Each pack is built only from your verified facts.`;
   return html`${head('networks', d.counts, lede)}
-<p class="note">Shown alphabetically: no fit score for networks is stored, so none is ranked above another here.</p>
+<p class="note">Recommended order (research of ${dateText(d.checked)}): micro1, Mercor and Alignerr first (hourly AI-evaluation work at 10–20 h/week, quick to apply), then Arc, Braintrust, Toptal and Proxify, then the rest. A network that does not take people in India is last and has no “Mark applied”.</p>
 ${d.packError !== null ? html`<p class="blocked">Your pack could not be read: ${d.packError}</p>` : ''}
-${d.cards.length === 0 && d.packError === null ? html`<p class="empty">No network files in pack/networks/ yet.</p>` : html`<div class="net-grid">${d.cards.map((c) => networkCard(c, d.csrf, d.istDay))}</div>`}`;
+<div class="net-grid">${d.cards.map((c) => networkCard(c, d.csrf, d.istDay))}</div>`;
 }
 
 // ---- sources --------------------------------------------------------------------------------------------------------
@@ -347,7 +499,7 @@ export interface SourcesData {
   readonly disabled: readonly { readonly platform: string; readonly reason: string }[];
   readonly problems: readonly { readonly kind: string; readonly line: string }[];
   readonly lastRun: string | null;
-  readonly counts: Partial<Record<FreelanceTab, number>>;
+  readonly counts: TabCounts;
 }
 
 const PROBLEM_LABEL: Readonly<Record<string, string>> = {

@@ -11,6 +11,7 @@ import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
+import { routesToFreelance, structuredFullTime } from './contract-routes.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
@@ -1151,6 +1152,8 @@ export class AppStore {
   /**
    * `duplicate_of` for one gig dedupe group, the v1 rule: the earliest first_seen row (then gig key) is the group's
    * row; every row from another platform points at it, and rows from its own platform stay separate gigs.
+   * freelance-boost: a `boards` row (the freelance run's re-read of a stored daily posting) yields to a row from any
+   * direct source (the Himalayas gigs source reads the same postings with their structured pay): boards rows sort last.
    */
   private relinkGigs(dedupeKey: string): void {
     const rows = (this.db.prepare(`SELECT gig_key, platform, first_seen, duplicate_of FROM gigs WHERE dedupe_key = ?`).all(dedupeKey) as {
@@ -1158,9 +1161,23 @@ export class AppStore {
       platform: string;
       first_seen: string;
       duplicate_of: string | null;
-    }[]).sort((a, b) => cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
+    }[]).sort((a, b) => Number(a.platform === 'boards') - Number(b.platform === 'boards') || cmp(a.first_seen, b.first_seen) || cmp(a.gig_key, b.gig_key));
     const top = rows[0];
     if (!top) return;
+    // A new head (the Himalayas row becoming the group's row over the boards one it duplicates) takes over the status
+    // the user set on the old head, so the shown row never loses it (review round 2026-10-15). Only from 'new': a status
+    // the user set on the new head itself wins. No history row is written: the user's own entry stays on the old row.
+    const oldHead = rows.find((r) => r !== top && r.platform !== top.platform && r.duplicate_of === null);
+    if (oldHead !== undefined) {
+      const st = this.db.prepare(`SELECT status, applied_at, note FROM gigs WHERE gig_key = ?`);
+      const from = st.get(oldHead.gig_key) as { status: string; applied_at: string | null; note: string };
+      const to = st.get(top.gig_key) as { status: string; applied_at: string | null; note: string };
+      if (from.status !== 'new' && to.status === 'new') {
+        this.db
+          .prepare(`UPDATE gigs SET status = ?, applied_at = COALESCE(applied_at, ?), note = CASE WHEN note = '' THEN ? ELSE note END WHERE gig_key = ?`)
+          .run(from.status, from.applied_at, from.note ?? '', top.gig_key);
+      }
+    }
     const set = this.db.prepare(`UPDATE gigs SET duplicate_of = ? WHERE gig_key = ?`);
     for (const r of rows) {
       const dup = r !== top && r.platform !== top.platform ? top.gig_key : null;
@@ -1182,6 +1199,19 @@ export class AppStore {
     if (!row) return undefined;
     const docs = this.db.prepare(`SELECT kind, format, path, sha256, pages FROM gig_docs WHERE gig_key = ? ORDER BY kind, format`).all(gigKey) as GigDoc[];
     return { ...gigView(row), docs };
+  }
+
+  /** The recorded documents of each of `gigKeys` (kind, format order), in batches of at most 500 keys; a gig with none maps to []. */
+  gigDocsFor(gigKeys: readonly string[]): Record<string, GigDoc[]> {
+    const out: Record<string, GigDoc[]> = Object.fromEntries(gigKeys.map((k) => [k, []]));
+    for (let i = 0; i < gigKeys.length; i += POSTING_BATCH) {
+      const batch = gigKeys.slice(i, i + POSTING_BATCH);
+      const rows = this.db
+        .prepare(`SELECT gig_key, kind, format, path, sha256, pages FROM gig_docs WHERE gig_key IN (${batch.map(() => '?').join(', ')}) ORDER BY gig_key, kind, format`)
+        .all(...batch) as (GigDoc & { gig_key: string })[];
+      for (const { gig_key, ...d } of rows) (out[gig_key] as GigDoc[]).push(d);
+    }
+    return out;
   }
 
   /** Every gig by gig key; duplicate listings only with `duplicates`. */
@@ -1216,25 +1246,28 @@ export class AppStore {
   }
 
   /**
-   * The stored daily jobs that are contract, freelance or part-time (their reasons include `employment:contract`,
-   * `employment:freelance` or `employment:part-time`), seen at or after `since` (the run passes now minus
+   * The stored daily jobs whose reasons route them to the freelance run (`routesToFreelance`: the closed list of
+   * contract wordings, `contract-routes.ts`), seen at or after `since` (the run passes now minus
    * BOARD_SEED_DAYS), not skipped or rejected by the user, duplicate listings left out, by job key; each with the
    * Posting@1 the daily normalizer emitted for it: the newest stored Posting@1 envelope with that job key (same
    * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
    * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. The envelopes are read in one
    * pass per batch of at most 500 keys (`IN`, the newest per key by NEWEST_FIRST), never one scan per job. `missing` lists the job
-   * keys with no stored posting (a Desk import): they are not seeded.
+   * keys with no stored posting (a Desk import): they are not seeded. A job whose stored posting has a structured
+   * full-time type (`structuredFullTime`) is neither seeded nor missing: it is not a contract.
    */
   contractPostings(since: string): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
     const keys = (
       this.db
         .prepare(
-          `SELECT job_key FROM jobs WHERE duplicate_of IS NULL AND last_seen >= ? AND status NOT IN ('skipped', 'rejected') AND EXISTS (
-             SELECT 1 FROM json_each(jobs.reasons) WHERE value IN ('employment:contract', 'employment:freelance', 'employment:part-time')
+          `SELECT job_key, reasons FROM jobs WHERE duplicate_of IS NULL AND last_seen >= ? AND status NOT IN ('skipped', 'rejected') AND EXISTS (
+             SELECT 1 FROM json_each(jobs.reasons) WHERE value LIKE 'employment:%'
            ) ORDER BY job_key`,
         )
-        .all(since) as { job_key: string }[]
-    ).map((r) => r.job_key);
+        .all(since) as { job_key: string; reasons: string }[]
+    )
+      .filter((r) => (JSON.parse(r.reasons) as string[]).some(routesToFreelance))
+      .map((r) => r.job_key);
     const bodies = new Map<string, string>();
     for (let i = 0; i < keys.length; i += POSTING_BATCH) {
       const batch = keys.slice(i, i + POSTING_BATCH);
@@ -1252,8 +1285,15 @@ export class AppStore {
     const missing: string[] = [];
     for (const jobKey of keys) {
       const body = bodies.get(jobKey);
-      if (body === undefined) missing.push(jobKey);
-      else postings.push({ jobKey, posting: (JSON.parse(body) as { payload: unknown }).payload });
+      if (body === undefined) {
+        missing.push(jobKey);
+        continue;
+      }
+      const posting = (JSON.parse(body) as { payload: unknown }).payload;
+      // A structured full-time type is never routed, whatever title label gave the reason (`structuredFullTime`).
+      const type = typeof posting === 'object' && posting !== null ? (posting as { employmentType?: unknown }).employmentType : undefined;
+      if (typeof type === 'string' && structuredFullTime(type)) continue;
+      postings.push({ jobKey, posting });
     }
     return { postings, missing };
   }
@@ -1683,8 +1723,9 @@ export interface GigSnapshot {
 }
 
 export interface GigDoc {
-  readonly kind: 'proposal' | 'pitch' | 'resume';
-  readonly format: 'txt' | 'pdf' | 'docx';
+  /** `cover` (`txt`, `pdf`, `docx`, `html`): the cover letter of a contract role on an employer job board (migration 23). */
+  readonly kind: 'proposal' | 'pitch' | 'resume' | 'cover';
+  readonly format: 'txt' | 'pdf' | 'docx' | 'html';
   readonly path: string;
   readonly sha256: string;
   readonly pages: number | null;

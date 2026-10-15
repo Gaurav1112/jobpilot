@@ -7,7 +7,7 @@ import { PAGE_MIN_INTERVAL_MS, type PageRecord, type PageState } from './agents/
 import type { HttpTool, PageLedger, PlatformHosts } from './agents/sources/platforms/shared.js';
 import { WORKDAY_MIN_INTERVAL_MS, type WorkdayHosts } from './agents/sources/platforms/workday.js';
 import { isChallenge } from './coverage/gate.js';
-import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './coverage/robots.js';
+import { robotsDenial, robotsInBody, robotsVerdictOf, type RobotsVerdict } from './coverage/robots.js';
 
 /**
  * The daily run's host state for the registry platform adapters (Task 6: Workday; Task 7: Eightfold, Oracle), one per
@@ -50,7 +50,11 @@ export function dailyPlatformHosts<S>(o: {
       throw new KernelError('rate_limit', `429 from ${host} for robots.txt: the host is disabled for this run`);
     }
     const hash = createHash('sha256').update(`${r.status}\n${r.body}`).digest('hex').slice(0, 16);
-    if (o.unreadableRobots === 'allow' && (r.status === 401 || r.status === 403)) return { verdict: { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` }, hash };
+    if (o.unreadableRobots === 'allow' && (r.status === 401 || r.status === 403)) {
+      // A 401/403 that still carries rules is honoured (robotsInBody, controller decision 2026-10-15).
+      const rules = robotsInBody(r.body);
+      return { verdict: rules === null ? { kind: 'allow-all', why: `robots.txt ${r.status}: unreadable, read at the minimal rate` } : { kind: 'rules', robots: rules }, hash };
+    }
     const verdict = robotsVerdictOf(r.status, r.body);
     // C1: a 5xx is the server's trouble, not an answer: the step fails `overloaded`, uncached, and is asked again
     if (verdict.kind === 'disallow-all' && verdict.reason === 'robots-transient') throw new KernelError('overloaded', `${host} answered its robots.txt with ${r.status}: not read now, asked again (never kept for the run)`);

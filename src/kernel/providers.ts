@@ -1,3 +1,4 @@
+import { refuseRealNetwork } from './no-network.js';
 import { execFile } from 'node:child_process';
 
 export interface FetchResponse {
@@ -138,5 +139,7 @@ export function pdftotextProvider(binary = 'pdftotext'): PdfTextProvider {
     });
 }
 
-export const nodeFetch: FetchLike = (url, init) =>
-  fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers }, ...(init.method !== undefined ? { method: init.method, body: init.body ?? '' } : {}) });
+export const nodeFetch: FetchLike = async (url, init) => {
+  refuseRealNetwork(url); // JOBPILOT_NO_NETWORK=1 (the test suite)
+  return fetch(url, { signal: init.signal, redirect: init.redirect, headers: { ...init.headers }, ...(init.method !== undefined ? { method: init.method, body: init.body ?? '' } : {}) });
+};
