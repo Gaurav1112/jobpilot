@@ -112,6 +112,18 @@ describe.skipIf(pdftotext === undefined)('run-freelance end to end (offline fixt
     for (const g of below) expect(existsSync(join(out, 'gigs', g.gigKey))).toBe(false);
   });
 
+  it('the board contract (an employer job board) also gets the cover letter, on disk with its recorded sha256 (freelance-v2)', () => {
+    const out = join(home, 'out');
+    const board = withApp(home, (app) => app.listGigs().filter((g) => g.platform === 'boards').map((g) => app.getGig(g.gigKey)!));
+    expect(board).toHaveLength(1);
+    const g = board[0]!;
+    expect(g.fit).toBeGreaterThanOrEqual(45);
+    expect(g.docsState, g.docsDetail ?? '').toBe('ready');
+    expect(g.docs.map((d) => `${d.kind}.${d.format}`).sort()).toEqual(['cover.docx', 'cover.html', 'cover.pdf', 'cover.txt', 'pitch.txt', 'resume.docx', 'resume.pdf']);
+    for (const d of g.docs) expect(createHash('sha256').update(readFileSync(join(out, d.path))).digest('hex')).toBe(d.sha256);
+    expect(readFileSync(join(out, 'gigs', g.gigKey, 'cover.txt'), 'utf8')).toMatch(/^Dear Hiring Team,\n/);
+  });
+
   it('has 0 forbidden-term hits in every output file', () => {
     const hits: string[] = [];
     let n = 0;

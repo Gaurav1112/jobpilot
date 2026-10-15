@@ -8,7 +8,8 @@ import { RenderPack } from '../../render/fill.js';
 import { modelText, normText, resumeModel } from '../../render/model.js';
 import { renderPdf, uncoveredGlyph } from '../../render/pdf.js';
 import { GigDocsPlan, GigRendered } from '../types.js';
-import { gigFilesOf, gigTexts, txtBytes } from './gig-text.js';
+import { renderHtml } from '../../render/html.js';
+import { coverPasteText, gigCoverModel, gigFilesOf, gigTexts, txtBytes } from './gig-text.js';
 
 export { GIG_DIR, gigFilesOf, gigPath, gigTexts } from './gig-text.js';
 
@@ -23,6 +24,11 @@ export { GIG_DIR, gigFilesOf, gigPath, gigTexts } from './gig-text.js';
  * writes files, so it is an `io` agent (the kernel lets only io agents write) and its outputs are P1. Before writing it
  * refuses a character the embedded font cannot draw in the CV and a forbidden term in any document text (strict), and
  * after rendering it checks the DOCX text layer. G-GROUND then re-renders every text from the plan and the full pack.
+ *
+ * **Cover letter (freelance-v2).** A plan with a `cover` (a contract role on an employer job board) also gets
+ * `cover.txt` (the letter from the salutation to the name, `coverPasteText`), `cover.pdf`, `cover.docx` and `cover.html`,
+ * drawn from the daily cover model (`coverModel`) with `{city}` filled from `contact.yaml` (`fillGigCover`): the same
+ * glyph, forbidden-term and DOCX text-layer checks as the CV, and G-FILL re-derives the fill.
  *
  * **Step key (Task 9 wiring).** The freelance supervisor must key this agent on the freelance full pack hash, which
  * covers the contact block, the answers and the freelance files (`freelance.yaml`, `platform-rules.yaml`, networks):
@@ -43,7 +49,7 @@ export const gigRendererContract = defineContract({
   emits: 'P1',
   budget: { usdPerCall: 0, usdPerRun: 0 },
   timeoutMs: 120_000,
-  guardrails: { in: [], out: ['G-GROUND', 'G-NAMING'] },
+  guardrails: { in: [], out: ['G-GROUND', 'G-FILL', 'G-NAMING'] },
 });
 
 /** The pack options the freelance supervisor passes for the gig documents: the freelance hashes, never the daily ones. */
@@ -79,6 +85,14 @@ export const gigRenderer = defineAgent(gigRendererContract, async (plan, ctx) =>
     const term = forbiddenTermStrict(t, pack.naming);
     if (term !== undefined) throw fail(`G-NAMING: forbidden term #${pack.naming.forbiddenTerms.indexOf(term) + 1} appears in ${what}`);
   }
+  // freelance-v2: the cover letter, drawn exactly as the daily renderer draws a job's (`coverModel`, PDF, DOCX, HTML).
+  const letter = plan.cover === undefined ? undefined : gigCoverModel(plan.cover, pack);
+  if (letter !== undefined) {
+    const glyph = uncoveredGlyph([modelText(letter), letter.title, letter.author]);
+    if (glyph !== null) throw fail(`unrenderable-glyph:${glyph} (the cover letter has a character the embedded font cannot draw)`);
+    const term = forbiddenTermStrict(`${letter.title}\n${modelText(letter)}`, pack.naming);
+    if (term !== undefined) throw fail(`G-NAMING: forbidden term #${pack.naming.forbiddenTerms.indexOf(term) + 1} appears in the cover letter`);
+  }
   const pdf = await renderPdf(model);
   const docx = await renderDocx(model);
   if (normText(docxText(docx)) !== normText(modelText(model))) throw fail('the contract CV DOCX text layer differs from the document text');
@@ -87,6 +101,12 @@ export const gigRenderer = defineAgent(gigRendererContract, async (plan, ctx) =>
     { data: pdf.bytes, pages: pdf.pages },
     { data: docx, pages: null },
   ];
+  if (letter !== undefined && texts.cover !== undefined) {
+    const cPdf = await renderPdf(letter);
+    const cDocx = await renderDocx(letter);
+    if (normText(docxText(cDocx)) !== normText(modelText(letter))) throw fail('the cover letter DOCX text layer differs from the document text');
+    bytes.push({ data: txtBytes(coverPasteText(texts.cover)), pages: null }, { data: cPdf.bytes, pages: cPdf.pages }, { data: cDocx, pages: null }, { data: new TextEncoder().encode(renderHtml(letter)), pages: null });
+  }
   const files: GigRendered['files'] = [];
   for (const [i, f] of gigFilesOf(plan).entries()) {
     const b = bytes[i];

@@ -39,7 +39,7 @@ import { literalIn, tagIs, tagsBack } from './lexicon.js';
 import { assertNoForbidden, assertNoForbiddenStrict, citeable, ForbiddenTermError } from './pack/rules.js';
 import { CoverPlan, Rendered, ResumePlan } from './types.js';
 import { GigDocsPlan, GigRendered } from './freelance/types.js';
-import { gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
+import { gigCoverModel, gigFilesOf, gigTexts } from './freelance/writing/gig-text.js';
 import { companyOf, getsCover, gigCoverOf, gigPostingOf } from './freelance/writing/gig-cover.js';
 import { asciiPunct } from './freelance/writing/phrases.js';
 import { evidenceLine, gigResume, planGigDocs, sentencesOf as sentencesOfDescription } from './freelance/writing/proposal-planner.js';
@@ -400,9 +400,9 @@ function gigRenderedProblems(ctx: GuardrailContext): string[] {
   if (!same(out.data.plan, input.data)) problems.push(`plan differs from the input plan (at ${firstDiff(out.data.plan, input.data) ?? '?'})`);
   const want = attempt(problems, 'text', () => gigTexts(input.data, full.data));
   if (want !== undefined) {
-    for (const k of ['proposal', 'pitch', 'resume'] as const) {
-      const w = want[k];
-      const g = out.data.text[k];
+    for (const k of ['proposal', 'pitch', 'resume', 'cover'] as const) {
+      const w = want[k] ?? null;
+      const g = out.data.text[k] ?? null;
       if (w === g) continue;
       if (w === null || g === null) problems.push(`text.${k} is ${g === null ? 'missing' : 'present'}, the plan gives ${w === null ? 'none' : 'one'}`);
       else {
@@ -618,7 +618,8 @@ export const G_FILL: Guardrail = {
     if (ctx.fullPack === undefined || ctx.fullPack === null) return trip('G-FILL', 'no full pack, so the fill cannot be re-derived');
     const pack = RenderPack.safeParse(ctx.fullPack);
     if (!pack.success) return trip('G-FILL', 'the full pack lacks contact, answers or naming');
-    if (ctx.input.type !== CoverPlan.id) return trip('G-FILL', `G-FILL checks the renderer's output for a ${CoverPlan.id} input, not ${ctx.input.type}`);
+    if (ctx.input.type === GigDocsPlan.id) return report('G-FILL', gigFillProblems(ctx, pack.data));
+    if (ctx.input.type !== CoverPlan.id) return trip('G-FILL', `G-FILL checks the renderer's output for a ${CoverPlan.id} or ${GigDocsPlan.id} input, not ${ctx.input.type}`);
     const input = CoverPlan.schema.safeParse(ctx.input.payload);
     const out = Rendered.schema.safeParse(ctx.output.payload);
     if (!input.success) return trip('G-FILL', `the input is not a valid ${CoverPlan.id}`);
@@ -657,6 +658,29 @@ export const G_FILL: Guardrail = {
     return report('G-FILL', problems);
   },
 };
+
+/**
+ * G-FILL on the gig renderer's output (freelance-v2): the only fill a gig document gets from the full pack beyond the
+ * contact block is the cover letter's `{city}`. With a planned cover, the output's plan is the input plan and
+ * `text.cover` is the letter filled from `contact.yaml` city (`gigCoverModel`) and rendered, with no placeholder left;
+ * without one, the output has no cover text. Details never quote the city.
+ */
+function gigFillProblems(ctx: GuardrailContext, full: RenderPack): string[] {
+  const input = GigDocsPlan.schema.safeParse(ctx.input.payload);
+  if (!input.success) return [`the input is not a valid ${GigDocsPlan.id}`];
+  const out = GigRendered.schema.safeParse(ctx.output?.payload);
+  if (!out.success) return [`not a valid ${GigRendered.id}`];
+  const plan = input.data;
+  const got = out.data.text.cover;
+  if (!same(out.data.plan, plan)) return [`plan differs from the input plan (at ${firstDiff(out.data.plan, plan) ?? '?'})`];
+  if (plan.cover === undefined) return got === undefined ? [] : ['text.cover is present, but the plan has no cover letter'];
+  if (got === undefined) return ['text.cover is missing, but the plan has a cover letter'];
+  const problems: string[] = [];
+  if (hasBrace(got)) problems.push('text.cover still holds a placeholder brace');
+  const want = attempt(problems, 'the cover fill', () => modelText(gigCoverModel(plan.cover as CoverPlan, full)));
+  if (want !== undefined && got !== want) problems.push('text.cover is not the letter filled from contact.yaml and rendered');
+  return problems;
+}
 
 export const APP_GUARDRAILS: readonly Guardrail[] = [G_GROUND, G_NAMING, G_NO_GAP_CLAIM, G_FILL];
 

@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { COVER_P4_THANKS, COVER_OPENING } from '../../../src/app/agents/writing/templates.js';
-import { gigKey } from '../../../src/app/freelance/keys.js';
 import { COVER_PLATFORMS, getsCover, GIG_COVER_P4_CITY } from '../../../src/app/freelance/writing/gig-cover.js';
 import { planGigDocs } from '../../../src/app/freelance/writing/proposal-planner.js';
 import { GigDocsPlan, type Gig, type ScoredGig } from '../../../src/app/freelance/types.js';
@@ -10,7 +9,7 @@ import type { Envelope } from '../../../src/kernel/envelope.js';
 import { freezePack } from '../../../src/kernel/broker.js';
 import type { GuardrailContext } from '../../../src/kernel/guardrails/index.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
-import { fixturePack, scoredGig } from '../../support/gig-fixtures.js';
+import { boardRole, fixturePack, scoredGig } from '../../support/gig-fixtures.js';
 
 /**
  * freelance-v2 Feature 2: a full tailored cover letter for contract roles from employer job boards (`boards`, the
@@ -19,28 +18,6 @@ import { fixturePack, scoredGig } from '../../support/gig-fixtures.js';
  */
 
 const { full, pub } = fixturePack();
-
-/** A review-list contract from an employer job board (pay and hours unstated), at a fictional company. */
-export function boardRole(over: Partial<Gig> = {}, list: ScoredGig['list'] = 'review'): ScoredGig {
-  const platform = over.platform ?? 'boards';
-  const n = over.sourceId ?? 'b1';
-  const s = scoredGig({
-    platform,
-    sourceId: n,
-    gigKey: gigKey(platform, n),
-    kind: 'contract',
-    url: `https://jobs.example.com/roles/${n}`,
-    title: 'Senior Backend Engineer - Java (6-month contract)',
-    description:
-      'Example Robotics is hiring a contract backend engineer. You will build event-driven payment services in Java with Kafka on AWS. ' +
-      'We need someone who can design APIs and own production services. PostgreSQL experience is welcome.',
-    client: { name: 'Example Robotics', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null },
-    budget: { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null },
-    skills: [],
-    ...over,
-  });
-  return { ...s, list, risked: { ...s.risked, verdict: { ...s.risked.verdict, verdict: list === 'review' ? 'review' : 'eligible', reasons: list === 'review' ? ['rate-unclear', 'hours-unclear'] : [] } } };
-}
 
 const plan = (s: ScoredGig, pack: unknown = pub): GigDocsPlan => {
   const p = planGigDocs(s, pack);

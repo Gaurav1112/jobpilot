@@ -1,5 +1,5 @@
 {
-  "hash": "8d28ad9206dcc550d28fdc2b5eb2fd3d10e565f9f052b95a7b0def925ed24f30",
+  "hash": "b44aec55f6ebf304f03456a905896e8697474ca56b35c8949971598cfb90442b",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -1842,6 +1842,7 @@
       "in": [],
       "out": [
         "G-GROUND",
+        "G-FILL",
         "G-NAMING"
       ]
     },
@@ -1864,7 +1865,8 @@
                   "enum": [
                     "txt",
                     "pdf",
-                    "docx"
+                    "docx",
+                    "html"
                   ],
                   "type": "string"
                 },
@@ -1872,7 +1874,8 @@
                   "enum": [
                     "proposal",
                     "pitch",
-                    "resume"
+                    "resume",
+                    "cover"
                   ],
                   "type": "string"
                 },
@@ -3717,6 +3720,9 @@
           "text": {
             "additionalProperties": false,
             "properties": {
+              "cover": {
+                "type": "string"
+              },
               "pitch": {
                 "type": [
                   "string",

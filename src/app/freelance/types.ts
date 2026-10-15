@@ -175,8 +175,11 @@ export const GigDocsPlan = defineType(
 );
 export type GigDocsPlan = z.infer<typeof GigDocsPlan.schema>;
 
-/** A gig file: the paste-ready text (`proposal.txt` or `pitch.txt`) or the contract CV (`resume.pdf`, `resume.docx`). */
-export const GigFile = RenderedFile.extend({ kind: z.enum(['proposal', 'pitch', 'resume']), format: z.enum(['txt', 'pdf', 'docx']) }).strict();
+/**
+ * A gig file: the paste-ready text (`proposal.txt` or `pitch.txt`), the contract CV (`resume.pdf`, `resume.docx`), or
+ * (freelance-v2) the cover letter of a contract role on an employer job board (`cover.txt`, `.pdf`, `.docx`, `.html`).
+ */
+export const GigFile = RenderedFile.extend({ kind: z.enum(['proposal', 'pitch', 'resume', 'cover']), format: z.enum(['txt', 'pdf', 'docx', 'html']) }).strict();
 export type GigFile = z.infer<typeof GigFile>;
 
 /**
@@ -192,7 +195,8 @@ export const GigRendered = defineType(
       gigKey: JobKey,
       files: z.array(GigFile),
       plan: GigDocsPlan.schema,
-      text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string() }).strict(),
+      /** `cover` (freelance-v2): the cover letter's document text (`modelText`, contact block included), only with a planned cover. */
+      text: z.object({ proposal: z.string().nullable(), pitch: z.string().nullable(), resume: z.string(), cover: z.string().optional() }).strict(),
     })
     .strict(),
 );

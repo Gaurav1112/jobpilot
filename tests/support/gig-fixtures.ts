@@ -104,3 +104,25 @@ export function scoredGig(over: Partial<Gig> = {}): ScoredGig {
     list: gig.kind === 'contract' ? 'contracts' : 'gigs',
   };
 }
+
+/** A review-list contract from an employer job board (pay and hours unstated), at a fictional company. */
+export function boardRole(over: Partial<Gig> = {}, list: ScoredGig['list'] = 'review'): ScoredGig {
+  const platform = over.platform ?? 'boards';
+  const n = over.sourceId ?? 'b1';
+  const s = scoredGig({
+    platform,
+    sourceId: n,
+    gigKey: gigKey(platform, n),
+    kind: 'contract',
+    url: `https://jobs.example.com/roles/${n}`,
+    title: 'Senior Backend Engineer - Java (6-month contract)',
+    description:
+      'Example Robotics is hiring a contract backend engineer. You will build event-driven payment services in Java with Kafka on AWS. ' +
+      'We need someone who can design APIs and own production services. PostgreSQL experience is welcome.',
+    client: { name: 'Example Robotics', country: null, paymentVerified: null, hireRate: null, spendUsd: null, reviews: null, since: null },
+    budget: { type: 'unknown', min: null, max: null, currency: null, usdPerUnit: null },
+    skills: [],
+    ...over,
+  });
+  return { ...s, list, risked: { ...s.risked, verdict: { ...s.risked.verdict, verdict: list === 'review' ? 'review' : 'eligible', reasons: list === 'review' ? ['rate-unclear', 'hours-unclear'] : [] } } };
+}

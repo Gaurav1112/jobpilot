@@ -33,7 +33,7 @@ function answerText(answers: Readonly<Record<string, unknown>>, key: string): st
 const CITY_DISALLOWED = /[<>{}`\\]/;
 
 /** Why a contact city may not go into the letter, or null. The pack scan already checks its glyphs and forbidden terms. */
-function unsafeCity(city: string): string | null {
+export function unsafeCity(city: string): string | null {
   if (sanitisePostingText(city) !== city) return 'it changes when sanitised';
   if (CITY_DISALLOWED.test(city)) return 'it has a markup or template character';
   const why = unsafePostingText(city);

@@ -1,5 +1,5 @@
 {
-  "hash": "fddaf638f844c97b0169898d35846bbc7bbb6c9528548207eea129f9c7cae969",
+  "hash": "dfca36d54b9a16fa52b6aad479d3a9d96b824394a4e595c8afe2714938ee72bf",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -29,7 +29,8 @@
                   "enum": [
                     "txt",
                     "pdf",
-                    "docx"
+                    "docx",
+                    "html"
                   ],
                   "type": "string"
                 },
@@ -37,7 +38,8 @@
                   "enum": [
                     "proposal",
                     "pitch",
-                    "resume"
+                    "resume",
+                    "cover"
                   ],
                   "type": "string"
                 },
@@ -1882,6 +1884,9 @@
           "text": {
             "additionalProperties": false,
             "properties": {
+              "cover": {
+                "type": "string"
+              },
               "pitch": {
                 "type": [
                   "string",
@@ -1976,7 +1981,8 @@
                   "enum": [
                     "txt",
                     "pdf",
-                    "docx"
+                    "docx",
+                    "html"
                   ],
                   "type": "string"
                 },
@@ -1984,7 +1990,8 @@
                   "enum": [
                     "proposal",
                     "pitch",
-                    "resume"
+                    "resume",
+                    "cover"
                   ],
                   "type": "string"
                 },
