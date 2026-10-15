@@ -987,6 +987,29 @@ function gem(raw: RawPosting, r: Rec): Posting {
   });
 }
 
+const LEAD_REMOTE_WORD = /\bremote\b/i;
+
+/**
+ * freehire lead (sources expansion Task 9; src-freehire-leads): `{url, title, company, location, postedAt, via}` as the
+ * weekly discovery stored it. The location is freehire's own text; remote is the word "remote" in it and nothing else.
+ * The description is empty (freehire's preview is truncated and not stored); the date is as stored. Eligibility caps
+ * every freehire posting at `review`.
+ */
+function freehire(raw: RawPosting, r: Rec): Posting {
+  const location = str(r.location) ?? '';
+  const remote = LEAD_REMOTE_WORD.test(location);
+  return smallPosting(raw, 'freehire', {
+    title: r.title,
+    url: r.url,
+    places: [oneLine(location)],
+    structured: remote ? 'remote' : null,
+    signals: remote ? ['location:remote'] : [],
+    employmentType: null,
+    description: '',
+    postedAt: r.postedAt,
+  });
+}
+
 const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> = {
   greenhouse,
   lever,
@@ -1014,6 +1037,7 @@ const BY_SOURCE: Readonly<Record<string, (raw: RawPosting, r: Rec) => Posting>> 
   zohorecruit,
   manatal,
   gem,
+  freehire,
 };
 
 /** Maps one raw posting; throws `invalid_output` for an unknown source, a raw that is not an object, no title or no URL. */

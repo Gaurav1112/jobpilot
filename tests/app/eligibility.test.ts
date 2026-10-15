@@ -604,7 +604,7 @@ describe('eligibility, in spec §5.2 order; the first failure ends it', () => {
   });
 
   it('every reason and note is one of the fixed codes', () => {
-    const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+)$/;
+    const CODE = /^(closed|onsite|hybrid|remote-unclear|location-outside-india|timezone-excludes-india|role:.+|company:.+|employment:[a-z0-9 -]+|remote-excludes-india:(location|us-only|eu-only|must-reside|us-work-authorization|country-list)|below-floor:\d+|freehire-lead: .+)$/;
     const NOTES = new Set(['pay not disclosed', 'pay basis unclear', 'remote scope unclear - verify', 'time zone may exclude India - verify', NOTE_B2B]);
     const spec = appEvalSpecs(join(root, 'evals/datasets'), join(root, 'tests/fixtures/pack')).find((s) => s.agent.contract.id === 'eligibility')!;
     for (const k of spec.cases) {

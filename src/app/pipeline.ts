@@ -10,6 +10,7 @@ import { scorerLexicon } from './agents/scorer-lexicon.js';
 import { srcAshby } from './agents/sources/ashby.js';
 import { CAREERS_RENDER_INTERVAL_MS, careersHosts, srcCareersJob, srcCareersList } from './agents/sources/careers.js';
 import { SOURCE_TIMEOUT_MS } from './agents/sources/common.js';
+import { makeSrcFreehireLeads } from './agents/sources/freehire-leads.js';
 import { srcGreenhouse } from './agents/sources/greenhouse.js';
 import { HIMALAYAS_FEED, HIMALAYAS_MAX_PAGES, HIMALAYAS_TIMEOUT_MS, srcHimalayas } from './agents/sources/himalayas.js';
 import { JOBICY_FEED, JOBICY_MAX_REQUESTS, JOBICY_TIMEOUT_MS, srcJobicy } from './agents/sources/jobicy.js';
@@ -36,6 +37,7 @@ import { qaGate } from './agents/writing/qa-gate.js';
 import { renderer } from './agents/writing/renderer.js';
 import { capabilityProblems } from './allow-list.js';
 import type { Feeds, WatchEntry } from './pack/schema.js';
+import type { FreehireLead } from './store/app-store.js';
 import { CoverPlan, DiscoveryRequest, knownAts } from './types.js';
 import { FEED_SOURCES, knownFeeds } from './feeds.js';
 
@@ -76,6 +78,7 @@ const TEAM_ORDER = [
   ...SMALL_PLATFORMS.map((p) => p.spec.team),
   'sourcing-jazzhr',
   'sourcing-freshteam',
+  'sourcing-freehire',
   'understanding',
   'evaluation',
   'writing',
@@ -259,7 +262,7 @@ export function registryBoards(companies: readonly RegistryCompany[]): RegistryB
 export function dailyAgents(
   watchlist: readonly WatchLike[],
   boards: readonly RegistryBoard[] = [],
-  o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState; readonly jobPageLedger?: PageLedger } = {},
+  o: { readonly pageLedger?: PageLedger; readonly pageState?: PageState; readonly jobPageLedger?: PageLedger; readonly leads?: readonly FreehireLead[] } = {},
 ): AnyAgent[] {
   const careers: AnyAgent[] = careersHosts(watchlist).length === 0 ? [] : [srcCareersList, srcCareersJob];
   // one adapter per platform with a verified company, each on its own fresh host state (robots.txt, disabled hosts)
@@ -283,6 +286,8 @@ export function dailyAgents(
     // Sources expansion, Task 2: the listing-pages adapters, on the page state and the strict page rule
     ...(has('jazzhr') ? [jazzhr.make(pages())] : []),
     ...(has('freshteam') ? [freshteam.make(pages())] : []),
+    // Sources expansion, Task 9: the stored freehire leads, fed by the app layer (no network); only when there are leads
+    ...(o.leads !== undefined && o.leads.length > 0 ? [makeSrcFreehireLeads(o.leads)] : []),
   ];
   return [...API_SOURCES, ...careers, ...platforms, normalizer, eligibility, scorerLexicon, ...writingAgents];
 }
@@ -325,7 +330,7 @@ export function dailyPipeline(agents: readonly AnyAgent[]): Pipeline {
     ...(has('src-workday') ? [{ type: 'DiscoveryRequest@1', to: 'src-workday' }] : []),
     ...(has('src-eightfold') ? [{ type: 'DiscoveryRequest@1', to: 'src-eightfold' }] : []),
     ...(has('src-oracle') ? [{ type: 'DiscoveryRequest@1', to: 'src-oracle' }] : []),
-    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap', ...SMALL_PLATFORMS.map((f) => f.contract.id), 'src-jazzhr', 'src-freshteam'] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
+    ...(['src-icims', 'src-successfactors', 'src-smartrecruiters', 'src-jsonld-sitemap', ...SMALL_PLATFORMS.map((f) => f.contract.id), 'src-jazzhr', 'src-freshteam', 'src-freehire-leads'] as const).flatMap((id) => (has(id) ? [{ type: 'DiscoveryRequest@1', to: id }] : [])),
     { type: 'RawPosting@1', to: 'normalizer' },
     { type: 'Posting@1', to: 'eligibility' },
     { type: 'EligibilityVerdict@1', to: 'scorer-lexicon' },
@@ -440,7 +445,8 @@ export function pacingProblems(
 
 /**
  * The run's seeds: one request per watchlist entry, then one per enabled feed, then one per registry board (`boards`,
- * `registryBoards`: `{ats: <platform>, slug: <ref>, company}`, Workday, Eightfold, then Oracle), each dated `runDate` (the IST date).
+ * `registryBoards`: `{ats: <platform>, slug: <ref>, company}`, Workday, Eightfold, then Oracle), then `{ats: 'freehire',
+ * slug: 'leads'}` when `hasLeads` (Task 9, src-freehire-leads), each dated `runDate` (the IST date).
  * Identical entries are sent once. `attempt` (the run's ordinal on its date, from `run --refresh`) is set only when it
  * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. An unknown feed cannot get here
  * (`loadPack` refuses it) and throws.
@@ -450,6 +456,7 @@ export function dailySeeds(
   runDate: string,
   attempt?: number,
   boards: readonly RegistryBoard[] = [],
+  hasLeads = false,
 ): DiscoveryRequest[] {
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
@@ -478,5 +485,7 @@ export function dailySeeds(
     }
     add({ ats: b.platform, slug: b.ref, company: b.company, runDate });
   }
+  // Task 9: the stored freehire leads are one more request, only when there are leads (else the seeds are as before)
+  if (hasLeads) add({ ats: 'freehire', slug: 'leads', company: 'freehire', runDate });
   return seeds;
 }

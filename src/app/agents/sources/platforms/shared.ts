@@ -279,4 +279,6 @@ export const PLATFORM_NOTE_PREFIXES = [
   'page-budget ', 'title-prefilter ', 'no-jobposting ', 'page-moved ', 'page-error ', 'not-india ', 'malformed-entries ', 'listing-cap ',
   // Task 9, the small platforms (feed-board.ts, rippling.ts)
   'rippling-uuid-conflict ',
+  // Sources expansion Task 9, the stored freehire leads (freehire-leads.ts)
+  'freehire-leads: ',
 ] as const;

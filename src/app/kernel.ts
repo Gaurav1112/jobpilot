@@ -19,6 +19,7 @@ import { packTextProblems } from './pack/scan.js';
 import type { Fact, Pack, PublicPack } from './pack/schema.js';
 import type { PageState } from './agents/sources/platforms/pages.js';
 import type { PageLedger } from './agents/sources/platforms/shared.js';
+import type { FreehireLead } from './store/app-store.js';
 import { careersEgressSets, compileDaily, dailyAgents, pacingProblems, rebuildAgents, rebuildPipeline, registryEgressSets, type RegistryBoard } from './pipeline.js';
 import { FETCHING_PLATFORMS, freelanceAgents, freelancePacingProblems, freelancePipeline } from './freelance/pipeline.js';
 import { freelanceDocsPacks } from './freelance/writing/gig-renderer.js';
@@ -129,6 +130,8 @@ export interface AppKernelOptions {
   readonly pageState?: PageState;
   /** The page adapters' job pages per company per IST day (`appPageLedger(app, PAGE_LEDGER_PREFIX)`); default in memory. */
   readonly jobPageLedger?: PageLedger;
+  /** The stored freehire leads the daily run reads through `src-freehire-leads` (Task 9); default none (no agent, no seed). */
+  readonly leads?: readonly FreehireLead[];
   /**
    * The HTTPS online check (`pacedHttpsOnline`), given the supervisor's per-host pacer, which its probes must wait on: a
    * network failure while it says offline is not final; the step is re-queued once it passes (the supervisor's wake
@@ -158,9 +161,10 @@ export function preparePipeline(
   pageLedger?: PageLedger,
   pageState?: PageState,
   jobPageLedger?: PageLedger,
+  leads?: readonly FreehireLead[],
 ): Omit<AppKernel, 'supervisor'> & { readonly guardrails: GuardrailRegistry } {
   const guardrails = appGuardrails();
-  const state = { ...(pageLedger === undefined ? {} : { pageLedger }), ...(pageState === undefined ? {} : { pageState }), ...(jobPageLedger === undefined ? {} : { jobPageLedger }) };
+  const state = { ...(pageLedger === undefined ? {} : { pageLedger }), ...(pageState === undefined ? {} : { pageState }), ...(jobPageLedger === undefined ? {} : { jobPageLedger }), ...(leads === undefined ? {} : { leads }) };
   const { registry, compiled } = mode === 'daily' ? compileDaily(dailyAgents(pack.watchlist, boards, state), guardrails) : compileDaily(rebuildAgents(), guardrails, rebuildPipeline());
   const policy = mergePolicy(PRODUCT_POLICY_V1, pack.policyUser);
   // A rebuild fetches nothing, so only the daily run's pacing matters.
@@ -178,7 +182,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
   const { pack } = o.loaded;
   if (!isAbsolute(o.pdftotext)) throw new Error(`pdftotext must be an absolute path, not ${o.pdftotext}`);
   const boards = o.mode === 'rebuild' ? [] : (o.boards ?? []);
-  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards, o.pageLedger, o.pageState, o.jobPageLedger);
+  const { registry, compiled, guardrails, policy, policyHash: pHash } = preparePipeline(pack, o.mode ?? 'daily', boards, o.pageLedger, o.pageState, o.jobPageLedger, o.leads);
   if (registry.has('src-careers-list') && o.browser === undefined) throw new Error('the watchlist has careers entries but no browser provider was given');
   const supervisor = new Supervisor({
     store: o.store,

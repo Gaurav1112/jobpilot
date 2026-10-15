@@ -29,12 +29,21 @@ export interface JobPageData {
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
 const KIND_NAME = { resume: 'Resume', cover: 'Cover letter' } as const;
 
+/** The freehire source a lead came through: its row's source id is `<via>:<external id>` (src-freehire-leads). */
+function leadVia(j: JobDetail): string | null {
+  const id = j.sources.find((s) => s.source === 'freehire')?.sourceId ?? '';
+  const cut = id.indexOf(':');
+  return cut > 0 ? id.slice(0, cut) : null;
+}
+
 function header(j: JobDetail): Html {
   const url = externalUrl(j.url);
+  const via = j.ats === 'freehire' ? leadVia(j) : null;
   return html`<header class="job-head">
 <p class="crumbs"><a href="/">Jobs</a></p>
 <h1>${j.title}</h1>
 <p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span><span class="sep" aria-hidden="true">·</span><span>via ${sourceName(j.source)}${j.ats !== j.source && j.ats !== 'feed' ? html` (applies on ${sourceName(j.ats)})` : ''}</span></p>
+${j.ats === 'freehire' ? html`<p class="hint">Found through freehire${via === null ? '' : html` (via ${via})`}. jobpilot cannot read this platform, so it is listed for review only.</p>` : ''}
 <div class="head-facts">
 <div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
 <div class="fact-box"><span class="label">Fit score</span><span class="big num">${j.score === null ? '–' : scoreText(j.score)}</span></div>

@@ -12,6 +12,7 @@ import { notificationFor, type Notifier } from './notify.js';
 import { homePaths } from './pack/paths.js';
 import { appPageLedger, appPageState } from './daily-hosts.js';
 import { PAGE_LEDGER_PREFIX } from './agents/sources/platforms/pages.js';
+import { coverageWeek } from './due.js';
 import { DAILY_PIPELINE, dailySeeds, registryBoards } from './pipeline.js';
 import { namedSkipWarnings, runProblems, safeLine, sourceSkipWarnings, staleProblems, type Problem } from './problems.js';
 import { markStaleDocs, projectDocs, projectRun, runCounts, type AgentCounts, type DocsChange, type ProjectResult, type RunCounts } from './project.js';
@@ -28,6 +29,11 @@ export function istDate(iso: string): string {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) throw new Error(`not an ISO time: ${iso}`);
   return new Date(t + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/** The earliest coverage week whose leads the daily run reads: the week before the current one (`coverageWeek(now)` minus 7 days). */
+export function leadsSince(now: string): string {
+  return new Date(Date.parse(`${coverageWeek(now)}T00:00:00Z`) - 7 * 86_400_000).toISOString().slice(0, 10);
 }
 
 /** The month in India (YYYY-MM) at an ISO instant: the run's `experience.asOf`. */
@@ -214,11 +220,13 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'daily');
       // the verified registry companies whose platform has a daily adapter (none: the run is exactly as before)
       const boards = registryBoards(app.verifiedCompanies());
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), boards, pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
+      // Sources expansion Task 9: the freehire leads the weekly discovery stored this coverage week or the one before (SELECT only)
+      const leads = app.freehireLeads(leadsSince(now));
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), boards, ...(leads.length > 0 ? { leads } : {}), pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
-      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined, boards);
+      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined, boards, leads.length > 0);
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });
