@@ -41,7 +41,7 @@ export const MAX_HOPS = 5;
  */
 export const REQUEST_TIMEOUT_MS = 15_000;
 /**
- * One step's wall-clock deadline (the injected clock), under the agents' 120 s step timeout: no request starts after
+ * One step's deadline (the injected clock, less any time the step spent asleep), under the agents' 120 s step timeout: no request starts after
  * it, and the step ends with what it has (the locator: `none` with `budget-exhausted:time`).
  */
 export const CANDIDATE_DEADLINE_MS = 90_000;
@@ -373,7 +373,7 @@ export function stepFetcher(o: {
   readonly maxRequests: number;
   /** Per-request timeout; default REQUEST_TIMEOUT_MS. */
   readonly requestTimeoutMs?: number;
-  /** The step's wall-clock deadline from its start (the context's clock); default CANDIDATE_DEADLINE_MS. */
+  /** The step's deadline from its start (the context's clock less the time it slept, `ctx.sleptMs`); default CANDIDATE_DEADLINE_MS. */
   readonly deadlineMs?: number;
 }): StepFetcher {
   const { ctx, gate, planned, acceptMoved, maxRequests } = o;
@@ -423,7 +423,8 @@ export function stepFetcher(o: {
       }
       // robots.txt is shared by the whole run, so it is counted but never refused by one step's budget
       if (checkRobots && requests >= maxRequests) throw new BudgetExhausted('requests');
-      if (Date.parse(ctx.clock.now()) >= deadline) throw new BudgetExhausted('time');
+      // awake time: what the step spent suspended (a sleeping Mac) does not use its deadline up
+      if (Date.parse(ctx.clock.now()) - (ctx.sleptMs?.() ?? 0) >= deadline) throw new BudgetExhausted('time');
       requests++;
       let page;
       try {
