@@ -67,12 +67,12 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
   )}${j.history.length > imported.length ? html` · ${j.history.length - imported.length} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
 }
 
-function row(j: ListedJob, istDay: (iso: string) => string): Html {
+function row(j: ListedJob, istDay: (iso: string) => string, markNew: boolean): Html {
   return html`<li class="job" data-job="${j.jobKey}">
 <div class="job-comp">${compCell(j)}<span class="job-band">${bandPill(j.band)}</span></div>
 <div class="job-score num" title="Fit score">${j.score === null ? '–' : scoreText(j.score)}</div>
 <div class="job-main">
-<h2 class="job-title"><a href="/jobs/${j.jobKey}">${j.title}</a>${j.isNew ? html` <span class="new">New since your last visit</span>` : ''}</h2>
+<h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="/jobs/${j.jobKey}">${j.title}</a></h2>
 <p class="job-sub"><span class="job-company">${j.company}</span><span class="sep" aria-hidden="true">·</span><span>${j.location}</span>${
     j.alsoListedOn.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : ''
   }</p>
@@ -94,11 +94,11 @@ function pager(d: JobsPageData): Html | '' {
 }
 
 export function jobsBody(d: JobsPageData): Html {
-  const newCount = d.newCount;
+  const markNew = d.newCount > 0 && d.newCount < d.total;
   return html`<div class="page-head">
 <h1>Jobs</h1>
 <p class="lede"><span class="num">${d.total}</span> job${d.total === 1 ? '' : 's'} · <span class="num">${d.toDecide}</span> to decide${
-    newCount > 0 ? html`, <span class="num">${newCount}</span> new since your last visit` : ''
+    markNew ? html`, <span class="num">${d.newCount}</span> new since your last visit` : ''
   } · sorted by best fit, then pay.${
     d.defaultBands && d.hiddenCount > 0
       ? html` <span class="muted"><span class="num">${d.hiddenCount}</span> not-eligible or below-floor job${d.hiddenCount === 1 ? ' is' : 's are'} hidden; tick their bands to see them.</span>`
@@ -109,6 +109,6 @@ ${filterForm(d.filter, d.defaultBands)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" aria-label="Jobs">${d.jobs.map((j) => row(j, d.istDay))}</ol>${pager(d)}`
+    : html`<ol class="jobs" aria-label="Jobs">${d.jobs.map((j) => row(j, d.istDay, markNew))}</ol>${pager(d)}`
 }`;
 }

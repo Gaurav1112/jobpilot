@@ -286,14 +286,20 @@ describe('dashboard: jobs list', () => {
     expect(textOf((await get(`/jobs/${K1}`)).body)).not.toContain('office/hybrid:');
   });
 
-  it('marks rows first seen since the previous visit as new', async () => {
-    // first visit: everything is new
-    const first = await app.request('/', { headers: { cookie } });
-    expect((await first.text()).match(/New since your last visit/g)?.length).toBe(8);
-    // a visit cookie from after the rows were seen: nothing new
-    const later = Date.parse('2026-10-09T03:00:00.000Z');
-    const r = await app.request('/', { headers: { cookie: `${cookie}; jp_visit=${later}.${later}` } });
-    expect(await r.text()).not.toContain('New since your last visit');
+  it('A4: "new" is said once in the lede, and new rows get a dot, only when some but not all rows are new', async () => {
+    const first = await (await app.request('/', { headers: { cookie } })).text();
+    expect(textOf(first)).not.toContain('new since your last visit');
+    expect(first).not.toContain('New since your last visit');
+    expect(elementsWith(first, 'class', 'new-dot')).toEqual([]);
+    const FRESH = 'c4c4c4c4c4c4c4c4';
+    withStore((s) => s.upsertJob(row(FRESH, 24, { title: 'Fresh role', score: 79, at: '2026-10-09T05:00:00.000Z' })));
+    const seen = Date.parse('2026-10-09T03:00:00.000Z'); // a visit after the first rows, before FRESH
+    const r = await app.request('/', { headers: { cookie: `${cookie}; jp_visit=${seen}.${seen}` } });
+    const body = await r.text();
+    expect(textOf(body)).toContain('1 new since your last visit');
+    expect(elementsWith(body, 'class', 'new-dot')).toHaveLength(1);
+    expect(elementsWith(rowOf(body, 'data-job', FRESH), 'class', 'new-dot')).toHaveLength(1);
+    expect(textOf(elementsWith(rowOf(body, 'data-job', FRESH), 'class', 'job-title')[0] ?? '')).toMatch(/^● New: Fresh role/);
     expect(r.headers.get('set-cookie')).toMatch(/jp_visit=\d+\.\d+/);
   });
 });
@@ -961,7 +967,7 @@ describe('dashboard: fix round 1', () => {
     const k3 = rowOf(body, 'data-job', K3);
     expect(k3.match(/>New</g) ?? []).toHaveLength(0);
     expect(textOf(k3)).toContain('Not started');
-    expect(textOf(k3)).toContain('New since your last visit');
+    expect(textOf(k3)).not.toContain('New since your last visit');
   });
 });
 
