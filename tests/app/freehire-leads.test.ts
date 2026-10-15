@@ -208,7 +208,7 @@ describe('a lead and the same job read directly', () => {
     expect(s.getJob(l.jobKey)?.duplicateOf).toBe('f000000000000001');
     expect(s.getJob('f000000000000001')?.duplicateOf).toBeNull();
     const detail = s.getJob(l.jobKey);
-    const page = jobBody({ job: detail as NonNullable<typeof detail>, csrf: 't', sent: { jobKey: l.jobKey, snapshots: [], changedSince: {}, canKeep: false, appliedDay: null, csrf: 't', istDay: (x) => x }, answers: null, display: (k) => k, recommended: { format: 'pdf', atsName: 'Most applicant systems' }, preferred: null, istDay: (x) => x }).value;
+    const page = jobBody({ job: detail as NonNullable<typeof detail>, csrf: 't', sent: { jobKey: l.jobKey, snapshots: [], changedSince: {}, canKeep: false, appliedDay: null, csrf: 't', istDay: (x) => x }, answers: null, display: (k) => k, recommended: { format: 'pdf', for: 'Most applicant systems' }, preferred: null, istDay: (x) => x, now: '2026-10-15T06:30:00.000Z' }).value;
     expect(page).toContain('Found through freehire (via lever)');
   });
 });
