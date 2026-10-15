@@ -112,15 +112,15 @@ describe('the slow queries use the new indexes (EXPLAIN QUERY PLAN)', () => {
       return prepare(sql);
     }) as typeof db.prepare;
     try {
-      app.listJobsPage({ floorInr: 4_000_000 }, { page: 1, size: 100, newAfterMs: 0 });
-      app.listJobsPage({ floorInr: 4_000_000, status: ['new', 'applied'], text: 'eng', minScore: 10 }, { page: 1, size: 100, newAfterMs: 0 });
+      app.listJobsPage({ floorInr: 4_000_000 }, { page: 1, size: 100, newAfterMs: 0, decideFrom: '2026-10-01T00:00:00.000Z' });
+      app.listJobsPage({ floorInr: 4_000_000, status: ['new', 'applied'], text: 'eng', minScore: 10 }, { page: 1, size: 100, newAfterMs: 0, decideFrom: '2026-10-01T00:00:00.000Z' });
     } finally {
       db.prepare = prepare;
     }
     const scans = seen.filter((s) => /GROUP BY band|ORDER BY band/.test(s));
     expect(scans.length).toBe(4);
     for (const sql of scans) {
-      const p = plan(db, sql, { floor: 4_000_000, newAfter: 0, limit: 100, offset: 0, minScore: 10, text: 'eng' });
+      const p = plan(db, sql, { floor: 4_000_000, newAfter: 0, decideFromMs: 0, limit: 100, offset: 0, minScore: 10, text: 'eng' });
       // the default view's `duplicate_of IS NULL` is an equality search on the index's first column, not a full index scan
       expect(p, sql).toMatch(/SEARCH j USING COVERING INDEX jobs_list \(duplicate_of=\?/);
       expect(p, sql).not.toMatch(/SCAN j\b(?! USING COVERING)/);

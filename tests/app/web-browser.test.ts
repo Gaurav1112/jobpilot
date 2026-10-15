@@ -4,7 +4,8 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { chromium, type Browser } from 'playwright';
+import type { Browser } from 'playwright';
+import { launchBrowser } from '../support/browser.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppStore, type Doc } from '../../src/app/store/app-store.js';
 import { serveDashboard } from '../../src/app/web/server.js';
@@ -19,7 +20,7 @@ const root = join(import.meta.dirname, '../..');
 const K1 = '1111111111111111';
 const sha = (b: string): string => createHash('sha256').update(b).digest('hex');
 
-const browser: Browser | undefined = await chromium.launch().catch(() => undefined);
+const browser: Browser | undefined = await launchBrowser();
 
 let home: string;
 let base: string;

@@ -102,6 +102,7 @@ const NOTICE: Readonly<Record<string, string>> = {
 };
 
 /** Code-unit order (locale independent, as every sort in the app). */
+export const REVIEW_PAGE_SIZE = 50;
 const codeUnits = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -223,18 +224,35 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     return rankGigs(mine.map((g) => rankable(g, list)), fitFloor)[list].map((s) => byKey.get(s.risked.verdict.rated.gig.gigKey) as GigView);
   };
 
-  const hiddenText = (gigs: readonly GigView[], tab: (typeof GIG_TABS)[number]): string | null => {
-    if (tab === 'review') return null;
+  const hiddenOf = (gigs: readonly GigView[], tab: (typeof GIG_TABS)[number]): { text: string | null; count: number } => {
+    if (tab === 'review') return { text: null, count: 0 };
     const kind = tab === 'contracts' ? 'contract' : 'gig';
     const mine = gigs.filter((g) => g.kind === kind);
     const below = mine.filter((g) => g.list === 'below-floor').length;
     const rejected = mine.filter((g) => g.list === null && g.verdict === 'rejected').length;
     const unscored = mine.filter((g) => g.list === null && g.verdict !== 'rejected').length;
     const parts = [below > 0 ? `${below} below the fit floor` : '', rejected > 0 ? `${rejected} not eligible` : '', unscored > 0 ? `${unscored} not scored` : ''].filter((p) => p !== '');
-    if (parts.length === 0) return null;
+    const count = below + rejected + unscored;
+    if (parts.length === 0) return { text: null, count: 0 };
     const joined = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts.at(-1) as string}`;
-    return `${joined} ${below + rejected + unscored === 1 ? 'is' : 'are'} not shown.`;
+    return { text: `${joined} ${count === 1 ? 'is' : 'are'} not shown.`, count };
   };
+
+  /** A3: the tab /freelance opens on when no tab is asked for. */
+  const landingTab = (gigs: readonly GigView[], fitFloor: number): (typeof GIG_TABS)[number] =>
+    ranked(gigs, 'contracts', fitFloor).length > 0 || contractRoles(gigs, fitFloor).length > 0
+      ? 'contracts'
+      : ranked(gigs, 'gigs', fitFloor).length > 0
+        ? 'gigs'
+        : ranked(gigs, 'review', fitFloor).length > 0
+          ? 'review'
+          : 'contracts';
+
+  /** A3: the gigs a Contracts or Gigs tab left out (below the floor, not eligible, not scored), best fit first. */
+  const leftOut = (gigs: readonly GigView[], tab: (typeof GIG_TABS)[number]): GigView[] =>
+    gigs
+      .filter((g) => g.kind === (tab === 'contracts' ? 'contract' : 'gig') && (g.list === 'below-floor' || g.list === null))
+      .sort((a, b) => (a.fit === b.fit ? 0 : a.fit === null ? 1 : b.fit === null ? -1 : b.fit - a.fit) || codeUnits(a.gigKey, b.gigKey));
 
   const lastRunText = (s: AppStore): string | null => {
     const r = s.latestGigRun();
@@ -243,27 +261,38 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
 
   // --- the three gig lists, and the tab switch -------------------------------------------------------------------------
   app.get('/freelance', (c) => {
-    const tab = c.req.query('tab') ?? 'contracts';
-    if (tab === 'networks') return networksPage(c);
-    if (tab === 'sources') return sourcesPage(c);
-    const list = (GIG_TABS as readonly string[]).includes(tab) ? (tab as (typeof GIG_TABS)[number]) : 'contracts';
+    const tabAsked = c.req.query('tab') ?? '';
+    if (tabAsked === 'networks') return networksPage(c);
+    if (tabAsked === 'sources') return sourcesPage(c);
     const at = d.now();
     const ps = d.packState(at);
     const r = d.redactor(ps.naming);
     const fitFloor = rulesOf(ps.pack).fitFloor;
+    const pageRaw = c.req.query('page') ?? '1';
+    const pageAsked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
     const data = d.withStore((s) => {
       const gigs = s.listGigs();
-      const rows = ranked(gigs, list, fitFloor);
-      // The Contract roles section heads the Contracts tab (the Freelance landing tab).
+      const list = (GIG_TABS as readonly string[]).includes(tabAsked) ? (tabAsked as (typeof GIG_TABS)[number]) : landingTab(gigs, fitFloor);
+      const showHidden = c.req.query('show') === 'hidden' && list !== 'review';
+      const all = showHidden ? leftOut(gigs, list) : ranked(gigs, list, fitFloor);
+      const paged = list === 'review' || showHidden;
+      const pages = paged ? Math.max(1, Math.ceil(all.length / REVIEW_PAGE_SIZE)) : 1;
+      const page = Math.min(pageAsked, pages);
+      const rows = paged ? all.slice((page - 1) * REVIEW_PAGE_SIZE, page * REVIEW_PAGE_SIZE) : all;
+      // The Contract roles section heads the Contracts tab.
       const roles = list === 'contracts' ? contractRoles(gigs, fitFloor) : [];
       const keys = [...new Set([...rows, ...roles].map((g) => g.gigKey))];
-      return { gigs, rows, roles, extras: extrasOf(s, keys), docs: s.gigDocsFor(roles.map((g) => g.gigKey)), lastRun: lastRunText(s) };
+      return { gigs, list, showHidden, page, pages, rows, roles, extras: extrasOf(s, keys), docs: s.gigDocsFor(roles.map((g) => g.gigKey)), lastRun: lastRunText(s) };
     });
+    const list = data.list;
     const inRoles = new Set(contractRoles(data.gigs, fitFloor).map((g) => g.gigKey));
     const rows = data.rows.map((g) => ({ ...rowView(r.deep(g), data.extras[g.gigKey] as Extras, ps.pack, at, r.text), ...(list === 'review' && inRoles.has(g.gigKey) ? { alsoInRoles: true } : {}) }));
     const roles = data.roles.map((g) => roleView(r.deep(g), data.extras[g.gigKey] as Extras, data.docs[g.gigKey] ?? [], ps.pack, at, r.text));
+    const hidden = hiddenOf(data.gigs, list);
+    const pageHref = (n: number): string => `/freelance?tab=${list}${data.showHidden ? '&show=hidden' : ''}${n > 1 ? `&page=${n}` : ''}`;
     const body = gigListBody({
-      tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hiddenText(data.gigs, list), fitFloor, lastRun: data.lastRun,
+      tab: list, rows, counts: countsOf(data.gigs, fitFloor), hidden: hidden.text, hiddenCount: hidden.count, fitFloor, lastRun: data.lastRun,
+      page: data.page, pages: data.pages, pageHref, showHidden: data.showHidden,
       ...(list === 'contracts' ? { roles: { rows: roles, fitFloor } } : {}),
     });
     return d.page(c, 'freelance', 'Freelance', packBanner(ps), body);

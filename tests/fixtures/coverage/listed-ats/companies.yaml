@@ -1,0 +1,4 @@
+# Two picks whose careersUrl is a direct ATS board URL that redirects (302, 307) to the company's own careers page.
+companies:
+  - {name: Acme Cloud, website: 'https://acme.test', careersUrl: 'https://job-boards.greenhouse.io/acmecloud'}
+  - {name: Bravo, website: 'https://bravo.test', careersUrl: 'https://ats.rippling.com/bravo/jobs'}

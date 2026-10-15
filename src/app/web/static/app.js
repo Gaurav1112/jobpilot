@@ -65,3 +65,37 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', wire);
   else wire();
 })();
+
+// UX upgrade A12 (D7 2.4.3, 4.1.3): after an htmx swap, focus goes back to the control that was used (stable ids), else
+// to the swapped element itself; the change is announced once in the polite live region #live. Without JavaScript none
+// of this runs and the forms post as plain HTML.
+(function () {
+  'use strict';
+  var lastId = null;
+  var targetId = null;
+  document.addEventListener('htmx:beforeRequest', function (e) {
+    var a = document.activeElement;
+    lastId = a && a.id ? a.id : null;
+    var t = e.detail && e.detail.target;
+    targetId = t && t.id ? t.id : null;
+  });
+  document.addEventListener('htmx:afterSettle', function () {
+    var swapped = targetId ? document.getElementById(targetId) : null;
+    var again = lastId ? document.getElementById(lastId) : null;
+    if (again) again.focus();
+    else if (swapped) {
+      swapped.setAttribute('tabindex', '-1');
+      swapped.focus();
+    }
+    var say = swapped ? swapped.getAttribute('data-live') : null;
+    var live = document.getElementById('live');
+    if (live && say) {
+      if (live.textContent === say) {
+        live.textContent = '';
+        setTimeout(function () { live.textContent = say; }, 50);
+      } else live.textContent = say;
+    }
+    lastId = null;
+    targetId = null;
+  });
+})();

@@ -17,6 +17,7 @@ import { createDashboard, type DashboardDeps } from '../../src/app/web/server.js
 import { Sessions } from '../../src/app/web/security.js';
 import type { FetchLike } from '../../src/kernel/providers.js';
 import { jobRow } from '../support/app-fixtures.js';
+import { elementsWith, linksOf, textOf } from '../support/dom.js';
 
 /**
  * The Companies tab (career-sites Task 11, spec §5) through Hono's `app.request()`: a temp JOBPILOT_HOME with the
@@ -132,17 +133,14 @@ describe('companies: the lists', () => {
   it('the nav has Companies; every list renders with its count, ordered by company key', async () => {
     const { status, body } = await get('/companies');
     expect(status).toBe(200);
-    expect(body).toContain('<a href="/companies" aria-current="page">Companies</a>');
-    expect((await get('/')).body).toContain('<a href="/companies">Companies</a>');
+    expect(linksOf(body).find((l) => l.href === '/companies')?.attrs['aria-current']).toBe('page');
+    expect(linksOf((await get('/')).body).find((l) => l.href === '/companies')?.attrs['aria-current']).toBeUndefined();
     expect(keysIn(sectionOf(body, 'verified'))).toEqual(['acme.example']);
     expect(keysIn(sectionOf(body, 'proposed'))).toEqual(['bank.example', 'hooli.example']);
     expect(keysIn(sectionOf(body, 'failing'))).toEqual(['globodyne.example']);
     expect(keysIn(sectionOf(body, 'rejected'))).toEqual(['umbrella.example']);
     expect(keysIn(sectionOf(body, 'unverified'))).toEqual(['vandelay.example']);
     expect(sectionOf(body, 'unverified')).toContain('1 company from the seed lists did not pass either');
-    for (const [l, n] of [['Verified', 1], ['Proposed', 2], ['Failing', 1], ['Rejected', 1], ['Deferred this week', 0]] as const) {
-      expect(body).toContain(`>${l} <span class="num tab-count">${n}</span></a>`);
-    }
   });
 
   it('verified: platform, careers link (https, noopener noreferrer), open jobs, jobs passing your rules, last verified, read daily', async () => {
@@ -192,21 +190,45 @@ describe('companies: the lists', () => {
     expect(body).not.toContain(term as string);
     expect(body).toContain('[hidden: contains a forbidden term]');
   });
+});
 
-  it('deferred this week: the hosts this week\'s coverage run disabled, with the reason and their companies', async () => {
+describe('A9: Companies reads in one order; skipped sites are a summary and a paged list', () => {
+  it('Add a company comes first, and the jump links follow the sections exactly', async () => {
+    const body = (await get('/companies')).body;
+    const sections = [...body.matchAll(/<section class="card wide"[^>]*aria-labelledby="([a-z]+)-h"/g)].map((m) => m[1]);
+    expect(sections).toEqual(['add', 'proposed', 'failing', 'unverified', 'verified', 'rejected', 'skipped']);
+    const jumps = linksOf(elementsWith(body, 'aria-label', 'Company lists')[0] ?? '');
+    expect(jumps.map((l) => l.href)).toEqual(sections.map((s) => `#${s}-h`));
+    expect(jumps.map((l) => l.text)).toEqual(['Add a company', 'Proposed 2', 'Failing 1', 'Your picks not verified 1', 'Verified 1', 'Rejected 1', 'Skipped this week 0']);
+  });
+
+  it('skipped this week: one line by reason on the page, the hosts on /companies/skipped', async () => {
     withStore((s) => {
       s.kernel.startRun('coverage-2026-10-11', 'jobpilot-coverage', 'p', AT);
       s.disableCoverageHost('coverage-2026-10-11', 'acme.example', 'http-429', AT);
-      // a run of another week is not this week's
+      for (const h of ['a.example', 'b.example']) s.disableCoverageHost('coverage-2026-10-11', h, 'robots-forbidden', AT);
       s.kernel.startRun('coverage-2026-10-04', 'jobpilot-coverage', 'p', '2026-10-04T01:30:00.000Z');
       s.disableCoverageHost('coverage-2026-10-04', 'hooli.example', 'challenge', AT);
     });
-    const { body } = await get('/companies');
-    const d = sectionOf(body, 'deferred');
-    expect(d).toContain('<code>acme.example</code> rate-limited (HTTP 429) <span class="muted">(http-429)</span>');
-    expect(d).toContain('Acme Robotics');
-    expect(d).not.toContain('hooli.example');
-    expect(body).toContain('>Deferred this week <span class="num tab-count">1</span></a>');
+    const body = (await get('/companies')).body;
+    const sk = sectionOf(body, 'skipped');
+    expect(textOf(sk)).toContain('2 robots.txt refused · 1 rate-limited (HTTP 429)');
+    expect(sk).not.toContain('acme.example');
+    expect(linksOf(sk).find((l) => l.href === '/companies/skipped')?.text).toBe('See the 3 sites');
+    const page = (await get('/companies/skipped')).body;
+    expect(textOf(page)).toContain('acme.example rate-limited (HTTP 429) (http-429) · Acme Robotics');
+    expect(page).not.toContain('hooli.example');
+  });
+
+  it('the skipped list is paged at 50', async () => {
+    withStore((s) => {
+      s.kernel.startRun('coverage-2026-10-11', 'jobpilot-coverage', 'p', AT);
+      for (let i = 0; i < 60; i++) s.disableCoverageHost('coverage-2026-10-11', `h${String(i).padStart(2, '0')}.example`, 'challenge', AT);
+    });
+    const p1 = (await get('/companies/skipped')).body;
+    expect(elementsWith(p1, 'data-host')).toHaveLength(50);
+    expect(textOf(p1)).toContain('Page 1 of 2');
+    expect(elementsWith((await get('/companies/skipped?page=2')).body, 'data-host')).toHaveLength(10);
   });
 });
 
@@ -474,7 +496,7 @@ describe('companies: links to their jobs', () => {
     expect(keys.sort()).toEqual(['a1a1a1a1a1a1a1a1', 'a2a2a2a2a2a2a2a2']);
     expect(body).toContain('Jobs at <strong>Acme Robotics</strong> only');
     expect(body).toContain('<input type="hidden" name="companyKey" value="acme.example">');
-    expect(body).toContain('Not eligible: The title matches a role you filtered out <code>role:product manager</code>');
+    expect(body).toContain('Not eligible: The title matches a role you filtered out</p>');
   });
 });
 

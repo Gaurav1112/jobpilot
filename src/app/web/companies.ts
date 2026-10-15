@@ -13,7 +13,7 @@ import { istDate } from '../run.js';
 import type { AppStore, Band, Company } from '../store/app-store.js';
 import { companyKeys, jobKeys, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { Html } from './html.js';
-import { companiesBody, companyPlatformName, deferWhy, type AddFormView, type CompaniesPageData, type CompanyRowView, type DeferredHost } from './views/companies.js';
+import { companiesBody, companyPlatformName, deferWhy, skippedBody, type AddFormView, type CompaniesPageData, type CompanyRowView } from './views/companies.js';
 import type { Banner, Nav } from './views/layout.js';
 
 /**
@@ -223,11 +223,12 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
       return { companies, counts, run, hosts };
     });
     const by = (pred: (c: Company) => boolean): CompanyRowView[] => data.companies.filter(pred).map((c) => view(c, data.counts, r.text));
-    const deferred: DeferredHost[] = [...data.hosts].map(([host, why]) => ({
-      host: r.text(host),
-      why: r.text(why),
-      companies: data.companies.filter((c) => [c.careersUrl, c.boardUrl, c.website].some((u) => hostOf(u) === host)).map((c) => r.text(c.name)),
-    }));
+    const reasons = new Map<string, number>();
+    for (const [, why] of data.hosts) {
+      const words = deferWhy(r.text(why));
+      reasons.set(words, (reasons.get(words) ?? 0) + 1);
+    }
+    const byReason = [...reasons].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
     const body = companiesBody({
       lists: {
         verified: by((c) => c.status === 'verified'),
@@ -237,8 +238,7 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
         unverified: by((c) => c.status === 'failed' && c.source === 'pick'),
       },
       hiddenFailed: data.companies.filter((c) => c.status === 'failed' && c.source !== 'pick').length,
-      deferred,
-      deferredRun: data.run ?? null,
+      skipped: { run: data.run ?? null, total: data.hosts.size, byReason },
       csrf: d.csrf(c),
       flash,
       add,
@@ -247,6 +247,28 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     const banners: Banner[] = ps.error !== undefined ? [{ tone: 'critical', text: `Your pack could not be read: ${ps.error}` }] : [];
     return d.page(c, 'companies', 'Companies', banners, body, status);
   };
+
+  const SKIPPED_PAGE_SIZE = 50;
+  app.get('/companies/skipped', (c) => {
+    const at = d.now();
+    const ps = d.packState(at);
+    const r = d.redactor(ps.naming);
+    const pageRaw = c.req.query('page') ?? '1';
+    const asked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
+    const data = d.withStore((s) => {
+      const run = weekRun(s, at);
+      return { hosts: run === undefined ? [] : [...s.coverageHostState(run)], companies: s.listCompanies() };
+    });
+    const pages = Math.max(1, Math.ceil(data.hosts.length / SKIPPED_PAGE_SIZE));
+    const page = Math.min(asked, pages);
+    const hosts = data.hosts.slice((page - 1) * SKIPPED_PAGE_SIZE, page * SKIPPED_PAGE_SIZE).map(([host, why]) => ({
+      host: r.text(host),
+      why: r.text(why),
+      companies: data.companies.filter((co) => [co.careersUrl, co.boardUrl, co.website].some((u) => hostOf(u) === host)).map((co) => r.text(co.name)),
+    }));
+    const banners: Banner[] = ps.error !== undefined ? [{ tone: 'critical', text: `Your pack could not be read: ${ps.error}` }] : [];
+    return d.page(c, 'companies', 'Skipped sites', banners, skippedBody({ hosts, total: data.hosts.length, page, pages }));
+  });
 
   const flashOf = (done: Done, key: string | null, run: string | null): CompaniesPageData['flash'] => {
     const company = key === null ? undefined : d.withStore((s) => s.getCompany(key));

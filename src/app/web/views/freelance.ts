@@ -1,9 +1,9 @@
 import type { GigDoc, GigHistoryEntry, GigSnapshot, GigStatus, GigView, NetworkStatus, SourceHealthRow } from '../../store/app-store.js';
 import { GIG_STATUSES, NETWORK_STATUSES } from '../../store/schema.js';
-import { dateText, groupWestern, scoreText } from '../format.js';
+import { countText, dateText, scoreText } from '../format.js';
 import { externalUrl, html, type Html } from '../html.js';
-import { platformName } from '../copy.js';
-import { csrfField, pill, type Tone } from './common.js';
+import { gigReasonText, platformName } from '../copy.js';
+import { csrfField, fitChip, meta, pager, pill, techDetail, type Tone } from './common.js';
 
 /**
  * The freelance tab (Task 10, spec §8): Contracts, Gigs, Review, Networks and Sources, one gig's page, and the fragments
@@ -16,7 +16,7 @@ export const GIG_TABS = ['contracts', 'gigs', 'review'] as const;
 
 const TAB_LABEL: Readonly<Record<FreelanceTab, string>> = { contracts: 'Contracts', gigs: 'Gigs', review: 'Review', networks: 'Networks', sources: 'Sources' };
 const TAB_HREF: Readonly<Record<FreelanceTab, string>> = {
-  contracts: '/freelance', gigs: '/freelance?tab=gigs', review: '/freelance?tab=review', networks: '/freelance/networks', sources: '/freelance/sources',
+  contracts: '/freelance?tab=contracts', gigs: '/freelance?tab=gigs', review: '/freelance?tab=review', networks: '/freelance/networks', sources: '/freelance/sources',
 };
 
 export const GIG_STATUS_LABEL: Readonly<Record<GigStatus, string>> = {
@@ -58,8 +58,8 @@ export type TabCounts = Partial<Record<FreelanceTab | 'roles', number>>;
 
 function tabsNav(here: FreelanceTab, counts: TabCounts): Html {
   return html`<nav class="tabs" aria-label="Freelance">${(Object.keys(TAB_LABEL) as FreelanceTab[]).map(
-    (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${counts[t]}</span>` : ''}</a>`,
-  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${counts.roles}</span></a>` : ''}</nav>`;
+    (t) => html`<a href="${TAB_HREF[t]}"${t === here ? html` aria-current="page"` : ''}>${TAB_LABEL[t]}${counts[t] !== undefined ? html` <span class="num tab-count">${countText(counts[t] as number)}</span>` : ''}</a>`,
+  )}${counts.roles !== undefined ? html`<a href="/freelance#contract-roles">Contract roles <span class="num tab-count">${countText(counts.roles)}</span></a>` : ''}</nav>`;
 }
 
 function head(here: FreelanceTab, counts: TabCounts, lede: Html | string): Html {
@@ -80,26 +80,28 @@ const noteLine = (n: GigRowView['notes'][number]): Html => (n.amber ? html`<li c
 const flagPills = (v: GigRowView): Html => html`${v.flags.map((f) => html`<span class="pill pill-${f.tone}" title="${f.title}">${f.label}</span>`)}`;
 
 function factsLine(v: GigRowView): Html {
-  const parts: Html[] = [html`<span>${v.hours}</span>`, html`<span>IST overlap: ${v.overlap ?? 'not stated'} <span class="muted">(your window ${v.istWindow})</span></span>`];
-  if (v.age !== null) parts.push(html`<span>${v.age}</span>`);
-  if (v.bids !== null) parts.push(html`<span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>`);
-  return html`<p class="gig-facts">${parts.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>`;
+  return html`<p class="gig-facts">${meta([
+    html`<span>Hours: ${v.hours}</span>`,
+    html`<span>Overlap: ${v.overlap ?? 'not stated'} <span class="muted">(your hours ${v.istWindow})</span></span>`,
+    v.age,
+    v.bids === null ? null : html`<span>Bids: <span class="num">${countText(v.bids)}</span></span>`,
+  ])}</p>`;
 }
 
 function gigRow(v: GigRowView): Html {
   const g = v.gig;
   return html`<li class="gig" data-gig="${g.gigKey}">
-<div class="gig-rate"><span class="rate-label">${v.rate}</span></div>
-<div class="gig-fit num" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h2 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h2>
-<p class="gig-sub"><span>${platformName(g.platform)}</span>${v.client.length > 0 ? html`<span class="sep" aria-hidden="true">·</span><span>${v.client.join(', ')}</span>` : html`<span class="sep" aria-hidden="true">·</span><span class="muted">no client details</span>`}<span class="sep" aria-hidden="true">·</span>${sourceLink(g, 'Open the posting')}</p>
+<p class="gig-sub">${meta([platformName(g.platform), v.client.length > 0 ? v.client.join(', ') : html`<span class="muted">no client details</span>`, sourceLink(g, 'Open the posting')])}</p>
 ${factsLine(v)}
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 ${v.alsoInRoles === true ? html`<p class="gig-also"><a class="pill pill-accent" href="/freelance#contract-roles">Also in Contract roles</a></p>` : ''}
 </div>
+<div class="gig-rate"><span class="rate-label">${v.rate}</span></div>
+<div class="gig-fit" title="${v.fitTitle}">${fitChip(g.fit)}</div>
 <div class="gig-status">${gigStatusPill(g.status)}</div>
 </li>`;
 }
@@ -136,6 +138,14 @@ export interface GigListData {
   readonly hidden: string | null;
   readonly fitFloor: number;
   readonly lastRun: string | null;
+  /** A3: the page shown, of how many (Review and "show them" lists are paged at 50), and the link to a page. */
+  readonly page: number;
+  readonly pages: number;
+  readonly pageHref: (n: number) => string;
+  /** A3: this list shows the gigs the tab leaves out (`?show=hidden`). */
+  readonly showHidden: boolean;
+  /** A3: how many gigs the tab leaves out. */
+  readonly hiddenCount: number;
 }
 
 const LEDE: Readonly<Record<GigListData['tab'], string>> = {
@@ -159,15 +169,15 @@ function roleRow(r: ContractRoleView): Html {
   ];
   const url = externalUrl(g.url);
   return html`<li class="role" data-role="${g.gigKey}">
-<div class="gig-fit num" title="Fit">${g.fit === null ? '–' : scoreText(g.fit)}<span class="visually-hidden"> fit</span></div>
 <div class="gig-main">
 <h3 class="gig-title"><a href="/freelance/${g.gigKey}">${g.title}</a></h3>
-<p class="gig-sub">${sub.map((p, i) => html`${i > 0 ? html`<span class="sep" aria-hidden="true">·</span>` : ''}${p}`)}</p>
+<p class="gig-sub">${meta(sub)}</p>
 <p class="role-skills">${r.skills.length > 0 ? html`Matches your facts: ${r.skills.join(', ')}` : html`<span class="muted">Matched skills not on record yet</span>`}</p>
 <p class="role-ask">${pill(r.ask, 'warn', 'The posting does not state these: ask the employer before you apply')}</p>
 ${files.length > 0 ? html`<div class="downloads">${files.map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${ROLE_FILE_LABEL(f)}</a>`)}</div>` : html`<p class="muted">${r.docsReason ?? 'No documents yet.'}</p>`}
 ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopener noreferrer" target="_blank">Apply on the posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>`}
 </div>
+<div class="gig-fit" title="Fit">${fitChip(g.fit)}</div>
 </li>`;
 }
 
@@ -178,18 +188,36 @@ ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopen
  */
 export function contractRolesSection(d: ContractRolesData): Html {
   return html`<section class="card wide roles" id="contract-roles" aria-labelledby="roles-h">
-<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${d.rows.length}</span></h2>
+<h2 id="roles-h">Contract roles matching your stack <span class="num tab-count">${countText(d.rows.length)}</span></h2>
 <p class="hint">Contract roles from employer job boards (Himalayas and the daily boards) with fit <span class="num">${scoreText(d.fitFloor)}</span> or more. Their pay or hours are not stated, so they stay in Review: ask before you apply. Best fit first, then newest.</p>
 ${d.rows.length === 0 ? html`<p class="empty">No contract role from an employer job board is at or above your fit floor yet.</p>` : html`<ol class="roles-list" aria-label="Contract roles">${d.rows.map(roleRow)}</ol>`}
 </section>`;
+}
+
+const EMPTY_NAME: Readonly<Record<GigListData['tab'], string>> = { contracts: 'contract roles', gigs: 'gigs', review: 'gigs to check' };
+
+function emptyState(d: GigListData): Html {
+  if (d.lastRun === null) return html`<p class="empty">No freelance run yet. The first run fills this list.</p>`;
+  if (d.tab === 'review') return html`<p class="empty">Nothing to check from the last run (${d.lastRun}).</p>`;
+  return html`<p class="empty">No ${EMPTY_NAME[d.tab]} passed your rules in the last run (${d.lastRun}).${
+    d.hiddenCount > 0
+      ? html` <span class="num">${countText(d.hiddenCount)}</span> ${d.hiddenCount === 1 ? 'was' : 'were'} not shown: <a href="/freelance?tab=${d.tab}&amp;show=hidden">show them</a>.`
+      : ''
+  }</p>`;
 }
 
 export function gigListBody(d: GigListData): Html {
   const lede = html`${LEDE[d.tab]}${d.tab === 'review' ? '' : html` Fit floor <span class="num">${scoreText(d.fitFloor)}</span>.`}${d.lastRun !== null ? html` <span class="muted">Last run ${d.lastRun}.</span>` : ''}`;
   return html`${head(d.tab, d.counts, lede)}
 ${d.roles !== undefined ? contractRolesSection(d.roles) : ''}
-${d.hidden !== null ? html`<p class="note">${d.hidden}</p>` : ''}
-${d.rows.length === 0 ? html`<p class="empty">Nothing here yet. The next freelance run fills this list.</p>` : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>`}
+${
+  d.showHidden
+    ? html`<p class="note">Not shown by default: below your fit floor, not a match, or not scored. <a href="${TAB_HREF[d.tab]}">Back to ${TAB_LABEL[d.tab]}</a></p>`
+    : d.hidden !== null
+      ? html`<p class="note">${d.hidden} <a href="/freelance?tab=${d.tab}&amp;show=hidden">Show them</a></p>`
+      : ''
+}
+${d.rows.length === 0 ? emptyState(d) : html`<ol class="gigs" aria-label="${TAB_LABEL[d.tab]}">${d.rows.map(gigRow)}</ol>${pager({ page: d.page, pages: d.pages, href: d.pageHref })}`}
 <p class="hint">jobpilot never bids or applies for you: open the posting, paste the text, and mark the status here.</p>`;
 }
 
@@ -256,6 +284,8 @@ function coverSection(d: GigPageData): Html | '' {
 </section>`;
 }
 
+const clip = (t: string): string => (t.length > 100 ? t.slice(0, 99) + '…' : t);
+
 function pasteSection(d: GigPageData): Html {
   const g = d.row.gig;
   const p = d.paste;
@@ -265,26 +295,28 @@ function pasteSection(d: GigPageData): Html {
   }
   const over = p.max !== null && p.chars > p.max;
   const txt = d.files.find((f) => f.format === 'txt' && f.kind !== 'cover');
+  const cited = p.segments.filter((s) => s.facts !== null);
   return html`<section class="card wide" aria-labelledby="paste-h">
 <h2 id="paste-h">${title}</h2>
 <div class="paste-bar">
 <button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/${g.gigKey}/files/${txt?.kind ?? p.kind}.txt" data-copy-target="paste" hidden>Copy</button>
 <span class="copy-status" role="status" aria-live="polite"></span>
-<span class="char-count num${over ? ' over' : ''}">${groupWestern(p.chars)}${p.max !== null ? html` / ${groupWestern(p.max)}` : ''} characters</span>
+<span class="char-count num${over ? ' over' : ''}">${countText(p.chars)}${p.max !== null ? html` / ${countText(p.max)}` : ''} characters</span>
 </div>
-<pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}" title="Fact${s.facts.length === 1 ? '' : 's'} ${s.facts.join(', ')}">${s.text}</span>`))}</pre>
-<p class="hint">Copy pastes exactly the .txt file.${p.segments.some((x) => x.facts !== null) ? ' Hover an underlined line to see the fact it comes from.' : ''} Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
+<pre class="paste" id="paste">${p.segments.map((s) => (s.facts === null ? s.text : html`<span class="fact-src" data-fact="${s.facts.join(' ')}">${s.text}</span>`))}</pre>
+<p class="hint">Copy pastes exactly the .txt file. Paste it on ${platformName(g.platform)} yourself: jobpilot never sends it.</p>
+${cited.length === 0 ? '' : html`<details class="cited"><summary>Which fact each underlined line comes from</summary><ul class="plain">${cited.map((s) => html`<li><code class="fact-id">${(s.facts as readonly string[]).join(', ')}</code> ${clip(s.text)}</li>`)}</ul></details>`}
 <div class="downloads">${d.files.filter((f) => f.kind !== 'cover').map((f) => html`<a class="btn" href="/freelance/${g.gigKey}/files/${f.kind}.${f.format}" download>${FILE_LABEL(f)}</a>`)}</div>
 </section>`;
 }
 
 export function gigSentSection(d: GigSentData, oob = false): Html {
-  return html`<section id="sent" class="card wide"${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 || d.canKeep ? '' : html` hidden`}>
+  return html`<section id="sent" class="card wide" data-live="A copy of your documents is kept."${oob ? html` hx-swap-oob="true"` : ''} aria-labelledby="sent-h"${d.snapshots.length > 0 || d.canKeep ? '' : html` hidden`}>
 <h2 id="sent-h">Documents you sent</h2>
 ${
   d.canKeep
     ? html`<p class="hint">You marked this gig applied, but no copy of its documents was kept. A copy made now is today's version, which may differ from what you sent.</p>
-<form method="post" action="/freelance/${d.gigKey}/keep" hx-post="/freelance/${d.gigKey}/keep" hx-target="#sent" hx-swap="outerHTML">${csrfField(d.csrf)}<button class="btn btn-primary">Keep a copy of these documents now</button></form>`
+<form method="post" action="/freelance/${d.gigKey}/keep" hx-post="/freelance/${d.gigKey}/keep" hx-target="#sent" hx-swap="outerHTML" hx-disabled-elt="find button">${csrfField(d.csrf)}<button id="keep-copy" class="btn btn-primary">Keep a copy of these documents now</button></form>`
     : ''
 }
 ${d.snapshots.map(
@@ -297,13 +329,13 @@ ${d.snapshots.map(
 /** The status block: a button per status in flow order, and the last change. Returned alone to htmx. */
 export function gigStatusSection(g: Pick<GigView, 'gigKey' | 'status' | 'appliedAt'>, history: readonly GigHistoryEntry[], csrf: string, istDay: (iso: string) => string, flash?: string): Html {
   const last = history.at(-1);
-  return html`<section id="status" class="card" aria-labelledby="status-h">
+  return html`<section id="status" class="card" data-live="Status set to ${GIG_STATUS_LABEL[g.status]}." aria-labelledby="status-h">
 <h2 id="status-h">Your status ${gigStatusPill(g.status)}</h2>
 ${g.appliedAt !== null ? html`<p class="muted">Applied ${dateText(istDay(g.appliedAt))}</p>` : ''}
-<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML">
+<form class="status-form" method="post" action="/freelance/${g.gigKey}/status" hx-post="/freelance/${g.gigKey}/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
 ${csrfField(csrf)}
 <div class="btn-row">${GIG_STATUSES.map(
-    (s) => html`<button class="btn${s === g.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === g.status ? 'true' : 'false'}">${GIG_STATUS_LABEL[s]}</button>`,
+    (s) => html`<button id="gig-to-${s}" class="btn${s === g.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === g.status ? 'true' : 'false'}">${GIG_STATUS_LABEL[s]}</button>`,
   )}</div>
 </form>
 <p class="hint">New → Shortlisted → Applied → Replied → Interviewing → Won, Lost or Not for me. Applied keeps a read-only copy of what you sent.</p>
@@ -329,7 +361,7 @@ function checksSection(d: GigPageData): Html {
   const empty = v.flags.length === 0 && v.notes.length === 0 && d.reasons.length === 0;
   return html`<section class="card" aria-labelledby="checks-h"><h2 id="checks-h">Before you bid</h2>
 ${v.flags.length > 0 ? html`<p class="gig-flags">${flagPills(v)}</p>` : ''}
-${d.reasons.length > 0 ? html`<ul class="plain">${d.reasons.map((r) => html`<li><code>${r}</code></li>`)}</ul>` : ''}
+${d.reasons.length > 0 ? html`<ul class="plain">${[...new Set(d.reasons.map(gigReasonText))].map((t) => html`<li>${t}</li>`)}</ul>${techDetail(d.reasons)}` : ''}
 ${v.notes.length > 0 ? html`<ul class="plain gig-notes">${v.notes.map(noteLine)}</ul>` : ''}
 ${empty ? html`<p class="muted">Nothing to flag.</p>` : ''}
 ${v.client.length > 0 ? html`<p class="hint">Client: ${v.client.join(', ')}</p>` : html`<p class="hint">The platform states nothing about the client.</p>`}
@@ -342,12 +374,12 @@ export function gigBody(d: GigPageData): Html {
   return html`<header class="job-head">
 <p class="crumbs"><a href="/freelance">Freelance</a></p>
 <h1>${g.title}</h1>
-<p class="job-sub"><span>${platformName(g.platform)}</span><span class="sep" aria-hidden="true">·</span><span>${g.kind === 'contract' ? 'Contract' : g.kind === 'gig' ? 'Gig' : g.kind}</span>${v.age !== null ? html`<span class="sep" aria-hidden="true">·</span><span>${v.age}</span>` : ''}${v.bids !== null ? html`<span class="sep" aria-hidden="true">·</span><span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>` : ''}</p>
+<p class="job-sub">${meta([platformName(g.platform), g.kind === 'contract' ? 'Contract' : g.kind === 'gig' ? 'Gig' : g.kind, v.age, v.bids !== null ? html`<span class="num">${v.bids} bid${v.bids === 1 ? '' : 's'}</span>` : null])}</p>
 <div class="head-facts">
 <div class="fact-box"><span class="label">Rate</span><span class="rate-label">${v.rate}</span></div>
 <div class="fact-box"><span class="label">Hours</span><span>${v.hours}</span></div>
 <div class="fact-box"><span class="label">IST overlap</span><span>${v.overlap ?? 'not stated'}</span><span class="hint">your window ${v.istWindow}</span></div>
-<div class="fact-box"><span class="label">Fit</span><span class="big num" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}</span></div>
+<div class="fact-box"><span class="label">Fit</span><span class="big num" aria-hidden="true" title="${v.fitTitle}">${g.fit === null ? '–' : scoreText(g.fit)}</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">${g.fit === null ? 'Not scored' : html`Fit score ${scoreText(g.fit)} out of 100`}</span></div>
 </div>
 ${v.coverage !== null ? html`<p class="gig-coverage">${v.coverage}</p>` : ''}
 <p>${sourceLink(g, 'Open the original posting')}</p>
@@ -411,14 +443,14 @@ export function networkStatusBlock(n: Pick<NetworkCard, 'id' | 'status' | 'updat
     : '';
   const action = "/freelance/networks/" + n.id + "/status";
   const quick = n.status === 'todo' && n.notOpen !== true
-    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">
-${csrfField(csrf)}<button class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
+    ? html`<form class="net-quick" method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="#net-status-${n.id} button">
+${csrfField(csrf)}<button id="net-${n.id}-quick" class="btn btn-primary" name="to" value="applied">Mark applied</button></form>`
     : '';
-  return html`<div class="net-status" id="net-status-${n.id}">
+  return html`<div class="net-status" id="net-status-${n.id}" data-live="Network status set to ${NETWORK_LABEL[n.status]}.">
 <p>${pill(NETWORK_LABEL[n.status], NETWORK_TONE[n.status])}${since}</p>
 ${quick}
-<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML">${csrfField(csrf)}
-<div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
+<form method="post" action="${action}" hx-post="${action}" hx-target="#net-status-${n.id}" hx-swap="outerHTML" hx-disabled-elt="#net-status-${n.id} button">${csrfField(csrf)}
+<div class="btn-row">${NETWORK_STATUSES.map((s) => html`<button id="net-${n.id}-to-${s}" class="btn${s === n.status ? ' btn-current' : ''}" name="to" value="${s}" aria-pressed="${s === n.status ? 'true' : 'false'}">${NETWORK_LABEL[s]}</button>`)}</div>
 </form></div>`;
 }
 
@@ -441,7 +473,8 @@ ${url === undefined ? '' : html`<p><a class="src-link" href="${url}" rel="noopen
 function networkCard(n: NetworkCard, csrf: string, istDay: (iso: string) => string): Html {
   const unchecked = n.hasFile && !n.checkedByUser;
   return html`<section class="card net" id="net-${n.id}" data-network="${n.id}" aria-labelledby="net-h-${n.id}">
-<h2 id="net-h-${n.id}">${n.name}${unchecked ? pill('check before use', 'warn', 'You have not yet checked this network file against the network’s own page') : ''}</h2>
+<h2 id="net-h-${n.id}">${n.name}</h2>
+${unchecked ? html`<p class="net-flag">${pill('check before use', 'warn')}</p>` : ''}
 ${networkFacts(n)}
 ${unchecked ? html`<p class="fact-warn">The screening stages are a starter file you have not checked yet: check before use.</p>` : ''}
 ${networkStatusBlock({ ...n, notOpen: n.facts?.india === 'not-open' }, csrf, istDay)}
@@ -516,7 +549,7 @@ function sourceTable(t: SourceTable): Html {
 <div class="table-wrap"><table class="counts"><thead><tr><td></td><th scope="colgroup" colspan="2">Runs</th><th scope="colgroup" colspan="4">Shortlisted and the rest: summed per run</th><th scope="colgroup" colspan="3">Applied and the rest: distinct gigs, from your status changes</th></tr>
 <tr><th scope="col">Week</th>${HEALTH_COLUMNS.map(([, l]) => html`<th scope="col" class="num">${l}</th>`)}<th scope="col" class="num">Applied</th><th scope="col" class="num">Replied</th><th scope="col" class="num">Won</th></tr></thead>
 <tbody>${t.rows.map(
-    (r) => html`<tr><th scope="row" class="num">${r.week}</th>${HEALTH_COLUMNS.map(([k]) => html`<td class="num${r[k] === 0 ? ' zero' : ''}${k === 'failedRuns' && r[k] > 0 ? ' bad' : ''}">${r[k]}</td>`)}${(['applied', 'replied', 'won'] as const).map((k) => html`<td class="num${r.outcomes[k] === 0 ? ' zero' : ''}">${r.outcomes[k]}</td>`)}</tr>`,
+    (r) => html`<tr><th scope="row" class="num">${r.week}</th>${HEALTH_COLUMNS.map(([k]) => html`<td class="num${r[k] === 0 ? ' zero' : ''}${k === 'failedRuns' && r[k] > 0 ? ' bad' : ''}">${countText(r[k])}</td>`)}${(['applied', 'replied', 'won'] as const).map((k) => html`<td class="num${r.outcomes[k] === 0 ? ' zero' : ''}">${countText(r.outcomes[k])}</td>`)}</tr>`,
   )}</tbody></table></div></section>`;
 }
 

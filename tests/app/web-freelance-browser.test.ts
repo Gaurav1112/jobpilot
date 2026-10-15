@@ -3,7 +3,8 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } f
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, type Browser } from 'playwright';
+import type { Browser } from 'playwright';
+import { launchBrowser } from '../support/browser.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AppStore } from '../../src/app/store/app-store.js';
 import { serveDashboard } from '../../src/app/web/server.js';
@@ -19,7 +20,7 @@ const sha = (b: string): string => createHash('sha256').update(b).digest('hex');
 const B = 'b1b1b1b1b1b1b1b1';
 const COVER = 'Dear Hiring Team,\nI’m applying for the role — with “quotes” & <angle> text.\n\nSincerely,\nAsha Rao\n';
 
-const browser: Browser | undefined = await chromium.launch().catch(() => undefined);
+const browser: Browser | undefined = await launchBrowser();
 let home: string;
 let base: string;
 let server: ReturnType<typeof serveDashboard>;

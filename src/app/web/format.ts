@@ -1,4 +1,5 @@
 import type { Posting } from '../types.js';
+import { istDay } from '../triage.js';
 
 /**
  * Number and date formatting for the dashboard (Task 13). INR is written the Indian way: lakh and crore per year
@@ -13,6 +14,9 @@ const CRORE = 10_000_000;
 function trim(n: number, digits: number): string {
   return n.toFixed(digits).replace(/\.?0+$/, '');
 }
+
+/** A count shown on a page, en-IN grouped: 570418 → "5,70,418". */
+export const countText = (n: number): string => groupIndian(n);
 
 /** Indian digit grouping: 1234567 → "12,34,567". */
 export function groupIndian(n: number): string {
@@ -134,4 +138,10 @@ export function ageText(iso: string | null, now: string): string | null {
   if (hours < 1) return 'posted just now';
   if (hours < 48) return `posted ${Math.floor(hours)} h ago`;
   return `posted ${Math.floor(hours / 24)} days ago`;
+}
+
+/** A14: how long ago something was applied for, by IST calendar date: "today", "yesterday", "27 days ago". */
+export function appliedAgo(appliedAt: string, now: string): string {
+  const d = daysBetween(istDay(appliedAt), istDay(now));
+  return d <= 0 ? 'today' : d === 1 ? 'yesterday' : `${countText(d)} days ago`;
 }

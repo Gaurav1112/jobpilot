@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Contract backend engineer · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance" aria-current="page">Freelance</a><a href="/companies">Companies</a><a href="/facts">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+
+<header class="job-head">
+<p class="crumbs"><a href="/freelance">Freelance</a></p>
+<h1>Contract backend engineer</h1>
+<p class="job-sub"><span>HN freelancer thread</span><span class="sep" aria-hidden="true">·</span><span>Contract</span><span class="sep" aria-hidden="true">·</span><span>posted 21 h ago</span><span class="sep" aria-hidden="true">·</span><span class="num">7 bids</span></p>
+<div class="head-facts">
+<div class="fact-box"><span class="label">Rate</span><span class="rate-label">$70/h stated</span></div>
+<div class="fact-box"><span class="label">Hours</span><span>15 h/week</span></div>
+<div class="fact-box"><span class="label">IST overlap</span><span>4 hours overlap with US Eastern</span><span class="hint">your window 18:00–00:00 IST</span></div>
+<div class="fact-box"><span class="label">Fit</span><span class="big num" aria-hidden="true" title="Starting points +30
+Core skill: Java +4
+Asks for php, which you don&#39;t list -4">54</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">Fit score 54 out of 100</span></div>
+</div>
+
+<p><a class="src-link" href="https://www.freelancer.example/projects/c1c1c1c1c1c1c1c1" rel="noopener noreferrer" target="_blank">Open the original posting<span class="visually-hidden"> (opens in a new tab)</span></a></p>
+</header>
+
+<div class="job-grid">
+<section class="card wide" aria-labelledby="paste-h">
+<h2 id="paste-h">Your pitch</h2>
+<div class="paste-bar">
+<button type="button" class="btn btn-primary copy-btn" data-copy-src="/freelance/c1c1c1c1c1c1c1c1/files/pitch.txt" data-copy-target="paste" hidden>Copy</button>
+<span class="copy-status" role="status" aria-live="polite"></span>
+<span class="char-count num">96 / 2,500 characters</span>
+</div>
+<pre class="paste" id="paste">Backend engineer for your platform team.
+At Contoso Retail I built the payments service in Java.
+</pre>
+<p class="hint">Copy pastes exactly the .txt file. Paste it on HN freelancer thread yourself: jobpilot never sends it.</p>
+
+<div class="downloads"><a class="btn" href="/freelance/c1c1c1c1c1c1c1c1/files/pitch.txt" download>Pitch (.txt)</a><a class="btn" href="/freelance/c1c1c1c1c1c1c1c1/files/resume.docx" download>Contract CV (Word, DOCX)</a><a class="btn" href="/freelance/c1c1c1c1c1c1c1c1/files/resume.pdf" download>Contract CV (PDF)</a></div>
+</section>
+
+<section id="sent" class="card wide" data-live="A copy of your documents is kept." aria-labelledby="sent-h" hidden>
+<h2 id="sent-h">Documents you sent</h2>
+
+
+</section>
+<section class="card" aria-labelledby="checks-h"><h2 id="checks-h">Before you bid</h2>
+
+
+
+<p class="muted">Nothing to flag.</p>
+<p class="hint">The platform states nothing about the client.</p>
+</section>
+<section id="status" class="card" data-live="Status set to Not started." aria-labelledby="status-h">
+<h2 id="status-h">Your status <span class="pill pill-neutral">Not started</span></h2>
+
+<form class="status-form" method="post" action="/freelance/c1c1c1c1c1c1c1c1/status" hx-post="/freelance/c1c1c1c1c1c1c1c1/status" hx-target="#status" hx-swap="outerHTML" hx-disabled-elt="#status button">
+<input type="hidden" name="_csrf" value="x">
+<div class="btn-row"><button id="gig-to-new" class="btn btn-current" name="to" value="new" aria-pressed="true">Not started</button><button id="gig-to-shortlisted" class="btn" name="to" value="shortlisted" aria-pressed="false">Shortlisted</button><button id="gig-to-applied" class="btn" name="to" value="applied" aria-pressed="false">Applied</button><button id="gig-to-replied" class="btn" name="to" value="replied" aria-pressed="false">Replied</button><button id="gig-to-interviewing" class="btn" name="to" value="interviewing" aria-pressed="false">Interviewing</button><button id="gig-to-won" class="btn" name="to" value="won" aria-pressed="false">Won</button><button id="gig-to-lost" class="btn" name="to" value="lost" aria-pressed="false">Lost</button><button id="gig-to-skipped" class="btn" name="to" value="skipped" aria-pressed="false">Not for me</button></div>
+</form>
+<p class="hint">New → Shortlisted → Applied → Replied → Interviewing → Won, Lost or Not for me. Applied keeps a read-only copy of what you sent.</p>
+
+
+</section>
+<section class="card" aria-labelledby="fit-h"><h2 id="fit-h">Fit <span class="num">54</span></h2>
+<div class="table-wrap"><table class="breakdown"><thead><tr><th scope="col">What counted</th><th scope="col" class="num">Points</th></tr></thead>
+<tbody><tr><td>Starting points</td><td class="num">+30</td></tr><tr><td>Core skill: Java</td><td class="num">+4</td></tr><tr class="neg"><td>Asks for php, which you don&#39;t list</td><td class="num">-4</td></tr></tbody></table></div>
+<p class="hint">Shown, not counted in the fit: Client signals 15, Hours since posted 5, Bids so far 7</p>
+</section>
+<section class="card wide" aria-labelledby="desc-h"><h2 id="desc-h">The posting</h2>
+<details><summary>Show the full text</summary><div class="jd">Build a service.</div></details></section>
+</div>
+</main>
+</body>
+</html>

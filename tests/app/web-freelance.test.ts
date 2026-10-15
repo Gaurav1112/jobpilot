@@ -13,6 +13,7 @@ import { createTestDashboard } from '../../src/app/web/server-testing.js';
 import { NOTE_ONE_SKILL } from '../../src/app/freelance/project.js';
 import { Sessions } from '../../src/app/web/security.js';
 import { Store as KernelStore } from '../../src/kernel/store/store.js';
+import { elementsWith, linksOf, rowOf, textOf } from '../support/dom.js';
 
 /**
  * The freelance tab (Task 10, spec §8) through Hono's `app.request()`: a temp JOBPILOT_HOME with the fictional pack,
@@ -214,11 +215,11 @@ describe('freelance tabs: the rows', () => {
     const { status, body } = await get('/freelance');
     expect(status).toBe(200);
     expect(order(body)).toEqual([C1]);
-    expect(body).toContain('aria-current="page">Freelance</a>');
+    expect(linksOf(body).find((l) => l.href === '/freelance' && l.attrs['aria-current'] === 'page')?.text).toBe('Freelance');
     const t = text(body);
     expect(t).toContain('$70/h stated');
     expect(t).toContain('15 h/week');
-    expect(t).toContain('IST overlap: 4 hours overlap with US Eastern');
+    expect(t).toContain('Overlap: 4 hours overlap with US Eastern');
     expect(t).toContain('covered 6/8 · missing: Kubernetes, terraform');
     expect(t).toMatch(/Payment verified/);
   });
@@ -229,14 +230,14 @@ describe('freelance tabs: the rows', () => {
     const t = text(body);
     expect(t).toContain('1 below the fit floor and 1 not eligible are not shown');
     expect(t).toContain('posted 5 h ago');
-    expect(t).toContain('7 bids');
+    expect(t).toContain('Bids: 7');
   });
 
   it('review shows its rows with each note as a muted line', async () => {
     const { body } = await get('/freelance?tab=review');
     expect(order(body)).toEqual([R5]);
-    expect(body).toContain('<li class="gig-note muted">preset bracket - bids may exceed it</li>');
-    expect(body).toContain('<li class="gig-note muted">rate negotiable - verify</li>');
+    expect(textOf(rowOf(body, 'data-gig', R5))).toContain('preset bracket - bids may exceed it');
+    expect(textOf(rowOf(body, 'data-gig', R5))).toContain('rate negotiable - verify');
   });
 
   it('red flags are a red badge in plain words, amber flags amber', async () => {
@@ -249,7 +250,7 @@ describe('freelance tabs: the rows', () => {
     const t = text((await get('/freelance?tab=gigs')).body) + text((await get('/freelance?tab=review')).body);
     expect(t).toContain('$75/h derived from 2 weeks (the basis is not on record)');
     expect(t).toContain('$50/h from ~60 hours stated');
-    expect(t).toContain('rate unknown - fixed budget $750');
+    expect(t).toContain('rate unknown – fixed budget $750');
     expect(t).toContain('$43.80–49.64/h stated · via platform FX');
   });
 
@@ -261,8 +262,8 @@ describe('freelance tabs: the rows', () => {
     expect(rateLabel(r({ minUsdH: 50, maxUsdH: 50, method: 'fixed÷stated-hours', budgetUsd: 3000 }), { description: 'About 60 hours of work.', weeks: null, hours: null, budgetType: 'fixed' })).toBe('$50/h from ~60 hours stated');
     expect(rateLabel(r({ minUsdH: 25, maxUsdH: 25, method: 'fixed÷stated-hours', budgetUsd: 1500 }), { description: '', weeks: 3, hours: 20, budgetType: 'fixed' })).toBe('$25/h from 3 weeks × 20 h stated');
     expect(rateLabel(r({ minUsdH: 46.19, maxUsdH: 46.19, method: 'monthly÷hours', budgetUsd: 4000 }), { description: '', weeks: null, hours: 20, budgetType: 'monthly' })).toBe('$46.19/h from a monthly $4,000 at 20 h/week stated');
-    expect(rateLabel(r({ budgetUsd: 750 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $750');
-    expect(rateLabel(r({ budgetUsd: 1500, fxSource: 'platform' }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown - fixed budget $1,500 · via platform FX');
+    expect(rateLabel(r({ budgetUsd: 750 }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown – fixed budget $750');
+    expect(rateLabel(r({ budgetUsd: 1500, fxSource: 'platform' }), { description: '', weeks: null, hours: null, budgetType: 'fixed' })).toBe('rate unknown – fixed budget $1,500 · via platform FX');
     // a preset tier is labelled as one (final review I1)
     expect(rateLabel(r({ budgetUsd: 1500 }), { description: '', weeks: null, hours: null, budgetType: 'fixed', presetTier: { lo: 750, hi: 1500 } })).toBe('preset tier $750–1,500 (client picked a range; bids may exceed it)');
     const preset = { notes: ['preset bracket - bids may exceed it'], budget: { type: 'fixed', min: 750, max: 1500, currency: 'USD' }, rate: r({ budgetUsd: 1500 }) };
@@ -296,7 +297,7 @@ describe('freelance: the gig page', () => {
     expect(body).toMatch(/<pre class="paste" id="paste">/);
     expect(body).toContain(`data-copy-src="/freelance/${G2}/files/proposal.txt"`);
     expect(body).toContain('1,214 / 1,500 characters');
-    expect(body).toContain(`<span class="fact-src" data-fact="f-nw-01" title="Fact f-nw-01">${EVIDENCE}</span>`);
+    expect(body).toContain(`<span class="fact-src" data-fact="f-nw-01">${EVIDENCE}</span>`);
     for (const f of ['proposal.txt', 'resume.pdf', 'resume.docx']) expect(body).toContain(`href="/freelance/${G2}/files/${f}"`);
     // the <pre> holds exactly the file text
     const pre = /<pre class="paste" id="paste">([\s\S]*?)<\/pre>/.exec(body)?.[1] ?? '';
@@ -382,6 +383,7 @@ describe('freelance: networks', () => {
         const j = body.indexOf('data-network="', i + 1);
         return body.slice(i, j === -1 ? undefined : j);
       };
+      expect(textOf(elementsWith(body, 'id', 'net-h-arc')[0] ?? '')).toBe('Arc');
       expect(card('arc')).toContain('check before use');
       expect(card('contra')).not.toContain('check before use');
       expect(card('arc')).toContain('href="/freelance/networks/arc/files/resume.pdf"');
@@ -456,7 +458,7 @@ describe('freelance: sources', () => {
       expect(t).toContain('Reddit needs your OAuth script app');
       // freelance-boost: Remotive is off, with its named reason.
       expect(t).toContain('Remotive robots.txt disallows /api (2026-10-15)');
-      expect(t).toContain('Gmail not connected - run jobpilot gmail connect');
+      expect(t).toContain('Gmail not connected – run jobpilot gmail connect');
       expect(t).toContain('freelancer: 3 requests skipped after 5 failures');
       expect(t).not.toContain('freelancer q6');
       expect(t).toContain('source remotive looks dead');
@@ -471,7 +473,7 @@ describe('freelance: sources', () => {
     app = wrap(createDashboard({ home, clock: { now: () => NOW }, sessions: new Sessions(Buffer.alloc(32, 7)), gmailConnected: () => true }));
     const t = text((await get('/freelance/sources')).body);
     expect(t).not.toContain('Gmail not connected');
-    expect(t).toContain('Gmail reads the label jobpilot/gigs; alert parsers: none yet - send one alert email per sender to enable');
+    expect(t).toContain('Gmail reads the label jobpilot/gigs; alert parsers: none yet – send one alert email per sender to enable');
   });
 });
 
@@ -543,19 +545,20 @@ describe('fix round 1', () => {
     expect(page.body).not.toContain('Initech on payments');
   });
 
-  it('the hover hint shows only when a line cites a fact', async () => {
-    expect((await get(`/freelance/${G2}`)).body).toContain('Hover an underlined line');
+  it('says which fact each underlined line comes from, without hover', async () => {
+    const b = (await get(`/freelance/${G2}`)).body;
+    expect(textOf(b)).not.toMatch(/\bhover\b/i);
+    expect(b).not.toMatch(/class="fact-src"[^>]*\stitle=/);
+    expect(textOf(elementsWith(b, 'class', 'cited')[0] ?? '')).toContain('Which fact each underlined line comes from f-nw-01 At Contoso Retail I built the payments reconciliation service in Java.');
     readyGig(G9, 'A proposal with no cited line.', {}, { covered: ['java', 'kafka'], cited: false });
-    const b = (await get(`/freelance/${G9}`)).body;
-    expect(b).toContain('Copy pastes exactly the .txt file.');
-    expect(b).not.toContain('Hover an underlined line');
+    expect(elementsWith((await get(`/freelance/${G9}`)).body, 'class', 'cited')).toEqual([]);
   });
 
   it('a skill row the facts do not back says so; the one-skill note is amber', async () => {
     readyGig(G9, 'Short proposal.', { breakdown: { base: 30, 'strong:java': 4, 'medium:react': 1.5 }, notes: [NOTE_ONE_SKILL] }, { covered: ['java'], cited: true });
     const b = decode((await get(`/freelance/${G9}`)).body);
-    expect(b).toContain('<td>Skill: React (not backed by your facts)</td>');
-    expect(b).toContain('<td>Core skill: Java</td>');
+    expect(textOf(b)).toContain('Skill: React (not backed by your facts)');
+    expect(textOf(b)).toContain('Core skill: Java');
     expect(b).toContain(`<li class="gig-note warn-note">${NOTE_ONE_SKILL}</li>`);
   });
 
@@ -564,5 +567,65 @@ describe('fix round 1', () => {
     expect(t).toContain('Review holds gigs that need your judgement; the fit floor applies to Contracts and Gigs only.');
     expect(t).not.toContain('Fit floor 45');
     expect(text((await get('/freelance?tab=gigs')).body)).toContain('Fit floor 45');
+  });
+});
+
+describe('A7: gig rows label their fit and lead with the title', () => {
+  it('a gig row reads title first and "Fit score 70 out of 100"', async () => {
+    const r = rowOf((await get('/freelance?tab=gigs')).body, 'data-gig', G2);
+    expect(r).toMatch(/^<li class="gig" data-gig="[0-9a-f]{16}"[^>]*>\s*<div class="gig-main">/);
+    expect(textOf(r)).toContain('fit Fit score 70 out of 100');
+  });
+});
+
+describe('A3: Review is paged, Freelance opens where the work is, empty states tell the truth', () => {
+  const current = async (path: string): Promise<string | undefined> =>
+    linksOf(elementsWith((await get(path)).body, 'aria-label', 'Freelance')[0] ?? '').find((l) => l.attrs['aria-current'] === 'page')?.text;
+  const setList = (keys: readonly string[], list: string | null): void =>
+    withStore((s) => {
+      for (const k of keys) s.kernel.db.prepare(`UPDATE gigs SET list = ? WHERE gig_key = ?`).run(list, k);
+    });
+
+  it('Review shows 50 a page, with the pager', async () => {
+    withStore((s) => {
+      for (let i = 0; i < 60; i++) {
+        const k = (0xd000000000000000n + BigInt(i)).toString(16);
+        upsert(s, gigOf(k, { title: `Review ${i}`, sourceId: `rv${i}` }), { list: 'review', verdict: 'review', reasons: ['rate-unclear'], fit: 50 });
+      }
+    });
+    const p1 = await get('/freelance?tab=review');
+    expect(order(p1.body)).toHaveLength(50);
+    expect(textOf(p1.body)).toContain('Page 1 of 2');
+    expect(linksOf(p1.body).find((l) => l.attrs['rel'] === 'next')?.href).toBe('/freelance?tab=review&page=2');
+    expect(order((await get('/freelance?tab=review&page=2')).body)).toHaveLength(11); // 60 + R5
+    expect(order((await get('/freelance?tab=review&page=99')).body)).toHaveLength(11);
+    expect(order((await get('/freelance?tab=gigs')).body)).toEqual([G3, G4, G2]); // other tabs are not paged
+  });
+
+  it('without tab=, opens the first tab that has something', async () => {
+    expect(await current('/freelance')).toMatch(/^Contracts/);
+    setList([C1], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Gigs/);
+    setList([G2, G3, G4], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Review/);
+    setList([R5], 'below-floor');
+    expect(await current('/freelance')).toMatch(/^Contracts/);
+    expect(await current('/freelance?tab=gigs')).toMatch(/^Gigs/); // an explicit tab always wins
+  });
+
+  it('an empty tab says what the last run found and links to what it left out', async () => {
+    setList([C1], 'below-floor');
+    const body = (await get('/freelance?tab=contracts')).body;
+    expect(textOf(body)).toContain('No contract roles passed your rules in the last run (12 Oct 2026, 19:30 IST). 1 was not shown: show them.');
+    expect(textOf(body)).not.toContain('The next freelance run fills this list');
+    expect(linksOf(body).find((l) => l.text === 'show them')?.href).toBe('/freelance?tab=contracts&show=hidden');
+    expect(order((await get('/freelance?tab=contracts&show=hidden')).body)).toEqual([C1]);
+    expect(order((await get('/freelance?tab=gigs&show=hidden')).body)).toEqual([F6, X7]);
+  });
+
+  it('before any freelance run, it says the first run fills the list', async () => {
+    withStore((s) => s.kernel.db.prepare('DELETE FROM gig_runs_summary').run());
+    setList([C1], 'below-floor');
+    expect(textOf((await get('/freelance?tab=contracts')).body)).toContain('No freelance run yet. The first run fills this list.');
   });
 });

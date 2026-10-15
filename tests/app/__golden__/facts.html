@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="same-origin">
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true}'>
+<title>Your facts · jobpilot</title>
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/htmx.min.js" defer></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+<div class="top-inner">
+<a class="brand" href="/">jobpilot</a>
+<nav aria-label="Main"><a href="/">Jobs</a><a href="/freelance">Freelance</a><a href="/companies">Companies</a><a href="/facts" aria-current="page">Your facts</a><a href="/runs">Runs</a></nav>
+</div>
+</header>
+<main id="main">
+<p id="htmx-error" class="toast" role="alert" aria-live="assertive" hidden></p>
+<div id="live" class="visually-hidden" role="status" aria-live="polite"></div>
+
+<div class="page-head">
+<h1>Your facts</h1>
+<p class="lede">Every claim your documents can make comes from one of these. Only verified facts and facts you stated go into a resume or cover letter. <strong><span class="num">1</span> waiting for you to verify.</strong></p>
+<p class="note">Verify and Reject change only the fact's status here (your facts.yaml is never edited). The next run makes the affected documents again.</p>
+</div>
+<ol class="facts" aria-label="Facts"><li class="fact fact-unverified fact-unused" id="fact-f-nw-05" data-live="Saved: Not verified.">
+<p class="fact-claim">Reduced AWS spend by roughly 30 percent through right-sizing and spot capacity.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Northwind Labs</span><span class="sep" aria-hidden="true">·</span><span class="num">Jun 2023 – Jun 2024</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-nw-05</code></p>
+<p class="fact-state"><span class="pill pill-warn">Not verified</span></p>
+<p class="fact-warn">Not used in documents until you verify it.</p>
+
+<div class="btn-row"><form method="post" action="/facts/f-nw-05/verify" hx-post="/facts/f-nw-05/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-05-verify" class="btn btn-primary">Verify</button></form><form method="post" action="/facts/f-nw-05/reject" hx-post="/facts/f-nw-05/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-05-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-nw-01" data-live="Saved: Verified.">
+<p class="fact-claim">Led the design of an event-driven order pipeline on Kafka handling 40M events a day.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Northwind Labs</span><span class="sep" aria-hidden="true">·</span><span class="num">Mar 2022 – present</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-nw-01</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-nw-01/reject" hx-post="/facts/f-nw-01/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-01-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-nw-02" data-live="Saved: Verified.">
+<p class="fact-claim">Cut p99 latency of the pricing service from 800 ms to 180 ms by introducing a Redis read-through cache.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Northwind Labs</span><span class="sep" aria-hidden="true">·</span><span class="num">Mar 2022 – present</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-nw-02</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-nw-02/reject" hx-post="/facts/f-nw-02/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-02-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-nw-03" data-live="Saved: Verified.">
+<p class="fact-claim">Migrated a multi-tenant SaaS billing module from a monolith to three microservices on Kubernetes.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Northwind Labs</span><span class="sep" aria-hidden="true">·</span><span class="num">Mar 2022 – present</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-nw-03</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-nw-03/reject" hx-post="/facts/f-nw-03/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-03-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-nw-04" data-live="Saved: Stated by you.">
+<p class="fact-claim">Mentored four engineers and ran the weekly design review for the platform group.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Northwind Labs</span><span class="sep" aria-hidden="true">·</span><span class="num">Jan 2023 – present</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-nw-04</code></p>
+<p class="fact-state"><span class="pill pill-good">Stated by you</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-nw-04/verify" hx-post="/facts/f-nw-04/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-04-verify" class="btn">Verify</button></form><form method="post" action="/facts/f-nw-04/reject" hx-post="/facts/f-nw-04/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-nw-04-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ct-01" data-live="Saved: Verified.">
+<p class="fact-claim">Built the payments reconciliation service in Java and Postgres, processing 2M transactions nightly.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Contoso Retail</span><span class="sep" aria-hidden="true">·</span><span class="num">Jun 2018 – Feb 2022</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ct-01</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ct-01/reject" hx-post="/facts/f-ct-01/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ct-01-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ct-02" data-live="Saved: Verified.">
+<p class="fact-claim">Introduced RabbitMQ based retry queues that removed a class of duplicate-charge incidents.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Contoso Retail</span><span class="sep" aria-hidden="true">·</span><span class="num">Feb 2019 – Jan 2020</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ct-02</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ct-02/reject" hx-post="/facts/f-ct-02/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ct-02-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ct-03" data-live="Saved: Stated by you.">
+<p class="fact-claim">Owned the on-call rotation and wrote the first runbooks for the checkout stack.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Contoso Retail</span><span class="sep" aria-hidden="true">·</span><span class="num">Jan 2020 – Feb 2022</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ct-03</code></p>
+<p class="fact-state"><span class="pill pill-good">Stated by you</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ct-03/verify" hx-post="/facts/f-ct-03/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ct-03-verify" class="btn">Verify</button></form><form method="post" action="/facts/f-ct-03/reject" hx-post="/facts/f-ct-03/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ct-03-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact fact-unused" id="fact-f-ct-04" data-live="Saved: Rejected.">
+<p class="fact-claim">Led a Scala rewrite of the recommendation feed.</p>
+<p class="fact-sub"><span>project</span><span class="sep" aria-hidden="true">·</span><span>Contoso Retail</span><span class="sep" aria-hidden="true">·</span><span class="num">Jan 2021 – Dec 2021</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ct-04</code></p>
+<p class="fact-state"><span class="pill pill-critical">Rejected</span></p>
+
+<p class="hint">Not used in documents.</p>
+<div class="btn-row"><form method="post" action="/facts/f-ct-04/verify" hx-post="/facts/f-ct-04/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ct-04-verify" class="btn">Verify</button></form></div>
+
+</li><li class="fact" id="fact-f-fb-01" data-live="Saved: Verified.">
+<p class="fact-claim">Built REST services in Java with Spring and MySQL for the store-locator product.</p>
+<p class="fact-sub"><span>experience</span><span class="sep" aria-hidden="true">·</span><span>Fabrikam</span><span class="sep" aria-hidden="true">·</span><span class="num">Jul 2016 – May 2018</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-fb-01</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-fb-01/reject" hx-post="/facts/f-fb-01/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-fb-01-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-fb-02" data-live="Saved: Stated by you.">
+<p class="fact-claim">Wrote a Python tool that generated nightly sales reports for regional managers.</p>
+<p class="fact-sub"><span>project</span><span class="sep" aria-hidden="true">·</span><span>Fabrikam</span><span class="sep" aria-hidden="true">·</span><span class="num">Mar 2017 – Sep 2017</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-fb-02</code></p>
+<p class="fact-state"><span class="pill pill-good">Stated by you</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-fb-02/verify" hx-post="/facts/f-fb-02/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-fb-02-verify" class="btn">Verify</button></form><form method="post" action="/facts/f-fb-02/reject" hx-post="/facts/f-fb-02/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-fb-02-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact fact-unused" id="fact-f-fb-03" data-live="Saved: You cannot confirm.">
+<p class="fact-claim">Claims familiarity with Elasticsearch relevance tuning on an internal search project.</p>
+<p class="fact-sub"><span>project</span><span class="sep" aria-hidden="true">·</span><span>Fabrikam</span><span class="sep" aria-hidden="true">·</span><span class="num">Oct 2017 – Mar 2018</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-fb-03</code></p>
+<p class="fact-state"><span class="pill pill-muted">You cannot confirm</span></p>
+
+<p class="hint">Not used in documents.</p>
+<div class="btn-row"><form method="post" action="/facts/f-fb-03/verify" hx-post="/facts/f-fb-03/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-fb-03-verify" class="btn">Verify</button></form><form method="post" action="/facts/f-fb-03/reject" hx-post="/facts/f-fb-03/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-fb-03-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ed-01" data-live="Saved: Verified.">
+<p class="fact-claim">B.E. in Computer Engineering, Savitribai Phule Pune University.</p>
+<p class="fact-sub"><span>education</span><span class="sep" aria-hidden="true">·</span><span>Savitribai Phule Pune University</span><span class="sep" aria-hidden="true">·</span><span class="num">Aug 2012 – May 2016</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ed-01</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ed-01/reject" hx-post="/facts/f-ed-01/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ed-01-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ce-01" data-live="Saved: Verified.">
+<p class="fact-claim">AWS Certified Solutions Architect - Associate.</p>
+<p class="fact-sub"><span>cert</span><span class="sep" aria-hidden="true">·</span><span>Amazon Web Services</span><span class="sep" aria-hidden="true">·</span><span class="num">May 2021 – May 2024</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ce-01</code></p>
+<p class="fact-state"><span class="pill pill-good">Verified</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ce-01/reject" hx-post="/facts/f-ce-01/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ce-01-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li><li class="fact" id="fact-f-ce-02" data-live="Saved: Stated by you.">
+<p class="fact-claim">Certified Kubernetes Application Developer (CKAD).</p>
+<p class="fact-sub"><span>cert</span><span class="sep" aria-hidden="true">·</span><span>Cloud Native Computing Foundation</span><span class="sep" aria-hidden="true">·</span><span class="num">Sep 2022 – Sep 2025</span><span class="sep" aria-hidden="true">·</span><code class="fact-id">f-ce-02</code></p>
+<p class="fact-state"><span class="pill pill-good">Stated by you</span></p>
+
+
+<div class="btn-row"><form method="post" action="/facts/f-ce-02/verify" hx-post="/facts/f-ce-02/verify" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ce-02-verify" class="btn">Verify</button></form><form method="post" action="/facts/f-ce-02/reject" hx-post="/facts/f-ce-02/reject" hx-target="closest li" hx-swap="outerHTML" hx-disabled-elt="find button"><input type="hidden" name="_csrf" value="x"><button id="fact-f-ce-02-reject" class="btn btn-danger">Reject</button></form></div>
+
+</li></ol>
+</main>
+</body>
+</html>
