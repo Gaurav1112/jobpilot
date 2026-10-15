@@ -11,7 +11,7 @@ import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { companyKeys, jobKeys, jobOfCompany, type CompanyJobs } from '../coverage/company-jobs.js';
 import type { AtsIdPlatform, AtsRef } from '../text/ats-id.js';
 import { boardRefOf, splitPostingSourceId } from '../text/norm.js';
-import { routesToFreelance } from './contract-routes.js';
+import { routesToFreelance, structuredFullTime } from './contract-routes.js';
 import { ATS_SOURCES, linkJobs, type LinkRow } from './links.js';
 import { APP_MIGRATIONS, COMPANY_OVERRIDES, COMPANY_STATUSES, DOCS_STATES, GIG_DOCS_STATES, GIG_KINDS, GIG_LISTS, GIG_STATUSES, JOB_STATUSES, NETWORK_STATUSES } from './schema.js';
 
@@ -1240,7 +1240,8 @@ export class AppStore {
    * connection, read only). The jobs table keeps columns, not the posting (no slug, employment type or remote
    * signals), so the envelope is the exact posting and nothing is rebuilt or guessed. The envelopes are read in one
    * pass per batch of at most 500 keys (`IN`, the newest per key by NEWEST_FIRST), never one scan per job. `missing` lists the job
-   * keys with no stored posting (a Desk import): they are not seeded.
+   * keys with no stored posting (a Desk import): they are not seeded. A job whose stored posting has a structured
+   * full-time type (`structuredFullTime`) is neither seeded nor missing: it is not a contract.
    */
   contractPostings(since: string): { postings: { jobKey: string; posting: unknown }[]; missing: string[] } {
     const keys = (
@@ -1271,8 +1272,15 @@ export class AppStore {
     const missing: string[] = [];
     for (const jobKey of keys) {
       const body = bodies.get(jobKey);
-      if (body === undefined) missing.push(jobKey);
-      else postings.push({ jobKey, posting: (JSON.parse(body) as { payload: unknown }).payload });
+      if (body === undefined) {
+        missing.push(jobKey);
+        continue;
+      }
+      const posting = (JSON.parse(body) as { payload: unknown }).payload;
+      // A structured full-time type is never routed, whatever title label gave the reason (`structuredFullTime`).
+      const type = typeof posting === 'object' && posting !== null ? (posting as { employmentType?: unknown }).employmentType : undefined;
+      if (typeof type === 'string' && structuredFullTime(type)) continue;
+      postings.push({ jobKey, posting });
     }
     return { postings, missing };
   }

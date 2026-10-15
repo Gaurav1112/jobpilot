@@ -12,7 +12,7 @@ import { issueContext } from '../../../src/kernel/broker.js';
 import { fixedClock } from '../../../src/kernel/clock.js';
 import { PRODUCT_POLICY_V1 } from '../../../src/kernel/policy.js';
 import { Store } from '../../../src/kernel/store/store.js';
-import { CONTRACT_REASONS, routesToFreelance } from '../../../src/app/store/contract-routes.js';
+import { CONTRACT_REASONS, routesToFreelance, structuredFullTime } from '../../../src/app/store/contract-routes.js';
 import { jobRow } from '../../support/app-fixtures.js';
 
 /** freelance-boost review round (2026-10-15): I1, I2, wide ranges and the minors. Fictional fixtures only. */
@@ -208,6 +208,37 @@ describe('routing: every contract wording the daily run rejects reaches the free
   it.each(['employment:intern', 'employment:full-time', 'employment:hourly-ish', 'employment:6 monthly', 'employment:contract management', 'remote-excludes-india', 'company:contract', 'employment:', 'employment:999 months'])('%s → not routed', (r) =>
     expect(routesToFreelance(r)).toBe(false),
   );
+
+  it('the duration bound is 24 months: 24 is routed, 25 is not', () => {
+    expect(routesToFreelance('employment:24 months')).toBe(true);
+    expect(routesToFreelance('employment:24-month contract')).toBe(true);
+    expect(routesToFreelance('employment:25 months')).toBe(false);
+    expect(routesToFreelance('employment:25-month contract')).toBe(false);
+  });
+
+  it('a structured full-time role is never routed, whatever title label gave the reason', () => {
+    expect(structuredFullTime('Full-time')).toBe(true);
+    expect(structuredFullTime('FULL_TIME')).toBe(true);
+    expect(structuredFullTime('Full time; Permanent')).toBe(true);
+    expect(structuredFullTime('Full-time, Contractor')).toBe(false);
+    expect(structuredFullTime('Contract')).toBe(false);
+    expect(structuredFullTime(null)).toBe(false);
+    expect(structuredFullTime('')).toBe(false);
+    const app = AppStore.on(Store.open(':memory:'));
+    const put = (jobKey: string, i: number, employmentType: string | null, reasons: string[]) => {
+      app.upsertJob(jobRow({ jobKey, dedupeKey: `e00000000000000${i}`, sourceId: `ft${i}`, title: 'Senior Backend Engineer - 6 months', verdict: 'rejected', reasons }));
+      app.kernel.db
+        .prepare(`INSERT INTO envelopes (envelope_id, step_key, idx, type, body) VALUES (?, ?, 0, 'Posting@1', ?)`)
+        .run(`e-${jobKey}`, `s-${jobKey}`, JSON.stringify({ type: 'Posting@1', payload: { jobKey, title: 'Senior Backend Engineer - 6 months', employmentType } }));
+    };
+    put('b000000000000001', 1, 'Full-time', ['employment:6 months']);
+    put('b000000000000002', 2, 'Contract', ['employment:6 months']);
+    put('b000000000000003', 3, null, ['employment:6 months']);
+    put('b000000000000004', 4, 'Full-time, Contractor', ['employment:contractor']);
+    const got = app.contractPostings('2000-01-01T00:00:00.000Z');
+    expect(got.postings.map((p) => p.jobKey)).toEqual(['b000000000000002', 'b000000000000003', 'b000000000000004']);
+    expect(got.missing).toEqual([]);
+  });
 
   it('the list is closed and exact', () => {
     expect([...CONTRACT_REASONS]).toEqual(['contract', 'contractor', 'freelance', 'part-time', 'temporary', 'temp', 'fixed-term', 'contract-to-hire', 'c2h']);
