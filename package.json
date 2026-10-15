@@ -11,6 +11,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "perf": "vitest run --config vitest.perf.config.ts",
+    "catalogue:freehire": "tsx scripts/freehire-catalogue.ts",
     "contracts:export": "tsx src/bin.ts contracts export",
     "verify": "node --run typecheck && node --run test && node --run jobpilot -- contracts check && node --run jobpilot -- eval && node --run perf"
   },

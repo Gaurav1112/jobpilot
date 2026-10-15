@@ -1,0 +1,74 @@
+{
+ "data": [
+  {
+   "public_slug": "x",
+   "source": "greenhouse",
+   "external_id": "twilio:111",
+   "url": "https://job-boards.greenhouse.io/twilio/jobs/111?utm_source=freehire.me",
+   "title": "Staff Software Engineer",
+   "company": null,
+   "location": "Bengaluru, India",
+   "posted_at": null,
+   "created_at": "2026-10-06T06:13:21Z",
+   "last_seen_at": "2026-10-06T06:13:21Z",
+   "closed_at": null
+  },
+  {
+   "public_slug": "x",
+   "source": "greenhouse",
+   "external_id": "twilio:222",
+   "url": "https://job-boards.greenhouse.io/twilio/jobs/222?utm_source=freehire.me",
+   "title": "Senior Backend Engineer",
+   "company": null,
+   "location": "Remote - India",
+   "posted_at": null,
+   "created_at": "2026-10-10T08:00:00Z",
+   "last_seen_at": "2026-10-10T08:00:00Z",
+   "closed_at": null
+  },
+  {
+   "public_slug": "x",
+   "source": "greenhouse",
+   "external_id": "contoso:5",
+   "url": "https://job-boards.greenhouse.io/contoso/jobs/5?utm_source=freehire.me",
+   "title": "Platform Engineer",
+   "company": null,
+   "location": "Pune, India",
+   "posted_at": null,
+   "created_at": "2026-10-01T09:30:00Z",
+   "last_seen_at": "2026-10-01T09:30:00Z",
+   "closed_at": null
+  },
+  {
+   "public_slug": "x",
+   "source": "greenhouse",
+   "external_id": "northwind:9",
+   "url": "https://job-boards.greenhouse.io/northwind/jobs/9?utm_source=freehire.me",
+   "title": "Account Executive",
+   "company": null,
+   "location": "Mumbai, India",
+   "posted_at": null,
+   "created_at": "2026-10-02T09:30:00Z",
+   "last_seen_at": "2026-10-02T09:30:00Z",
+   "closed_at": null
+  },
+  {
+   "public_slug": "x",
+   "source": "greenhouse",
+   "external_id": "tilthq:1",
+   "url": "https://job-boards.greenhouse.io/tilthq/jobs/1?utm_source=freehire.me",
+   "title": "Software Engineer",
+   "company": null,
+   "location": "India",
+   "posted_at": null,
+   "created_at": "2026-10-03T09:30:00Z",
+   "last_seen_at": "2026-10-03T09:30:00Z",
+   "closed_at": null
+  }
+ ],
+ "meta": {
+  "total": 5,
+  "limit": 100,
+  "offset": 0
+ }
+}
