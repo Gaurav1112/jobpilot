@@ -4,6 +4,7 @@ import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { BoardRefused, platformClient, type BoardRead, type PlatformClient } from '../agents/sources/platforms/client.js';
 import { HostDisabled, RobotsDenied, type PlatformHosts } from '../agents/sources/platforms/shared.js';
+import { listedBoard } from './detector.js';
 import { gateOf, HOST_DISABLED, REFUSALS, REQUEST_TIMEOUT_MS, stepFetcher, type GateSource, type RunGate } from './gate.js';
 import { robotsDenial, robotsVerdictOf, type RobotsVerdict } from './robots.js';
 import { sameCompany } from './names.js';
@@ -24,7 +25,9 @@ import { CompanyVerdict, PlatformGuess } from './types.js';
  * - `failed` on an error: 404 (`board not found`), another 4xx or a response of the wrong shape. A URL-only detection
  *   of a dead board ends here, never verified. A 5xx, a network failure or a timeout is NOT a verdict (C1): the step
  *   fails with that transport code (the breaker sees an outage; the coverage run asks again later), so an outage
- *   never adds a failed week to a registry company.
+ *   never adds a failed week to a registry company. Exception: a board the detector took from a listed careersUrl as
+ *   written (`<platform>:listed`, its redirect off the platform not followed) is `proposed` on a 404 or a wrong shape,
+ *   with the reason; every verdict on such a board also carries the detector's note.
  *
  * Politeness and memo safety (the run's shared gate, `gate.ts`): the read host of a platform is a public job-board API
  * the daily adapters already read (robots.txt is not fetched for it, exactly as the daily adapters do not), except
@@ -125,12 +128,25 @@ const readOptions = (client: PlatformClient, ctx: AgentContext, gate: RunGate, h
 
 const deferred = (why: string, host: string, detail: string): KernelError => new KernelError('input_rejected', `${HOST_DISABLED}${why} on ${host} (${detail}); deferred to a later run, never retried around`);
 
+/**
+ * The detector's note when `g` is the board a listed careersUrl names as written (`<platform>:listed`, its redirect
+ * off the platform not followed), else null. Such a board is read exactly as any other; only its outcome differs: a
+ * board that is not there (404) or does not read as a board is Proposed with the reason, not failed, because nothing but
+ * the URL as written ever pointed at it.
+ */
+function listedNote(g: PlatformGuess): string | null {
+  if (g.platform === null || g.signature !== `${g.platform}:listed`) return null;
+  const l = listedBoard(g.site);
+  return l !== null && l.platform === g.platform && l.slug === g.slug ? l.note : null;
+}
+
 async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeoutMs: number): Promise<CompanyVerdict> {
+  const listed = listedNote(g);
   const verdict = (status: CompanyVerdict['status'], reasons: string[], read?: BoardRead): CompanyVerdict => ({
     // a read may name what to store instead of the detection's slug and board URL (Eightfold: its API variant)
     guess: read?.stored === undefined ? g : { ...g, slug: read.stored.slug, boardUrl: read.stored.boardUrl },
     status,
-    reasons,
+    reasons: listed === null ? reasons : [...reasons, listed],
     boardName: read?.boardName ?? null,
     jobsSeen: read === undefined ? null : read.jobs.length,
   });
@@ -171,8 +187,8 @@ async function verify(g: PlatformGuess, ctx: AgentContext, gate: RunGate, timeou
       gate.disable(host, 'challenge', ctx.clock.now());
       throw deferred('challenge', host, 'it answered with a challenge page');
     }
-    if (e instanceof KernelError && e.code === 'gone') return verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]);
-    if (e instanceof KernelError && e.code === 'invalid_output') return verdict('failed', [`${g.platform} board ${g.slug}: ${e.message}`]);
+    if (e instanceof KernelError && e.code === 'gone') return listed === null ? verdict('failed', [`board not found (404): ${g.platform} ${g.slug}`]) : verdict('proposed', [`board not found (404): ${g.platform} ${g.slug}, please confirm`]);
+    if (e instanceof KernelError && e.code === 'invalid_output') return verdict(listed === null ? 'failed' : 'proposed', [`${g.platform} board ${g.slug}: ${e.message}`]);
     // C1: an outage, a timeout or an overloaded board is not a verdict: the step fails with its transport code
     if (e instanceof KernelError && (e.code === 'overloaded' || e.code === 'network' || e.code === 'timeout')) throw new KernelError(e.code, `${g.platform} board ${g.slug}: ${e.message}`, e.sysCode);
     throw e;

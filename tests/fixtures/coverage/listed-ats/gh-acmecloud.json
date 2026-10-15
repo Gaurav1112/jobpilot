@@ -1,0 +1,14 @@
+{
+ "jobs": [
+  {
+   "id": 5000,
+   "title": "Platform Engineer",
+   "company_name": "Acme Cloud",
+   "absolute_url": "https://job-boards.greenhouse.io/acmecloud/jobs/5000",
+   "location": { "name": "Remote" },
+   "updated_at": "2026-10-01T00:00:00-04:00",
+   "content": "A fictional role."
+  }
+ ],
+ "meta": { "total": 1 }
+}

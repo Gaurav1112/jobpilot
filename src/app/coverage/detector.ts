@@ -25,6 +25,11 @@ import { CareersSite, PlatformGuess } from './types.js';
  * ones too); JobPosting JSON-LD; the page markers (Phenom, `gh_jid=`, Teamtailor and SuccessFactors assets on the
  * company's host, an Eightfold script on a `/careers?domain=` page). Only the first MAX_SCAN_CHARS of a page are read.
  *
+ * A listed careersUrl that is itself a board URL (as written: `job-boards.greenhouse.io/<slug>`,
+ * `ats.rippling.com/<slug>/jobs`, any row of the signature table) whose redirects the locator followed off every
+ * platform host (to the company's marketing careers page) is not fetched at all: the board it names is the guess
+ * (`<platform>:listed`), and the verifier reads it through the platform's API (`listedBoard`).
+ *
  * Decision, after removing the front-end-only signals (Phenom always; JobPosting JSON-LD when any ATS is present):
  * - two or more ATS platforms -> `platform: null`, all of them in the evidence (it becomes Proposed);
  * - one ATS with two or more board slugs -> null, every slug in the evidence; with no slug at all -> null;
@@ -413,6 +418,35 @@ function decide(c: Collected): Decision {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// The listed careersUrl as written
+
+export interface ListedBoard {
+  readonly platform: SignatureRow['platform'];
+  readonly slug: string;
+  readonly boardUrl: string;
+  /** Why the board came from the listed URL, for the evidence and the verdict's reasons. */
+  readonly note: string;
+}
+
+/**
+ * The board the candidate's own careersUrl names AS WRITTEN, when the locator took that URL (`listed`) and its
+ * redirects led off every platform host (a board URL answering 302/307 to the company's marketing careers page): the
+ * page reached says nothing about the board, the URL the user or the list gave does. Null otherwise: a listed URL that
+ * names no board, a located URL still on a platform host (the same board, the vendor's not-found page, another ATS:
+ * the page fetch decides, as for any site), or a site another probe found. Pure: no request.
+ */
+export function listedBoard(site: CareersSite): ListedBoard | null {
+  if (site.method !== 'listed' || site.careersUrl === null || site.candidate.careersUrl === null) return null;
+  const written = asHttps(site.candidate.careersUrl);
+  const located = asHttps(site.careersUrl);
+  if (written === null || located === null || platformForHost(located.hostname) !== null) return null;
+  const s = urlSignal(written, 'url');
+  if (s === null || s.slug === null || s.boardUrl === null) return null;
+  const note = `listed careersUrl is a ${s.platform} board (${s.slug}); the redirect to ${short(located.href)} was not followed for detection`;
+  return { platform: s.platform, slug: s.slug, boardUrl: s.boardUrl, note };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // The agent
 
 /**
@@ -436,6 +470,12 @@ async function detect(site: CareersSite, ctx: AgentContext, gate: RunGate, limit
   if (site.careersUrl === null || site.careersUrl.trim() === '') return nullWith('no-careers-url');
   const start = asHttps(site.careersUrl);
   if (start === null) return nullWith(`unavailable: not an http(s) URL: ${short(site.careersUrl)}`);
+  // a listed board URL redirected off its platform: the board as written goes to the verifier, which reads its API (no fetch here)
+  const listed = listedBoard(site);
+  if (listed !== null) {
+    const { platform, slug, boardUrl } = listed;
+    return guess({ platform, slug, boardUrl, signature: `${platform}:listed`, routedFrom: null, verdict: `detected: ${platform} ${slug}` }, [listed.note]);
+  }
 
   const web = asHttps(site.candidate.website);
   const key = web === null ? null : registrableDomain(web.hostname);
