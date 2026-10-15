@@ -28,22 +28,40 @@ export function escapeXml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
+export interface ProfileJob {
+  readonly id: string;
+  readonly root: string;
+}
 export interface PlistOpts {
   readonly node: string;
   readonly repo: string;
   readonly home: string;
+  /** A profile's jobs (profiles spec §3); absent: the legacy single-home jobs, byte-identical to before. */
+  readonly profile?: ProfileJob;
 }
+export const LEGACY_LABELS: readonly string[] = [DAILY_LABEL, FREELANCE_LABEL, COVERAGE_LABEL, DASHBOARD_LABEL];
+export const profileLabels = (id: string): { daily: string; freelance: string; coverage: string } => ({
+  daily: `com.jobpilot.${id}.daily`,
+  freelance: `com.jobpilot.${id}.freelance`,
+  coverage: `com.jobpilot.${id}.coverage`,
+});
+
+type Kind = 'daily' | 'freelance' | 'coverage';
+const LEGACY: Readonly<Record<Kind, string>> = { daily: DAILY_LABEL, freelance: FREELANCE_LABEL, coverage: COVERAGE_LABEL };
+const labelOf = (o: { profile?: ProfileJob | undefined }, kind: Kind): string => (o.profile === undefined ? LEGACY[kind] : profileLabels(o.profile.id)[kind]);
+const argsOf = (o: { profile?: ProfileJob | undefined }, args: readonly string[]): readonly string[] => (o.profile === undefined ? args : [...args, '--profile', o.profile.id]);
 
 const str = (v: string, pad: string): string => `${pad}<string>${escapeXml(v)}</string>`;
 const entry = (k: string, body: string, pad = '  '): string => `${pad}<key>${k}</key>\n${body}`;
 
-function plist(label: string, o: PlistOpts, args: readonly string[], logName: string, extra: string[]): string {
+function plist(label: string, o: PlistOpts, args: readonly string[], logName: string, extra: string[], logsDir: string = homePaths(o.home).logs): string {
   for (const [n, p] of [['node', o.node], ['repo', o.repo], ['home', o.home]] as const) {
     if (!isAbsolute(p)) throw new Error(`${n} must be an absolute path (got ${p})`);
   }
-  const log = join(homePaths(o.home).logs, logName);
+  if (o.profile !== undefined && !isAbsolute(o.profile.root)) throw new Error(`root must be an absolute path (got ${o.profile.root})`);
+  const log = join(logsDir, logName);
   const env = [
-    ['JOBPILOT_HOME', o.home],
+    o.profile === undefined ? (['JOBPILOT_HOME', o.home] as const) : (['JOBPILOT_ROOT', o.profile.root] as const),
     ['PATH', LAUNCHD_PATH],
     ['TZ', 'Asia/Kolkata'],
     ['LANG', 'en_US.UTF-8'],
@@ -79,7 +97,7 @@ function plistDue(label: string, o: PlistOpts, args: readonly string[], logName:
  * slot missed in sleep (2026-10-11, -12).
  */
 export function plistDaily(o: PlistOpts): string {
-  return plistDue(DAILY_LABEL, o, ['run', '--if-due'], 'daily.log');
+  return plistDue(labelOf(o, 'daily'), o, argsOf(o, ['run', '--if-due']), 'daily.log');
 }
 
 /**
@@ -88,7 +106,7 @@ export function plistDaily(o: PlistOpts): string {
  * the daily job's lock: a start while a daily run is going says so and exits 0.
  */
 export function plistFreelance(o: PlistOpts): string {
-  return plistDue(FREELANCE_LABEL, o, ['run-freelance', '--if-due'], 'freelance.log');
+  return plistDue(labelOf(o, 'freelance'), o, argsOf(o, ['run-freelance', '--if-due']), 'freelance.log');
 }
 
 /**
@@ -97,7 +115,7 @@ export function plistFreelance(o: PlistOpts): string {
  * Sunday runs it on its first start after waking. It shares the daily job's lock.
  */
 export function plistCoverage(o: PlistOpts): string {
-  return plistDue(COVERAGE_LABEL, o, ['run-coverage', '--if-due'], 'coverage.log');
+  return plistDue(labelOf(o, 'coverage'), o, argsOf(o, ['run-coverage', '--if-due']), 'coverage.log');
 }
 
 /** The always-on local dashboard (the server itself binds 127.0.0.1). */
@@ -108,6 +126,16 @@ export function plistDashboard(o: PlistOpts): string {
     entry('ThrottleInterval', '  <integer>30</integer>'),
     entry('ExitTimeOut', '  <integer>30</integer>'),
   ]);
+}
+
+/** The one dashboard of a profiles root: every profile under /p/<id>/ (Task 10); log in <root>/logs. */
+export function plistDashboardRoot(o: { node: string; repo: string; root: string }): string {
+  return plist(DASHBOARD_LABEL, { node: o.node, repo: o.repo, home: join(o.root, 'profiles', '.dashboard'), profile: { id: '', root: o.root } }, ['serve', '--port', String(DASHBOARD_PORT)], 'dashboard.log', [
+    entry('RunAtLoad', '  <true/>'),
+    entry('KeepAlive', '  <true/>'),
+    entry('ThrottleInterval', '  <integer>30</integer>'),
+    entry('ExitTimeOut', '  <integer>30</integer>'),
+  ], join(o.root, 'logs'));
 }
 
 /** The next occurrence of `hour:minute` IST after `now`, as "YYYY-MM-DD HH:MM IST". */
@@ -124,6 +152,10 @@ export interface ScheduleOpts extends PlistOpts {
   readonly uid: number;
   /** Default `~/Library/LaunchAgents`; tests pass a temp dir. */
   readonly agentsDir?: string;
+  /** A profile's freelance job is installed unless false (Task 21 sets false for a non-`IN` residence). */
+  readonly freelance?: boolean;
+  /** Uninstall: also unload the machine dashboard (always for the legacy jobs; default false for a profile). */
+  readonly dashboard?: boolean;
 }
 export interface InstallOpts extends ScheduleOpts {
   readonly now?: Date;
@@ -233,11 +265,21 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   if (v.status !== 0 || nodeVersion === undefined) throw new Error(`could not run "${o.node} --version": ${(v.stderr || v.stdout).trim() || `exit ${v.status}`}`);
   if (Number(nodeVersion.split('.')[0]) < 24) throw new Error(`jobpilot needs Node 24 or newer; ${o.node} is ${nodeVersion}. Install it with a Node 24 binary (not the Volta shim) and run again`);
   const now = o.now ?? new Date();
-  const jobs = [[DAILY_LABEL, plistDaily(o)], [FREELANCE_LABEL, plistFreelance(o)], [COVERAGE_LABEL, plistCoverage(o)], [DASHBOARD_LABEL, plistDashboard(o)]] as const;
+  const jobs: (readonly [string, string, string])[] =
+    o.profile === undefined
+      ? [[DAILY_LABEL, plistDaily(o), 'daily.log'], [FREELANCE_LABEL, plistFreelance(o), 'freelance.log'], [COVERAGE_LABEL, plistCoverage(o), 'coverage.log'], [DASHBOARD_LABEL, plistDashboard(o), 'dashboard.log']]
+      : [
+          [labelOf(o, 'daily'), plistDaily(o), 'daily.log'],
+          ...(o.freelance === false ? [] : [[labelOf(o, 'freelance'), plistFreelance(o), 'freelance.log'] as const]),
+          [labelOf(o, 'coverage'), plistCoverage(o), 'coverage.log'],
+          [DASHBOARD_LABEL, plistDashboardRoot({ node: o.node, repo: o.repo, root: o.profile.root }), 'dashboard.log'],
+        ];
 
   const logsDir = homePaths(o.home).logs;
   prepareLogsDir(o.home, logsDir);
-  const logs = ['daily.log', 'freelance.log', 'coverage.log', 'dashboard.log'].map((n) => join(logsDir, n));
+  const machineLogs = o.profile === undefined ? undefined : join(o.profile.root, 'logs');
+  if (o.profile !== undefined && machineLogs !== undefined) prepareLogsDir(o.profile.root, machineLogs);
+  const logs = jobs.map(([label, , n]) => join(machineLogs !== undefined && label === DASHBOARD_LABEL ? machineLogs : logsDir, n));
   for (const l of logs) prepareLogFile(l);
   // before any job is loaded: the coverage job starts at load (RunAtLoad) and must already see the date
   const coverageFrom = scheduleFirstCoverage(o.home, now, o.coverageNow === true, () => coverageRanOn(o.home));
@@ -265,7 +307,8 @@ const notLoaded = (r: { status: number; stdout: string; stderr: string }): boole
 
 export function uninstallSchedule(o: ScheduleOpts, run: Runner = realRunner): string[] {
   const removed: string[] = [];
-  for (const label of [DAILY_LABEL, FREELANCE_LABEL, COVERAGE_LABEL, DASHBOARD_LABEL]) {
+  const labels = [labelOf(o, 'daily'), labelOf(o, 'freelance'), labelOf(o, 'coverage'), ...(o.profile === undefined || o.dashboard === true ? [DASHBOARD_LABEL] : [])];
+  for (const label of labels) {
     const p = plistPathOf(o, label);
     // By label, so a job still loaded after its plist file went missing is unloaded too.
     const r = run('launchctl', ['bootout', `gui/${o.uid}/${label}`]);
@@ -286,26 +329,28 @@ export interface JobStatus {
 }
 
 export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobStatus[] {
-  return [[DAILY_LABEL, 'daily.log'], [FREELANCE_LABEL, 'freelance.log'], [COVERAGE_LABEL, 'coverage.log'], [DASHBOARD_LABEL, 'dashboard.log']].map(([label, log]) => {
+  const jobs: (readonly [string, string])[] = [[labelOf(o, 'daily'), 'daily.log'], [labelOf(o, 'freelance'), 'freelance.log'], [labelOf(o, 'coverage'), 'coverage.log'], [DASHBOARD_LABEL, 'dashboard.log']];
+  return jobs.map(([label, log]) => {
     const r = run('launchctl', ['print', `gui/${o.uid}/${label}`]);
     const loaded = r.status === 0;
     const state = loaded ? (/^\s*state = (.+)$/m.exec(r.stdout)?.[1]?.trim() ?? null) : null;
     const code = loaded ? /^\s*last exit code = (-?\d+)/m.exec(r.stdout)?.[1] : undefined;
     return {
-      label: label as string,
+      label: label,
       loaded,
       state,
       lastExitCode: code === undefined ? null : Number(code),
-      plistPath: plistPathOf(o, label as string),
-      logPath: join(homePaths(o.home).logs, log as string),
+      plistPath: plistPathOf(o, label),
+      logPath: join(o.profile !== undefined && label === DASHBOARD_LABEL ? join(o.profile.root, 'logs') : homePaths(o.home).logs, log),
     };
   });
 }
 
 /** Start the daily job now, or with `freelance` / `coverage` that job (a manual test of the real scheduled command). */
-export function runNow(o: { uid: number; freelance?: boolean; coverage?: boolean }, run: Runner = realRunner): void {
+export function runNow(o: { uid: number; freelance?: boolean; coverage?: boolean; profile?: string | undefined }, run: Runner = realRunner): void {
   if (o.freelance === true && o.coverage === true) throw new Error('run-now starts one job: pass --freelance or --coverage, not both');
-  const label = o.coverage === true ? COVERAGE_LABEL : o.freelance === true ? FREELANCE_LABEL : DAILY_LABEL;
+  const kind: Kind = o.coverage === true ? 'coverage' : o.freelance === true ? 'freelance' : 'daily';
+  const label = o.profile === undefined ? LEGACY[kind] : profileLabels(o.profile)[kind];
   const r = run('launchctl', ['kickstart', `gui/${o.uid}/${label}`]);
   if (r.status !== 0) throw new Error(`launchctl kickstart failed (${r.status}): ${(r.stderr || r.stdout).trim()}. Is the schedule installed? Run "jobpilot schedule install"`);
 }

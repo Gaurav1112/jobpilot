@@ -24,8 +24,8 @@ import { osascriptNotifier } from './app/notify.js';
 import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
-import { homePaths, jobpilotHome, selectProfile } from './app/pack/paths.js';
-import { ProfileError } from './app/profiles/root.js';
+import { homePaths, jobpilotHome, selectedProfile, selectProfile } from './app/pack/paths.js';
+import { ProfileError, resolveHome } from './app/profiles/root.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -33,7 +33,7 @@ import { formatSummary, istMonth, nonceOf, rebuildDocs } from './app/run.js';
 import { forbiddenTermsAt, redactedError, runCommand, runCoverageCommand, runFreelanceCommand } from './app/run-command.js';
 import { AppStore, SchemaBehindError } from './app/store/app-store.js';
 import { COVERAGE_DUE, DAILY_DUE, FREELANCE_DUE, coverageWeek, due, type DueSpec } from './app/due.js';
-import { installSchedule, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
+import { COVERAGE_LABEL, DAILY_LABEL, FREELANCE_LABEL, installSchedule, profileLabels, runNow, scheduleStatus, uninstallSchedule } from './app/schedule.js';
 import { DEFAULT_PORT, serveDashboard } from './app/web/server.js';
 import { networksList, networksPack } from './app/freelance/networks-command.js';
 import { probeCommand } from './app/freelance/probe.js';
@@ -677,7 +677,8 @@ function dueOrError(now: string, spec: DueSpec = DAILY_DUE): string {
 const schedule = program.command('schedule').description('launchd jobs: the 07:00 IST daily run, the 07:30 and 19:30 IST freelance runs, the weekly Sunday coverage run and the always-on dashboard (macOS)');
 const scheduleOpts = () => {
   if (process.getuid === undefined) throw new Error('schedule needs a POSIX user id (macOS)');
-  return { node: process.execPath, repo: root, home: jobpilotHome(), uid: process.getuid() };
+  const h = resolveHome({ profile: selectedProfile() });
+  return { node: process.execPath, repo: root, home: h.home, uid: process.getuid(), ...(h.mode === 'profile' ? { profile: { id: h.profile as string, root: h.root } } : {}) };
 };
 schedule
   .command('install')
@@ -698,6 +699,7 @@ schedule
         }`,
       );
       console.log('dashboard: http://127.0.0.1:4317 (starts now and at login)');
+      if (scheduleOpts().profile !== undefined) console.log(`jobs: ${r.plists.map((p) => p.split('/').pop()?.replace(/\.plist$/, '')).join(', ')}`);
       console.log(`logs: ${r.logs.join(', ')}`);
     }),
   );
@@ -732,14 +734,17 @@ schedule
   .action((o: { freelance?: boolean; coverage?: boolean }) =>
     guarded(() => {
       if (o.coverage === true) {
-        runNow({ ...scheduleOpts(), coverage: true });
-        console.log(`started com.jobpilot.coverage (run-coverage --if-due): ${dueOrError(new Date().toISOString(), COVERAGE_DUE)}`);
+        const so = scheduleOpts();
+        runNow({ ...so, coverage: true, profile: so.profile?.id });
+        console.log(`started ${so.profile === undefined ? COVERAGE_LABEL : profileLabels(so.profile.id).coverage} (run-coverage --if-due): ${dueOrError(new Date().toISOString(), COVERAGE_DUE)}`);
         console.log('it runs only when this coverage week\'s run is owed; "jobpilot run-coverage" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'coverage.log'));
         return;
       }
       const f = o.freelance === true;
-      runNow({ ...scheduleOpts(), freelance: f });
-      console.log(f ? `started com.jobpilot.freelance (run-freelance --if-due): ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}` : `started com.jobpilot.daily (run --if-due): ${dueOrError(new Date().toISOString())}`);
+      const so = scheduleOpts();
+      runNow({ ...so, freelance: f, profile: so.profile?.id });
+      const labels = so.profile === undefined ? { daily: DAILY_LABEL, freelance: FREELANCE_LABEL } : profileLabels(so.profile.id);
+      console.log(f ? `started ${labels.freelance} (run-freelance --if-due): ${dueOrError(new Date().toISOString(), FREELANCE_DUE)}` : `started ${labels.daily} (run --if-due): ${dueOrError(new Date().toISOString())}`);
       console.log(f ? 'it runs only when the window is owed; "jobpilot run-freelance" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'freelance.log') : 'it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
