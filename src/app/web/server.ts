@@ -27,6 +27,8 @@ import { AppStore, DEFAULT_BANDS, SchemaBehindError, type Band, type JobFilter, 
 import { JOB_STATUSES } from '../store/schema.js';
 import { toDecideFrom } from '../triage.js';
 import { dateText, daysBetween, istTimeText } from './format.js';
+import { homeCurrencyOf } from '../comp/currencies.js';
+import type { PayView } from './views/common.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
@@ -176,6 +178,13 @@ function namingOnly(packDir: string): NamingRules | undefined {
 class NamingUnreadable extends Error {
   override readonly name = 'NamingUnreadable';
 }
+
+/** Profiles Task 17: the pay view for a profile whose home currency is not INR; nothing for an INR home (pages unchanged). */
+const payOf = (pack: Pack | undefined): { pay: PayView } | Record<string, never> => {
+  if (pack === undefined) return {};
+  const home = homeCurrencyOf(pack);
+  return home === 'INR' ? {} : { pay: { home, fx: pack.fx } };
+};
 
 function packState(home: string, now: string): PackState {
   const dir = homePaths(home).pack;
@@ -429,7 +438,9 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const pageRaw = c.req.query('page') ?? '1';
     const pageAsked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
     const floor = ps.pack?.offers.floor;
-    const floorInr = floor ? floor.amount * (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
+    // Profiles Task 17: a floor in any currency, through its fx.toINR rate (pack load refuses a floor without one).
+    const floorRate = floor ? (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
+    const floorInr = floor && floorRate !== undefined ? floor.amount * floorRate : undefined;
     const filter: JobFilter = {
       status: statuses,
       ...(bands.length > 0 ? { band: bands } : {}),
@@ -478,7 +489,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     };
     const body = jobsBody({
       base, jobs: r.deep(jobs), filter: { status: statuses, band: bands, min, q, ...(companyKey !== '' ? { company: { key: companyKey, name: r.text(registryCompany?.name ?? companyKey) } } : {}) }, defaultBands: bandsDefault, defaultStatuses: statusesDefault, hiddenCount: hidden, istDay: istDate, now: at, lastRun,
-      page: pageNo, pages, total, newCount, toDecide, pageHref,
+      page: pageNo, pages, total, newCount, toDecide, pageHref, ...payOf(ps.pack),
     });
     return page(c, 'jobs', 'Jobs', commonBanners(ps, istDate(at), overrides), body);
   });
@@ -523,7 +534,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const next = nextQ !== undefined && JOB_KEY.test(nextQ) ? nextQ : undefined;
     const back = from === undefined ? undefined : { from, ...(next !== undefined ? { next } : {}) };
     const cited = data.job.citedFacts === null ? null : data.job.citedFacts.map((id) => ({ id: r.text(id), claim: r.text(ps.pack?.facts.find((f) => f.id === id)?.claim ?? 'no longer in your fact list') }));
-    const body = jobBody({ base, job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}) });
+    const body = jobBody({ base, job, csrf: csrf(c), sent: data.sent, answers, display, recommended, preferred: data.preferred, istDay: istDate, now: at, cited, ...(flash !== undefined ? { flash } : {}), ...(back !== undefined ? { back } : {}), ...payOf(ps.pack) });
     return page(c, 'jobs', job.title, banners, body);
   });
 

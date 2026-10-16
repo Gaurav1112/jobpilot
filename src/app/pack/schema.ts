@@ -1,12 +1,13 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
+import { CURRENCY_CODES, isCurrencyCode } from '../comp/currencies.js';
 import { countryOfCode } from '../text/norm.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
 import type { FreelanceRules, Network, PlatformRules } from './freelance-schema.js';
 
 const YearMonth = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'expected YYYY-MM');
-const Currency = z.enum(['INR', 'USD', 'EUR', 'GBP']);
+const Currency = z.enum(CURRENCY_CODES);
 
 export const FactStatus = z.enum(['verified', 'user-stated', 'derived-unverified', 'user-cannot-confirm', 'rejected']);
 export const FactSchema = z.strictObject({
@@ -91,12 +92,19 @@ export const OffersSchema = z.strictObject({
 
 export const FxSchema = z.strictObject({
   asOf: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected YYYY-MM-DD').refine(isCalendarDate, 'not a real calendar date'),
-  toINR: z.strictObject({
-    USD: z.number().positive(),
-    EUR: z.number().positive(),
-    GBP: z.number().positive(),
-    INR: z.number().positive(),
-  }),
+  // Profiles Task 17: USD, EUR, GBP and INR are required (the posting currencies the normalizer reads); any other
+  // known currency may be listed for a floor in it (`CAD: 61.2`). INR is the pivot every comparison is made in.
+  toINR: z
+    .object({
+      USD: z.number().positive(),
+      EUR: z.number().positive(),
+      GBP: z.number().positive(),
+      INR: z.number().positive(),
+    })
+    .catchall(z.number().positive())
+    .superRefine((r, ctx) => {
+      for (const k of Object.keys(r)) if (!isCurrencyCode(k)) ctx.addIssue({ code: 'custom', path: [k], message: `unknown currency code ${k}` });
+    }),
 });
 
 export const AnswersSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()]));

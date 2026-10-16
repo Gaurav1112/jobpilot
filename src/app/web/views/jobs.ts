@@ -4,7 +4,7 @@ import { isFollowUpDue } from '../../triage.js';
 import { html, type Html } from '../html.js';
 import { u } from '../paths.js';
 import { reasonText, remoteText, sourceName } from '../copy.js';
-import { meta, pager, BAND_LABEL, compCell, exceptionPill, pill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill } from './common.js';
+import { meta, pager, BAND_LABEL, compCell, exceptionPill, pill, fitChip, rowException, STATUS_LABEL, STATUSES, statusPill, type PayView } from './common.js';
 
 export interface ListedJob extends JobView {
   /** First seen after the user's previous visit. */
@@ -44,6 +44,8 @@ export interface JobsPageData {
   readonly total: number;
   /** The page's path WITHOUT the base (it is also the `from` a job page returns to); the view adds the base. */
   readonly pageHref: (page: number) => string;
+  /** Profiles Task 17: pay in the home currency; absent for an INR home. */
+  readonly pay?: PayView;
 }
 
 const ALL_BANDS: readonly Band[] = ['disclosed', 'undisclosed', 'review', 'below-floor', 'rejected'];
@@ -86,7 +88,7 @@ function historyLine(j: ListedJob, istDay: (iso: string) => string): Html | '' {
   )}${j.history.length > imported.length ? html` · ${countText(j.history.length - imported.length)} change${j.history.length - imported.length === 1 ? '' : 's'} since` : ''}</p>`;
 }
 
-function row(base: string, j: ListedJob, istDay: (iso: string) => string, now: string, markNew: boolean, from: string, next: string | undefined): Html {
+function row(base: string, j: ListedJob, istDay: (iso: string) => string, now: string, markNew: boolean, from: string, next: string | undefined, pay?: PayView): Html {
   return html`<li class="job" id="job-${j.jobKey}" data-job="${j.jobKey}">
 <div class="job-main">
 <h2 class="job-title">${markNew && j.isNew ? html`<span class="new-dot" aria-hidden="true">●</span><span class="visually-hidden">New: </span>` : ''}<a href="${u(base, jobHref(j.jobKey, from, next))}">${j.title}</a></h2>
@@ -97,10 +99,10 @@ function row(base: string, j: ListedJob, istDay: (iso: string) => string, now: s
     j.alsoListedOn.length > 0 ? html`<span class="muted">also listed on ${j.alsoListedOn.map(sourceName).join(', ')}</span>` : null,
   ])}</p>
 <p class="job-pills">${exceptionPill(rowException(j))}</p>
-${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${[...new Set(j.reasons.map(reasonText))].join('; ')}</p>` : ''}
+${j.band === 'rejected' && j.reasons.length > 0 ? html`<p class="job-reasons">Not eligible: ${[...new Set(j.reasons.map((r) => reasonText(r, pay)))].join('; ')}</p>` : ''}
 ${historyLine(j, istDay)}
 </div>
-<div class="job-comp">${compCell(j)}</div>
+<div class="job-comp">${compCell(j, pay)}</div>
 <div class="job-score">${fitChip(j.score)}</div>
 <div class="job-status">${
     j.status === 'new'
@@ -133,6 +135,6 @@ ${filterForm(d.base, d.filter, d.defaultBands, d.defaultStatuses)}
 ${
   d.jobs.length === 0
     ? html`<p class="empty">No jobs match these filters.</p>`
-    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(d.base, j, d.istDay, d.now, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey))}</ol>${pager({ page: d.page, pages: d.pages, href: (n) => u(d.base, d.pageHref(n)) })}`
+    : html`<ol class="jobs" id="jobs" aria-label="Jobs">${d.jobs.map((j, i) => row(d.base, j, d.istDay, d.now, markNew, d.pageHref(d.page), d.jobs[i + 1]?.jobKey, d.pay))}</ol>${pager({ page: d.page, pages: d.pages, href: (n) => u(d.base, d.pageHref(n)) })}`
 }`;
 }

@@ -294,6 +294,10 @@ export function loadPack(
     feeds: readYaml(dir, 'feeds.yaml', FeedsSchema, { enabled: [] }),
     policyUser: readYaml(dir, 'policy.user.yaml', PolicyUserSchema, {}),
   };
+  // Profiles Task 17: a floor in any known currency compares through fx.toINR, so its currency must have a rate.
+  if (base.offers.floor !== null && base.fx.toINR[base.offers.floor.currency] === undefined) {
+    throw new PackError(`fx.yaml has no toINR rate for ${base.offers.floor.currency}, the currency of offers.yaml floor; add it`);
+  }
   // Read after the daily files, so a strict load names the same first problem as before; a daily load needs naming.
   const warnings: string[] = [];
   const freelanceParts: Pick<Pack, 'freelance' | 'platformRules' | 'networks'> =

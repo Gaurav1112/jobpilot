@@ -106,8 +106,9 @@ const PackView = z.object({
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
   eligibility: z.object({ residence: z.string().optional(), employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
-  offers: z.object({ floor: z.object({ amount: z.number(), currency: z.enum(['INR', 'USD', 'EUR', 'GBP']) }).nullable() }),
-  fx: z.object({ toINR: z.object({ INR: z.number(), USD: z.number(), EUR: z.number(), GBP: z.number() }) }),
+  // Profiles Task 17: the floor may be in any currency the pack has a rate for; the extra rates are kept (catchall).
+  offers: z.object({ floor: z.object({ amount: z.number(), currency: z.string() }).nullable() }),
+  fx: z.object({ toINR: z.object({ INR: z.number(), USD: z.number(), EUR: z.number(), GBP: z.number() }).catchall(z.number()) }),
 });
 export type EligibilityPack = z.infer<typeof PackView>;
 

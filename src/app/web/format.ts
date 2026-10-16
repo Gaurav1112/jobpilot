@@ -1,3 +1,4 @@
+import { CURRENCIES, isCurrencyCode, pivotToHome, type CurrencyCode } from '../comp/currencies.js';
 import type { Posting } from '../types.js';
 import { istDay } from '../triage.js';
 
@@ -82,6 +83,52 @@ export function compText(comp: Posting['comp'] | null, minInr: number | null, ma
   if (comp.currency === 'INR') return { main: inrRange(comp.min, comp.max), inr: null, caveat };
   const eq = inrRange(minInr, maxInr);
   return { main: foreignRange(comp), inr: eq === '' ? null : `≈ ${eq}`, caveat };
+}
+
+/** The pay text for a profile whose home currency is not INR (profiles Task 17); an INR home keeps `compText`. */
+export interface HomeCompText {
+  /** The pay as stated, in the posting's own currency and locale (`70.000 € – 80.000 €`), or "Pay not disclosed". */
+  readonly main: string;
+  /** When the posting's currency is not the home one: the home equivalent at the pack's rates (`≈ 74.000 € – 83.000 €`). */
+  readonly equivalent: string | null;
+  /** When the posting does not say the figure is base pay. */
+  readonly caveat: string | null;
+}
+
+/** One amount in a currency, written the way its locale writes it, whole units: `70.000 €`, `$150,000`. */
+export function moneyText(n: number, currency: string): string {
+  const locale = isCurrencyCode(currency) ? CURRENCIES[currency].locale : 'en-US';
+  return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
+}
+
+/** An approximate amount: to the nearest 1,000 at or above 10,000, else whole units. */
+const approx = (n: number): number => (n >= 10_000 ? Math.round(n / 1_000) * 1_000 : Math.round(n));
+
+function moneyRange(min: number | null, max: number | null, currency: string): string {
+  if (min !== null && max !== null) return min === max ? moneyText(max, currency) : `${moneyText(min, currency)} – ${moneyText(max, currency)}`;
+  if (max !== null) return `up to ${moneyText(max, currency)}`;
+  if (min !== null) return `from ${moneyText(min, currency)}`;
+  return '';
+}
+
+/** A pivot (INR) amount shown in the home currency, approximated: `≈ 54.000 €`. Used for the below-floor reason. */
+export const homeApproxText = (inr: number, home: CurrencyCode, fx: { toINR: Readonly<Record<string, number>> }): string =>
+  `≈ ${moneyText(approx(pivotToHome(inr, home, fx)), home)}`;
+
+export function homeCompText(
+  comp: Posting['comp'] | null,
+  minInr: number | null,
+  maxInr: number | null,
+  home: CurrencyCode,
+  fx: { toINR: Readonly<Record<string, number>> },
+): HomeCompText {
+  if (comp === null) return { main: 'Pay not disclosed', equivalent: null, caveat: null };
+  const caveat = comp.basis === 'unknown' ? 'may include bonus or equity' : null;
+  const main = moneyRange(comp.min, comp.max, comp.currency);
+  if (comp.currency === home) return { main, equivalent: null, caveat };
+  const toHome = (v: number | null): number | null => (v === null ? null : approx(pivotToHome(v, home, fx)));
+  const eq = moneyRange(toHome(minInr), toHome(maxInr), home);
+  return { main, equivalent: eq === '' ? null : `≈ ${eq}`, caveat };
 }
 
 /** Whole days from the calendar date `from` (YYYY-MM-DD) to `to` (YYYY-MM-DD); negative when `to` is earlier. */

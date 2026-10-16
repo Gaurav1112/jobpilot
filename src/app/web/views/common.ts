@@ -1,6 +1,7 @@
 import type { Band, DocsState, JobStatus, JobView } from '../../store/app-store.js';
 import { JOB_STATUSES } from '../../store/schema.js';
-import { compText, countText, scoreText } from '../format.js';
+import type { CurrencyCode } from '../../comp/currencies.js';
+import { compText, countText, homeCompText, scoreText } from '../format.js';
 import { remoteText } from '../copy.js';
 import { Html, html } from '../html.js';
 import { CSRF_FIELD } from '../security.js';
@@ -53,7 +54,22 @@ export function remotePill(remote: JobView['remote']): Html {
   return pill(r.label, r.tone);
 }
 
-export function compCell(j: Pick<JobView, 'comp' | 'compMinInr' | 'compMaxInr'>): Html {
+/**
+ * Profiles Task 17: a profile whose home currency (the floor's) is not INR sees pay in the posting's own currency, with
+ * an equivalent in the home currency. Absent for an INR home, whose pages stay exactly as they were.
+ */
+export interface PayView {
+  readonly home: CurrencyCode;
+  readonly fx: { readonly toINR: Readonly<Record<string, number>> };
+}
+
+export function compCell(j: Pick<JobView, 'comp' | 'compMinInr' | 'compMaxInr'>, pay?: PayView): Html {
+  if (pay !== undefined) {
+    const h = homeCompText(j.comp, j.compMinInr, j.compMaxInr, pay.home, pay.fx);
+    return html`<span class="comp-main num">${h.main}</span>${h.equivalent !== null ? html`<span class="comp-inr num">${h.equivalent}</span>` : ''}${
+      h.caveat !== null ? html`<span class="comp-caveat">${h.caveat}</span>` : ''
+    }`;
+  }
   const c = compText(j.comp, j.compMinInr, j.compMaxInr);
   return html`<span class="comp-main num">${c.main}</span>${c.inr !== null ? html`<span class="comp-inr num">${c.inr}</span>` : ''}${
     c.caveat !== null ? html`<span class="comp-caveat">${c.caveat}</span>` : ''

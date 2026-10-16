@@ -6,15 +6,15 @@ import type { CompRange } from './parse.js';
  */
 type Currency = CompRange['currency'];
 
-/** Pinned rates to INR (the pack's `fx.toINR`). */
+/** Pinned rates to INR (the pack's `fx.toINR`): the posting currencies always, any other floor currency optionally. */
 export interface FxRates {
-  readonly toINR: Readonly<Record<Currency, number>>;
+  readonly toINR: Readonly<Record<Currency, number>> & Readonly<Record<string, number>>;
 }
 
-/** The comp floor (the pack's `offers.floor`): base salary per year. */
+/** The comp floor (the pack's `offers.floor`): base salary per year, in any currency `fx.toINR` has a rate for. */
 export interface CompFloor {
   readonly amount: number;
-  readonly currency: Currency;
+  readonly currency: string;
 }
 
 export interface InrRange {
@@ -36,7 +36,9 @@ export function belowFloor(rangeInr: InrRange, floor: CompFloor, fx?: FxRates): 
   let amount = floor.amount;
   if (floor.currency !== 'INR') {
     if (fx === undefined) throw new Error(`fx is required to compare against a ${floor.currency} floor`);
-    amount *= fx.toINR[floor.currency];
+    const rate = fx.toINR[floor.currency];
+    if (rate === undefined) throw new Error(`fx has no toINR rate for ${floor.currency}, the floor's currency`);
+    amount *= rate;
   }
   return rangeInr.max < amount;
 }

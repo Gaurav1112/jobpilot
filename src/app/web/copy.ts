@@ -2,7 +2,8 @@ import { RED } from '../freelance/rank.js';
 import { totalHours } from '../freelance/rate.js';
 import { countryDisplayOfToken } from '../geo/residence.js';
 import type { JobView } from '../store/app-store.js';
-import { usdText } from './format.js';
+import type { CurrencyCode } from '../comp/currencies.js';
+import { homeApproxText, usdText } from './format.js';
 
 /**
  * Plain-language copy for the dashboard (Task 13), as strings: the views escape them through `html`. Written from the
@@ -75,7 +76,11 @@ export function docsReason(j: Pick<JobView, 'docsState' | 'docsDetail' | 'compan
 /** Country names read with "the" in a sentence ("outside the United States"). */
 const THE_COUNTRY = /^(?:united |netherlands$|philippines$|czech republic$|dominican republic$|bahamas$|gambia$|maldives$)/i;
 
-export function reasonText(code: string): string {
+export function reasonText(code: string, pay?: { readonly home: CurrencyCode; readonly fx: { readonly toINR: Readonly<Record<string, number>> } }): string {
+  // Profiles Task 17: the code keeps pivot (INR) units; a non-INR home reads it in its own currency. An INR home (no
+  // `pay`) keeps showing the code as it always has.
+  const below = pay === undefined ? null : /^below-floor:(\d+)$/.exec(code);
+  if (below && pay !== undefined) return `Pay below your floor (max ${homeApproxText(Number(below[1]), pay.home, pay.fx)} a year)`;
   if (code === 'remote-unclear') return 'The posting does not say clearly where remote work is allowed';
   if (code === 'onsite') return 'On-site only';
   if (code === 'hybrid') return 'Hybrid only, outside the cities you accept';

@@ -4,7 +4,7 @@ import { isFollowUpDue } from '../../triage.js';
 import { externalUrl, html, type Html } from '../html.js';
 import { u } from '../paths.js';
 import { breakdownText, docsReason, reasonText, sourceName } from '../copy.js';
-import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail } from './common.js';
+import { b2bPill, officePill, bandPill, compCell, csrfField, meta, pill, remotePill, STATUS_LABEL, STATUSES, statusPill, techDetail, type PayView } from './common.js';
 
 export interface Recommended {
   readonly format: 'pdf' | 'docx';
@@ -33,6 +33,8 @@ export interface JobPageData {
   readonly back?: { readonly from: string; readonly next?: string };
   /** A2: the facts the current documents cite, with their claims; null when unknown. */
   readonly cited?: readonly { readonly id: string; readonly claim: string }[] | null;
+  /** Profiles Task 17: pay in the home currency; absent for an INR home. */
+  readonly pay?: PayView;
 }
 
 const FORMAT_NAME = { pdf: 'PDF', docx: 'Word (DOCX)', html: 'HTML' } as const;
@@ -45,7 +47,7 @@ function leadVia(j: JobDetail): string | null {
   return cut > 0 ? id.slice(0, cut) : null;
 }
 
-function header(base: string, j: JobDetail, back?: JobPageData['back']): Html {
+function header(base: string, j: JobDetail, back?: JobPageData['back'], pay?: PayView): Html {
   const url = externalUrl(j.url);
   const via = j.ats === 'freehire' ? leadVia(j) : null;
   return html`<header class="job-head">
@@ -58,7 +60,7 @@ function header(base: string, j: JobDetail, back?: JobPageData['back']): Html {
 ])}</p>${j.ats === 'freehire' ? html`
 <p class="hint">Found through freehire${via === null ? '' : html` (via ${via})`}. jobpilot cannot read this platform, so it is listed for review only.</p>` : ''}
 <div class="head-facts">
-<div class="fact-box"><span class="label">Pay</span>${compCell(j)}</div>
+<div class="fact-box"><span class="label">Pay</span>${compCell(j, pay)}</div>
 <div class="fact-box"><span class="label">Fit score</span><span class="big num" aria-hidden="true">${j.score === null ? '–' : scoreText(j.score)}</span><span class="hint" aria-hidden="true">out of 100</span><span class="visually-hidden">${j.score === null ? 'Not scored' : html`Fit score ${scoreText(j.score)} out of 100`}</span></div>
 <div class="fact-box"><span class="label">Band</span>${bandPill(j.band)}</div>
 <div class="fact-box"><span class="label">Where</span>${remotePill(j.remote)}</div>
@@ -89,11 +91,11 @@ function whyMatched(j: JobDetail, display: (k: string) => string): Html {
 </table></div></section>`;
 }
 
-function eligibility(j: JobDetail): Html {
+function eligibility(j: JobDetail, pay?: PayView): Html {
   const verdict = j.verdict === 'eligible' ? pill('Eligible', 'good') : j.verdict === 'review' ? pill('Needs a look', 'warn') : j.verdict === 'rejected' ? pill('Not eligible', 'critical') : pill('Not assessed yet', 'muted');
   return html`<section class="card" aria-labelledby="elig"><h2 id="elig">Eligibility</h2>
 <p>${verdict}${b2bPill(j.notes)}${officePill(j.notes)}</p>
-${j.reasons.length > 0 ? html`<ul class="plain">${[...new Set(j.reasons.map(reasonText))].map((t) => html`<li>${t}</li>`)}</ul>${techDetail(j.reasons)}` : ''}
+${j.reasons.length > 0 ? html`<ul class="plain">${[...new Set(j.reasons.map((r) => reasonText(r, pay)))].map((t) => html`<li>${t}</li>`)}</ul>${techDetail(j.reasons)}` : ''}
 ${j.notes.length > 0 ? html`<ul class="plain notes">${j.notes.map((n) => html`<li>${n}</li>`)}</ul>` : ''}
 ${j.reasons.length === 0 && j.notes.length === 0 ? html`<p class="muted">Nothing to flag.</p>` : ''}
 </section>`;
@@ -258,14 +260,14 @@ ${
 
 export function jobBody(d: JobPageData): Html {
   const j = d.job;
-  return html`${header(d.base, j, d.back)}
+  return html`${header(d.base, j, d.back, d.pay)}
 ${duplicates(d.base, j, d.preferred)}
 <div class="job-grid">
 ${statusSection(j, { base: d.base, csrf: d.csrf, istDay: d.istDay, now: d.now, ...(d.flash !== undefined ? { flash: d.flash } : {}), ...(d.back !== undefined ? { back: d.back } : {}) })}
 ${sendCard(d)}
 ${answers(d.answers)}
 ${whyMatched(j, d.display)}
-${eligibility(j)}
+${eligibility(j, d.pay)}
 ${documents(d)}
 ${sentSection(d.sent)}
 ${noteSection(d.base, j, d.csrf)}
