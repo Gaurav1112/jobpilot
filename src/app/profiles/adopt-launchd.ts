@@ -55,10 +55,15 @@ export function unadoptLaunchd(o: LaunchdTarget): UnadoptLaunchd {
   const run = o.run ?? realRunner;
   return {
     before(id) {
+      const loaded = scheduleStatus(profileOf(o, id), run).filter((st) => st.loaded).map((st) => st.label);
       uninstallSchedule({ ...profileOf(o, id), dashboard: true }, run);
+      return loaded;
     },
     after(loaded) {
       if (loaded.length > 0) installSchedule(legacyOf(o), run);
+    },
+    restore(id, loaded) {
+      if (loaded.length > 0) installSchedule(profileOf(o, id), run);
     },
   };
 }

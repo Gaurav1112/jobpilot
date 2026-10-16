@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { closeSync, constants, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, constants, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, statfsSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
@@ -26,13 +26,29 @@ export interface AdoptLaunchd {
   restore(loaded: readonly string[]): void;
 }
 export interface UnadoptLaunchd {
-  before(id: string): void;
+  /** Unload the profile's jobs; returns the labels that were loaded. */
+  before(id: string): string[];
   after(loaded: readonly string[]): void;
+  /** A failed unadopt: load the profile's jobs back. */
+  restore(id: string, loaded: readonly string[]): void;
 }
 export const NO_LAUNCHD: AdoptLaunchd = { before: () => [], after: () => {}, restore: () => {} };
-export const NO_UNADOPT_LAUNCHD: UnadoptLaunchd = { before: () => {}, after: () => {} };
+export const NO_UNADOPT_LAUNCHD: UnadoptLaunchd = { before: () => [], after: () => {}, restore: () => {} };
 
 const DB = 'jobpilot.db';
+/** Free bytes on the volume holding `dir`. */
+export type FreeBytes = (dir: string) => number;
+const systemFreeBytes: FreeBytes = (dir) => {
+  const s = statfsSync(dir);
+  return s.bavail * s.bsize;
+};
+/** Adopt and unadopt back the DB up with a full copy: refuse, before touching anything, when it would not fit. */
+function checkSpace(dir: string, free: FreeBytes, what: string): void {
+  const db = join(dir, DB);
+  const need = (existsSync(db) ? statSync(db).size : 0) + 256 * 2 ** 20;
+  const have = free(dir);
+  if (have < need) throw new AdoptError(`${what} needs about ${Math.ceil(need / 2 ** 20)} MB free for its backup of the database; ${Math.floor(have / 2 ** 20)} MB is free. Nothing was changed.`);
+}
 /** sha256 of a file, read in 1 MiB chunks: a real home's DB is several GB, past readFileSync's 2 GiB limit. */
 function sha(p: string): string {
   const h = createHash('sha256');
@@ -76,6 +92,7 @@ async function backup(from: string, names: readonly string[], to: string): Promi
       const db = new Database(join(from, DB));
       try {
         await db.backup(join(to, DB));
+        chmodSync(join(to, DB), 0o600);
       } finally {
         db.close();
       }
@@ -94,7 +111,7 @@ const integrityOk = (dir: string): boolean => {
   }
 };
 
-export async function adoptProfile(o: { root: string; id: string; clock: Clock; launchd?: AdoptLaunchd; probe?: ProcessProbe; afterMove?: (name: string) => void }): Promise<{ home: string; moved: string[]; backup: string; lines: string[] }> {
+export async function adoptProfile(o: { root: string; id: string; clock: Clock; launchd?: AdoptLaunchd; probe?: ProcessProbe; afterMove?: (name: string) => void; freeBytes?: FreeBytes }): Promise<{ home: string; moved: string[]; backup: string; lines: string[] }> {
   checkProfileId(o.id);
   if (isProfilesRoot(o.root)) throw new AdoptError(`${o.root} already has profiles; adopt runs once`);
   if (!existsSync(join(o.root, 'pack'))) throw new AdoptError(`nothing to adopt: ${o.root} has no pack/`);
@@ -102,6 +119,7 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
   const at = o.clock.now();
   const backupRel = `${BACKUPS_DIR}/adopt-${stampOf(at)}`;
   const home = profileHome(o.root, o.id);
+  checkSpace(o.root, o.freeBytes ?? systemFreeBytes, 'profile adopt');
   return withLock(o.root, 'profile adopt', async () => {
     let loaded: string[];
     try {
@@ -109,13 +127,22 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
     } catch (e) {
       throw new AdoptError(`could not unload the scheduled jobs (${e instanceof Error ? e.message : String(e)}); nothing was moved; "jobpilot schedule install" reloads them`);
     }
-    checkpoint(o.root);
-    const names = readdirSync(o.root).filter((n) => !isMachineEntry(n)).sort();
-    await backup(o.root, names, join(o.root, backupRel));
-    const manifest = treeManifest(o.root, names);
-    writeFileSync(join(o.root, backupRel, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
-    const journal: AdoptJournal = { id: o.id, at, moved: names, backup: backupRel, legacyLabelsLoaded: [...loaded] };
-    writeFileSync(join(o.root, JOURNAL_FILE), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+    // Everything before the moves: a failure here moved nothing, so the unloaded jobs are loaded back (review I1).
+    let names: string[];
+    let manifest: string[];
+    try {
+      checkpoint(o.root);
+      names = readdirSync(o.root).filter((n) => !isMachineEntry(n)).sort();
+      await backup(o.root, names, join(o.root, backupRel));
+      manifest = treeManifest(o.root, names);
+      writeFileSync(join(o.root, backupRel, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
+      const journal: AdoptJournal = { id: o.id, at, moved: names, backup: backupRel, legacyLabelsLoaded: [...loaded] };
+      writeFileSync(join(o.root, JOURNAL_FILE), `${JSON.stringify(journal, null, 2)}\n`, { mode: 0o600 });
+    } catch (e) {
+      rmSync(join(o.root, JOURNAL_FILE), { force: true });
+      launchd.restore(loaded);
+      throw new AdoptError(`adopt failed before any move (${e instanceof Error ? e.message : String(e)}); nothing was moved and the scheduled jobs were loaded back`);
+    }
     const moved: string[] = [];
     try {
       mkdirSync(join(o.root, PROFILES_DIR), { mode: 0o700 });
@@ -139,7 +166,11 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
       launchd.restore(loaded);
       throw new AdoptError(`adopt failed and was rolled back (${e instanceof Error ? e.message : String(e)}); the backup is ${join(o.root, backupRel)}`);
     }
-    launchd.after(o.id, loaded);
+    try {
+      launchd.after(o.id, loaded);
+    } catch (e) {
+      throw new AdoptError(`adopted ${o.root} as profile ${o.id}, but its scheduled jobs could not be loaded (${e instanceof Error ? e.message : String(e)}); run "jobpilot schedule install --profile ${o.id}" (or undo with "jobpilot profile unadopt")`);
+    }
     return {
       home, moved, backup: join(o.root, backupRel),
       lines: [`adopted ${o.root} as profile ${o.id} (${moved.length} entries moved to ${home})`, `backup: ${join(o.root, backupRel)}`, `undo with: jobpilot profile unadopt`],
@@ -157,7 +188,7 @@ function foldMachineLogs(root: string, home: string): void {
   rmdirSync(from);
 }
 
-export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: UnadoptLaunchd; probe?: ProcessProbe }): Promise<string[]> {
+export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: UnadoptLaunchd; probe?: ProcessProbe; freeBytes?: FreeBytes }): Promise<string[]> {
   let journal: AdoptJournal;
   try {
     journal = AdoptJournal.parse(JSON.parse(readFileSync(join(o.root, JOURNAL_FILE), 'utf8')));
@@ -169,17 +200,30 @@ export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: 
   const launchd = o.launchd ?? NO_UNADOPT_LAUNCHD;
   const home = profileHome(o.root, journal.id);
   const backupRel = `${BACKUPS_DIR}/unadopt-${stampOf(o.clock.now())}`;
+  checkSpace(home, o.freeBytes ?? systemFreeBytes, 'profile unadopt');
   await withLock(home, 'profile unadopt', async () => {
-    launchd.before(journal.id);
-    foldMachineLogs(o.root, home);
-    checkpoint(home);
-    const names = readdirSync(home).filter((n) => n !== META_FILE && !n.startsWith('jobpilot.lock') && !TEMP.test(n)).sort();
-    const clash = names.filter((n) => existsSync(join(o.root, n)));
-    if (clash.length > 0) throw new AdoptError(`cannot unadopt: ${clash.join(', ')} already exist in ${o.root}`);
-    await backup(home, names, join(o.root, backupRel));
-    const manifest = treeManifest(home, names);
-    for (const n of names) renameSync(join(home, n), join(o.root, n));
-    if (treeManifest(o.root, names).join('\n') !== manifest.join('\n')) throw new AdoptError(`the moved files differ from the manifest; the backup is ${join(o.root, backupRel)}`);
+    const loaded = launchd.before(journal.id);
+    // A failure from here on moves back whatever moved and loads the profile's jobs again (review I1).
+    const moved: string[] = [];
+    try {
+      foldMachineLogs(o.root, home);
+      checkpoint(home);
+      const names = readdirSync(home).filter((n) => n !== META_FILE && !n.startsWith('jobpilot.lock') && !TEMP.test(n)).sort();
+      const clash = names.filter((n) => existsSync(join(o.root, n)));
+      if (clash.length > 0) throw new AdoptError(`cannot unadopt: ${clash.join(', ')} already exist in ${o.root}`);
+      await backup(home, names, join(o.root, backupRel));
+      const manifest = treeManifest(home, names);
+      for (const n of names) {
+        renameSync(join(home, n), join(o.root, n));
+        moved.push(n);
+      }
+      if (treeManifest(o.root, names).join('\n') !== manifest.join('\n')) throw new AdoptError(`the moved files differ from the manifest; the backup is ${join(o.root, backupRel)}`);
+    } catch (e) {
+      for (const n of [...moved].reverse()) renameSync(join(o.root, n), join(home, n));
+      launchd.restore(journal.id, loaded);
+      if (e instanceof AdoptError) throw new AdoptError(`${e.message}; profile ${journal.id} is unchanged and its scheduled jobs were loaded back`);
+      throw new AdoptError(`unadopt failed (${e instanceof Error ? e.message : String(e)}); profile ${journal.id} is unchanged and its scheduled jobs were loaded back`);
+    }
   }, o.probe ?? systemProbe);
   rmSync(join(home, META_FILE), { force: true });
   rmdirSync(home);
