@@ -657,14 +657,6 @@ program
     guarded(() => {
       const port = /^\d{1,5}$/.test(o.port) ? Number(o.port) : Number.NaN;
       if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('--port must be a number from 1 to 65535');
-      const secrets = keychain(realSecretsRunner, profileKeychainService());
-      const gmailConnected = (): boolean => {
-        try {
-          return secrets.has(SECRET.refresh);
-        } catch {
-          return false;
-        }
-      };
       // dashboard-perf: a newer jobpilot migrated the DB under this (older) process: exit after answering, so launchd's
       // KeepAlive restarts the dashboard on the checkout's code (a hand-started one just stops, and says why)
       const onSchemaNewer = (): void => {
@@ -672,14 +664,7 @@ program
         setTimeout(() => process.exit(1), 250).unref();
       };
       // a profiles root without --profile serves every profile (/p/<id>/); --profile or a single home serves one dashboard
-      const rootToServe = ((): string | undefined => {
-        if (selectedProfile() !== undefined) return undefined;
-        const explicit = process.env['JOBPILOT_HOME'];
-        const named = explicit !== undefined && explicit !== '';
-        if (named && !(isProfilesRoot(explicit) && !existsSync(join(explicit, 'pack')))) return undefined;
-        const r = named ? explicit : jobpilotRoot();
-        return isProfilesRoot(r) ? r : undefined;
-      })();
+      const rootToServe = profilesRootToServe();
       const server =
         rootToServe !== undefined
           ? serveRoot(
@@ -699,13 +684,35 @@ program
               },
               (url) => console.log(`jobpilot dashboard on ${url} (every profile; Ctrl-C to stop)`),
             )
-          : serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected, onSchemaNewer, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
+          : serveDashboard({ home: jobpilotHome(), clock: systemClock, port, gmailConnected: singleHomeGmailConnected(), onSchemaNewer, resolve: { fetch: nodeFetch } }, (url) => console.log(`jobpilot dashboard on ${url} (Ctrl-C to stop)`));
       server.on('error', (e) => {
         console.error(`error: ${e.message}`);
         process.exit(1);
       });
     }),
   );
+
+/** The profiles root `serve` should serve whole (every profile), or undefined for one home; needs no active profile. */
+function profilesRootToServe(): string | undefined {
+  if (selectedProfile() !== undefined) return undefined;
+  const explicit = process.env['JOBPILOT_HOME'];
+  const named = explicit !== undefined && explicit !== '';
+  if (named && !(isProfilesRoot(explicit) && !existsSync(join(explicit, 'pack')))) return undefined;
+  const r = named ? explicit : jobpilotRoot();
+  return isProfilesRoot(r) ? r : undefined;
+}
+
+/** Gmail status probe for a single-home dashboard; built lazily because the keychain service name needs a resolvable active profile, which a profiles root may lack. */
+function singleHomeGmailConnected(): () => boolean {
+  const secrets = keychain(realSecretsRunner, profileKeychainService());
+  return (): boolean => {
+    try {
+      return secrets.has(SECRET.refresh);
+    } catch {
+      return false;
+    }
+  };
+}
 
 /** Whether a pipeline's run is owed, as one line; a DB that cannot be read is named, not thrown. */
 function dueOrError(now: string, spec: DueSpec = DAILY_DUE): string {
@@ -846,6 +853,7 @@ program.hook('preAction', (_program, action) => {
   if (action.parent?.name() === 'profile') return; // the profile group works on the root, never on one home
   const id = action.opts()['profile'] as string | undefined;
   selectProfile(id);
+  if (action.name() === 'serve' && profilesRootToServe() !== undefined) return; // serving a whole root needs no active profile
   try {
     jobpilotHome(); // resolve now, so a bad profile stops the command before it starts
   } catch (e) {
