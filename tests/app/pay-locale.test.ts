@@ -14,7 +14,7 @@ describe('parsePay', () => {
     ['Gehalt 60.000,00 € jährlich', de, { min: 60000, max: 60000, currency: 'EUR' }],
     ['Gehalt bis zu 75.000 €', de, { min: null, max: 75000, currency: 'EUR' }],
     ['Gehalt ab 60.000 €', de, { min: 60000, max: null, currency: 'EUR' }],
-    ['5.000 € brutto monatlich', de, { min: 60000, max: 60000, currency: 'EUR' }],
+    ['Gehalt 5.000 € brutto monatlich', de, { min: 60000, max: 60000, currency: 'EUR' }],
     ['Salary CA$110,000 - CA$130,000 annually', ca, { min: 110000, max: 130000, currency: 'CAD' }],
     ['Salary $110,000 - $130,000', ca, { min: 110000, max: 130000, currency: 'CAD' }],
     ['Salary $110,000 - $130,000', de, { min: 110000, max: 130000, currency: 'USD' }],
@@ -69,7 +69,7 @@ describe('parsePay: locale readings', () => {
     // a figure in en grouping on a de profile is read once more in en
     ['Salary $95,000 per year', opt('de', 'EUR'), { min: 95000, max: 95000, currency: 'USD' }],
     // years of experience next to a salary are not read as pay
-    ['Mindestens 5 Jahre Erfahrung, Gehalt 60.000 €', opt('de', 'EUR'), { min: 60000, max: 60000, currency: 'EUR' }],
+    ['Mindestens 5 Jahre Erfahrung. Gehalt: 60.000 €', opt('de', 'EUR'), { min: 60000, max: 60000, currency: 'EUR' }],
     ['Salary €60k+', opt('en', 'EUR'), { min: 60000, max: null, currency: 'EUR' }],
   ])('%s', (text, o, want) => {
     expect(parsePay(text, o)).toMatchObject({ ...want, period: 'year', basis: 'base' });
@@ -106,8 +106,9 @@ describe('parsePay: locale readings', () => {
     expect(parsePay(text, o)).toBeNull();
   });
 
-  it('basis: a bonus beside the salary makes it unknown; a bare total is unknown', () => {
-    expect(parsePay('Gehalt 60.000 € plus Bonus', opt('de', 'EUR'))).toMatchObject({ min: 60000, max: 60000, basis: 'unknown' });
+  it('basis: a bonus added on top leaves the base; an included bonus or a total is unknown', () => {
+    expect(parsePay('Gehalt 60.000 € plus Bonus', opt('de', 'EUR'))).toMatchObject({ min: 60000, max: 60000, basis: 'base' });
+    expect(parsePay('Gehalt 60.000 € inkl. Bonus', opt('de', 'EUR'))).toMatchObject({ min: 60000, max: 60000, basis: 'unknown' });
     expect(parsePay('Total compensation €90k per year', opt('en', 'EUR'))?.basis).toBe('unknown');
   });
 
@@ -252,7 +253,8 @@ describe('fix round 1', () => {
     ['Gehalt 4.500 € brutto/Monat', de, { min: 54000, max: 54000, currency: 'EUR' }],
     ['Salaire 3 800 € brut/mois', opt('fr', 'EUR'), { min: 45600, max: 45600, currency: 'EUR' }],
     ['Salary: $3,500-$5,000 USD/month', opt('en', 'USD'), { min: 42000, max: 60000, currency: 'USD' }],
-    ['Gehalt: 13 Monatsgehälter à 5.000 €', de, { min: 60000, max: 60000, currency: 'EUR' }],
+    // round 3: N payments a year of the figure
+    ['Gehalt: 13 Monatsgehälter à 5.000 €', de, { min: 65000, max: 65000, currency: 'EUR' }],
     // I2: an explicit code beside a bare $ wins over the home dollar
     ['Salary $90,000 - $110,000 USD', en, { min: 90000, max: 110000, currency: 'USD' }],
     ['Base salary: $100k–$175k usd per year.', opt('en', 'SGD'), { min: 100000, max: 175000, currency: 'USD' }],
@@ -280,5 +282,82 @@ describe('fix round 1', () => {
   it('CHF with a dot group needs a payLocale that groups with dots', () => {
     expect(parsePay('Salary CHF 120.000', opt('en', 'CHF'))).toBeNull();
     expect(parsePay('Salary CHF 120.000', opt('de', 'CHF'))).toMatchObject({ min: 120000, currency: 'CHF' });
+  });
+});
+
+describe('round 3: pay only after a salary label', () => {
+  const de = opt('de', 'EUR');
+  const en = opt('en', 'EUR');
+  it.each([
+    // headings with the figure on the next line (item 4)
+    ['Salary\n€60,000 – €75,000', de, { min: 60000, max: 75000, currency: 'EUR' }],
+    ['Vergütung:\n60.000 €', de, { min: 60000, max: 60000, currency: 'EUR' }],
+    ['**Compensation**\n\n€55,000 - €65,000', en, { min: 55000, max: 65000, currency: 'EUR' }],
+    ['Rémunération\n45 000 € - 55 000 €', opt('fr', 'EUR'), { min: 45000, max: 55000, currency: 'EUR' }],
+    ['Lön\n40 000 kr/mån', opt('sv', 'SEK'), { min: 480000, max: 480000, currency: 'SEK' }],
+    ['- Salary range\n  €50,000 - €55,000', en, { min: 50000, max: 55000, currency: 'EUR' }],
+    ['| Salary |\n| €50,000 |', en, { min: 50000, max: 50000, currency: 'EUR' }],
+    // inline with a link
+    ['Our salary for this role is €60,000.', en, { min: 60000, max: 60000, currency: 'EUR' }],
+    ['Das Gehalt beträgt 60.000 €.', de, { min: 60000, max: 60000, currency: 'EUR' }],
+    // the 13th month is an add-on to a labelled figure, never its period (item 3)
+    ['Gehalt: 50.000 € (inkl. 13. Monatsgehalt)', de, { min: 50000, max: 50000, currency: 'EUR' }],
+    ['Gehalt 50.000 €, 13. Monatsgehalt', de, { min: 50000, max: 50000, currency: 'EUR' }],
+    ['Gehalt: 50.000 € + 13. Monatsgehalt', de, { min: 50000, max: 50000, currency: 'EUR' }],
+    ['Gehalt: 50.000 € zzgl. 13. Monatsgehalt', de, { min: 50000, max: 50000, currency: 'EUR' }],
+    ['Jahresgehalt 50.000 € inkl. Weihnachtsgeld', de, { min: 50000, max: 50000, currency: 'EUR' }],
+    // "+ €10,000 bonus" is an add-on, not "or more" (item 6)
+    ['Salary: €50,000 + €10,000 bonus', en, { min: 50000, max: 50000, currency: 'EUR' }],
+    // item 7: a code in a trailing parenthetical, Salär, N payments, k and M
+    ['Salary: $95,000 (USD)', opt('en', 'CAD'), { min: 95000, max: 95000, currency: 'USD' }],
+    ["Salär: CHF 50'000", opt('de', 'CHF'), { min: 50000, max: 50000, currency: 'CHF' }],
+    ['Gehalt: 14 Gehälter à 3.500 €', de, { min: 49000, max: 49000, currency: 'EUR' }],
+    ['Salario: 14 pagas de 2.500 € brutos', opt('es', 'EUR'), { min: 35000, max: 35000, currency: 'EUR' }],
+    ['Gehalt: 13 x 4.000 €', de, { min: 52000, max: 52000, currency: 'EUR' }],
+    ['Gehalt: € 3.500 brutto pro Monat (14x)', de, { min: 49000, max: 49000, currency: 'EUR' }],
+    ['Compensation: $50k – $1.2M OTE', opt('en', 'CAD'), { min: 50000, max: 1200000, currency: 'CAD', basis: 'unknown' }],
+    // a figure at the start of a cell named by "base" after it
+    ['| Full-time | $170k to $230k Base + Equity', opt('en', 'USD'), { min: 170000, max: 230000, currency: 'USD' }],
+  ] as const)('%s', (text, o, want) => {
+    expect(parsePay(text, o)).toMatchObject({ basis: 'base', ...want });
+  });
+  it.each([
+    // item 1: a cue word far from the figure is not a label
+    ['- Competitive salary, learning budget, up to €2,000 per year', en],
+    ['Attraktives Gehalt, Weiterbildungsbudget, bis zu 2.000 € im Jahr', de],
+    ['Competitive salary, 30 days off and a training budget, up to €1,500 a year.', en],
+    ['We pay for your conference trips, up to $3,000 a year.', opt('en', 'CAD')],
+    // item 2: a label word in another sense
+    ["Worker's compensation insurance up to $40,000 is included.", en],
+    ['Een beloning van € 3.000 voor elke geslaagde referral.', opt('nl', 'EUR')],
+    // item 5
+    ['Pay attention to detail: you will own a €40,000 vendor contract.', en],
+    ["Workers' compensation coverage of €35,000.", en],
+    ['Wir belohnen jede erfolgreiche Empfehlung mit 3.000 €.', de],
+    ['Es lohnt sich: 3.000 € Willkommensgeschenk.', de],
+    ['Bruttoinlandsprodukt-Analysen für Kunden mit 40.000 € Volumen.', de],
+    ['Bruttomarge von 45.000 € pro Projekt.', de],
+    ['Un margen bruto de 45.000 € por proyecto.', opt('es', 'EUR')],
+    ['Un fonds de 40 000 € pour un projet brutaliste.', opt('fr', 'EUR')],
+    ["Nos salariés bénéficient d'un CSE avec 2 000 € par an.", opt('fr', 'EUR')],
+    ['Belöning på 30 000 kr för varje rekommendation.', opt('sv', 'SEK')],
+    ['En lönsam affär: vi har ökat med 4 000 000 kr.', opt('sv', 'SEK')],
+    ['Pedido ordenado de 45.000 €.', opt('es', 'EUR')],
+    ['Remuneration committee approved a €50,000 grant.', en],
+    ['Salary sacrifice scheme for bikes up to €4,000.', en],
+    ['Gehaltsumwandlung für betriebliche Altersvorsorge bis 7.000 € jährlich.', de],
+    ['Compensation for overtime: €40 per hour, capped at €8,000 a year.', en],
+    // a 13th month alone, and a label after its figure in prose
+    ['13. Gehalt 2.000 €', de],
+    ['€10,000 bonus + €50,000 salary', en],
+    // no label: never read as yearly
+    ['Wir zahlen 13 Monatsgehälter à 5.000 €.', de],
+  ])('no comp: %s', (text, o) => {
+    expect(parsePay(text, o)).toBeNull();
+  });
+  it('a perk in another cell or clause of the salary line vetoes only itself', () => {
+    expect(parsePay('Salary €70k · Learning budget €2k', en)).toMatchObject({ min: 70000, max: 70000 });
+    expect(parsePay('Gehalt: 70.000 € | Hardware: 2.000 €', de)).toMatchObject({ min: 70000, max: 70000 });
+    expect(parsePay('Salary: €70,000. On-call compensation: €5,000 per year.', en)).toMatchObject({ min: 70000, max: 70000 });
   });
 });

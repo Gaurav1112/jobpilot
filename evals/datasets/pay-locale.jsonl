@@ -1,6 +1,6 @@
 {"id": "en-range", "input": {"text": "Salary: CA$95,000 - CA$120,000 per year", "locale": "en", "home": "CAD"}, "expected": {"min": 95000, "max": 120000, "currency": "CAD", "period": "year", "basis": "base"}}
 {"id": "en-single", "input": {"text": "Base salary $105,000 annually", "locale": "en", "home": "CAD"}, "expected": {"min": 105000, "max": 105000, "currency": "CAD", "period": "year", "basis": "base"}}
-{"id": "en-up-to", "input": {"text": "Pay up to CA$130,000", "locale": "en", "home": "CAD"}, "expected": {"min": null, "max": 130000, "currency": "CAD", "period": "year", "basis": "base"}}
+{"id": "en-up-to", "input": {"text": "Salary up to CA$130,000", "locale": "en", "home": "CAD"}, "expected": {"min": null, "max": 130000, "currency": "CAD", "period": "year", "basis": "base"}}
 {"id": "en-from", "input": {"text": "Salary starting from $90,000 a year", "locale": "en", "home": "CAD"}, "expected": {"min": 90000, "max": null, "currency": "CAD", "period": "year", "basis": "base"}}
 {"id": "en-monthly", "input": {"text": "Salary CA$8,500 per month", "locale": "en", "home": "CAD"}, "expected": {"min": 102000, "max": 102000, "currency": "CAD", "period": "year", "basis": "base"}}
 {"id": "en-hourly", "input": {"text": "CA$65 per hour", "locale": "en", "home": "CAD"}, "expected": null}
@@ -10,7 +10,7 @@
 {"id": "de-single", "input": {"text": "Jahresgehalt 72.500 €", "locale": "de", "home": "EUR"}, "expected": {"min": 72500, "max": 72500, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "de-up-to", "input": {"text": "Gehalt bis zu 85.000 € pro Jahr", "locale": "de", "home": "EUR"}, "expected": {"min": null, "max": 85000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "de-from", "input": {"text": "Gehalt ab 60.000 € jährlich", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": null, "currency": "EUR", "period": "year", "basis": "base"}}
-{"id": "de-monthly", "input": {"text": "5.500 € brutto monatlich", "locale": "de", "home": "EUR"}, "expected": {"min": 66000, "max": 66000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "de-monthly", "input": {"text": "Gehalt 5.500 € brutto monatlich", "locale": "de", "home": "EUR"}, "expected": {"min": 66000, "max": 66000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "de-hourly", "input": {"text": "45 € pro Stunde", "locale": "de", "home": "EUR"}, "expected": null}
 {"id": "de-headcount", "input": {"text": "Über 2.500 Mitarbeiter in 12 Ländern", "locale": "de", "home": "EUR"}, "expected": null}
 {"id": "de-ote", "input": {"text": "OTE 110.000 € pro Jahr", "locale": "de", "home": "EUR"}, "expected": {"min": 110000, "max": 110000, "currency": "EUR", "period": "year", "basis": "unknown"}}
@@ -18,7 +18,7 @@
 {"id": "fr-single", "input": {"text": "Salaire 55 000 € brut annuel", "locale": "fr", "home": "EUR"}, "expected": {"min": 55000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "fr-up-to", "input": {"text": "Salaire jusqu'à 70 000 € par an", "locale": "fr", "home": "EUR"}, "expected": {"min": null, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "fr-from", "input": {"text": "Salaire à partir de 48 000 € par an", "locale": "fr", "home": "EUR"}, "expected": {"min": 48000, "max": null, "currency": "EUR", "period": "year", "basis": "base"}}
-{"id": "fr-monthly", "input": {"text": "4 200 € brut par mois", "locale": "fr", "home": "EUR"}, "expected": {"min": 50400, "max": 50400, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "fr-monthly", "input": {"text": "Salaire 4 200 € brut par mois", "locale": "fr", "home": "EUR"}, "expected": {"min": 50400, "max": 50400, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "fr-hourly", "input": {"text": "35 € de l'heure", "locale": "fr", "home": "EUR"}, "expected": null}
 {"id": "fr-headcount", "input": {"text": "Plus de 3 000 collaborateurs", "locale": "fr", "home": "EUR"}, "expected": null}
 {"id": "fr-ote", "input": {"text": "Rémunération totale 90 000 € par an", "locale": "fr", "home": "EUR"}, "expected": {"min": 90000, "max": 90000, "currency": "EUR", "period": "year", "basis": "unknown"}}
@@ -26,7 +26,7 @@
 {"id": "nl-single", "input": {"text": "Jaarsalaris € 62.000", "locale": "nl", "home": "EUR"}, "expected": {"min": 62000, "max": 62000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "nl-up-to", "input": {"text": "Salaris tot maximaal € 75.000 per jaar", "locale": "nl", "home": "EUR"}, "expected": {"min": null, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "nl-from", "input": {"text": "Salaris vanaf € 50.000 per jaar", "locale": "nl", "home": "EUR"}, "expected": {"min": 50000, "max": null, "currency": "EUR", "period": "year", "basis": "base"}}
-{"id": "nl-monthly", "input": {"text": "€ 4.500 bruto per maand", "locale": "nl", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "nl-monthly", "input": {"text": "Salaris € 4.500 bruto per maand", "locale": "nl", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "nl-hourly", "input": {"text": "€ 40 per uur", "locale": "nl", "home": "EUR"}, "expected": null}
 {"id": "nl-headcount", "input": {"text": "Ruim 1.500 medewerkers", "locale": "nl", "home": "EUR"}, "expected": null}
 {"id": "nl-ote", "input": {"text": "OTE € 95.000 per jaar", "locale": "nl", "home": "EUR"}, "expected": {"min": 95000, "max": 95000, "currency": "EUR", "period": "year", "basis": "unknown"}}
@@ -34,7 +34,7 @@
 {"id": "es-single", "input": {"text": "Salario 45.000 € anuales", "locale": "es", "home": "EUR"}, "expected": {"min": 45000, "max": 45000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "es-up-to", "input": {"text": "Salario hasta 60.000 € al año", "locale": "es", "home": "EUR"}, "expected": {"min": null, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "es-from", "input": {"text": "Salario desde 38.000 € al año", "locale": "es", "home": "EUR"}, "expected": {"min": 38000, "max": null, "currency": "EUR", "period": "year", "basis": "base"}}
-{"id": "es-monthly", "input": {"text": "3.500 € brutos al mes", "locale": "es", "home": "EUR"}, "expected": {"min": 42000, "max": 42000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "es-monthly", "input": {"text": "Salario 3.500 € brutos al mes", "locale": "es", "home": "EUR"}, "expected": {"min": 42000, "max": 42000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "es-hourly", "input": {"text": "25 € por hora", "locale": "es", "home": "EUR"}, "expected": null}
 {"id": "es-headcount", "input": {"text": "Más de 4.000 empleados", "locale": "es", "home": "EUR"}, "expected": null}
 {"id": "es-ote", "input": {"text": "OTE 80.000 € al año", "locale": "es", "home": "EUR"}, "expected": {"min": 80000, "max": 80000, "currency": "EUR", "period": "year", "basis": "unknown"}}
@@ -42,7 +42,7 @@
 {"id": "it-single", "input": {"text": "Stipendio 42.000 € lordi annui", "locale": "it", "home": "EUR"}, "expected": {"min": 42000, "max": 42000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "it-up-to", "input": {"text": "RAL fino a 55.000 € annui", "locale": "it", "home": "EUR"}, "expected": {"min": null, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "it-from", "input": {"text": "RAL a partire da 38.000 € annui", "locale": "it", "home": "EUR"}, "expected": {"min": 38000, "max": null, "currency": "EUR", "period": "year", "basis": "base"}}
-{"id": "it-monthly", "input": {"text": "3.200 € lordi al mese", "locale": "it", "home": "EUR"}, "expected": {"min": 38400, "max": 38400, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "it-monthly", "input": {"text": "Stipendio 3.200 € lordi al mese", "locale": "it", "home": "EUR"}, "expected": {"min": 38400, "max": 38400, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "it-hourly", "input": {"text": "30 € all'ora", "locale": "it", "home": "EUR"}, "expected": null}
 {"id": "it-headcount", "input": {"text": "Oltre 2.000 dipendenti", "locale": "it", "home": "EUR"}, "expected": null}
 {"id": "it-ote", "input": {"text": "OTE 70.000 € annui", "locale": "it", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "unknown"}}
@@ -50,7 +50,7 @@
 {"id": "pl-single", "input": {"text": "Pensja 200 000 zł rocznie", "locale": "pl", "home": "PLN"}, "expected": {"min": 200000, "max": 200000, "currency": "PLN", "period": "year", "basis": "base"}}
 {"id": "pl-up-to", "input": {"text": "Wynagrodzenie do 250 000 zł rocznie", "locale": "pl", "home": "PLN"}, "expected": {"min": null, "max": 250000, "currency": "PLN", "period": "year", "basis": "base"}}
 {"id": "pl-from", "input": {"text": "Wynagrodzenie od 170 000 zł rocznie", "locale": "pl", "home": "PLN"}, "expected": {"min": 170000, "max": null, "currency": "PLN", "period": "year", "basis": "base"}}
-{"id": "pl-monthly", "input": {"text": "16 000 zł brutto miesięcznie", "locale": "pl", "home": "PLN"}, "expected": {"min": 192000, "max": 192000, "currency": "PLN", "period": "year", "basis": "base"}}
+{"id": "pl-monthly", "input": {"text": "Wynagrodzenie 16 000 zł brutto miesięcznie", "locale": "pl", "home": "PLN"}, "expected": {"min": 192000, "max": 192000, "currency": "PLN", "period": "year", "basis": "base"}}
 {"id": "pl-hourly", "input": {"text": "120 zł za godzinę", "locale": "pl", "home": "PLN"}, "expected": null}
 {"id": "pl-headcount", "input": {"text": "Ponad 1 200 pracowników", "locale": "pl", "home": "PLN"}, "expected": null}
 {"id": "pl-ote", "input": {"text": "OTE 300 000 zł rocznie", "locale": "pl", "home": "PLN"}, "expected": {"min": 300000, "max": 300000, "currency": "PLN", "period": "year", "basis": "unknown"}}
@@ -103,7 +103,7 @@
 {"id": "i1-de-brutto-slash-monat", "input": {"text": "Gehalt 4.500 € brutto/Monat", "locale": "de", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "i1-fr-brut-slash-mois", "input": {"text": "Salaire 3 800 € brut/mois", "locale": "fr", "home": "EUR"}, "expected": {"min": 45600, "max": 45600, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "i1-en-usd-slash-month", "input": {"text": "Salary: $3,500-$5,000 USD/month", "locale": "en", "home": "USD"}, "expected": {"min": 42000, "max": 60000, "currency": "USD", "period": "year", "basis": "base"}}
-{"id": "i1-de-monatsgehaelter", "input": {"text": "Gehalt: 13 Monatsgehälter à 5.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "i1-de-monatsgehaelter", "input": {"text": "Gehalt: 13 Monatsgehälter à 5.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 65000, "max": 65000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "i2-en-trailing-usd-cad-home", "input": {"text": "Salary $90,000 - $110,000 USD", "locale": "en", "home": "CAD"}, "expected": {"min": 90000, "max": 110000, "currency": "USD", "period": "year", "basis": "base"}}
 {"id": "i2-en-lowercase-usd-sgd-home", "input": {"text": "Base salary: $100k–$175k usd per year.", "locale": "en", "home": "CAD"}, "expected": {"min": 100000, "max": 175000, "currency": "USD", "period": "year", "basis": "base"}}
 {"id": "i2-en-ambiguous-codes", "input": {"text": "Salary $160,000–$200,000 CAD/USD", "locale": "en", "home": "CAD"}, "expected": null}
@@ -112,3 +112,211 @@
 {"id": "clause-de-13th", "input": {"text": "Gehalt 60.000 € brutto, 13. Gehalt 2.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "fr-k-euro-range", "input": {"text": "Salaire 45-55 k€ brut annuel", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
 {"id": "pt-mensais", "input": {"text": "Salário R$ 12.000 mensais", "locale": "es", "home": "BRL"}, "expected": {"min": 144000, "max": 144000, "currency": "BRL", "period": "year", "basis": "base"}}
+{"id": "r3-L1", "input": {"text": "Salary\n€60,000 – €75,000", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L2", "input": {"text": "Salary:\n€60,000 – €75,000", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L3", "input": {"text": "Vergütung:\n60.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L4", "input": {"text": "Vergütung:\n60.000 € – 75.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L5", "input": {"text": "Vergütung\n\n60.000 – 75.000 € p.a.", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L6", "input": {"text": "**Compensation**\n\n€55,000 - €65,000", "locale": "en", "home": "EUR"}, "expected": {"min": 55000, "max": 65000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L7", "input": {"text": "Gehalt:\n50.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L8", "input": {"text": "Salary:\n€50,000", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L9", "input": {"text": "- Gehalt: 50.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L10", "input": {"text": "• Gehalt: 50.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L11", "input": {"text": "* Gehalt: 50.000 € brutto/Jahr", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L12", "input": {"text": "Salary | €50k", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L13", "input": {"text": "| Salary | €50,000 |", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L14", "input": {"text": "| Salary |\n| €50,000 |", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L15", "input": {"text": "Gehalt: 50.000 €; flexible Arbeitszeiten", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L16", "input": {"text": "Gehalt: €50,000 per year", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L17", "input": {"text": "Salary: 50.000 € pro Jahr", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L18", "input": {"text": "Salary: 50 000 €", "locale": "fr", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L19", "input": {"text": "Salary: we offer a very competitive package that reflects your experience, skills and the impact you will have on our product, our customers and our engineering culture over the coming years, starting at €50,000.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-L20", "input": {"text": "Gehalt: Wir bieten ein attraktives Gehalt, das deine Erfahrung, deine Fähigkeiten und deinen Beitrag zu unserem Produkt und unserer Engineering-Kultur in den kommenden Jahren angemessen widerspiegelt, ab 50.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-L21", "input": {"text": "What we offer\n- Salary range\n  €50,000 - €55,000\n- 30 days holiday", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L22", "input": {"text": "Gehalt\n50.000 € brutto", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L23", "input": {"text": "Jahresgehalt\n50.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L24", "input": {"text": "Salary: €50,000. Plus an extra 30 days of holiday.", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L25", "input": {"text": "Salary range: €45,000 to €55,000. Location: Berlin.", "locale": "en", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L26", "input": {"text": "Compensation:\n- €50,000 base", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L27", "input": {"text": "Lön\n40 000 kr/mån", "locale": "sv", "home": "SEK"}, "expected": {"min": 480000, "max": 480000, "currency": "SEK", "period": "year", "basis": "base"}}
+{"id": "r3-L28", "input": {"text": "Gehalt (brutto, jährlich):\n50.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L29", "input": {"text": "Gehaltsband: 50.000 € inkl. 13. Monatsgehalt", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L30", "input": {"text": "Jahresgehalt 50.000 € inkl. Weihnachtsgeld", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L31", "input": {"text": "Jahresgehalt 50.000 € zzgl. Bonus", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L32", "input": {"text": "Salär: CHF 50'000", "locale": "de", "home": "CHF"}, "expected": {"min": 50000, "max": 50000, "currency": "CHF", "period": "year", "basis": "base"}}
+{"id": "r3-L33", "input": {"text": "Rémunération\n45 000 € - 55 000 €", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-L34", "input": {"text": "Salary: €50,000 – €55,000 (depending on experience)", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-F1", "input": {"text": "You will lead a $2M database migration.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F2", "input": {"text": "Our payments platform processing $5,000,000 a day.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F3", "input": {"text": "Based in Berlin, €3.000 Umzugshilfe.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F4", "input": {"text": "Based in Berlin, €3,000 relocation support.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F5", "input": {"text": "Our base camp offsite costs €40,000 a year.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F6", "input": {"text": "Our customer base grew to €45,000 in monthly recurring revenue.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F7", "input": {"text": "Pay attention to detail: you will own a €40,000 vendor contract.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F8", "input": {"text": "Join the payments team: we move €50,000 per transaction batch.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F9", "input": {"text": "Experience with PayPal and Stripe; a €45,000 hardware budget.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F10", "input": {"text": "Worker's compensation insurance up to $40,000 is included.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F11", "input": {"text": "Workers' compensation coverage of €35,000.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F12", "input": {"text": "We pay for your conference trips, up to $3,000 a year.", "locale": "en", "home": "CAD"}, "expected": null}
+{"id": "r3-F13", "input": {"text": "We pay €2,000 for your home office setup.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F14", "input": {"text": "Wir belohnen jede erfolgreiche Empfehlung mit 3.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F15", "input": {"text": "Es lohnt sich: 3.000 € Willkommensgeschenk.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F16", "input": {"text": "Bruttoinlandsprodukt-Analysen für Kunden mit 40.000 € Volumen.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F17", "input": {"text": "Un fonds de 40 000 € pour un projet brutaliste.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-F18", "input": {"text": "Nos salariés bénéficient d'un CSE avec 2 000 € par an.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-F19", "input": {"text": "Partie fixe et variable : un budget de 40 000 €.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-F20", "input": {"text": "Salary: competitive. Laptop €2,000.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F21", "input": {"text": "Competitive salary and a €3,000 signing bonus.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F22", "input": {"text": "Competitive salary, €3,000 joining bonus.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F23", "input": {"text": "Competitive salary and €40,000 in stock options.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F24", "input": {"text": "Salary plus €45,000 equity.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F25", "input": {"text": "Base salary plus $5,000 annual training allowance.", "locale": "en", "home": "CAD"}, "expected": null}
+{"id": "r3-F26", "input": {"text": "Our base of 40,000 € customers is growing.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F27", "input": {"text": "Competitive salary; €20,000 relocation package.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F28", "input": {"text": "Salary in line with market, plus 13th month and €2,500 Christmas bonus.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F29", "input": {"text": "CTC 12 LPA equivalent? We pay €30,000.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F30", "input": {"text": "Salary: 12 LPA", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F31", "input": {"text": "CTC: $45,000", "locale": "en", "home": "CAD"}, "expected": {"min": 45000, "max": 45000, "currency": "CAD", "period": "year", "basis": "base"}}
+{"id": "r3-F32", "input": {"text": "Compensation for overtime: €40 per hour, capped at €8,000 a year.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F33", "input": {"text": "En lönsam affär: vi har ökat med 4 000 000 kr.", "locale": "sv", "home": "SEK"}, "expected": null}
+{"id": "r3-F34", "input": {"text": "Belöning på 30 000 kr för varje rekommendation.", "locale": "sv", "home": "SEK"}, "expected": null}
+{"id": "r3-F35", "input": {"text": "Een beloning van € 3.000 voor elke geslaagde referral.", "locale": "nl", "home": "EUR"}, "expected": null}
+{"id": "r3-F36", "input": {"text": "Wir zahlen einen Lohnkostenzuschuss von 40.000 € an Partner.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F37", "input": {"text": "Bruttomarge von 45.000 € pro Projekt.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F38", "input": {"text": "Un margen bruto de 45.000 € por proyecto.", "locale": "es", "home": "EUR"}, "expected": null}
+{"id": "r3-F39", "input": {"text": "Lordo di 40.000 € di fatturato.", "locale": "it", "home": "EUR"}, "expected": null}
+{"id": "r3-F40", "input": {"text": "Pedido ordenado de 45.000 €.", "locale": "es", "home": "EUR"}, "expected": null}
+{"id": "r3-F41", "input": {"text": "The base package includes a €40,000 annual training stipend.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F42", "input": {"text": "Salary sacrifice scheme for bikes up to €4,000.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F43", "input": {"text": "Remuneration committee approved a €50,000 grant.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F44", "input": {"text": "We pay you to learn: €3,000 learning credit each year.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F45", "input": {"text": "Gehaltsumwandlung für betriebliche Altersvorsorge bis 7.000 € jährlich.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-F46", "input": {"text": "Salary: €70,000. On-call compensation: €5,000 per year.", "locale": "en", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-F47", "input": {"text": "Equity: €40,000 vesting over 4 years; salary competitive.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-F48", "input": {"text": "Salary competitive, equity €40,000 vesting over 4 years.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-R1", "input": {"text": "Salary: €30,000 – €650,000", "locale": "en", "home": "EUR"}, "expected": {"min": 30000, "max": 650000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R2", "input": {"text": "Compensation: $50k – $1.2M OTE", "locale": "en", "home": "CAD"}, "expected": {"min": 50000, "max": 1200000, "currency": "CAD", "period": "year", "basis": "unknown"}}
+{"id": "r3-R3", "input": {"text": "Compensation: $50,000 – $1,200,000 OTE", "locale": "en", "home": "CAD"}, "expected": {"min": 50000, "max": 1200000, "currency": "CAD", "period": "year", "basis": "unknown"}}
+{"id": "r3-R4", "input": {"text": "Gehalt: €5.000/Monat (€60.000/Jahr)", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R5", "input": {"text": "Gehalt: 5.000 €/Monat (60.000 €/Jahr)", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R6", "input": {"text": "Gehalt: 4.000 € – 70.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 4000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R7", "input": {"text": "Gehalt: 3.500 - 75.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 3500, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R8", "input": {"text": "Gehalt: 60 - 75.000 €", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-R9", "input": {"text": "Gehalt: 60 bis 75.000 € brutto im Jahr", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-R10", "input": {"text": "Gehalt: 3.000 - 70.000 € je nach Erfahrung", "locale": "de", "home": "EUR"}, "expected": {"min": 3000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R11", "input": {"text": "Salary: €4,500/month - €60,000/year", "locale": "en", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R12", "input": {"text": "Gehalt: 4.500 € monatlich bzw. 54.000 € jährlich", "locale": "de", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R13", "input": {"text": "Gehalt: 13 x 4.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 52000, "max": 52000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R14", "input": {"text": "Gehalt: 14 Gehälter à 3.500 €", "locale": "de", "home": "EUR"}, "expected": {"min": 49000, "max": 49000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-R15", "input": {"text": "Jahresgehalt: 14 × 3.500 € brutto", "locale": "de", "home": "EUR"}, "expected": {"min": 49000, "max": 49000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P1", "input": {"text": "Salary: €60,000 (+ bonus)", "locale": "en", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P2", "input": {"text": "Gehalt: 60.000 € + Bonus", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P3", "input": {"text": "Gehalt 60.000 € (brutto)", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P4", "input": {"text": "€50,000 (base salary)", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P5", "input": {"text": "€50,000 + bonus (salary)", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-P6", "input": {"text": "Salary (base): €50,000", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P7", "input": {"text": "Salary: €50,000 base + €10,000 bonus", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P8", "input": {"text": "Salary: €50,000 + €10,000 bonus", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P9", "input": {"text": "€10,000 bonus + €50,000 salary", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-P10", "input": {"text": "Gehalt: 50.000 € + 13. Monatsgehalt", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P11", "input": {"text": "Gehalt: 50.000 € (inkl. 13. Monatsgehalt)", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P12", "input": {"text": "Salary (incl. bonus): €50,000", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "unknown"}}
+{"id": "r3-P13", "input": {"text": "Compensation (bonus up to €8,000)", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-P14", "input": {"text": "Salary €70,000 (bonus €8,000)", "locale": "en", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P15", "input": {"text": "Gehalt 70.000 € (Bonus bis 8.000 €)", "locale": "de", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P16", "input": {"text": "Salary: €50k + equity", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P17", "input": {"text": "Salary: €50,000, plus a €3,000 signing bonus", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P18", "input": {"text": "Salary: €70,000 and a €3,000 signing bonus", "locale": "en", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-P19", "input": {"text": "€50,000 base + bonus + equity", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X1", "input": {"text": "Salario: 14 pagas de 2.500 € brutos", "locale": "es", "home": "EUR"}, "expected": {"min": 35000, "max": 35000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X2", "input": {"text": "Mindestgehalt: € 3.500 brutto x 14", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-X3", "input": {"text": "Gehalt: € 3.500 brutto pro Monat (14x)", "locale": "de", "home": "EUR"}, "expected": {"min": 49000, "max": 49000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X4", "input": {"text": "Gehalt: 50.000 € zzgl. 13. Monatsgehalt", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X5", "input": {"text": "We offer a competitive salary and up to €10,000 annual bonus.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-X6", "input": {"text": "Competitive base salary plus €40,000 in RSUs.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-X7", "input": {"text": "Salary: €50,000 + €10,000 bonus + equity", "locale": "en", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X8", "input": {"text": "RAL 40.000 € + 14 mensilità", "locale": "it", "home": "EUR"}, "expected": {"min": 40000, "max": 40000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X9", "input": {"text": "Salario: 30.000 € en 14 pagas", "locale": "es", "home": "EUR"}, "expected": {"min": 30000, "max": 30000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-X10", "input": {"text": "Gehalt 50.000 €, 13. Monatsgehalt", "locale": "de", "home": "EUR"}, "expected": {"min": 50000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-C1", "input": {"text": "- Competitive salary, learning budget, up to €2,000 per year", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-C2", "input": {"text": "Competitive salary, 30 days off and a training budget, up to €1,500 a year.", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-C3", "input": {"text": "Attraktives Gehalt, Weiterbildungsbudget, bis zu 2.000 € im Jahr", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-C4", "input": {"text": "Competitive pay, health benefits, wellness allowance, $1,200 per year", "locale": "en", "home": "CAD"}, "expected": null}
+{"id": "r3-C5", "input": {"text": "Competitive salary, home office setup, €1,000 one-off", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-C6", "input": {"text": "Salary: €70,000 | Equipment: €2,000", "locale": "en", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-C7", "input": {"text": "Salary €70k · Learning budget €2k", "locale": "en", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-C8", "input": {"text": "Gehalt: 70.000 € | Hardware: 2.000 €", "locale": "de", "home": "EUR"}, "expected": {"min": 70000, "max": 70000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-C9", "input": {"text": "Competitive compensation, plus €2,500 for conferences", "locale": "en", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-0", "input": {"text": "Wir haben 2025 eine Finanzierung über 30 Mio. € abgeschlossen.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-1", "input": {"text": "Jährliches Weiterbildungsbudget von 1.500 € pro Person.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-2", "input": {"text": "Hardware deiner Wahl im Wert von 3.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-3", "input": {"text": "Ein Laptop im Wert von 2.500 € gehört dir.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-4", "input": {"text": "Unsere Kunden sparen mit uns jährlich bis zu 120.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-5", "input": {"text": "Projekte mit einem Volumen von 250.000 € verantworten.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-6", "input": {"text": "Fahrtkostenerstattung bis 150 € monatlich.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-7", "input": {"text": "Firmenwagen im Wert von 45.000 € auch zur privaten Nutzung.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-8", "input": {"text": "Inflationsausgleich von 3.000 € netto.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-9", "input": {"text": "Lizenzkosten von 20.000 € pro Jahr gehören zu deinem Verantwortungsbereich.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-10", "input": {"text": "Empfehlungsbonus: 2.000 € für jede erfolgreiche Empfehlung.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-11", "input": {"text": "Betreuung eines Marketingetats von 500.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-12", "input": {"text": "Kita-Zuschuss von 200 € im Monat.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-13", "input": {"text": "Wir spenden 10.000 € an gemeinnützige Projekte.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-14", "input": {"text": "Der Preis für unser Produkt beginnt bei 9.900 € pro Jahr.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-15", "input": {"text": "Gehalt: 4.500 € brutto/Monat.", "locale": "de", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-16", "input": {"text": "Vergütung: 5.000 EUR/Monat brutto.", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 60000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-17", "input": {"text": "Wir zahlen 13 Monatsgehälter à 5.000 €.", "locale": "de", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-18", "input": {"text": "Jahresgehalt: 65.000 - 80.000 EUR.", "locale": "de", "home": "EUR"}, "expected": {"min": 65000, "max": 80000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-19", "input": {"text": "Vergütung: 70.000 € – 85.000 € p.a.", "locale": "de", "home": "EUR"}, "expected": {"min": 70000, "max": 85000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-20", "input": {"text": "Das Gehalt liegt zwischen 60.000 und 75.000 Euro.", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-21", "input": {"text": "Gehaltsrahmen 60-75k €", "locale": "de", "home": "EUR"}, "expected": {"min": 60000, "max": 75000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-22", "input": {"text": "Lohn: CHF 120'000 – 140'000", "locale": "de", "home": "CHF"}, "expected": {"min": 120000, "max": 140000, "currency": "CHF", "period": "year", "basis": "base"}}
+{"id": "r3-synth-23", "input": {"text": "Salär CHF 110.000 bis 130.000", "locale": "de", "home": "CHF"}, "expected": {"min": 110000, "max": 130000, "currency": "CHF", "period": "year", "basis": "base"}}
+{"id": "r3-synth-24", "input": {"text": "Ordinateur portable d'une valeur de 2 500 € fourni.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-25", "input": {"text": "Nous avons réalisé une levée de fonds de 15 M€.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-26", "input": {"text": "Prime de cooptation de 2 000 €.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-27", "input": {"text": "Vous gérerez un portefeuille clients de 3 000 000 €.", "locale": "fr", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-28", "input": {"text": "Salaire : 45 000 € - 55 000 € bruts annuels.", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-29", "input": {"text": "Rémunération : 45-55 k€ selon profil.", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-30", "input": {"text": "Salaire : 45 k€ - 55 k€.", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-31", "input": {"text": "Salaire : 45K€ - 55K€.", "locale": "fr", "home": "EUR"}, "expected": {"min": 45000, "max": 55000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-32", "input": {"text": "Salaire : 3 800 € brut/mois.", "locale": "fr", "home": "EUR"}, "expected": {"min": 45600, "max": 45600, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-33", "input": {"text": "Salaris: €4.000 - €5.500 bruto per maand.", "locale": "nl", "home": "EUR"}, "expected": {"min": 48000, "max": 66000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-34", "input": {"text": "Salaris tussen € 4.000 en € 5.500 per maand.", "locale": "nl", "home": "EUR"}, "expected": {"min": 48000, "max": 66000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-35", "input": {"text": "Opleidingsbudget van € 2.000 per jaar.", "locale": "nl", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-36", "input": {"text": "Een reiskostenvergoeding van € 0,23 per km.", "locale": "nl", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-37", "input": {"text": "Een laptop ter waarde van € 2.500.", "locale": "nl", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-38", "input": {"text": "Salario: 35.000€ - 45.000€ brutos anuales.", "locale": "es", "home": "EUR"}, "expected": {"min": 35000, "max": 45000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-39", "input": {"text": "Ticket restaurante de 11 € al día.", "locale": "es", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-40", "input": {"text": "Hemos cerrado una ronda de 12.000.000 € de inversión.", "locale": "es", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-41", "input": {"text": "Portátil valorado en 2.000 €.", "locale": "es", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-42", "input": {"text": "RAL 40.000 - 50.000 €", "locale": "it", "home": "EUR"}, "expected": {"min": 40000, "max": 50000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-43", "input": {"text": "Retribuzione da 38.000 € a 45.000 € lordi annui.", "locale": "it", "home": "EUR"}, "expected": {"min": 38000, "max": 45000, "currency": "EUR", "period": "year", "basis": "base"}}
+{"id": "r3-synth-44", "input": {"text": "Buoni pasto da 8 € al giorno.", "locale": "it", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-45", "input": {"text": "Un portatile del valore di 2.000 €.", "locale": "it", "home": "EUR"}, "expected": null}
+{"id": "r3-synth-46", "input": {"text": "Wynagrodzenie: 15 000 - 20 000 zł brutto miesięcznie.", "locale": "pl", "home": "PLN"}, "expected": {"min": 180000, "max": 240000, "currency": "PLN", "period": "year", "basis": "base"}}
+{"id": "r3-synth-47", "input": {"text": "Wynagrodzenie: 18 000 – 22 000 PLN/mies. netto + VAT (B2B)", "locale": "pl", "home": "PLN"}, "expected": {"min": 216000, "max": 264000, "currency": "PLN", "period": "year", "basis": "base"}}
+{"id": "r3-synth-48", "input": {"text": "15 000 - 20 000 zł/mies.", "locale": "pl", "home": "PLN"}, "expected": null}
+{"id": "r3-synth-49", "input": {"text": "Budżet szkoleniowy 3 000 zł rocznie.", "locale": "pl", "home": "PLN"}, "expected": null}
+{"id": "r3-synth-50", "input": {"text": "Karta Multisport i laptop o wartości 8 000 zł.", "locale": "pl", "home": "PLN"}, "expected": null}
+{"id": "r3-synth-51", "input": {"text": "Lön: 45 000 kr/mån.", "locale": "sv", "home": "SEK"}, "expected": {"min": 540000, "max": 540000, "currency": "SEK", "period": "year", "basis": "base"}}
+{"id": "r3-synth-52", "input": {"text": "Månadslön 45 000 – 55 000 SEK.", "locale": "sv", "home": "SEK"}, "expected": {"min": 540000, "max": 660000, "currency": "SEK", "period": "year", "basis": "base"}}
+{"id": "r3-synth-53", "input": {"text": "Friskvårdsbidrag på 5 000 kr per år.", "locale": "sv", "home": "SEK"}, "expected": null}
+{"id": "r3-synth-54", "input": {"text": "Vi har tagit in 50 000 000 kr i riskkapital.", "locale": "sv", "home": "SEK"}, "expected": null}
+{"id": "r3-synth-55", "input": {"text": "Salary: $90,000 - $110,000 USD per year.", "locale": "en", "home": "CAD"}, "expected": {"min": 90000, "max": 110000, "currency": "USD", "period": "year", "basis": "base"}}
+{"id": "r3-synth-56", "input": {"text": "Salary: $90,000–$110,000 USD/month.", "locale": "en", "home": "CAD"}, "expected": null}
+{"id": "r3-synth-57", "input": {"text": "Salary: S$6,000 - S$8,000 per month.", "locale": "en", "home": "SGD"}, "expected": {"min": 72000, "max": 96000, "currency": "SGD", "period": "year", "basis": "base"}}
+{"id": "r3-synth-58", "input": {"text": "Monthly salary: $6,000 - $8,000", "locale": "en", "home": "SGD"}, "expected": {"min": 72000, "max": 96000, "currency": "SGD", "period": "year", "basis": "base"}}
+{"id": "r3-synth-59", "input": {"text": "We spent $250,000 on cloud last year.", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-60", "input": {"text": "Win a $10,000 prize in our hackathon.", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-61", "input": {"text": "There is a $5k bounty for a working port.", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-62", "input": {"text": "A $3,000 laptop of your choice.", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-63", "input": {"text": "Our product costs $12,000 a year per seat.", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-64", "input": {"text": "CHF 120,000 - 140,000", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-65", "input": {"text": "CHF 120.000 - 140.000", "locale": "en", "home": "CHF"}, "expected": null}
+{"id": "r3-synth-66", "input": {"text": "年収 800万円〜1200万円", "locale": "en", "home": "JPY"}, "expected": null}
+{"id": "r3-synth-67", "input": {"text": "Salary: ¥8,000,000 - ¥12,000,000", "locale": "en", "home": "JPY"}, "expected": {"min": 8000000, "max": 12000000, "currency": "JPY", "period": "year", "basis": "base"}}
+{"id": "r3-synth-68", "input": {"text": "Salary: 8,000,000 - 12,000,000 JPY per year", "locale": "en", "home": "JPY"}, "expected": {"min": 8000000, "max": 12000000, "currency": "JPY", "period": "year", "basis": "base"}}
+{"id": "r3-synth-69", "input": {"text": "Salário: R$ 8.000 a R$ 12.000 por mês.", "locale": "es", "home": "BRL"}, "expected": {"min": 96000, "max": 144000, "currency": "BRL", "period": "year", "basis": "base"}}
+{"id": "r3-synth-70", "input": {"text": "Salário: R$ 12.000,00 mensais.", "locale": "es", "home": "BRL"}, "expected": {"min": 144000, "max": 144000, "currency": "BRL", "period": "year", "basis": "base"}}
+{"id": "r3-synth-71", "input": {"text": "Salary: £55,000 - £65,000 + bonus", "locale": "en", "home": "GBP"}, "expected": {"min": 55000, "max": 65000, "currency": "GBP", "period": "year", "basis": "base"}}
+{"id": "r3-synth-72", "input": {"text": "Salary: €4,500/month", "locale": "en", "home": "EUR"}, "expected": {"min": 54000, "max": 54000, "currency": "EUR", "period": "year", "basis": "base"}}

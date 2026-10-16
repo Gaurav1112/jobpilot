@@ -179,10 +179,10 @@ describe('pay stated in the profile\'s locale (Task 18)', () => {
 
 describe('pay in the profile\'s locale end to end (Task 18 fix round 1)', () => {
   const floorOf = (amount: number, currency: string) => ({ floor: { amount, currency, period: 'year' as const, basis: 'base' as const } });
-  const profile = (code: string, payLocale: 'de' | 'en' | 'fr' | 'nl' | 'es' | 'it', amount: number, currency: string) => ({
+  const profile = (code: string, payLocale: 'de' | 'en' | 'fr' | 'nl' | 'es' | 'it' | 'sv', amount: number, currency: string) => ({
     ...living(code),
     offers: { ...floorOf(amount, currency), payLocale },
-    fx: { ...pub.fx, toINR: { ...pub.fx.toINR, CAD: 61.2 } },
+    fx: { ...pub.fx, toINR: { ...pub.fx.toINR, CAD: 61.2, SEK: 7.9, CHF: 94.1 } },
   });
   const job = (descriptionText: string) => posting({ descriptionText });
   // every C1 figure, inside a benefits list, on a profile whose floor is far above it (fictional values)
@@ -225,6 +225,71 @@ describe('pay in the profile\'s locale end to end (Task 18 fix round 1)', () => 
   it('I1: monthly pay after "brutto/" is monthly, so 54,000 a year clears a 50,000 floor', () => {
     const d = decideEligibility(job('Gehalt 4.500 € brutto/Monat'), profile('DE', 'de', 50000, 'EUR'));
     expect(d.reasons.filter((r) => r.startsWith('below-floor'))).toEqual([]);
+    expect(d.notes).not.toContain('pay not disclosed');
+  });
+  // Task 18 round 3: every review item end to end, with a €60,000 floor (CAD 90,000, SEK 600,000, CHF 60,000)
+  const belowFloor = (d: ReturnType<typeof decideEligibility>) => d.reasons.filter((r) => r.startsWith('below-floor'));
+  it.each([
+    // item 1: a cue far from a perk figure
+    ['DE', 'en', 60000, 'EUR', '- Competitive salary, learning budget, up to €2,000 per year'],
+    ['DE', 'de', 60000, 'EUR', 'Attraktives Gehalt, Weiterbildungsbudget, bis zu 2.000 € im Jahr'],
+    ['DE', 'en', 60000, 'EUR', 'Competitive salary, 30 days off and a training budget, up to €1,500 a year.'],
+    ['CA', 'en', 90000, 'CAD', 'We pay for your conference trips, up to $3,000 a year.'],
+    // item 2
+    ['DE', 'en', 60000, 'EUR', "Worker's compensation insurance up to $40,000 is included."],
+    ['NL', 'nl', 60000, 'EUR', 'Een beloning van € 3.000 voor elke geslaagde referral.'],
+    // item 5
+    ['DE', 'en', 60000, 'EUR', 'Pay attention to detail: you will own a €40,000 vendor contract.'],
+    ['DE', 'en', 60000, 'EUR', "Workers' compensation coverage of €35,000."],
+    ['DE', 'de', 60000, 'EUR', 'Wir belohnen jede erfolgreiche Empfehlung mit 3.000 €.'],
+    ['DE', 'de', 60000, 'EUR', 'Es lohnt sich: 3.000 € Willkommensgeschenk.'],
+    ['DE', 'de', 60000, 'EUR', 'Bruttoinlandsprodukt-Analysen für Kunden mit 40.000 € Volumen.'],
+    ['DE', 'de', 60000, 'EUR', 'Bruttomarge von 45.000 € pro Projekt.'],
+    ['ES', 'es', 60000, 'EUR', 'Un margen bruto de 45.000 € por proyecto.'],
+    ['FR', 'fr', 60000, 'EUR', 'Un fonds de 40 000 € pour un projet brutaliste.'],
+    ['FR', 'fr', 60000, 'EUR', "Nos salariés bénéficient d'un CSE avec 2 000 € par an."],
+    ['SE', 'sv', 600000, 'SEK', 'Belöning på 30 000 kr för varje rekommendation.'],
+    ['SE', 'sv', 600000, 'SEK', 'En lönsam affär: vi har ökat med 4 000 000 kr.'],
+    ['ES', 'es', 60000, 'EUR', 'Pedido ordenado de 45.000 €.'],
+    ['DE', 'en', 60000, 'EUR', 'Remuneration committee approved a €50,000 grant.'],
+    ['DE', 'en', 60000, 'EUR', 'Salary sacrifice scheme for bikes up to €4,000.'],
+    ['DE', 'de', 60000, 'EUR', 'Gehaltsumwandlung für betriebliche Altersvorsorge bis 7.000 € jährlich.'],
+    ['DE', 'en', 60000, 'EUR', 'Compensation for overtime: €40 per hour, capped at €8,000 a year.'],
+  ] as const)('%s %s: "%s" is not pay', (code, locale, amount, currency, text) => {
+    const d = decideEligibility(job(text), profile(code, locale, amount, currency));
+    expect(belowFloor(d)).toEqual([]);
+    expect(d.notes).toContain('pay not disclosed');
+  });
+  it.each([
+    // item 3: the 13th month never makes the figure monthly; the base stays as written
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € (inkl. 13. Monatsgehalt)', 4510000],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt 50.000 €, 13. Monatsgehalt', 4510000],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € + 13. Monatsgehalt', 4510000],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € zzgl. 13. Monatsgehalt', 4510000],
+    ['DE', 'de', 60000, 'EUR', 'Jahresgehalt 50.000 € inkl. Weihnachtsgeld', 4510000],
+    // item 4: headings with the figure on the next line
+    ['DE', 'fr', 60000, 'EUR', 'Rémunération\n45 000 € - 55 000 €', 4961000],
+    ['SE', 'sv', 600000, 'SEK', 'Lön\n40 000 kr/mån', 3792000],
+    ['DE', 'en', 60000, 'EUR', '- Salary range\n  €50,000 - €55,000', 4961000],
+    ['DE', 'en', 60000, 'EUR', '| Salary |\n| €50,000 |', 4510000],
+    // item 6: "+ €10,000 bonus" is an add-on, so the max stays 50,000
+    ['DE', 'en', 60000, 'EUR', 'Salary: €50,000 + €10,000 bonus', 4510000],
+    // item 7: Salär, N payments a year
+    ['CH', 'de', 60000, 'CHF', "Salär: CHF 50'000", 4705000],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 14 Gehälter à 3.500 €', 4419800],
+    ['ES', 'es', 60000, 'EUR', 'Salario: 14 pagas de 2.500 € brutos', 3157000],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 13 x 4.000 €', 4690400],
+  ] as const)('%s %s: "%s" is read and judged', (code, locale, amount, currency, text, inr) => {
+    const d = decideEligibility(job(text), profile(code, locale, amount, currency));
+    expect(belowFloor(d)).toEqual([`below-floor:${inr}`]);
+  });
+  it.each([
+    ['DE', 'en', 'Salary\n€60,000 – €75,000'],
+    ['DE', 'de', 'Vergütung:\n60.000 €'],
+    ['DE', 'en', '**Compensation**\n\n€55,000 - €65,000'],
+  ] as const)('%s %s: the heading layout "%s" is read and clears the floor', (code, locale, text) => {
+    const d = decideEligibility(job(text), profile(code, locale, 60000, 'EUR'));
+    expect(belowFloor(d)).toEqual([]);
     expect(d.notes).not.toContain('pay not disclosed');
   });
 });

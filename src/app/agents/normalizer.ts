@@ -169,7 +169,7 @@ function compOf(all: readonly Range[]): Comp | null {
 }
 
 /** Pay that is not base salary: its presence makes the basis `unknown`. */
-export const NOT_BASE =
+const NOT_BASE =
   /\b(?:ote|on[- ]target|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration)|tc|commissions?|bonus(?:es)?|equity|rsus?|stocks?|esops?|options|variable|incentives?|target\s+(?:cash|comp\w*|earnings))\b/i;
 /** Explicit base pay. CTC counts as base in India for floor purposes. */
 const BASE = /\b(?:base|fixed|ctc)\b/i;
@@ -195,7 +195,7 @@ const BLURB_NOT_BASE = /\b(?:ote|on[- ]target|total\s+comp\w*|tc)\b/i;
 const PAY_WORD =
   /\b(?:salary|salaries|base|pay|pays|compensation|ctc|lpa|remuneration|ote|tc|on[- ]target)\b|\bper annum\b|\bp\.a\.|\/\s*(?:yr|year)\b|\bper year\b|\ba year\b|\bannually\b/i;
 /** Sentences about money that is not pay. */
-export const NOT_PAY =
+const NOT_PAY =
   /\b(?:raised|raising|funding|funded|valuation|revenue|arr|series|saved|save|saves|savings|budget|customers|users|clients|investors?|market cap)\b/i;
 /**
  * Final fix I5: perk and benefit wording. A sentence with any of these states a perk budget, never pay, whatever else
@@ -207,23 +207,23 @@ const PERK =
   /\b(?:learning|education(?:al)?|training|conferences?|wellness|wellbeing|gym|home[\s-]+office|equipment|internet|(?:tele)?phones?|stipends?|budgets?|allowances?|reimburse\w*|relocation|sign[\s-]*on|joining\s+bonus(?:es)?)\b|\bper\s+year\s+for\b|\bannual\b[^.;\n]*\bbudget\b/i;
 /** "Base salary incl. allowances ₹20 LPA": allowances that the salary includes are part of it, not a perk figure. */
 const INCLUDED_ALLOWANCES = /\b(?:incl\.?|including|inclusive of)\s+(?:all\s+)?allowances?\b/gi;
-export const isPerk = (sentence: string): boolean => PERK.test(sentence.replace(INCLUDED_ALLOWANCES, ' '));
+const isPerk = (sentence: string): boolean => PERK.test(sentence.replace(INCLUDED_ALLOWANCES, ' '));
 /**
  * Pay components that are not salary: a sentence that names only these (no base, salary, fixed, CTC or total-type
  * wording) states no salary.
  */
-export const OTHER_PAY =
+const OTHER_PAY =
   /\b(?:equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowance|referral|reimburse\w*|perks?|hra|pf|epf|esic|gratuity|da|lta|allowances?|reimbursements?|insurance|meal|flexi|variable|incentives?)\b/i;
 /**
  * Total-type pay (OTE, on-target, TC, target cash, total comp/cash/pay/package): never base, but always at least base,
  * so its figure is kept with an `unknown` basis (task 7 fix round 2: eligibility rejects a total whose max is below
  * the floor, because the base under it is lower still).
  */
-export const TOTAL_PAY =
+const TOTAL_PAY =
   /\b(?:ote|on[- ]target|tc|target\s+(?:cash|comp\w*|earnings)|total\s+(?:comp\w*|cash|pay|rewards?|package|remuneration))\b/i;
 /** A total followed (in its sentence) by include/including/comprises/consists of: what it includes is not stated as a figure of its own. */
 const TOTAL_INCLUDES = new RegExp(`${TOTAL_PAY.source}[^.;]*?\\b(?:includ(?:e|es|ed|ing)|comprises?|consists? of)\\b`, 'i');
-export const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
+const SALARY_WORD = /\b(?:base|salary|salaries|fixed|ctc)\b/i;
 /** Dollars that are not US dollars, and currency codes the Posting cannot carry: the parser would read `CA$` as USD. */
 const FOREIGN_MONEY =
   /(?<![A-Za-z])(?:CA|C|A|AU|NZ|S|SG|HK|NT|R|MX|COL)\$|\b(?:CAD|AUD|SGD|NZD|HKD|JPY|CNY|RMB|CHF|SEK|NOK|DKK|PLN|CZK|HUF|RON|BRL|MXN|ARS|CLP|COP|PHP|IDR|MYR|THB|VND|KRW|TWD|ZAR|AED|SAR|QAR|ILS|TRY|NGN|KES|PKR|BDT|LKR|NPR|EGP|UAH)\b|[₱฿₩₺₪₦]/;

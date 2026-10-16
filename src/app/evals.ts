@@ -168,7 +168,7 @@ const PayRead = defineType(
  * Fixed fictional rates for the `pay-locale` eval: the fixture pack's four plus made-up rates for the other currencies
  * its cases use (KRW has none on purpose). Only the plausibility bounds read them.
  */
-const PAY_EVAL_FX = { toINR: { USD: 83.5, EUR: 90.2, GBP: 106.4, INR: 1, CAD: 61.2, CHF: 94.1, JPY: 0.56, SEK: 7.9, PLN: 21, BRL: 16.5 } };
+const PAY_EVAL_FX = { toINR: { USD: 83.5, EUR: 90.2, GBP: 106.4, INR: 1, CAD: 61.2, CHF: 94.1, JPY: 0.56, SEK: 7.9, PLN: 21, BRL: 16.5, SGD: 62 } };
 /** The eval-only wrapper of `parsePay` (Task 18); not a pipeline agent, so it is not in the contract registry. */
 const payLocaleReader = defineAgent(
   defineContract({
