@@ -225,12 +225,27 @@ export function namesResidence(location: string, scope: ResidenceScope): boolean
   return parts.length >= 3 && parts[parts.length - 1] === scope.code;
 }
 
-/** A facet value that is exactly the residence country's display name ("India", "Germany"), any case. India's is today's regex. */
+/**
+ * Names a board uses for the whole country (never a part of it: England, New Mexico). A country not listed here is
+ * matched by its canonical name and display name only.
+ */
+const COUNTRY_NAME_SPELLINGS: Readonly<Record<string, readonly string[]>> = {
+  'united states': ['united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'u.s'],
+  'united kingdom': ['uk', 'u.k.', 'great britain', 'britain'],
+  'united arab emirates': ['uae', 'u.a.e.'],
+  netherlands: ['the netherlands', 'holland'],
+};
+
+/** A facet value that is exactly the residence country, by any of its whole-country names, any case. India's is today's regex. */
 export function exactCountryRe(scope: ResidenceScope): RegExp {
   if (scope.isDefault) return /^\s*india\s*$/iu;
-  const name = scope.display.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`^\\s*${name}\\s*$`, 'iu');
+  const names = [...new Set([scope.country, scope.display.toLowerCase(), ...(COUNTRY_NAME_SPELLINGS[scope.country] ?? [])])];
+  const alt = names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  return new RegExp(`^\\s*(?:${alt})\\s*$`, 'iu');
 }
+
+/** How a residence's own scoped list is named in notes: India's as today ('india'), others by country ('United States'). */
+export const listName = (scope: ResidenceScope): string => (scope.isDefault ? 'india' : scope.display);
 
 /** `namesResidence` for India, today's residence. */
 export const namesIndia = (location: string): boolean => namesResidence(location, DEFAULT_RESIDENCE);

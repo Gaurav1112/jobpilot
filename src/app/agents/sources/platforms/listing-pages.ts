@@ -4,7 +4,8 @@ import { KernelError } from '../../../../kernel/errors.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import type { SrcPageOptions } from './icims.js';
 import { getListing, memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, prefilter, readJobPages, type ListedJob, type PageListing } from './pages.js';
-import { memoryPageLedger, namesIndia, namesOffice, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { DEFAULT_RESIDENCE, type ResidenceScope } from '../../../geo/residence.js';
+import { memoryPageLedger, namesOffice, namesResidence, refusal, residenceOf, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 
 /**
  * The adapter JazzHR and Freshteam share (sources-expansion plan, Task 2). Both publish a server-rendered LISTING that
@@ -28,15 +29,15 @@ export interface ScopedJob extends ListedJob {
 export const REMOTE_WORD = /\b(?:remote|work\s+from\s+home|wfh|anywhere)\b/iu;
 
 /**
- * The listing-level scope: a job is kept when its card names India (`namesIndia`), one of the pack's office cities
+ * The listing-level scope: a job is kept when its card names the residence country (`namesResidence`; India by default), one of the pack's office cities
  * (`namesOffice`), says remote (the flag, or REMOTE_WORD), or names no location at all (uncertain: its page decides).
- * The rest are counted in ONE named note `not-india <company>: N of M listed jobs outside India and not remote (not
+ * The rest are counted in ONE named note `not-<token> <company>: N of M listed jobs outside <Country> and not remote (not
  * fetched)`. Order kept.
  */
-export function scopeListed(jobs: readonly ScopedJob[], officeCities: readonly string[], company: string, ctx: AgentContext): ScopedJob[] {
-  const kept = jobs.filter((j) => j.location === null || j.remote === true || REMOTE_WORD.test(j.location) || namesIndia(j.location) || namesOffice(j.location, officeCities));
+export function scopeListed(jobs: readonly ScopedJob[], officeCities: readonly string[], company: string, ctx: AgentContext, scope: ResidenceScope = DEFAULT_RESIDENCE): ScopedJob[] {
+  const kept = jobs.filter((j) => j.location === null || j.remote === true || REMOTE_WORD.test(j.location) || namesResidence(j.location, scope) || namesOffice(j.location, officeCities, scope));
   const out = jobs.length - kept.length;
-  if (out > 0) ctx.skipped([`not-india ${company}: ${out} of ${jobs.length} listed jobs outside India and not remote (not fetched)`]);
+  if (out > 0) ctx.skipped([`not-${scope.token} ${company}: ${out} of ${jobs.length} listed jobs outside ${scope.display} and not remote (not fetched)`]);
   return kept;
 }
 
@@ -128,7 +129,7 @@ export function listingPagesBoard(spec: ListingPagesSpec): ListingPagesBoard {
     const pack = titlePackOf(ctx.pack, contract.id);
     try {
       const listing = await fetchListing(http, o.hosts, slug);
-      const scoped = scopeListed(listing.jobs, pack.eligibility?.officeCities ?? [], req.company, ctx);
+      const scoped = scopeListed(listing.jobs, pack.eligibility?.officeCities ?? [], req.company, ctx, residenceOf(pack, contract.id));
       const jobs = prefilter(scoped, pack, req.company, ctx);
       return await readJobPages({ http, hosts: o.hosts, ctx, company: req.company, board: `${spec.platform} ${slug}`, runDate: req.runDate, jobs, listed: listing.listed, state: o.state, max: o.maxPages, ledger: o.ledger, source: spec.platform, slug: req.slug, follow: sameHost(host) });
     } catch (e) {

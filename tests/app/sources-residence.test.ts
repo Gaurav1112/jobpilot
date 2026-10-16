@@ -43,7 +43,7 @@ describe('Workday reads the residence country', () => {
     expect(said(r, /India/)).toBe(false);
     expect(r.postings.length).toBeGreaterThan(0);
     // the residence-named notes
-    expect(r.skipped.some((s) => s.startsWith('short-list Acme (germany list)'))).toBe(true);
+    expect(r.skipped.some((s) => s.startsWith('short-list Acme (Germany list)'))).toBe(true);
     expect(r.skipped.some((s) => /not India-named/.test(s))).toBe(false);
     // the Berlin office list stamps its jobs
     expect(r.postings.some((p) => ((p.raw as { officeLocations?: string[] }).officeLocations ?? []).includes('Germany, Berlin'))).toBe(true);
@@ -75,7 +75,7 @@ describe('Eightfold reads the residence country', () => {
     expect(said(r, /[?&]location=Germany(&|$)/)).toBe(true);
     expect(said(r, /India/)).toBe(false);
     expect(r.postings.length).toBeGreaterThan(0);
-    expect(r.skipped.some((s) => s.startsWith('short-list Acme (germany list)'))).toBe(true);
+    expect(r.skipped.some((s) => s.startsWith('short-list Acme (Germany list)'))).toBe(true);
   });
 
   it('the same fixture for an IN profile skips with the India note', async () => {
@@ -96,7 +96,7 @@ describe('Oracle reads the residence country', () => {
     expect(said(r, /locationId=300000000289360/)).toBe(true);
     expect(said(r, /India/)).toBe(false);
     expect(r.postings.length).toBeGreaterThan(0);
-    expect(r.skipped.some((s) => s.startsWith('short-list Acme (germany list)'))).toBe(true);
+    expect(r.skipped.some((s) => s.startsWith('short-list Acme (Germany list)'))).toBe(true);
     // details only for rank-0 (Germany-named) jobs: at least one asked
     expect(r.requests.some((q) => q.url.includes('recruitingCEJobRequisitionDetails'))).toBe(true);
   });

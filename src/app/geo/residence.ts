@@ -54,11 +54,13 @@ export function residenceScope(code = 'IN'): ResidenceScope {
   if (hit !== undefined) return hit;
   const country = countryOfCode(code);
   if (country === null) throw new Error(`unknown country code ${code}`);
-  const data = countryData(code);
-  const isDefault = code === 'IN';
+  // one residence per country: UK resolves to GB, so a GB-coded job is home for either spelling
+  const canonical = codeOfCountry(country) ?? code;
+  const data = countryData(canonical);
+  const isDefault = canonical === 'IN';
   const names = [country];
   const s: ResidenceScope = {
-    code,
+    code: canonical,
     country,
     display: data?.display ?? country.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()),
     token: country.replace(/\s+/g, '-'),

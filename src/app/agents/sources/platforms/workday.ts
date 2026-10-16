@@ -23,9 +23,15 @@ import {
   titlePackOf,
   type HttpTool,
   type PlatformHosts,
+  listName,
 } from './shared.js';
 
 // the shared host rules and title pre-filter, under the names Task 6 gave them
+
+/** The per-run scopes cache key: India's is today's; another residence adds a separator no city name can contain. */
+export const workdayScopesKey = (ref: string, cities: readonly string[], residence: ResidenceScope): string =>
+  `${ref} ${cities.join(',')}${residence.isDefault ? '' : `\u0000res=${residence.code}`}`;
+
 export { HostDisabled, RobotsDenied, titlePasses, type HttpTool, type TitlePack } from './shared.js';
 export { HostRefused as WorkdayRefused };
 
@@ -589,7 +595,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
     const ref = workdayRef(b);
     const cities = titles.data.eligibility?.officeCities ?? [];
     // the scopes depend on the residence (India's key is today's)
-    const cacheKey = `${ref} ${cities.join(',')}${residence.isDefault ? '' : ` ${residence.code}`}`;
+    const cacheKey = workdayScopesKey(ref, cities, residence);
     let scopes = o.hosts.scopes?.get(cacheKey);
     let first: WorkdayListPage | undefined;
     if (scopes === undefined) {
@@ -615,7 +621,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
       const indiaRead = new Set<string>();
       for (const [key, sc] of lists) {
         // the residence list's name in requests' notes is the residence token ('india' for IN)
-        const name = key === 'india' ? residence.token : key;
+        const name = key === 'india' ? listName(residence) : key;
         const page1 = await scopedFirst(`the ${name} scoped list`, name, sc);
         const read = (await readList(http, o.hosts, b, req, sc.facets, page1, maxPages, ctx, ` (${name} list)`)).postings;
         if (key === 'india') for (const p of read) indiaRead.add((p.raw as WorkdayRaw).externalPath);

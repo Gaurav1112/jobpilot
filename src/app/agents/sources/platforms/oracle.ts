@@ -25,6 +25,7 @@ import {
   type PageLedger,
   type PlatformHosts,
   type ScopeBounds,
+  listName,
 } from './shared.js';
 
 /**
@@ -483,7 +484,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
     const all: RawPosting[] = [];
     if (lists.length > 0) {
       for (const [key, sc] of lists) {
-        const name = key === 'india' ? residence.token : key;
+        const name = key === 'india' ? listName(residence) : key;
         const page1 = await nextPage(http, o.hosts, b, 0, sc.query, budget, `${what} (${name} list): page cap reached before its first page (${budget.max} list pages per company per day, discovery included)`);
         const miss = scopeMiss(page1.total, sc);
         if (miss !== null) throw scopeNotApplied(req.company, name, miss, 'Oracle');

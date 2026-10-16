@@ -23,6 +23,7 @@ import {
   type HttpTool,
   type PlatformHosts,
   type ScopeBounds,
+  listName,
 } from './shared.js';
 
 /**
@@ -589,7 +590,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: AdapterOp
     const all: RawPosting[] = [];
     if (lists.length > 0) {
       for (const [key, sc] of lists) {
-        const name = key === 'india' ? residence.token : key;
+        const name = key === 'india' ? listName(residence) : key;
         const page1 = await fetchListPage(http, o.hosts, b, api, 0, sc.query);
         const miss = scopeMiss(page1.count, sc);
         if (miss !== null) throw scopeNotApplied(req.company, name, miss, 'Eightfold');
