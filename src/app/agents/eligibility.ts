@@ -377,7 +377,7 @@ function exclusionRule(s: string, scope: ResidenceScope): string | undefined {
     for (const re of patterns) {
       for (const m of s.matchAll(re)) {
         if (!countryToken(m[1] ?? '')) continue;
-        if (inScope(scope, countriesIn(sentenceAt(s, m.index ?? 0, m[0].length), scope.table))) continue;
+        if (inScope(scope, countriesIn(sentenceAt(s, m.index ?? 0, m[0].length), scope.table, scope.country))) continue;
         if (inScope(scope, keeps ?? [placeOfToken(m[1] ?? '')])) continue;
         return id;
       }
@@ -474,7 +474,7 @@ function timezoneExcludes(head: string, scope: ResidenceScope): boolean {
  */
 function postingNamesResidence(p: Posting, countries: readonly string[], head: string, scope: ResidenceScope): boolean {
   if (namesResidenceRegion(countries, scope) || scope.nameWord.test(`${p.title}\n${p.locationText}`)) return true;
-  if (namesResidenceRegion(countriesIn(head, scope.table), scope)) return true;
+  if (namesResidenceRegion(countriesIn(head, scope.table, scope.country), scope)) return true;
   return scope.zoneWord?.test(head) === true || scope.offsetRe?.test(head) === true;
 }
 
@@ -497,8 +497,8 @@ const namesResidenceRegion = (countries: readonly string[], scope: ResidenceScop
  * says worldwide ("fully remote: work from anywhere in the world"). "A global leader", "customers worldwide" do not.
  */
 function descriptionNamesResidenceScope(description: string, scope: ResidenceScope): boolean {
-  if (namesResidenceRegion(countriesIn(description, scope.table), scope)) return true;
-  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s, scope.table).includes('worldwide'));
+  if (namesResidenceRegion(countriesIn(description, scope.table, scope.country), scope)) return true;
+  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s, scope.table, scope.country).includes('worldwide'));
 }
 /** "remote … anywhere", "work from anywhere", "worldwide, remote": the worldwide word is about the remote work itself, close to it. */
 const REMOTE_ANYWHERE =
@@ -510,7 +510,7 @@ const REMOTE_ANYWHERE =
  * places its location names in the residence's own place table ("Remote, Berlin" is Germany), sorted.
  */
 const countriesOf = (p: Posting, scope: ResidenceScope): string[] =>
-  scope.isDefault ? p.remote.countries : [...new Set([...p.remote.countries, ...countriesIn(p.locationText, scope.table)])].sort();
+  scope.isDefault ? p.remote.countries : [...new Set([...p.remote.countries, ...countriesIn(p.locationText, scope.table, scope.country)])].sort();
 
 function remoteDecision(p: Posting, pack: EligibilityPack, scope: ResidenceScope): string | 'review' | 'review-timezone' | null {
   const { structured, signals } = p.remote;
@@ -542,7 +542,7 @@ function remoteDecision(p: Posting, pack: EligibilityPack, scope: ResidenceScope
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
   if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !inScope(scope, countries)) {
-    return inScope(scope, countriesIn(p.descriptionText, scope.table)) ? 'review' : `remote-excludes-${scope.token}:country-list`;
+    return inScope(scope, countriesIn(p.descriptionText, scope.table, scope.country)) ? 'review' : `remote-excludes-${scope.token}:country-list`;
   }
   const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
   const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
@@ -662,7 +662,7 @@ function officeCityNote(p: Posting, pack: EligibilityPack, scope: ResidenceScope
   if (excludedPlaces(where, scope.table).includes(scope.country)) return null;
   const excluded = excludedParts(where, scope.table);
   const segments = where.split(LOCATION_SPLIT).filter((seg) => {
-    const places = countriesIn(seg, scope.table);
+    const places = countriesIn(seg, scope.table, scope.country);
     return places.length === 0 || places.includes(scope.country);
   });
   for (const city of cities) {

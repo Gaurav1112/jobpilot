@@ -90,7 +90,7 @@ interface PlaceScan {
  */
 const TIER_CODE = /(?<![\p{L}\p{N}])(USA|US|UK|EU)(?=\d{1,2}(?![\p{L}\p{N}]))/gu;
 
-function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES): PlaceScan {
+function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES, residence?: string): PlaceScan {
   const { subPlaces, scopedAnywhere, country: home } = tableScan(table);
   const t = text.normalize('NFKC').replace(TIER_CODE, '$1 ');
   const out: string[] = [];
@@ -124,16 +124,16 @@ function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES): PlaceScan
     for (const f of found) if (!(f.name === home && cityOnlyHome && lastCountry !== undefined && lastCountry.name !== home)) out.push(f.name);
   }
   const ex = sortedUnique(excluded);
-  return { places: withoutExcluded(out, ex), excluded: ex, excludedParts: sortedUnique(excludedParts) };
+  return { places: withoutExcluded(out, ex, residence ?? home ?? 'india'), excluded: ex, excludedParts: sortedUnique(excludedParts) };
 }
 
 /**
- * `places` minus the excluded ones. When India is excluded, `worldwide` goes too: "Anywhere except India" is not a
- * worldwide posting for someone in India.
+ * `places` minus the excluded ones. When the residence country (India by default) is excluded, `worldwide` goes too:
+ * "Anywhere except India" is not a worldwide posting for someone in India, and is still one for someone in Germany.
  */
-export function withoutExcluded(places: Iterable<string>, excluded: readonly string[]): string[] {
+export function withoutExcluded(places: Iterable<string>, excluded: readonly string[], residence = 'india'): string[] {
   const drop = new Set(excluded);
-  if (drop.has('india')) drop.add('worldwide');
+  if (drop.has(residence)) drop.add('worldwide');
   return sortedUnique([...places].filter((p) => !drop.has(p)));
 }
 
@@ -142,7 +142,7 @@ export function withoutExcluded(places: Iterable<string>, excluded: readonly str
  * A place after "except", "excluding", "outside", "not", "anywhere but" (to the end of its clause) is left out; see
  * `hasPlaceExclusion`.
  */
-export const countriesIn = (text: string, table: PlaceTable = DEFAULT_PLACES): string[] => scanPlaces(text, table).places;
+export const countriesIn = (text: string, table: PlaceTable = DEFAULT_PLACES, residence?: string): string[] => scanPlaces(text, table, residence).places;
 
 /**
  * The cities and states (parts of a country, not the country or a region) named in `text`, as written, lower-cased,

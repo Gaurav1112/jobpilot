@@ -137,3 +137,23 @@ describe('the residence code reaching the agent (Task 13 review)', () => {
     expect(reasonText('timezone-excludes-germany')).toMatch(/exclude Germany/);
   });
 });
+
+describe('a description that excludes the residence (Task 16 review)', () => {
+  it.each([
+    ['DE', 'Fully remote: work from anywhere except Germany.', 'remote-excludes-germany:country-list'],
+    ['GB', 'Remote worldwide (excluding the United Kingdom).', 'remote-excludes-united-kingdom:country-list'],
+    ['CA', 'Work from anywhere, but not Canada.', 'remote-excludes-canada:country-list'],
+    ['US', 'Fully remote: work from anywhere except the United States.', 'remote-excludes-united-states:country-list'],
+  ])('%s: "%s" is rejected, as India is for "except India"', (code, description, reason) => {
+    const p = posting({ locationText: 'Remote, Brazil', descriptionText: description, remote: { structured: 'remote', countries: ['brazil'], signals: ['location:remote'] } });
+    expect(decideEligibility(p, living(code)).reasons).toEqual([reason]);
+  });
+  it('India: the same posting shape is rejected, as before', () => {
+    const p = posting({ locationText: 'Remote, Brazil', descriptionText: 'Fully remote: work from anywhere except India.', remote: { structured: 'remote', countries: ['brazil'], signals: ['location:remote'] } });
+    expect(decideEligibility(p, living('IN')).reasons).toEqual(['remote-excludes-india:country-list']);
+  });
+  it('a worldwide description that does not exclude the residence still makes it unclear (review)', () => {
+    const p = posting({ locationText: 'Remote, Brazil', descriptionText: 'Fully remote: work from anywhere except India.', remote: { structured: 'remote', countries: ['brazil'], signals: ['location:remote'] } });
+    expect(decideEligibility(p, living('DE')).verdict).toBe('review');
+  });
+});
