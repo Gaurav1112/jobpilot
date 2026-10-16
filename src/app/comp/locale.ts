@@ -1,21 +1,23 @@
 import { isPerk, NOT_BASE, NOT_PAY, OTHER_PAY, SALARY_WORD, TOTAL_PAY } from '../agents/normalizer.js';
 import type { Posting } from '../types.js';
-import { homeCurrencyOf, isCurrencyCode, type CurrencyCode } from './currencies.js';
+import { homeCurrencyOf, isCurrencyCode, type CurrencyCode, type PayLocale } from './currencies.js';
 
 /**
  * Pay stated in a description, read in the profile's locale (profiles Task 18, Decision 9). Eligibility uses it only
  * for a profile with a `payLocale` or a home currency outside INR/USD/EUR/GBP, and only when the normalizer found no
  * comp: the default profile's path never reaches this file (`effectiveComp`).
  *
- * Linear time on any input: sentences are split by one pass over the text, each sentence is tokenised by one pass
- * over its characters, and every regex runs on a window of at most a few hundred characters around one figure (there
- * are no nested quantifiers on the text). At most `MAX_FIGURES` plausible figures are read per description.
+ * A figure is pay only when salary wording (`SALARY_CUE`) is in its sentence, near it: a currency beside a number is
+ * not enough ("Hardware im Wert von 3.000 €", "a $5k bounty"), and a wrong figure could reject a job below the floor.
+ *
+ * Linear time on any input: sentences are split by one pass over the text, only the text around digits is tokenised
+ * (one pass), at most `MAX_NUMBERS` figures are tokenised and `MAX_FIGURES` read per description, and every regex
+ * runs on a window of at most a few hundred characters around one figure (no nested quantifiers on the text).
  *
  * Pure: it imports the normalizer's pay wording, the posting type and the currency table, nothing else.
  */
 
-export const PAY_LOCALES = ['en', 'de', 'fr', 'nl', 'es', 'it', 'pl', 'sv'] as const;
-export type PayLocale = (typeof PAY_LOCALES)[number];
+export { PAY_LOCALES, type PayLocale } from './currencies.js';
 
 /** A comp read from the text: like `Posting.comp`, but in any currency. It lives only inside eligibility. */
 export interface LocalComp {
@@ -145,6 +147,11 @@ const OTHER_CODES = new Set([
 /** A letter word as a currency: its code, null for a currency without a rate here, undefined when it is not one. */
 function wordCurrency(word: string, home: CurrencyCode): CurrencyCode | null | undefined {
   if (/^[A-Z]{3}$/.test(word)) return isCurrencyCode(word) ? word : OTHER_CODES.has(word) ? null : undefined;
+  // "usd per year": a lower-case code of a currency jobpilot converts (none of them is a word in these languages)
+  if (/^[a-z]{3}$/.test(word)) {
+    const up = word.toUpperCase();
+    return isCurrencyCode(up) ? up : undefined;
+  }
   const w = word.toLowerCase();
   if (w === 'euro' || w === 'euros') return 'EUR';
   if (w === 'zł' || w === 'pln') return 'PLN';
@@ -175,7 +182,8 @@ const isSpace = (c: string | undefined): boolean => {
 
 /**
  * Sentence ranges `[start, end)`: a line break, `;`, `!`, `?` or a bullet ends one, and so does a `.` followed by
- * white space and a capital letter, unless the word before it is an abbreviation (`ca.`, `max.`, `inkl.`, `z.B.`).
+ * white space and a capital letter, unless the word before it is an abbreviation (`ca.`, `max.`, `inkl.`, `z.B.`) or
+ * a number ("13. Gehalt", "1. Januar").
  */
 function sentences(text: string): Array<[number, number]> {
   const out: Array<[number, number]> = [];
@@ -188,7 +196,7 @@ function sentences(text: string): Array<[number, number]> {
     } else if (c === '.' && isSpace(text[i + 1])) {
       let j = i + 1;
       while (isSpace(text[j])) j++;
-      if (!isUpper(text[j])) continue;
+      if (!isUpper(text[j]) || isDigit(text[i - 1])) continue;
       let b = i;
       while (b > start && i - b < 8 && (isLetter(text[b - 1]) || text[b - 1] === '.')) b--;
       if (ABBREVIATIONS.has(text.slice(b, i).replaceAll('.', '').toLowerCase())) continue;
@@ -202,7 +210,8 @@ function sentences(text: string): Array<[number, number]> {
 
 type Tok =
   | { kind: 'num'; start: number; end: number; raw: string; k: boolean; bad: boolean }
-  | { kind: 'cur'; start: number; end: number; code: CurrencyCode | null }
+  /** `bare`: a `$` with no letters before it, whose dollar is a guess (the home dollar, else USD). */
+  | { kind: 'cur'; start: number; end: number; code: CurrencyCode | null; bare: boolean }
   | { kind: 'conn'; start: number; end: number; word: string }
   | { kind: 'word'; start: number; end: number; word: string }
   | { kind: 'other'; start: number; end: number };
@@ -216,6 +225,8 @@ const DASHES = new Set(['-', '–', '—', '‒']);
 
 /** At most this many figures are tokenised per description: a description with more is adversarial, not a job. */
 const MAX_NUMBERS = 2000;
+/** Only the text this close to a digit is tokenised: a currency or range word further away cannot touch a figure. */
+const TOKEN_REACH = 64;
 
 const code0 = (s: string, i: number): number => (i < s.length ? s.charCodeAt(i) : -1);
 const digitAt = (s: string, i: number): boolean => {
@@ -238,16 +249,41 @@ const markAt = (s: string, i: number): boolean => {
   return c === 46 || c === 44 || c === 39 || c === 0x2019;
 };
 const SPACE_CODES = new Set([32, 0xa0, 0x202f, 0x2009]);
+const SIGN_AFTER_K = new Set(['€', '$', '£']);
 
 /**
- * One pass over a sentence: figures, currencies, range words, other words and other characters (a run of these is
+ * The parts of a sentence that hold digits, each widened by `TOKEN_REACH` and merged with its neighbours, so a run
+ * of currency signs or words with no digit costs one regex scan and no tokens. A part never starts inside a word or
+ * a figure (it starts after it).
+ */
+function digitParts(s: string, maxRuns: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  const re = /\d+/g;
+  let runs = 0;
+  // past `maxRuns` digit runs the figure budget is spent anyway: the rest is never tokenised
+  for (let m = re.exec(s); m !== null && runs++ < maxRuns; m = re.exec(s)) {
+    const from = Math.max(0, m.index - TOKEN_REACH);
+    const to = Math.min(s.length, m.index + m[0].length + TOKEN_REACH);
+    const last = out[out.length - 1];
+    if (last !== undefined && from <= last[1]) last[1] = Math.max(last[1], to);
+    else out.push([from, to]);
+  }
+  for (const part of out) {
+    let from = part[0];
+    while (from > 0 && from < part[1] && ((letterAt(s, from) && letterAt(s, from - 1)) || ((digitAt(s, from) || markAt(s, from)) && digitAt(s, from - 1)))) from++;
+    part[0] = from;
+  }
+  return out;
+}
+
+/**
+ * One pass over `s[from, to)`: figures, currencies, range words, other words and other characters (a run of these is
  * one token). `budget.numbers` counts down the figures left for the description; at zero the pass stops.
  */
-function tokenise(s: string, home: CurrencyCode, spaces: boolean, budget: { numbers: number }): Tok[] {
+function tokenise(s: string, from: number, to: number, home: CurrencyCode, spaces: boolean, budget: { numbers: number }): Tok[] {
   const toks: Tok[] = [];
-  const n = s.length;
-  let i = 0;
-  while (i < n) {
+  let i = from;
+  while (i < to) {
     if (spaceAt(s, i)) {
       i++;
     } else if (digitAt(s, i)) {
@@ -265,7 +301,13 @@ function tokenise(s: string, home: CurrencyCode, spaces: boolean, budget: { numb
         k = true;
         j++;
       }
-      const raw = s.slice(i, j);
+      let raw = s.slice(i, j);
+      // French "45 k€": a spaced k right before a currency sign
+      if (!k && SPACE_CODES.has(code0(s, j)) && (s[j + 1] === 'k' || s[j + 1] === 'K') && SIGN_AFTER_K.has(s[j + 2] as string)) {
+        k = true;
+        raw = `${raw}k`;
+        j += 2;
+      }
       // "60.000,- €", "CHF 120'000.–": a dash after the mark means no cents
       if ((s[j] === ',' || s[j] === '.') && (s[j + 1] === '-' || s[j + 1] === '–') && !digitAt(s, j + 2)) j += s[j + 2] === '-' ? 3 : 2;
       const prev = toks[toks.length - 1];
@@ -279,12 +321,12 @@ function tokenise(s: string, home: CurrencyCode, spaces: boolean, budget: { numb
       const word = s.slice(i, j);
       const prev = toks[toks.length - 1];
       if (s[j] === '$') {
-        toks.push({ kind: 'cur', start: i, end: j + 1, code: word.length <= 3 ? DOLLAR_PREFIX[word.toUpperCase()] ?? null : null });
+        toks.push({ kind: 'cur', start: i, end: j + 1, code: word.length <= 3 ? DOLLAR_PREFIX[word.toUpperCase()] ?? null : null, bare: false });
         j++;
       } else {
         const code = wordCurrency(word, home);
         const lower = word.toLowerCase();
-        if (code !== undefined) toks.push({ kind: 'cur', start: i, end: j, code });
+        if (code !== undefined) toks.push({ kind: 'cur', start: i, end: j, code, bare: false });
         else if (RANGE_WORDS.has(lower) || AND_WORDS.has(lower)) toks.push({ kind: 'conn', start: i, end: j, word: lower });
         else toks.push({ kind: 'word', start: i, end: j, word: lower });
         // "60000kg", "3rd": a figure glued to a word that is not a currency is not a figure
@@ -294,9 +336,9 @@ function tokenise(s: string, home: CurrencyCode, spaces: boolean, budget: { numb
     } else {
       const c = s[i] as string;
       const prev = toks[toks.length - 1];
-      if (c === '$') toks.push({ kind: 'cur', start: i, end: i + 1, code: DOLLAR_HOMES.has(home) ? home : 'USD' });
-      else if (SYMBOLS[c] !== undefined) toks.push({ kind: 'cur', start: i, end: i + 1, code: SYMBOLS[c] as CurrencyCode });
-      else if (OTHER_SYMBOLS.has(c)) toks.push({ kind: 'cur', start: i, end: i + 1, code: null });
+      if (c === '$') toks.push({ kind: 'cur', start: i, end: i + 1, code: DOLLAR_HOMES.has(home) ? home : 'USD', bare: true });
+      else if (SYMBOLS[c] !== undefined) toks.push({ kind: 'cur', start: i, end: i + 1, code: SYMBOLS[c] as CurrencyCode, bare: false });
+      else if (OTHER_SYMBOLS.has(c)) toks.push({ kind: 'cur', start: i, end: i + 1, code: null, bare: false });
       else if (DASHES.has(c)) toks.push({ kind: 'conn', start: i, end: i + 1, word: '-' });
       else if (prev?.kind === 'other' && prev.end === i) prev.end = i + 1;
       else toks.push({ kind: 'other', start: i, end: i + 1 });
@@ -311,14 +353,46 @@ function tokenise(s: string, home: CurrencyCode, spaces: boolean, budget: { numb
 // ---------------------------------------------------------------------------
 
 const word = (alts: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alts})(?![\\p{L}])`, 'iu');
+/** Starts a word (German and Dutch compounds go on after it: "Gehaltsband", "Bruttojahresgehalt" needs `sub`). */
+const prefix = (alts: string): RegExp => new RegExp(`(?<![\\p{L}\\p{N}])(?:${alts})`, 'iu');
 const sub = (alts: string): RegExp => new RegExp(`(?:${alts})`, 'iu');
 
-/** Salary words beyond the normalizer's English ones: a sentence with one states salary even beside a component. */
-const LOCAL_SALARY = sub('gehalt|gehält|lohn|löhne|salaire|salario|salarios|sueldo|retribuci[oó]n|stipendio|retribuzione|salaris|wynagrodzeni|pensja|lön|løn|lønn|remunera');
-const LOCAL_SALARY_WORD = word('ral|ctc');
+/**
+ * Salary cues per language: a figure is pay only with one of these in its sentence (within `CONTEXT` characters).
+ * They are applied together, whatever the profile's locale, because a posting's language need not be the profile's
+ * (a German profile reads English postings; a Spanish-grouping profile reads Portuguese ones). Each list is written
+ * so it is not an ordinary word in the others. Not cues: period words alone ("per year", "pro Jahr", "par an": a
+ * licence also costs that much a year), "rate", "budget", "value".
+ */
+const SALARY_CUES: Readonly<Record<string, RegExp>> = {
+  // salary, base (pay/salary), pay range, compensation, remuneration, wage(s), OTE, on-target earnings, CTC, LPA, per annum
+  en: word('salary|salaries|base|base pay|pay|pay range|compensation|remuneration|wages?|ote|on[- ]target earnings|ctc|lpa|per annum'),
+  // Gehalt and every compound (Jahresgehalt, Bruttogehalt, Grundgehalt, Zielgehalt, Gehaltsband), Gehälter, Vergütung, Lohn, brutto
+  de: sub('gehalt|gehält|vergütung|verguetung|lohn|löhne|brutto'),
+  // salaire, rémunération, brut (annuel), fixe, package salarial
+  fr: prefix('salaire|salari|r[ée]mun[ée]ration|brut|fixe annuel'),
+  // salaris (jaar-/maandsalaris), bruto, loon, beloning
+  nl: sub('salaris|bruto|beloning|(?<![\\p{L}])loon'),
+  // salario, sueldo, remuneración, retribución, bruto(s)
+  es: prefix('salario|sueldo|remuneraci[oó]n|retribuci[oó]n|brutos?|banda salarial'),
+  // salário, remuneração, bruto, ordenado
+  pt: prefix('sal[aá]rio|remunera[cç][aã]o|ordenado'),
+  // stipendio, retribuzione, RAL, lordo/lordi, compenso
+  it: prefix('stipendi|retribuzione|lord[oi]|compenso|ral(?![\\p{L}])'),
+  // wynagrodzenie, pensja, brutto, płaca, widełki
+  pl: prefix('wynagrodzeni|pensj|płac|widełki'),
+  // lön (månadslön, årslön, grundlön), løn/lønn (da, no)
+  sv: sub('lön|løn'),
+};
+const hasSalaryCue = (w: string): boolean => Object.values(SALARY_CUES).some((re) => re.test(w));
+
 /** Pay components that are not salary (the normalizer's `OTHER_PAY` in the profile languages). */
 const LOCAL_OTHER = sub('prämie|praemie|urlaubsgeld|weihnachtsgeld|provision|tantieme|aktien|mitarbeiterbeteiligung|zulage|intéressement|commissione|comisi[oó]n|prowizj|premia|provisie|aandelen|optionen|bonusy|bonussen');
-const LOCAL_OTHER_WORD = word('primes?|primas?|premi|premio|13e mois|14\\. gehalt');
+const LOCAL_OTHER_WORD = word('primes?|primas?|premi|premio');
+/** A 13th or 14th month, Christmas or holiday pay: an extra payment, never the base, even beside "Gehalt". */
+const EXTRA_SALARY = sub(
+  '(?<!\\d)1[34]\\.\\s*(?:monats)?gehalt|(?<!\\d)1[34](?:th|e|ème|°|\\.)?\\s*(?:month|mois|monatsgehalt|mensilit)|thirteenth|fourteenth|dertiende maand|tredicesima|quattordicesima|decimotercera|paga extra|trzynastk|weihnachtsgeld|urlaubsgeld',
+);
 /**
  * The normalizer's `OTHER_PAY` without its Indian short forms (HRA, PF, EPF, ESIC, DA, LTA, gratuity, flexi): outside
  * `en` they are ordinary words ("da 38.000 €" is Italian for "from").
@@ -326,14 +400,38 @@ const LOCAL_OTHER_WORD = word('primes?|primas?|premi|premio|13e mois|14\\. gehal
 const OTHER_PAY_INTL = word('equity|rsus?|stocks?|options|esops?|shares|bonus(?:es)?|commissions?|joining|sign[- ]on|relocation|stipend|allowances?|referral|reimburse\\p{L}*|perks?|insurance|meal|variable|incentives?');
 /** Total-type pay: never base, so the basis is unknown. */
 const LOCAL_TOTAL = sub('zielgehalt|zieleinkommen|gesamtvergütung|gesamtpaket|gesamtjahres|rémunération totale|rémunération globale|package|paquete|pacchetto|totaalpakket|retribución total|retribuzione totale');
-/** Money that is not pay (revenue, funding, valuation) in the profile languages; headcounts carry no currency. */
-const LOCAL_NOT_PAY = sub('umsatz|finanzierung|investition|bewertung|chiffre d|levée de fonds|facturaci|financiaci|fatturato|omzet|przychod|omsättning|startkapital|risikokapital');
-/** Perks and benefit budgets in the profile languages, plus retirement matching. */
-const LOCAL_PERK = sub('weiterbildung|fortbildung|schulung|budget|zuschuss|jobrad|jobticket|deutschlandticket|fitness|gutschein|umzug|401\\s*\\(k\\)|matching|homeoffice|home-office|formation continue|plan de formation|mutuelle|tickets? restaurant|télétravail|formación|formazione|buoni pasto|welfare|opleiding|reiskosten|szkoleni|multisport|friskvård|utbildning|kursus|tagegeld|spesen');
+/** Money that is not pay (revenue, funding, valuation, costs, prices, donations, savings) in the profile languages. */
+const LOCAL_NOT_PAY = sub(
+  'umsatz|finanzierung|investition|bewertung|kosten|preis|etat|spende|spenden|sparen|chiffre d|levée de fonds|facturaci|financiaci|fatturato|omzet|przychod|omsättning|startkapital|risikokapital|coût|prix|precio|coste|costo|prezzo|prijs',
+);
+/** The same in English, as whole words ("fund" is not "fundamentals"). */
+const NOT_PAY_EN = word('bount(?:y|ies)|prizes?|awards?|funds?|spend|spends|spent|spending|costs?|price|pricing|donat\\p{L}*');
+/** Perks, equipment and benefit budgets in the profile languages, plus retirement matching. */
+const LOCAL_PERK = sub(
+  'weiterbildung|fortbildung|schulung|budget|zuschuss|jobrad|jobticket|deutschlandticket|fitness|gutschein|umzug|401\\s*\\(k\\)|matching|homeoffice|home-office|formation continue|plan de formation|mutuelle|tickets? restaurant|télétravail|formación|formazione|buoni pasto|welfare|opleiding|reiskosten|szkoleni|multisport|friskvård|utbildning|kursus|tagegeld|spesen|erstattung|ausgleich|laptop|notebook|firmenwagen|dienstwagen|im wert von|valeur|ordinateur|portable|waarde|portátil|valorad|valore|portatile|lunch|worth|value of|valued at',
+);
+
+/**
+ * The clause of a figure inside its sentence, for the vetoes: it ends at ", ", "|", "·", "(", ")", "+" or a bullet,
+ * at most `CONTEXT` characters away. "Base salary: $120,000, health insurance, $2,000 learning stipend": the stipend
+ * vetoes only its own figure.
+ */
+function clauseOf(s: string, start: number, end: number): string {
+  const isEdge = (i: number): boolean => {
+    const c = s[i];
+    return c === '|' || c === '·' || c === '(' || c === ')' || c === '+' || (c === ',' && isSpace(s[i + 1]));
+  };
+  let a = start;
+  while (a > 0 && start - a < CONTEXT && !isEdge(a - 1)) a--;
+  let b = end;
+  while (b < s.length && b - end < CONTEXT && !isEdge(b)) b++;
+  return s.slice(a, b);
+}
 
 /** Period words, by kind: hour, day and week cannot be annualised honestly; month is twelve; year is one. */
 const PERIOD = new RegExp(
-  `(?<![\\p{L}])(?:${[
+  // a word form may not start inside a word; a "/" form may follow anything ("brutto/Monat", "USD/month")
+  `(?:(?<![\\p{L}])|(?=/))(?:${[
     // hour
     '(?<hour>per hour|an hour|/\\s*h(?:ou)?r?|hourly|stündlich|pro stunde|die stunde|/\\s*std\\.?|\\p{L}*stunden(?:lohn|satz)\\p{L}*|par heure|de l[\'’]heure|/\\s*heure|per uur|/\\s*uur|uurloon|por hora|/\\s*hora|all[\'’]ora|orari[ao]|za godzinę|/\\s*godz\\.?|na godzinę|per timme|/\\s*tim|i timmen|timlön|i timen|pr\\.? time)',
     // day
@@ -341,9 +439,9 @@ const PERIOD = new RegExp(
     // week
     '(?<week>per week|a week|/\\s*w(?:ee)?k|weekly|pro woche|/\\s*woche|wöchentlich|par semaine|/\\s*semaine|hebdomadaire|por semana|/\\s*semana|a settimana|settimanal[ei]|tygodniowo|/\\s*tydz\\.?|i veckan|per vecka|om ugen)',
     // month
-    '(?<month>per month|a month|/\\s*mo(?:nth)?|/\\s*mth|monthly|p\\.\\s?m\\.|pro monat|/\\s*monat|monatlich|im monat|\\p{L}*monats(?:gehalt|lohn|brutto)\\p{L}*|par mois|/\\s*mois|mensu\\p{L}*|per maand|/\\s*maand|maandelijks|maandsalaris|bruto per maand|por mes|/\\s*mes|al mes|mensual\\p{L}*|al mese|/\\s*mese|mensil\\p{L}*|miesięcznie|/\\s*mies\\.?|na miesiąc|per månad|/\\s*mån|i månaden|månadslön|om måneden|pr\\.? måned|per måned|i måneden|/\\s*md|por mês|/\\s*mês|mensal)',
+    '(?<month>per month|a month|/\\s*mo(?:nth)?|/\\s*mth|monthly|p\\.\\s?m\\.|pro monat|/\\s*monat|monatlich|im monat|\\p{L}*monats(?:gehalt|gehält|lohn|brutto)\\p{L}*|par mois|/\\s*mois|mensu\\p{L}*|per maand|/\\s*maand|maandelijks|maandsalaris|bruto per maand|por mes|/\\s*mes|al mes|mensual\\p{L}*|al mese|/\\s*mese|mensil\\p{L}*|miesięcznie|/\\s*mies\\.?|na miesiąc|per månad|/\\s*mån|i månaden|månadslön|om måneden|pr\\.? måned|per måned|i måneden|/\\s*md|por mês|/\\s*mês|mensal|mensais)',
     // year
-    '(?<year>per year|a year|/\\s*y(?:ea)?r|annual\\p{L}*|yearly|p\\.\\s?a\\.|per annum|pro jahr|/\\s*jahr|jährlich|im jahr|\\p{L}*jahres(?:gehalt|lohn|brutto)\\p{L}*|par an|/\\s*an|annuel\\p{L}*|per jaar|/\\s*jaar|jaarlijks|jaarsalaris|por año|/\\s*año|al año|anual\\p{L}*|all[\'’]anno|/\\s*anno|annu[ioa]|lordi annui|rocznie|/\\s*rok|na rok|per år|/\\s*år|om året|årlig\\p{L}*|årslön|por ano|/\\s*ano)',
+    '(?<year>per year|a year|/\\s*y(?:ea)?r|annual\\p{L}*|yearly|p\\.\\s?a\\.|per annum|pro jahr|/\\s*jahr|jährlich|im jahr|\\p{L}*jahres(?:gehalt|lohn|brutto)\\p{L}*|par an|/\\s*an|annuel\\p{L}*|per jaar|/\\s*jaar|jaarlijks|jaarsalaris|por año|/\\s*año|al año|anual\\p{L}*|all[\'’]anno|/\\s*anno|annu[ioa]|lordi annui|rocznie|/\\s*rok|na rok|per år|/\\s*år|om året|årlig\\p{L}*|årslön|por ano|/\\s*ano|anuais)',
   ].join('|')})(?![\\p{L}])`,
   'giu',
 );
@@ -378,6 +476,8 @@ const MAX_FIGURES = 64;
 /** The normalizer's INR bounds of a yearly salary. */
 const INR_MIN = 100_000;
 const INR_MAX = 100_000_000;
+/** Two figures whose ratio is above this are not one range ("13 Monatsgehälter à 5.000 €"). */
+const MAX_RANGE_RATIO = 20;
 
 interface Piece {
   first: number;
@@ -385,6 +485,7 @@ interface Piece {
   value: number | null;
   k: boolean;
   code: CurrencyCode | null | undefined;
+  bare: boolean;
 }
 
 interface Figure {
@@ -395,8 +496,27 @@ interface Figure {
   code: CurrencyCode | null;
 }
 
-/** The figures of one sentence: single amounts and ranges, each with its currency (null when it has no rate here). */
-function figuresOf(toks: readonly Tok[], locale: PayLocale): Figure[] {
+/**
+ * The currency code written beside a figure whose sign is a bare `$` (I2: "$90,000 - $110,000 USD", "USD $95,000"):
+ * the code wins; two codes ("CAD/USD") leave no currency; none keeps the sign's guess.
+ */
+function explicitCode(s: string, toks: readonly Tok[], first: number, last: number, guess: CurrencyCode | null): CurrencyCode | null {
+  const isCode = (t: Tok | undefined): t is Extract<Tok, { kind: 'cur' }> => t?.kind === 'cur' && !t.bare && t.code !== null;
+  const after = toks[last + 1];
+  const lastTok = toks[last] as Tok;
+  if (isCode(after) && after.start - lastTok.end <= 2) {
+    const slash = toks[last + 2];
+    if (slash?.kind === 'other' && s.slice(slash.start, slash.end) === '/' && toks[last + 3]?.kind === 'cur') return null;
+    return after.code;
+  }
+  const before = toks[first - 1];
+  const firstTok = toks[first] as Tok;
+  if (isCode(before) && firstTok.start - before.end <= 2) return before.code;
+  return guess;
+}
+
+/** The figures of tokens `toks` of `s`: single amounts and ranges, each with its currency (null when it has no rate here). */
+function figuresOf(s: string, toks: readonly Tok[], locale: PayLocale): Figure[] {
   const pieces: Piece[] = [];
   const used = new Set<number>();
   for (let i = 0; i < toks.length; i++) {
@@ -408,29 +528,36 @@ function figuresOf(toks: readonly Tok[], locale: PayLocale): Figure[] {
     const suffix = prefix === undefined && after?.kind === 'cur' && after.start - t.end <= 2 ? after : undefined;
     if (suffix !== undefined) used.add(i + 1);
     const value = t.bad ? null : readNumber(t.raw, locale);
-    pieces.push({ first: prefix === undefined ? i : i - 1, last: suffix === undefined ? i : i + 1, value, k: t.k, code: (prefix ?? suffix)?.code });
+    const sign = prefix ?? suffix;
+    pieces.push({ first: prefix === undefined ? i : i - 1, last: suffix === undefined ? i : i + 1, value, k: t.k, code: sign?.code, bare: sign?.bare === true });
   }
   const out: Figure[] = [];
+  const push = (a: Piece, b: Piece, min: number, max: number, code: CurrencyCode | null): void => {
+    const bare = a.bare || b.bare;
+    out.push({ start: (toks[a.first] as Tok).start, end: (toks[b.last] as Tok).end, min, max, code: bare ? explicitCode(s, toks, a.first, b.last, code) : code });
+  };
   for (let p = 0; p < pieces.length; p++) {
     const a = pieces[p] as Piece;
     const b = pieces[p + 1];
     const between = b !== undefined && b.first === a.last + 2 ? toks[a.last + 1] : undefined;
     const lead = toks[a.first - 1];
     const joins = between?.kind === 'conn' && (between.word === '-' || RANGE_WORDS.has(between.word) || (AND_WORDS.has(between.word) && lead?.kind === 'word' && BETWEEN_WORDS.has(lead.word)));
-    if (b !== undefined && joins) {
-      p++;
-      if (a.value === null || b.value === null) continue;
-      if (a.code !== undefined && b.code !== undefined && a.code !== b.code) continue;
-      const code = a.code !== undefined ? a.code : b.code;
-      if (code === undefined) continue;
+    if (b !== undefined && joins && a.value !== null && b.value !== null) {
       // "€60-75k": the k of one bound applies to a bare bound below a thousand
       const lo = b.k && !a.k && a.value < 1000 ? a.value * 1000 : a.value;
       const hi = a.k && !b.k && b.value < 1000 ? b.value * 1000 : b.value;
+      // "13 Monatsgehälter à 5.000 €": bounds this far apart are not one range; the second is read on its own
+      if (lo > 0 && hi / lo > MAX_RANGE_RATIO) continue;
+      p++;
+      if (a.code !== undefined && b.code !== undefined && a.code !== b.code) continue;
+      const code = a.code !== undefined ? a.code : b.code;
       // an inverted range is not read at all
-      if (lo > hi) continue;
-      out.push({ start: (toks[a.first] as Tok).start, end: (toks[b.last] as Tok).end, min: lo, max: hi, code });
+      if (code === undefined || lo > hi) continue;
+      push(a, b, lo, hi, code);
+    } else if (b !== undefined && joins) {
+      p++;
     } else if (a.value !== null && a.code !== undefined) {
-      out.push({ start: (toks[a.first] as Tok).start, end: (toks[a.last] as Tok).end, min: a.value, max: a.value, code: a.code });
+      push(a, a, a.value, a.value, a.code);
     }
   }
   return out;
@@ -445,21 +572,30 @@ interface Read {
 
 /**
  * The yearly pay stated in `text`, read in `o.locale`, or null. Each figure needs a currency beside it (a sign or a
- * code); a range shares one. A figure per hour, day or week is not read; per month is twelve times. A sentence about
- * money that is not pay (funding, headcount, a perk or budget) or that names only a pay component (bonus, equity) is
- * not read. "up to" keeps only the max, "from" only the min. Every bound must lie within ₹1 lakh to ₹10 crore a year
- * at the pack's rate, and the currency must have one. Several figures: base ones win, then the home currency's, and
- * the rest must share one currency; their union is the comp, as the normalizer's.
+ * code; an explicit code wins over a bare `$`) and salary wording in its sentence (`SALARY_CUES`); a range shares one
+ * currency. A figure per hour, day or week is not read; per month is twelve times. A figure whose clause is about
+ * money that is not pay (funding, costs, prices, a perk, equipment or budget), names only a pay component (bonus,
+ * equity) or is a 13th-month payment is not read. "up to" keeps only the max, "from" only the min. Every bound must
+ * lie within ₹1 lakh to ₹10 crore a year at the pack's rate, and the currency must have one. Several figures: base
+ * ones win, then the home currency's, and the rest must share one currency; their union is the comp, as the
+ * normalizer's.
  */
 export function parsePay(text: string, o: PayOptions): LocalComp | null {
   const { spaces } = GROUPING[o.locale];
   const reads: Read[] = [];
   const budget = { numbers: MAX_NUMBERS };
+  const digit = /\d/g;
+  let nextDigit = -1;
   for (const [a, b] of sentences(text)) {
     if (reads.length >= MAX_FIGURES || budget.numbers <= 0) break;
+    // a sentence with no digit is skipped without being copied
+    if (nextDigit < a) {
+      digit.lastIndex = a;
+      nextDigit = digit.exec(text)?.index ?? text.length;
+    }
+    if (nextDigit >= b) continue;
     const s = text.slice(a, b);
-    if (!/\d/.test(s)) continue;
-    const figures = figuresOf(tokenise(s, o.home, spaces, budget), o.locale);
+    const figures = digitParts(s, budget.numbers).flatMap(([from, to]) => figuresOf(s, tokenise(s, from, to, o.home, spaces, budget), o.locale));
     for (let f = 0; f < figures.length && reads.length < MAX_FIGURES; f++) {
       const g = figures[f] as Figure;
       if (g.code === null) continue;
@@ -467,6 +603,8 @@ export function parsePay(text: string, o: PayOptions): LocalComp | null {
       if (rate === undefined) continue;
       // cheap first: not plausible a year even as a month's pay, or too much even as a year's
       if (g.max * 12 * rate < INR_MIN || g.min * rate > INR_MAX) continue;
+      const w = s.slice(Math.max(0, g.start - CONTEXT), Math.min(s.length, g.end + CONTEXT));
+      if (!hasSalaryCue(w)) continue;
       const prevEnd = f > 0 ? (figures[f - 1] as Figure).end : 0;
       const nextStart = f + 1 < figures.length ? (figures[f + 1] as Figure).start : s.length;
       const before = s.slice(Math.max(prevEnd, g.start - NEAR), g.start);
@@ -477,11 +615,11 @@ export function parsePay(text: string, o: PayOptions): LocalComp | null {
       let min: number | null = g.min * perYear;
       let max: number | null = g.max * perYear;
       if (![min, max].every((v) => v * rate >= INR_MIN && v * rate <= INR_MAX)) continue;
-      const w = s.slice(Math.max(0, g.start - CONTEXT), Math.min(s.length, g.end + CONTEXT));
-      if (NOT_PAY.test(w) || LOCAL_NOT_PAY.test(w) || isPerk(w) || LOCAL_PERK.test(w)) continue;
-      const other = (o.locale === 'en' ? OTHER_PAY : OTHER_PAY_INTL).test(w) || LOCAL_OTHER.test(w) || LOCAL_OTHER_WORD.test(w);
-      const salary = SALARY_WORD.test(w) || LOCAL_SALARY.test(w) || LOCAL_SALARY_WORD.test(w);
-      const total = TOTAL_PAY.test(w) || LOCAL_TOTAL.test(w);
+      const clause = clauseOf(s, g.start, g.end);
+      if (NOT_PAY.test(clause) || LOCAL_NOT_PAY.test(clause) || NOT_PAY_EN.test(clause) || isPerk(clause) || LOCAL_PERK.test(clause) || EXTRA_SALARY.test(clause)) continue;
+      const other = (o.locale === 'en' ? OTHER_PAY : OTHER_PAY_INTL).test(clause) || LOCAL_OTHER.test(clause) || LOCAL_OTHER_WORD.test(clause);
+      const salary = SALARY_WORD.test(clause) || hasSalaryCue(clause);
+      const total = TOTAL_PAY.test(clause) || LOCAL_TOTAL.test(clause);
       if (total && other) continue;
       if (other && !salary && !total) continue;
       if (g.min === g.max) {
@@ -491,7 +629,7 @@ export function parsePay(text: string, o: PayOptions): LocalComp | null {
         if (up) min = null;
         if (from) max = null;
       }
-      reads.push({ min, max, currency: g.code, base: !total && !NOT_BASE.test(w) });
+      reads.push({ min, max, currency: g.code, base: !total && !TOTAL_PAY.test(w) && !LOCAL_TOTAL.test(w) && !NOT_BASE.test(w) });
     }
   }
   const base = reads.filter((r) => r.base);

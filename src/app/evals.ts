@@ -20,8 +20,8 @@ import { detectorEgressSets, makePlatformDetector, platformDetectorContract } fr
 import { memoryHostStateStore } from './coverage/gate.js';
 import { freehireRowClassifier } from './coverage/freehire-api.js';
 import { companyNameMatcher } from './coverage/names.js';
-import { CURRENCY_CODES } from './comp/currencies.js';
-import { PAY_LOCALES, parsePay } from './comp/locale.js';
+import { CURRENCY_CODES, PAY_LOCALES } from './comp/currencies.js';
+import { parsePay } from './comp/locale.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
 import { gigRisk } from './freelance/gig-risk.js';

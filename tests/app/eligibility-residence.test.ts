@@ -176,3 +176,55 @@ describe('pay stated in the profile\'s locale (Task 18)', () => {
     expect(d.notes).toContain('pay not disclosed');
   });
 });
+
+describe('pay in the profile\'s locale end to end (Task 18 fix round 1)', () => {
+  const floorOf = (amount: number, currency: string) => ({ floor: { amount, currency, period: 'year' as const, basis: 'base' as const } });
+  const profile = (code: string, payLocale: 'de' | 'en' | 'fr' | 'nl' | 'es' | 'it', amount: number, currency: string) => ({
+    ...living(code),
+    offers: { ...floorOf(amount, currency), payLocale },
+    fx: { ...pub.fx, toINR: { ...pub.fx.toINR, CAD: 61.2 } },
+  });
+  const job = (descriptionText: string) => posting({ descriptionText });
+  // every C1 figure, inside a benefits list, on a profile whose floor is far above it (fictional values)
+  it.each([
+    ['DE', 'de', 'Hardware im Wert von 3.000 €'],
+    ['DE', 'de', 'Firmenwagen im Wert von 45.000 €'],
+    ['DE', 'de', 'Empfehlungsbonus: 2.000 €'],
+    ['DE', 'de', 'Inflationsausgleich 3.000 €'],
+    ['DE', 'de', 'Lizenzkosten 20.000 € pro Jahr'],
+    ['DE', 'de', 'Marketingetat 500.000 €'],
+    ['DE', 'de', 'Wir spenden 10.000 € im Jahr.'],
+    ['DE', 'de', 'Preis der Lizenz: 9.900 €'],
+    ['DE', 'de', 'Unsere Kunden sparen bis zu 120.000 €.'],
+    ['DE', 'de', 'Fahrtkostenerstattung bis 150 € monatlich'],
+    ['FR', 'fr', "Ordinateur portable d'une valeur de 2 500 €"],
+    ['NL', 'nl', 'Laptop ter waarde van € 2.500'],
+    ['ES', 'es', 'Portátil valorado en 2.500 €'],
+    ['IT', 'it', 'Laptop del valore di 2.500 €'],
+  ] as const)('%s %s: "%s" is not pay', (code, locale, line) => {
+    const d = decideEligibility(job(`Wir bieten:\n- 30 Tage Urlaub\n- ${line}\n- Teamevents`), profile(code, locale, 60000, 'EUR'));
+    expect(d.reasons.filter((r) => r.startsWith('below-floor'))).toEqual([]);
+    expect(d.notes).toContain('pay not disclosed');
+  });
+  it.each([
+    'There is a $5k bounty for a working port.',
+    '$4000/month for the team lunch fund',
+    'We spend $250,000 on cloud every year.',
+    'The winner gets a $10,000 prize.',
+    'Our product costs $12,000 a year.',
+  ])('CA en: "%s" is not pay', (line) => {
+    const d = decideEligibility(job(`Perks:\n${line}`), profile('CA', 'en', 150000, 'CAD'));
+    expect(d.reasons.filter((r) => r.startsWith('below-floor'))).toEqual([]);
+    expect(d.notes).toContain('pay not disclosed');
+  });
+  it('a perk line beside the real salary neither rejects nor hides it', () => {
+    const d = decideEligibility(job('Gehalt: 70.000 € brutto pro Jahr.\nHardware im Wert von 3.000 €'), profile('DE', 'de', 60000, 'EUR'));
+    expect(d.reasons.filter((r) => r.startsWith('below-floor'))).toEqual([]);
+    expect(d.notes).not.toContain('pay not disclosed');
+  });
+  it('I1: monthly pay after "brutto/" is monthly, so 54,000 a year clears a 50,000 floor', () => {
+    const d = decideEligibility(job('Gehalt 4.500 € brutto/Monat'), profile('DE', 'de', 50000, 'EUR'));
+    expect(d.reasons.filter((r) => r.startsWith('below-floor'))).toEqual([]);
+    expect(d.notes).not.toContain('pay not disclosed');
+  });
+});

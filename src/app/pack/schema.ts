@@ -1,7 +1,6 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
-import { CURRENCY_CODES, isCurrencyCode } from '../comp/currencies.js';
-import { PAY_LOCALES } from '../comp/locale.js';
+import { CURRENCY_CODES, isCurrencyCode, PAY_LOCALES } from '../comp/currencies.js';
 import { countryOfCode } from '../text/norm.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';

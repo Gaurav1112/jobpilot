@@ -32,3 +32,10 @@ export function pivotToHome(inr: number, home: CurrencyCode, fx: { toINR: Readon
   if (rate === undefined) throw new Error(`fx.yaml has no toINR rate for ${home}`);
   return Math.round(inr / rate);
 }
+
+/**
+ * How a profile's postings write pay (profiles Task 18): `offers.payLocale`, read by `comp/locale.ts`. Here, in this
+ * import-free module, so the pack schema can name them without importing the pay reader (which imports the normalizer).
+ */
+export const PAY_LOCALES = ['en', 'de', 'fr', 'nl', 'es', 'it', 'pl', 'sv'] as const;
+export type PayLocale = (typeof PAY_LOCALES)[number];
