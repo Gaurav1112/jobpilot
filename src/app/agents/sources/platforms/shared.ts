@@ -141,7 +141,16 @@ export type TitlePack = z.infer<typeof TitlePack>;
  * default `IN`. A code `norm.ts` does not know is `invalid_output` naming the adapter.
  */
 export function residenceOf(pack: TitlePack, agent: string): ResidenceScope {
-  const code = (pack.eligibility?.residence ?? 'IN').toUpperCase();
+  return residenceOfCode(pack.eligibility?.residence, agent);
+}
+
+/**
+ * The residence scope of a code (absent: `IN`), upper-cased; `invalid_output` naming the agent for a code `norm.ts`
+ * does not know. `residenceOf` reads it from the pack; the feeds read it from the seed (`DiscoveryRequest.residence`,
+ * profiles Task 15).
+ */
+export function residenceOfCode(residence: string | undefined, agent: string): ResidenceScope {
+  const code = (residence ?? 'IN').toUpperCase();
   try {
     return residenceScope(code);
   } catch {

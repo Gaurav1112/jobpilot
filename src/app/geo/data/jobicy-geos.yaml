@@ -1,0 +1,67 @@
+# Jobicy's `geo` slugs per residence (profiles Task 15): the src-jobicy agent asks each slug in this order, a job
+# found under two slugs kept once (the first). Every slug is one Jobicy lists at /api/v2/remote-jobs?get=locations
+# (recorded 2026-10-16 in tests/fixtures/sources/jobicy-locations.json; a test checks every slug against it).
+# Jobicy has no India slug and no North America slug. Order: the country's own slug, its regions' slugs (in
+# regions.yaml order), then anywhere.
+# Edit here, then run `node --run geo:gen` (a drift test checks data.generated.ts agrees).
+
+# ISO 3166 alpha-2 code -> its slugs. IN is today's JOBICY_GEOS, in that order.
+countries:
+  IN: [apac, anywhere]
+  AE: [united-arab-emirates, emea, anywhere]
+  AR: [argentina, latam, anywhere]
+  AT: [austria, europe, emea, anywhere]
+  AU: [australia, apac, anywhere]
+  BE: [belgium, europe, emea, anywhere]
+  BG: [bulgaria, europe, emea, anywhere]
+  BR: [brazil, latam, anywhere]
+  CA: [canada, anywhere]
+  CH: [switzerland, europe, emea, anywhere]
+  CN: [china, apac, anywhere]
+  CR: [costa-rica, latam, anywhere]
+  CY: [cyprus, europe, emea, anywhere]
+  CZ: [czechia, europe, emea, anywhere]
+  DE: [germany, europe, emea, anywhere]
+  DK: [denmark, europe, emea, anywhere]
+  EE: [estonia, europe, emea, anywhere]
+  ES: [spain, europe, emea, anywhere]
+  FI: [finland, europe, emea, anywhere]
+  FR: [france, europe, emea, anywhere]
+  GB: [uk, europe, emea, anywhere]
+  GR: [greece, europe, emea, anywhere]
+  HK: [hong-kong, apac, anywhere]
+  HR: [croatia, europe, emea, anywhere]
+  HU: [hungary, europe, emea, anywhere]
+  IE: [ireland, europe, emea, anywhere]
+  IL: [israel, emea, anywhere]
+  IT: [italy, europe, emea, anywhere]
+  JP: [japan, apac, anywhere]
+  KR: [south-korea, apac, anywhere]
+  LT: [lithuania, europe, emea, anywhere]
+  LV: [latvia, europe, emea, anywhere]
+  MX: [mexico, latam, anywhere]
+  MY: [malaysia, apac, anywhere]
+  NL: [netherlands, europe, emea, anywhere]
+  NO: [norway, europe, emea, anywhere]
+  NZ: [new-zealand, apac, anywhere]
+  PH: [philippines, apac, anywhere]
+  PL: [poland, europe, emea, anywhere]
+  PT: [portugal, europe, emea, anywhere]
+  RO: [romania, europe, emea, anywhere]
+  RS: [serbia, europe, emea, anywhere]
+  SE: [sweden, europe, emea, anywhere]
+  SG: [singapore, apac, anywhere]
+  SI: [slovenia, europe, emea, anywhere]
+  SK: [slovakia, europe, emea, anywhere]
+  TH: [thailand, apac, anywhere]
+  TR: [turkiye, europe, emea, anywhere]
+  UA: [ukraine, europe, emea, anywhere]
+  US: [usa, anywhere]
+  VN: [vietnam, apac, anywhere]
+
+# A code without an entry above asks its regions' slugs (regions.yaml order) that appear here, then anywhere.
+regions:
+  europe: europe
+  emea: emea
+  apac: apac
+  latam: latam

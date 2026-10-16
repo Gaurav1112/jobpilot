@@ -132,7 +132,7 @@ export interface FeedBoard<B> {
 export function feedBoard<B>(spec: FeedSpec<B>): FeedBoard<B> {
   const contract = defineContract({
     id: `src-${spec.platform}`,
-    version: '1.1.0',
+    version: '1.2.0',
     description: `Reads one verified ${spec.label} company's whole job feed in one request, ${spec.documented ? 'its documented public API' : 'under the strict page robots rule'}, at least two seconds apart, nothing beyond the feed`,
     skills: ['job-sourcing'],
     // Its own team (spec §6): a dead tenant on this platform never opens a breaker for another platform or the ATS sources.

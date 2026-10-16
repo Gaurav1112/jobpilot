@@ -1,5 +1,5 @@
 {
-  "hash": "cb6bafde098ea31fd16d40e7914374e7cf6f93f6a673da7bfb86daab251810b8",
+  "hash": "0338d6db70d104091c9da76179ce94879302a2c401e347831241f6200fc41720",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-workable",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

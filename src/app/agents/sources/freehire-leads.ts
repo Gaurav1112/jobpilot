@@ -31,7 +31,7 @@ export interface StoredLead {
 
 export const srcFreehireLeadsContract = defineContract({
   id: 'src-freehire-leads',
-  version: '1.0.0',
+  version: '1.1.0',
   description: 'Turns the stored freehire leads into raw postings for the review band, fetching nothing',
   skills: ['job-sourcing'],
   team: 'sourcing-freehire',

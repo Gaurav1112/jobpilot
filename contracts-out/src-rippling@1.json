@@ -1,5 +1,5 @@
 {
-  "hash": "bfd1a1aab1a79d48c5e61791c20ad2bf6fcc2b92d46b7f34d0b3ab46be98faea",
+  "hash": "60f9cea44125c9c0cb890be099933230f0df79213dbcd8259d946d646fc2165b",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-rippling",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

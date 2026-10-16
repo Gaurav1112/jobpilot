@@ -1,5 +1,5 @@
 {
-  "hash": "bc2d93e0cb89f9d39693e03dfdca5d098629052eba621e3efecf2640888ef2e2",
+  "hash": "26b7731c12b916b0ac5652b4aad07faefd2cf97c4087b3af194dd7b37548d5b6",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-manatal",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

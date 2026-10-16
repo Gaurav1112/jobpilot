@@ -1,5 +1,5 @@
 {
-  "hash": "e2e867d7bca1048c71b39e47cd783a50c149d28d75c606605baf521553ec2f68",
+  "hash": "1ad7eaf0b37b82bf9651ae9786e173bf1c9b28a1b3bfaf5be4fba5ba9394df59",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-pinpoint",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

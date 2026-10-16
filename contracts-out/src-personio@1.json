@@ -1,5 +1,5 @@
 {
-  "hash": "4cb0a5c36d8ff111676831335adb44069dbca1bd7f825b7dfe2d3b0709f197d4",
+  "hash": "f87a36e700817b4ad2df9bc024e52055130763217d67ad05af690270016683cf",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-personio",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

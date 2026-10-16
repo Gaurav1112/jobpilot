@@ -106,7 +106,7 @@ export async function fetchSrListing(http: HttpTool, hosts: PlatformHosts, compa
 
 export const srcSmartRecruitersContract = defineContract({
   id: 'src-smartrecruiters',
-  version: '1.3.0',
+  version: '1.4.0',
   description: 'Reads one verified SmartRecruiters company\'s public job pages from its listing, never the posting API, at most forty new or stale pages per day',
   skills: ['job-sourcing'],
   team: 'sourcing-smartrecruiters',

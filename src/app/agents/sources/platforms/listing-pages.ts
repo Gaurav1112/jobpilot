@@ -81,7 +81,7 @@ const sameHost = (host: string) => (u: URL): boolean => u.hostname.toLowerCase()
 export function listingPagesBoard(spec: ListingPagesSpec): ListingPagesBoard {
   const contract = defineContract({
     id: `src-${spec.platform}`,
-    version: '1.0.0',
+    version: '1.1.0',
     description: `Reads one verified ${spec.label} company's India or remote job pages from its listing, at most forty new or stale pages per day, under the strict page robots rule`,
     skills: ['job-sourcing'],
     // Its own team (spec §6): a dead tenant never opens a breaker for another platform.

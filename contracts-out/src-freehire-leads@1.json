@@ -1,5 +1,5 @@
 {
-  "hash": "9869e632c3e0dd1aae971347fdf446354a5edb0762bfb657b1d226a35c66f125",
+  "hash": "a6fe6d5ceafcd1dc7e8c87d5279bf85b39bd21562f965a7eb99add822c62a40c",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -51,6 +51,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -132,6 +136,6 @@
     },
     "team": "sourcing-freehire",
     "timeoutMs": 10000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

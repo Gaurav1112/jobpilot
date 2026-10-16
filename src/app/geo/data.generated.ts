@@ -572,3 +572,297 @@ export const REGIONS: Readonly<Record<string, readonly string[]>> = {
     "africa"
   ]
 };
+
+export const JOBICY_GEO_SLUGS: { readonly countries: Readonly<Record<string, readonly string[]>>; readonly regions: Readonly<Record<string, string>> } = {
+  "countries": {
+    "AE": [
+      "united-arab-emirates",
+      "emea",
+      "anywhere"
+    ],
+    "AR": [
+      "argentina",
+      "latam",
+      "anywhere"
+    ],
+    "AT": [
+      "austria",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "AU": [
+      "australia",
+      "apac",
+      "anywhere"
+    ],
+    "BE": [
+      "belgium",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "BG": [
+      "bulgaria",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "BR": [
+      "brazil",
+      "latam",
+      "anywhere"
+    ],
+    "CA": [
+      "canada",
+      "anywhere"
+    ],
+    "CH": [
+      "switzerland",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "CN": [
+      "china",
+      "apac",
+      "anywhere"
+    ],
+    "CR": [
+      "costa-rica",
+      "latam",
+      "anywhere"
+    ],
+    "CY": [
+      "cyprus",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "CZ": [
+      "czechia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "DE": [
+      "germany",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "DK": [
+      "denmark",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "EE": [
+      "estonia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "ES": [
+      "spain",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "FI": [
+      "finland",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "FR": [
+      "france",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "GB": [
+      "uk",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "GR": [
+      "greece",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "HK": [
+      "hong-kong",
+      "apac",
+      "anywhere"
+    ],
+    "HR": [
+      "croatia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "HU": [
+      "hungary",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "IE": [
+      "ireland",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "IL": [
+      "israel",
+      "emea",
+      "anywhere"
+    ],
+    "IN": [
+      "apac",
+      "anywhere"
+    ],
+    "IT": [
+      "italy",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "JP": [
+      "japan",
+      "apac",
+      "anywhere"
+    ],
+    "KR": [
+      "south-korea",
+      "apac",
+      "anywhere"
+    ],
+    "LT": [
+      "lithuania",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "LV": [
+      "latvia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "MX": [
+      "mexico",
+      "latam",
+      "anywhere"
+    ],
+    "MY": [
+      "malaysia",
+      "apac",
+      "anywhere"
+    ],
+    "NL": [
+      "netherlands",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "NO": [
+      "norway",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "NZ": [
+      "new-zealand",
+      "apac",
+      "anywhere"
+    ],
+    "PH": [
+      "philippines",
+      "apac",
+      "anywhere"
+    ],
+    "PL": [
+      "poland",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "PT": [
+      "portugal",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "RO": [
+      "romania",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "RS": [
+      "serbia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "SE": [
+      "sweden",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "SG": [
+      "singapore",
+      "apac",
+      "anywhere"
+    ],
+    "SI": [
+      "slovenia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "SK": [
+      "slovakia",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "TH": [
+      "thailand",
+      "apac",
+      "anywhere"
+    ],
+    "TR": [
+      "turkiye",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "UA": [
+      "ukraine",
+      "europe",
+      "emea",
+      "anywhere"
+    ],
+    "US": [
+      "usa",
+      "anywhere"
+    ],
+    "VN": [
+      "vietnam",
+      "apac",
+      "anywhere"
+    ]
+  },
+  "regions": {
+    "apac": "apac",
+    "emea": "emea",
+    "europe": "europe",
+    "latam": "latam"
+  }
+};

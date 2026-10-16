@@ -448,11 +448,12 @@ export function pacingProblems(
  * `registryBoards`: `{ats: <platform>, slug: <ref>, company}`, Workday, Eightfold, then Oracle), then `{ats: 'freehire',
  * slug: 'leads'}` when `hasLeads` (Task 9, src-freehire-leads), each dated `runDate` (the IST date).
  * Identical entries are sent once. `attempt` (the run's ordinal on its date, from `run --refresh`) is set only when it
- * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. An unknown feed cannot get here
+ * is 2 or more, so a normal run's seeds, and so its step keys, are unchanged. `residence` (profiles Task 15: the
+ * pack's `eligibility.residence`) is set on every seed only when it is not `IN`, for the same reason. An unknown feed cannot get here
  * (`loadPack` refuses it) and throws.
  */
 export function dailySeeds(
-  pack: { readonly watchlist: readonly Pick<WatchEntry, 'ats' | 'slug' | 'company'>[]; readonly feeds: Pick<Feeds, 'enabled'> },
+  pack: { readonly watchlist: readonly Pick<WatchEntry, 'ats' | 'slug' | 'company'>[]; readonly feeds: Pick<Feeds, 'enabled'>; readonly eligibility?: { readonly residence?: string } },
   runDate: string,
   attempt?: number,
   boards: readonly RegistryBoard[] = [],
@@ -460,7 +461,9 @@ export function dailySeeds(
 ): DiscoveryRequest[] {
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
-  const extra = attempt !== undefined && attempt >= 2 ? { attempt } : {};
+  // profiles Task 15: the residence rides on every seed when it is not IN, so IN's seeds and step keys are unchanged
+  const home = pack.eligibility?.residence;
+  const extra = { ...(attempt !== undefined && attempt >= 2 ? { attempt } : {}), ...(home !== undefined && home !== 'IN' ? { residence: home } : {}) };
   const add = (s: DiscoveryRequest) => {
     const k = `${s.ats}\u0000${s.slug}\u0000${s.company}`;
     if (!seen.has(k)) {

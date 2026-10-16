@@ -1,5 +1,5 @@
 {
-  "hash": "e440524ca2f7ab2e5e5ccf7b710aabe1d242562527abb8f40bc528a26645e385",
+  "hash": "1f957582f8afc64403d3882d412054ac6f86487e955fd78fccd502673469df3f",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -54,6 +54,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -142,6 +146,6 @@
     },
     "team": "sourcing-eightfold",
     "timeoutMs": 900000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

@@ -386,7 +386,7 @@ export function oracleScopes(page: OracleListPage, scope: ResidenceScope = DEFAU
 
 export const srcOracleContract = defineContract({
   id: 'src-oracle',
-  version: '1.3.0',
+  version: '1.4.0',
   description: 'Reads one verified Oracle Recruiting Cloud company\'s India-located or remote requisition lists, with details for the titles the pre-filter passes, at the minimal rate of an unreadable robots.txt, within a per-company page budget',
   skills: ['job-sourcing'],
   // Its own team (spec §6): a dead Oracle tenant never opens a breaker for another platform or the ATS sources.

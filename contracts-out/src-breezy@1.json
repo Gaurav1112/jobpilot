@@ -1,5 +1,5 @@
 {
-  "hash": "bcba5cc55441d919bcae29af8c077e63d058ad7aebf5e070ebcb733879f22f36",
+  "hash": "65aff3f73562930f3ce15a4ebbe17ca09d0e8f8d9052df6a30475a5fb47e8d3b",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-breezy",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

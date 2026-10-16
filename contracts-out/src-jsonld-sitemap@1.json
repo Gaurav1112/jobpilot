@@ -1,5 +1,5 @@
 {
-  "hash": "9be0a9c145075d27f4062f735e784cdad31c6fae09b181698e7d176fa9b37953",
+  "hash": "c3ece22d3e01292119fcad9149fc7d9c7151a91f5cddf2b15affb36dac188a3c",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -54,6 +54,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -142,6 +146,6 @@
     },
     "team": "sourcing-jsonld",
     "timeoutMs": 900000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

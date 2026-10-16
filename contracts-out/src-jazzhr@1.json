@@ -1,5 +1,5 @@
 {
-  "hash": "08aea117c8e0f882d61e39623f0384006046821cf89eb1f9742725342957599c",
+  "hash": "b37645772edba716d3662ff923f3d0b835402a9704dc15baa5010360ad63683e",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -54,6 +54,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -142,6 +146,6 @@
     },
     "team": "sourcing-jazzhr",
     "timeoutMs": 900000,
-    "version": "1.0.0"
+    "version": "1.1.0"
   }
 }

@@ -1,5 +1,5 @@
 {
-  "hash": "3b41d3ebd2832f0cbb60d41111dd87b3c18b17ba5788b800189b7fbd144f9ac2",
+  "hash": "b80ac9fd0f7dfdfc524fa21ac30ecee5adb206d0ea52a7b05485cdf3eef22746",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-bamboohr",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

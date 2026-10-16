@@ -1,5 +1,5 @@
 {
-  "hash": "a3ac938af138f87cba211de13fa4b2400514ae306ae585c631287dfaf8368c13",
+  "hash": "bcd57e52dfb1691ccabf299e10ccf29a34717d7b63be69d84547838cd2d1fce5",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-teamtailor",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

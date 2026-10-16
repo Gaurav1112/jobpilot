@@ -19,7 +19,7 @@ export const SOURCE_RETRY = {
 export function sourceContract(id: string, host: string, description: string, timeoutMs = SOURCE_TIMEOUT_MS): Contract<DiscoveryRequest, RawPosting> {
   return defineContract({
     id,
-    version: '1.5.0',
+    version: '1.6.0',
     description,
     skills: ['job-sourcing'],
     team: 'sourcing',

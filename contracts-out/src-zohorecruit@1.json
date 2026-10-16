@@ -1,5 +1,5 @@
 {
-  "hash": "8ac8ca0323d40aaecceaff87f085fa8f40b15b41c6d086488c852690d633386a",
+  "hash": "579a1eade7b533ff4ac2a66cf3cf5e62024adbcb3a5954e8e74c6604c728edf9",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-zohorecruit",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }

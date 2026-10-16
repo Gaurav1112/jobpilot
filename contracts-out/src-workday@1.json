@@ -1,5 +1,5 @@
 {
-  "hash": "09afacd21db649662aeb642f1173944011994aba3d8e110d70365d214f71b859",
+  "hash": "09ed89addf9f5345142565706e0c26bf38ff5cdddaf04173e0f9830e5cdb62d5",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -55,6 +55,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -143,6 +147,6 @@
     },
     "team": "sourcing-workday",
     "timeoutMs": 900000,
-    "version": "1.5.0"
+    "version": "1.6.0"
   }
 }

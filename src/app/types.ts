@@ -43,6 +43,11 @@ export const DiscoveryRequest = defineType(
        * fetch again on the same day. Absent by default, so a normal run's step keys are unchanged; sources ignore it.
        */
       attempt: z.number().int().min(2).optional(),
+      /**
+       * Profiles Task 15: the pack's `eligibility.residence` (ISO 3166 alpha-2) when it is not `IN`. Absent for `IN`,
+       * so the default residence's seeds, and so its step keys, are unchanged. The feeds read it (absent: India).
+       */
+      residence: z.string().regex(/^[A-Z]{2}$/).optional(),
     })
     .strict(),
 );

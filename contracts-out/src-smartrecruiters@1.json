@@ -1,5 +1,5 @@
 {
-  "hash": "f08f7f712d90bbc8eacd462b3210bc693138adcfd3cff9ea6df135a5d538aad3",
+  "hash": "5b1a7007613aa885a8db66eca14fe78d1a0a4b9c36e3cc765c0589cc19a64e08",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -54,6 +54,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -142,6 +146,6 @@
     },
     "team": "sourcing-smartrecruiters",
     "timeoutMs": 900000,
-    "version": "1.3.0"
+    "version": "1.4.0"
   }
 }

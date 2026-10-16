@@ -1,7 +1,11 @@
 import { defineAgent } from '../../../kernel/agent.js';
 import { KernelError } from '../../../kernel/errors.js';
+import { JOBICY_GEO_SLUGS } from '../../geo/data.generated.js';
+import { regionsOf } from '../../geo/places.js';
+import type { ResidenceScope } from '../../geo/residence.js';
 import type { RawPosting } from '../../types.js';
 import { capReached, checkParsed, reportSkips, finish, getBoard, idOf, isRecord, onlySeenBefore, sourceContract, type Parsed } from './common.js';
+import { residenceOfCode } from './platforms/shared.js';
 
 /**
  * Jobicy remote-jobs API, `tag=backend&count=50`, for `geo=apac` then `geo=anywhere` (there is
@@ -22,11 +26,24 @@ import { capReached, checkParsed, reportSkips, finish, getBoard, idOf, isRecord,
  * `raw` is the job object unchanged (no request-time fields seen live); the envelope
  * (`apiVersion`, `documentationUrl`, `friendlyNotice`, `jobCount`, `lastUpdate`, `nextCursor`,
  * `hasMore`, `appliedFilters`, `statusCode`, `success`) is dropped.
+ *
+ * Profiles Task 15: the geos follow the residence on the seed (`DiscoveryRequest.residence`, absent: India), from
+ * `src/app/geo/data/jobicy-geos.yaml` (`jobicyGeos`): India keeps `apac` then `anywhere`; Germany asks `germany`,
+ * `europe`, `emea`, `anywhere`; a country Jobicy has no slug for asks its regions' slugs, then `anywhere`. The first
+ * geo's copy of a job is kept, as above. Every slug is one Jobicy's location list offers (a test checks it).
  */
 export const JOBICY_HOST = 'jobicy.com';
 export const JOBICY_FEED = 'jobicy';
 export const JOBICY_GEOS = ['apac', 'anywhere'] as const;
 export const JOBICY_MAX_REQUESTS = 20;
+
+/** The geo slugs to ask for the residence, in order: its own entry in jobicy-geos.yaml, else its regions' slugs, then `anywhere`. */
+export function jobicyGeos(scope: ResidenceScope): readonly string[] {
+  const own = Object.hasOwn(JOBICY_GEO_SLUGS.countries, scope.code) ? JOBICY_GEO_SLUGS.countries[scope.code] : undefined;
+  if (own !== undefined) return own;
+  const slugs = regionsOf(scope.code).flatMap((r) => (Object.hasOwn(JOBICY_GEO_SLUGS.regions, r) ? [JOBICY_GEO_SLUGS.regions[r] as string] : []));
+  return [...new Set([...slugs, 'anywhere'])];
+}
 export const JOBICY_TIMEOUT_MS = 180_000;
 
 export const jobicyUrl = (geo: string, cursor?: string): string =>
@@ -47,14 +64,14 @@ export function jobicyParse(json: unknown): Parsed {
   return checkParsed('jobicy', json.jobs.length, { postings, skipped });
 }
 
-export const srcJobicyContract = sourceContract('src-jobicy', JOBICY_HOST, 'Fetches APAC or worldwide backend jobs from the Jobicy feed', JOBICY_TIMEOUT_MS);
+export const srcJobicyContract = sourceContract('src-jobicy', JOBICY_HOST, 'Fetches backend jobs for the residence geos (default APAC, then anywhere) from the Jobicy feed', JOBICY_TIMEOUT_MS);
 
 export const srcJobicy = defineAgent(srcJobicyContract, async (req, ctx) => {
   if (req.ats !== 'feed' || req.slug !== JOBICY_FEED) return [];
   const what = `jobicy ${JOBICY_FEED}`;
   const all: RawPosting[] = [];
   let requests = 0;
-  for (const geo of JOBICY_GEOS) {
+  for (const geo of jobicyGeos(residenceOfCode(req.residence, 'src-jobicy'))) {
     const fail = (page: number, message: string): KernelError => new KernelError('invalid_output', `${what}: ${geo} page ${page} ${message}`);
     const seen = new Set<string>();
     let cursor: string | undefined;

@@ -1,5 +1,5 @@
 {
-  "hash": "8154c81bd1466bc1df705ae7cd06e2c41050807addc7396b83eb03d71ae3d466",
+  "hash": "9ea0c7b138cfb9554b9d5d21a60f85dcb07d838f71b32002136ca005577c8ee7",
   "shape": {
     "breaker": {
       "consecutiveFailures": 5
@@ -53,6 +53,10 @@
             "type": "integer"
           },
           "company": {
+            "type": "string"
+          },
+          "residence": {
+            "pattern": "^[A-Z]{2}$",
             "type": "string"
           },
           "runDate": {
@@ -141,6 +145,6 @@
     },
     "team": "sourcing-gem",
     "timeoutMs": 300000,
-    "version": "1.1.0"
+    "version": "1.2.0"
   }
 }
