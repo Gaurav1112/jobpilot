@@ -38,7 +38,7 @@ export function belowFloor(rangeInr: InrRange, floor: CompFloor, fx?: FxRates): 
     if (fx === undefined) throw new Error(`fx is required to compare against a ${floor.currency} floor`);
     const rate = fx.toINR[floor.currency];
     if (rate === undefined) throw new Error(`fx has no toINR rate for ${floor.currency}, the floor's currency`);
-    amount *= rate;
+    amount = Math.round(amount * rate); // whole rupees, as the job's range is (toInrPerYear): a job at the floor is not below it
   }
   return rangeInr.max < amount;
 }

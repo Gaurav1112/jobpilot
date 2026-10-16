@@ -440,7 +440,7 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const floor = ps.pack?.offers.floor;
     // Profiles Task 17: a floor in any currency, through its fx.toINR rate (pack load refuses a floor without one).
     const floorRate = floor ? (floor.currency === 'INR' ? 1 : (ps.pack as Pack).fx.toINR[floor.currency]) : undefined;
-    const floorInr = floor && floorRate !== undefined ? floor.amount * floorRate : undefined;
+    const floorInr = floor && floorRate !== undefined ? Math.round(floor.amount * floorRate) : undefined; // whole rupees, as belowFloor
     const filter: JobFilter = {
       status: statuses,
       ...(bands.length > 0 ? { band: bands } : {}),

@@ -69,7 +69,7 @@ describe('a floor in any currency', () => {
     const j = { comp: { min: 120000, max: 120000, currency: 'USD' as const, period: 'year' as const, basis: 'base' as const }, compMinInr: 120000 * 83.5, compMaxInr: 120000 * 83.5 };
     expect(compCell(j).value).toContain('≈ ₹1 Cr');
     const eur = compCell(j, { home: 'EUR', fx }).value.replace(/[\u00a0\u202f]/g, ' ');
-    expect(eur).toContain('$120,000');
+    expect(eur).toContain('120.000 $'); // the posting's USD in the home (de-DE) locale, like its € equivalent
     expect(eur).toContain('≈ 111.000 €');
     expect(eur).not.toContain('₹');
   });

@@ -95,25 +95,31 @@ export interface HomeCompText {
   readonly caveat: string | null;
 }
 
-/** One amount in a currency, written the way its locale writes it, whole units: `70.000 €`, `$150,000`. */
-export function moneyText(n: number, currency: string): string {
-  const locale = isCurrencyCode(currency) ? CURRENCIES[currency].locale : 'en-US';
+/**
+ * One amount in a currency, whole units: `70.000 €`, `$150,000`. Written in `locale` when given (the profile's, so a
+ * CAD home reads a USD posting as `US$` and its own equivalent as `$`), else the currency's own locale.
+ */
+export function moneyText(n: number, currency: string, locale?: string): string {
+  locale ??= isCurrencyCode(currency) ? CURRENCIES[currency].locale : 'en-US';
   return new Intl.NumberFormat(locale, { style: 'currency', currency, maximumFractionDigits: 0 }).format(n);
 }
 
 /** An approximate amount: to the nearest 1,000 at or above 10,000, else whole units. */
 const approx = (n: number): number => (n >= 10_000 ? Math.round(n / 1_000) * 1_000 : Math.round(n));
+/** The same, rounded down: a below-floor amount must never read as the floor itself. */
+const approxDown = (n: number): number => (n >= 10_000 ? Math.floor(n / 1_000) * 1_000 : Math.floor(n));
 
-function moneyRange(min: number | null, max: number | null, currency: string): string {
-  if (min !== null && max !== null) return min === max ? moneyText(max, currency) : `${moneyText(min, currency)} – ${moneyText(max, currency)}`;
-  if (max !== null) return `up to ${moneyText(max, currency)}`;
-  if (min !== null) return `from ${moneyText(min, currency)}`;
+function moneyRange(min: number | null, max: number | null, currency: string, locale?: string): string {
+  const m = (n: number): string => moneyText(n, currency, locale);
+  if (min !== null && max !== null) return min === max ? m(max) : `${m(min)} – ${m(max)}`;
+  if (max !== null) return `up to ${m(max)}`;
+  if (min !== null) return `from ${m(min)}`;
   return '';
 }
 
 /** A pivot (INR) amount shown in the home currency, approximated: `≈ 54.000 €`. Used for the below-floor reason. */
 export const homeApproxText = (inr: number, home: CurrencyCode, fx: { toINR: Readonly<Record<string, number>> }): string =>
-  `≈ ${moneyText(approx(pivotToHome(inr, home, fx)), home)}`;
+  `≈ ${moneyText(approxDown(pivotToHome(inr, home, fx)), home)}`;
 
 export function homeCompText(
   comp: Posting['comp'] | null,
@@ -124,10 +130,11 @@ export function homeCompText(
 ): HomeCompText {
   if (comp === null) return { main: 'Pay not disclosed', equivalent: null, caveat: null };
   const caveat = comp.basis === 'unknown' ? 'may include bonus or equity' : null;
-  const main = moneyRange(comp.min, comp.max, comp.currency);
+  const locale = CURRENCIES[home].locale;
+  const main = moneyRange(comp.min, comp.max, comp.currency, locale);
   if (comp.currency === home) return { main, equivalent: null, caveat };
   const toHome = (v: number | null): number | null => (v === null ? null : approx(pivotToHome(v, home, fx)));
-  const eq = moneyRange(toHome(minInr), toHome(maxInr), home);
+  const eq = moneyRange(toHome(minInr), toHome(maxInr), home, locale);
   return { main, equivalent: eq === '' ? null : `≈ ${eq}`, caveat };
 }
 
