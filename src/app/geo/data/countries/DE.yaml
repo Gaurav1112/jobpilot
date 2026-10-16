@@ -1,0 +1,17 @@
+# Germany: the city and state spellings that name Germany, and the office cities a pack may list. Public geography
+# (for the fictional P4 profiles; no person's data). Offsets: CET UTC+1, CEST UTC+2.
+# Edit here, then run `node --run geo:gen` to rewrite src/app/geo/data.generated.ts (a drift test checks they agree).
+code: DE
+country: germany        # the canonical place name (a PLACES key)
+display: Germany
+regions: [europe, emea]
+utcOffsets: [1, 2]
+zoneWords: [CET, CEST]
+cities: [berlin, munich, münchen, hamburg, frankfurt, cologne, köln, stuttgart, düsseldorf, leipzig, dresden, nuremberg, nürnberg]
+states: [bavaria, bayern, baden-württemberg, north rhine-westphalia, nordrhein-westfalen, hesse, hessen, saxony, sachsen]
+offices:
+  berlin: { display: Berlin, aliases: [berlin] }
+  munich: { display: Munich, aliases: [munich, münchen] }
+  hamburg: { display: Hamburg, aliases: [hamburg] }
+  frankfurt: { display: Frankfurt, aliases: [frankfurt, frankfurt am main] }
+benefitsNote: "B2B contractor: no employee benefits"

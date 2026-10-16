@@ -282,3 +282,10 @@ export const PLATFORM_NOTE_PREFIXES = [
   // Sources expansion Task 9, the stored freehire leads (freehire-leads.ts)
   'freehire-leads: ',
 ] as const;
+
+/**
+ * Profiles Task 13: the facet skip for any residence, `no-<token>-or-remote-facet ` (`no-india-or-remote-facet `,
+ * `no-united-states-or-remote-facet `), where the token is the residence country with spaces as hyphens.
+ */
+const FACET_SKIP = /^no-[a-z]+(?:-[a-z]+)*-or-remote-facet /;
+export const isPlatformFacetSkip = (note: string): boolean => FACET_SKIP.test(note);

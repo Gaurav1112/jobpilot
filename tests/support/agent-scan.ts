@@ -48,6 +48,8 @@ export const APP_ALLOWED = [
   'src/app/geo/base.ts',
   'src/app/geo/places.ts',
   'src/app/geo/data.generated.ts',
+  // Profiles Task 13: the pure residence scope (country, regions, offsets, notes) eligibility derives from the pack.
+  'src/app/geo/residence.ts',
 ];
 
 /**

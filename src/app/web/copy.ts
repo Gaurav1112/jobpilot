@@ -1,5 +1,6 @@
 import { RED } from '../freelance/rank.js';
 import { totalHours } from '../freelance/rate.js';
+import { countryDisplayOfToken } from '../geo/residence.js';
 import type { JobView } from '../store/app-store.js';
 import { usdText } from './format.js';
 
@@ -76,9 +77,11 @@ export function reasonText(code: string): string {
   if (code === 'onsite') return 'On-site only';
   if (code === 'hybrid') return 'Hybrid only, outside the cities you accept';
   if (code === 'onsite-only') return 'On-site only, outside the cities you accept';
-  if (code.startsWith('remote-excludes-india')) return 'Remote, but not open to people in India';
-  if (code === 'location-outside-india') return 'The posting names only places outside India';
-  if (code === 'timezone-excludes-india') return 'Working hours are limited to time zones that exclude India';
+  // Profiles Task 13: the token after the prefix is the residence country ('india', 'united-states').
+  const reasonPlace = (prefix: string): string => countryDisplayOfToken(code.slice(prefix.length).split(':')[0] ?? '');
+  if (code.startsWith('remote-excludes-')) return `Remote, but not open to people in ${reasonPlace('remote-excludes-')}`;
+  if (code.startsWith('location-outside-')) return `The posting names only places outside ${reasonPlace('location-outside-')}`;
+  if (code.startsWith('timezone-excludes-')) return `Working hours are limited to time zones that exclude ${reasonPlace('timezone-excludes-')}`;
   if (code.startsWith('freehire-lead')) return 'Found through freehire on a platform jobpilot cannot read; review it by hand';
   if (code.startsWith('role:')) return 'The title matches a role you filtered out';
   if (code.startsWith('company:')) return 'A company you filtered out';

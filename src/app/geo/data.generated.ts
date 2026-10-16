@@ -2,6 +2,157 @@
 import type { CountryData } from './base.js';
 
 export const COUNTRIES: Readonly<Record<string, CountryData>> = {
+  "CA": {
+    "benefitsNote": "B2B contractor: no employee benefits",
+    "cities": [
+      "toronto",
+      "vancouver",
+      "montreal",
+      "montréal",
+      "ottawa",
+      "calgary",
+      "edmonton",
+      "waterloo",
+      "winnipeg",
+      "halifax",
+      "quebec city"
+    ],
+    "code": "CA",
+    "country": "canada",
+    "display": "Canada",
+    "offices": {
+      "montreal": {
+        "aliases": [
+          "montreal",
+          "montréal"
+        ],
+        "display": "Montreal"
+      },
+      "toronto": {
+        "aliases": [
+          "toronto",
+          "gta"
+        ],
+        "display": "Toronto"
+      },
+      "vancouver": {
+        "aliases": [
+          "vancouver"
+        ],
+        "display": "Vancouver"
+      }
+    },
+    "regions": [
+      "americas",
+      "north america"
+    ],
+    "states": [
+      "ontario",
+      "british columbia",
+      "quebec",
+      "québec",
+      "alberta",
+      "manitoba",
+      "nova scotia",
+      "saskatchewan"
+    ],
+    "utcOffsets": [
+      -8,
+      -7,
+      -6,
+      -5,
+      -4,
+      -3.5,
+      -3,
+      -2.5
+    ],
+    "zoneWords": [
+      "PST",
+      "PDT",
+      "MST",
+      "MDT",
+      "CST",
+      "CDT",
+      "EST",
+      "EDT",
+      "AST",
+      "ADT",
+      "NST",
+      "NDT"
+    ]
+  },
+  "DE": {
+    "benefitsNote": "B2B contractor: no employee benefits",
+    "cities": [
+      "berlin",
+      "munich",
+      "münchen",
+      "hamburg",
+      "frankfurt",
+      "cologne",
+      "köln",
+      "stuttgart",
+      "düsseldorf",
+      "leipzig",
+      "dresden",
+      "nuremberg",
+      "nürnberg"
+    ],
+    "code": "DE",
+    "country": "germany",
+    "display": "Germany",
+    "offices": {
+      "berlin": {
+        "aliases": [
+          "berlin"
+        ],
+        "display": "Berlin"
+      },
+      "frankfurt": {
+        "aliases": [
+          "frankfurt",
+          "frankfurt am main"
+        ],
+        "display": "Frankfurt"
+      },
+      "hamburg": {
+        "aliases": [
+          "hamburg"
+        ],
+        "display": "Hamburg"
+      },
+      "munich": {
+        "aliases": [
+          "munich",
+          "münchen"
+        ],
+        "display": "Munich"
+      }
+    },
+    "regions": [
+      "europe",
+      "emea"
+    ],
+    "states": [
+      "bavaria",
+      "bayern",
+      "baden-württemberg",
+      "north rhine-westphalia",
+      "nordrhein-westfalen",
+      "hesse",
+      "hessen",
+      "saxony",
+      "sachsen"
+    ],
+    "utcOffsets": [
+      1,
+      2
+    ],
+    "zoneWords": [
+      "CET",
+      "CEST"
+    ]
+  },
   "IN": {
     "benefitsNote": "B2B contractor: no PF/benefits",
     "cities": [

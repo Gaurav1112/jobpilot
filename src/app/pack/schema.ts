@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
+import { countryOfCode } from '../text/norm.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
 import type { FreelanceRules, Network, PlatformRules } from './freelance-schema.js';
@@ -162,7 +163,8 @@ export const ContactSchema = z.strictObject({
 });
 
 export const EligibilitySchema = z.strictObject({
-  residence: z.literal('IN'),
+  /** ISO 3166 alpha-2 country of residence (profiles spec §6); remote scopes derive from it (`residenceScope`). */
+  residence: z.string().regex(/^[A-Z]{2}$/, 'expected an ISO 3166 alpha-2 code').refine((c) => countryOfCode(c) !== null, 'unknown country code'),
   acceptRemoteScopes: z.array(z.string()),
   onsiteCities: z.array(z.string()),
   /**

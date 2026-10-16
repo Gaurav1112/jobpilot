@@ -1,0 +1,17 @@
+# Canada: the city and province spellings that name Canada, and the office cities a pack may list. Public geography
+# (for the fictional P4 profiles; no person's data). Offsets, standard and daylight: Pacific -8/-7, Mountain -7/-6,
+# Central -6/-5, Eastern -5/-4, Atlantic -4/-3, Newfoundland -3:30/-2:30.
+# Edit here, then run `node --run geo:gen` to rewrite src/app/geo/data.generated.ts (a drift test checks they agree).
+code: CA
+country: canada         # the canonical place name (a PLACES key)
+display: Canada
+regions: [americas, north america]
+utcOffsets: [-8, -7, -6, -5, -4, -3.5, -3, -2.5]
+zoneWords: [PST, PDT, MST, MDT, CST, CDT, EST, EDT, AST, ADT, NST, NDT]
+cities: [toronto, vancouver, montreal, montréal, ottawa, calgary, edmonton, waterloo, winnipeg, halifax, quebec city]
+states: [ontario, british columbia, quebec, québec, alberta, manitoba, nova scotia, saskatchewan]
+offices:
+  toronto: { display: Toronto, aliases: [toronto, gta] }
+  vancouver: { display: Vancouver, aliases: [vancouver] }
+  montreal: { display: Montreal, aliases: [montreal, montréal] }
+benefitsNote: "B2B contractor: no employee benefits"

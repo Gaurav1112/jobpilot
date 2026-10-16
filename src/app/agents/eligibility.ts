@@ -3,7 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
-import { DEFAULT_PLACES } from '../geo/places.js';
+import { inScope, residenceScope, type ResidenceScope } from '../geo/residence.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
 import { citiesIn, cityKey, countriesIn, excludedParts, excludedPlaces, isPlaceList, officeCity } from '../text/norm.js';
@@ -33,7 +33,11 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *    full-time B2B contractor role (`fullTimeContract`), it passes with the note `B2B contractor: no PF/benefits`. Every
  *    other kind (temporary, intern, part-time, hourly, freelance, contract-to-hire, c2h) still rejects, and rules 5 and 6
  *    then apply unchanged.
- * 5. remote from India, by the decision table:
+ * 5. remote from the residence country (profiles Task 13: `eligibility.residence`, any ISO country; India below is
+ *    the residence `IN`, and for any other the same rules name its country, its regions and worldwide
+ *    (`residenceScope`), its token in the reason codes, its offsets and zone words, its display name in the
+ *    time-zone note and its B2B note; a posting's countries then also take the places its location names in the
+ *    residence's own place table), by the decision table:
  *    a. `structured` onsite or hybrid → `onsite` / `hybrid`. In the title or location a bare `hybrid` → `hybrid`, a bare
  *       `on-site`/`onsite`/`in-office` → `onsite`. In the first 1500 characters of the description only
  *       work-arrangement phrases count (HYBRID_PHRASES, ONSITE_PHRASES, "must be located/based in|near <city or our
@@ -47,7 +51,7 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       of india, apac, asia, south asia, worldwide. When the description names India or one of those regions, it is
  *       `review` instead. This runs before the allRemote and hiresInIndia checks.
  *    b1. final fix L2: working hours limited to time zones that exclude UTC+5:30 → `timezone-excludes-india`
- *       (`timezoneExcludesIndia`); overlap, flexibility, preferences, descriptions of the team and APAC time zones
+ *       (`timezoneExcludes`); overlap, flexibility, preferences, descriptions of the team and APAC time zones
  *       never count, and a range counts only with restrictive wording. Re-review R2: when the posting names India (or
  *       IST) it is `review` with the note `time zone may exclude India - verify`, never rejected.
  *    b2. final fix L1: any other posting whose countries are non-empty and name none of india, apac, asia, south asia,
@@ -100,7 +104,7 @@ const PackView = z.object({
   // `filters.employmentDeny` are the words that reject when bare in the title (fix round 2); the description uses the
   // fixed EMPLOYMENT_PHRASES instead, because bare words there are mostly not about employment (fix round 1, I1).
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
-  eligibility: z.object({ employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
+  eligibility: z.object({ residence: z.string().optional(), employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   offers: z.object({ floor: z.object({ amount: z.number(), currency: z.enum(['INR', 'USD', 'EUR', 'GBP']) }).nullable() }),
   fx: z.object({ toINR: z.object({ INR: z.number(), USD: z.number(), EUR: z.number(), GBP: z.number() }) }),
@@ -322,19 +326,23 @@ const ONSITE_PHRASES: readonly RegExp[] = [
 ];
 /** "must be located/based in|near <city or our office>": an office requirement (a country is not). */
 const MUST_BE_NEAR = /\bmust be (?:located|based) (?:in|near|close to|within commuting distance of) ([^.;\n]{0,60})/gi;
-const officeRequirement = (s: string): boolean =>
-  [...s.matchAll(MUST_BE_NEAR)].some((m) => citiesIn(m[1] ?? '').length > 0 || /\boffices?\b/i.test(m[1] ?? ''));
+const officeRequirement = (s: string, scope: ResidenceScope): boolean =>
+  [...s.matchAll(MUST_BE_NEAR)].some((m) => citiesIn(m[1] ?? '', scope.table).length > 0 || /\boffices?\b/i.test(m[1] ?? ''));
 
 /** The country forms of the US match only as written in capitals ("Contact us only" is not the US). */
 const US_FORMS: ReadonlySet<string> = new Set(['US', 'USA', 'U.S.', 'U.S.A.']);
 const countryToken = (t: string): boolean => (/^(?:us|usa|u\.s\.(?:a\.)?)$/i.test(t) ? US_FORMS.has(t) : true);
 const US = 'us|usa|u\\.s\\.(?:a\\.)?|united states';
 const END = '(?![\\p{L}\\p{N}])';
-/** Each rule: its id, and patterns whose group 1 is the country token (checked by `countryToken`). */
-const EXCLUSION_RULES: readonly (readonly [string, readonly RegExp[]])[] = [
-  ['us-only', [new RegExp(`(?<![\\p{L}\\p{N}])(${US})[\\s-]only\\b`, 'giu'), new RegExp(`(?<![\\p{L}\\p{N}])(${US}) residents only\\b`, 'giu')]],
+/**
+ * Each rule: its id, the places it keeps (null: the place its group 1 token names, `placeOfToken`), and patterns whose
+ * group 1 is the country token (checked by `countryToken`). A rule never excludes a residence it keeps.
+ */
+const EXCLUSION_RULES: readonly (readonly [string, readonly string[] | null, readonly RegExp[]])[] = [
+  ['us-only', ['united states'], [new RegExp(`(?<![\\p{L}\\p{N}])(${US})[\\s-]only\\b`, 'giu'), new RegExp(`(?<![\\p{L}\\p{N}])(${US}) residents only\\b`, 'giu')]],
   [
     'must-reside',
+    null,
     [
       // Only sentences about the candidate (fix round 3, C-R1): "based in the US", "within the US" or "US-based team"
       // describe the employer or colleagues and are not exclusions.
@@ -351,9 +359,10 @@ const EXCLUSION_RULES: readonly (readonly [string, readonly RegExp[]])[] = [
   ],
   [
     'us-work-authorization',
+    ['united states'],
     [new RegExp(`\\bauthori[sz]ed to work in the (${US})${END}`, 'giu'), new RegExp(`\\beligible to work in the (${US})${END}`, 'giu')],
   ],
-  ['eu-only', [/\b(eu|europe)[\s-]only\b/gi]],
+  ['eu-only', ['europe'], [/\b(eu|europe)[\s-]only\b/gi]],
 ];
 /** The sentence around a match: a phrase whose own sentence names India or a region with India is not an exclusion. */
 const sentenceAt = (s: string, at: number, len: number): string => {
@@ -361,12 +370,15 @@ const sentenceAt = (s: string, at: number, len: number): string => {
   const rest = s.slice(at + len).search(/[!?;\n]|\.(?=\s|$)/);
   return s.slice(from, rest < 0 ? s.length : at + len + rest);
 };
-function exclusionRule(s: string): string | undefined {
-  for (const [id, patterns] of EXCLUSION_RULES) {
+/** The place a must-reside token names: uk → united kingdom, eu → europe, any US form → united states. */
+const placeOfToken = (t: string): string => (/^u\.?k\.?$/i.test(t) ? 'united kingdom' : /^(?:eu|europe)$/i.test(t) ? 'europe' : 'united states');
+function exclusionRule(s: string, scope: ResidenceScope): string | undefined {
+  for (const [id, keeps, patterns] of EXCLUSION_RULES) {
     for (const re of patterns) {
       for (const m of s.matchAll(re)) {
         if (!countryToken(m[1] ?? '')) continue;
-        if (indiaInScope(countriesIn(sentenceAt(s, m.index ?? 0, m[0].length)))) continue;
+        if (inScope(scope, countriesIn(sentenceAt(s, m.index ?? 0, m[0].length), scope.table))) continue;
+        if (inScope(scope, keeps ?? [placeOfToken(m[1] ?? '')])) continue;
         return id;
       }
     }
@@ -386,7 +398,7 @@ function exclusionRule(s: string): string | undefined {
  * Re-review R2: a range or span counts only in a sentence with restrictive wording (only, must, required, need to
  * be/work, "candidates in|from …"); a description of where the team sits ("our team spans GMT to GMT+3", "we sit in
  * UTC-5 and UTC+1") never does, and "X and Y" is a range only after "between". "Candidates in|from <zone> time zones"
- * is a restriction of its own. A posting that names India never reaches a reject here (`postingNamesIndia`).
+ * is a restriction of its own. A posting that names India never reaches a reject here (`postingNamesResidence`).
  */
 const TZ_ZONE = '(?:european|eu|us|usa|u\\.s\\.|american|americas|emea|cet|est|pst|pacific|eastern|uk|gmt|central european)';
 const TZ_ONLY = new RegExp(`\\b${TZ_ZONE}\\s+time\\s?zones?\\s+only\\b`, 'i');
@@ -398,28 +410,52 @@ const TZ_SPAN = new RegExp(`\\b(?:utc|gmt)${OFFSET}\\s*(?:±|\\+\\s*\\/\\s*-|\\+
 const TZ_SOFT = /\b(?:overlap\w*|flexib\w*|prefer\w*)\b/i;
 const TZ_STRICT =
   /\b(?:only|must|required|requirement|mandatory|needs?\s+to\s+(?:be|work|live|reside)|(?:candidates?|applicants?)\s+(?:located\s+|based\s+)?(?:in|from|within))\b/i;
-const IST = 5.5;
+/**
+ * Profiles Task 13: the UTC offsets each zone word covers (standard and daylight). For a residence other than India a
+ * named-zone restriction counts only when none of the residence's offsets falls in a zone it names ("European time
+ * zones only" does not exclude Germany); India keeps today's rule (every zone word excludes it, as none covers +5:30).
+ */
+const TZ_ZONE_OFFSETS: readonly (readonly [RegExp, number, number])[] = [
+  [/^(?:european|eu|cet|central european)$/i, 0, 3],
+  [/^emea$/i, -1, 4],
+  [/^(?:uk|gmt)$/i, 0, 1],
+  [/^(?:us|usa|u\.s\.|american|eastern|est)$/i, -10, -4],
+  [/^americas$/i, -10, -2],
+  [/^(?:pacific|pst)$/i, -8, -7],
+];
+const TZ_ZONE_WORD = new RegExp(`(?<![\\p{L}\\p{N}])${TZ_ZONE}(?![\\p{L}\\p{N}])`, 'giu');
+/** True when the zones named in `text` cover none of the residence's offsets. */
+const zonesExclude = (text: string, offsets: readonly number[]): boolean => {
+  const spans = [...text.matchAll(TZ_ZONE_WORD)].flatMap((m) => TZ_ZONE_OFFSETS.filter(([re]) => re.test(m[0])));
+  return !offsets.some((o) => spans.some(([, lo, hi]) => o >= lo && o <= hi));
+};
 const offsetOf = (sign: string | undefined, h: string | undefined, m: string | undefined): number =>
   sign === undefined ? 0 : (sign === '-' ? -1 : 1) * (Number(h) + Number(m ?? '0') / 60);
 
-function timezoneExcludesIndia(head: string): boolean {
+function timezoneExcludes(head: string, scope: ResidenceScope): boolean {
+  const offsets = scope.utcOffsets;
+  // A residence without offsets (no country file) is never excluded on time zones.
+  if (offsets.length === 0) return false;
+  const outside = (lo: number, hi: number): boolean => offsets.every((o) => o < lo || o > hi);
   // Unicode minus, hyphen and dashes as an ASCII minus, so "UTC−1" reads as UTC-1.
   const s = withoutAlternatives(head.replace(/[−‐‑–—]/g, '-'));
   const counts = (at: number, len: number): boolean => !TZ_SOFT.test(sentenceAt(s, at, len));
   const strict = (at: number, len: number): boolean => TZ_STRICT.test(sentenceAt(s, at, len)) && counts(at, len);
   for (const re of [TZ_ONLY, TZ_MUST_WORK, TZ_CANDIDATES]) {
-    for (const m of s.matchAll(new RegExp(re.source, 'gi'))) if (counts(m.index ?? 0, m[0].length)) return true;
+    for (const m of s.matchAll(new RegExp(re.source, 'gi'))) {
+      if (counts(m.index ?? 0, m[0].length) && (scope.isDefault || zonesExclude(m[0], offsets))) return true;
+    }
   }
   for (const m of s.matchAll(TZ_RANGE)) {
     if (m[5]?.toLowerCase() === 'and' && m[1] === undefined) continue;
     const a = offsetOf(m[2], m[3], m[4]);
     const b = offsetOf(m[6], m[7], m[8]);
-    if ((IST < Math.min(a, b) || IST > Math.max(a, b)) && strict(m.index ?? 0, m[0].length)) return true;
+    if (outside(Math.min(a, b), Math.max(a, b)) && strict(m.index ?? 0, m[0].length)) return true;
   }
   for (const m of s.matchAll(TZ_SPAN)) {
     const a = offsetOf(m[1], m[2], m[3]);
     const n = Number(m[4]);
-    if ((IST < a - n || IST > a + n) && strict(m.index ?? 0, m[0].length)) return true;
+    if (outside(a - n, a + n) && strict(m.index ?? 0, m[0].length)) return true;
   }
   return false;
 }
@@ -429,14 +465,12 @@ function timezoneExcludesIndia(head: string): boolean {
  * asia; not `worldwide`) among the countries or in the title, location or head, "India" in the title or location, or
  * IST / UTC+5:30 in the head. Such a posting is never rejected on time zones; a restriction sends it to review.
  */
-function postingNamesIndia(p: Posting, head: string): boolean {
-  if (namesIndiaRegion(p.remote.countries) || /\bindia\b/i.test(`${p.title}\n${p.locationText}`)) return true;
-  if (namesIndiaRegion(countriesIn(head))) return true;
-  return /\bIST\b/.test(head) || /\b(?:utc|gmt)\s*\+\s*0?5:?30\b/i.test(head);
+function postingNamesResidence(p: Posting, countries: readonly string[], head: string, scope: ResidenceScope): boolean {
+  if (namesResidenceRegion(countries, scope) || scope.nameWord.test(`${p.title}\n${p.locationText}`)) return true;
+  if (namesResidenceRegion(countriesIn(head, scope.table), scope)) return true;
+  return scope.zoneWord?.test(head) === true || scope.offsetRe?.test(head) === true;
 }
 
-/** Regions that include India (decision 1: asia and south asia, like apac). */
-const INDIA_REGIONS: ReadonlySet<string> = new Set(['apac', 'asia', 'south asia', 'worldwide']);
 const REMOTE_WORD = /\bremote\b/i;
 const STRUCTURED_REMOTE_SIGNAL = /^(?:isRemote:true|workplaceType:remote|jobLocationType:telecommute|feed:remote-only)$/i;
 
@@ -448,25 +482,32 @@ function watchEntry(p: Posting, pack: EligibilityPack): EligibilityPack['watchli
   return pack.watchlist.find((w) => w.ats === p.ats && w.slug === p.slug);
 }
 
-const indiaInScope = (countries: readonly string[]): boolean => countries.some((c) => c === 'india' || INDIA_REGIONS.has(c));
-/** India or a named region with India (apac, asia, south asia); `worldwide` is not one ("global", "anywhere" are prose). */
-const namesIndiaRegion = (countries: readonly string[]): boolean => countries.some((c) => c !== 'worldwide' && indiaInScope([c]));
+/** The residence or a named region with it (India: apac, asia, south asia); `worldwide` is not one ("global", "anywhere" are prose). */
+const namesResidenceRegion = (countries: readonly string[], scope: ResidenceScope): boolean => countries.some((c) => c !== 'worldwide' && inScope(scope, [c]));
 
 /**
  * Re-review R1: the description names India or a region with India as a place, or a sentence that says remote also
  * says worldwide ("fully remote: work from anywhere in the world"). "A global leader", "customers worldwide" do not.
  */
-function descriptionNamesIndiaScope(description: string): boolean {
-  if (namesIndiaRegion(countriesIn(description))) return true;
-  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s).includes('worldwide'));
+function descriptionNamesResidenceScope(description: string, scope: ResidenceScope): boolean {
+  if (namesResidenceRegion(countriesIn(description, scope.table), scope)) return true;
+  return description.split(/[.!?;\n]+/).some((s) => REMOTE_ANYWHERE.test(s) && countriesIn(s, scope.table).includes('worldwide'));
 }
 /** "remote … anywhere", "work from anywhere", "worldwide, remote": the worldwide word is about the remote work itself, close to it. */
 const REMOTE_ANYWHERE =
   /\bremote(?:ly)?\b[^.;\n]{0,40}\b(?:anywhere|worldwide|globally|global)\b|\b(?:anywhere|worldwide|globally|global)\b[^.;\n]{0,15}\bremote\b|\bwork (?:from )?anywhere\b/i;
 
 /** The remote decision table: a reject reason, `review`, or null for eligible. */
-function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 'review-timezone' | null {
-  const { structured, countries, signals } = p.remote;
+/**
+ * The posting's countries under the residence: India's are the structured ones exactly; any other residence adds the
+ * places its location names in the residence's own place table ("Remote, Berlin" is Germany), sorted.
+ */
+const countriesOf = (p: Posting, scope: ResidenceScope): string[] =>
+  scope.isDefault ? p.remote.countries : [...new Set([...p.remote.countries, ...countriesIn(p.locationText, scope.table)])].sort();
+
+function remoteDecision(p: Posting, pack: EligibilityPack, scope: ResidenceScope): string | 'review' | 'review-timezone' | null {
+  const { structured, signals } = p.remote;
+  const countries = countriesOf(p, scope);
   if (structured === 'onsite') return 'onsite';
   if (structured === 'hybrid') return 'hybrid';
   const where = withoutAlternatives(`${p.title}\n${p.locationText}`);
@@ -474,27 +515,27 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   if (ONSITE_WORD.test(where)) return 'onsite';
   const jd = withoutAlternatives(p.descriptionText.slice(0, HEAD));
   if (HYBRID_PHRASES.some((re) => re.test(jd))) return 'hybrid';
-  if (ONSITE_PHRASES.some((re) => re.test(jd)) || officeRequirement(jd)) return 'onsite';
+  if (ONSITE_PHRASES.some((re) => re.test(jd)) || officeRequirement(jd, scope)) return 'onsite';
 
-  if (signals.includes('location:excludes:india')) return 'remote-excludes-india:location';
+  if (signals.includes(`location:excludes:${scope.country}`)) return `remote-excludes-${scope.token}:location`;
   const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
-  const rule = exclusionRule(head);
+  const rule = exclusionRule(head, scope);
   if (rule !== undefined) {
     // The posting's own India scope wins over a JD phrase (fix round 3, C-R1): a remote location naming India (or a
     // region with India) can only go to review on a description phrase, never be rejected.
     // Fix round 4: India in the countries also counts when the description says remote (remote-first, fully remote),
     // even if the location ("Bengaluru, India") does not. Documented: "Remote - Worldwide" is a scope with India too,
     // so it also goes to review on a JD phrase.
-    const ownIndiaScope =
-      ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && (indiaInScope(countries) || /\bindia\b/i.test(p.locationText))) ||
-      (countries.includes('india') && REMOTE_WORD.test(p.descriptionText));
-    return ownIndiaScope ? 'review' : `remote-excludes-india:${rule}`;
+    const ownScope =
+      ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && (inScope(scope, countries) || scope.nameWord.test(p.locationText))) ||
+      (countries.includes(scope.country) && REMOTE_WORD.test(p.descriptionText));
+    return ownScope ? 'review' : `remote-excludes-${scope.token}:${rule}`;
   }
-  if (timezoneExcludesIndia(head)) return postingNamesIndia(p, head) ? 'review-timezone' : 'timezone-excludes-india';
+  if (timezoneExcludes(head, scope)) return postingNamesResidence(p, countries, head, scope) ? 'review-timezone' : `timezone-excludes-${scope.token}`;
   // Remote, but only in foreign countries; checked before allRemote and hiresInIndia (#5, I3). A description that
   // names India or a region with India makes it unclear rather than excluded.
-  if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !indiaInScope(countries)) {
-    return indiaInScope(countriesIn(p.descriptionText)) ? 'review' : 'remote-excludes-india:country-list';
+  if ((structured === 'remote' || REMOTE_WORD.test(p.locationText)) && countries.length > 0 && !inScope(scope, countries)) {
+    return inScope(scope, countriesIn(p.descriptionText, scope.table)) ? 'review' : `remote-excludes-${scope.token}:country-list`;
   }
   const remoteStated = structured === 'remote' || signals.includes('location:remote') || signals.includes('title:remote') || REMOTE_WORD.test(p.locationText) || REMOTE_WORD.test(p.title);
   const anythingRemote = remoteStated || signals.some((s) => STRUCTURED_REMOTE_SIGNAL.test(s) || s.endsWith(':remote')) || REMOTE_WORD.test(p.descriptionText);
@@ -503,17 +544,17 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
   // JD). Re-review R1: the guard (review instead) needs something that says remote AND a description that names India
   // or a region with India; "global", "worldwide" or "anywhere" count only inside a sentence that says remote ("a
   // global leader", "customers worldwide" are prose). With nothing remote it is outside India whatever the JD names.
-  if (countries.length > 0 && !indiaInScope(countries)) {
-    return anythingRemote && descriptionNamesIndiaScope(`${p.title}\n${p.descriptionText}`) ? 'review' : 'location-outside-india';
+  if (countries.length > 0 && !inScope(scope, countries)) {
+    return anythingRemote && descriptionNamesResidenceScope(`${p.title}\n${p.descriptionText}`, scope) ? 'review' : `location-outside-${scope.token}`;
   }
 
   const entry = watchEntry(p, pack);
-  if (countries.includes('india') && remoteStated) return null;
+  if (countries.includes(scope.country) && remoteStated) return null;
   if (entry?.allRemote === true) return null;
   // Final fix I6: hiresInIndia upgrades only a stated region with India (apac, asia, south asia, worldwide). Remote with
   // no country, region or worldwide at all is unclear (a US-only role often states none) and goes to review below.
-  if (structured === 'remote' && countries.some((c) => INDIA_REGIONS.has(c)) && entry?.hiresInIndia === true) return null;
-  if (REMOTE_WORD.test(p.locationText) && /india/i.test(p.locationText)) return null;
+  if (structured === 'remote' && countries.some((c) => scope.regions.has(c)) && entry?.hiresInIndia === true) return null;
+  if (REMOTE_WORD.test(p.locationText) && scope.nameLoose.test(p.locationText)) return null;
 
   if (anythingRemote) return 'review';
   // Uncertain -> review: a freehire lead carries no description, so "nothing says remote" is missing evidence there,
@@ -524,9 +565,6 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
 /** remoteDecision's onsite-by-absence for a freehire lead: decided like `onsite` (the office rule), else review, never a reject. */
 const ONSITE_UNSTATED = 'onsite-unstated';
 
-/** Indian states (India's country file): a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
-const INDIAN_STATES: ReadonlySet<string> = DEFAULT_PLACES.states;
-
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const namesAlias = (text: string, aliases: readonly string[]): boolean =>
   aliases.some((a) => new RegExp(`(?<![\\p{L}\\p{N}])${escapeRe(a).replace(/ /g, '\\s+')}(?![\\p{L}\\p{N}])`, 'iu').test(text));
@@ -536,6 +574,17 @@ const LOCATION_SPLIT = /[;|\n/&]|\bor\b|\band\b/i;
 const RELOCATION = /\brelocat\w*\b|\bmust be (?:located|based)\b|\b(?:work(?:ing)? from|based (?:in|at)|report(?:ing)? to) our [^.;\n]{1,40}?\boffice\b/i;
 /** A location field that names no place of its own ("In-Office", "Hybrid", "India", "N/A", Workday's "2 Locations"), or an empty one. */
 const GENERIC_LOCATION = /^(?:in[- ]office|on[- ]?site|onsite|hybrid|office|india|in|n\/a|na|multiple locations?|\d+ locations?|various)$/i;
+const genericLocations = new Map<string, RegExp>();
+/** GENERIC_LOCATION for the residence: India's is today's; any other has its country in the place of `india`. */
+function genericLocationRe(scope: ResidenceScope): RegExp {
+  if (scope.isDefault) return GENERIC_LOCATION;
+  let re = genericLocations.get(scope.code);
+  if (re === undefined) {
+    re = new RegExp(GENERIC_LOCATION.source.replace('|india|', `|${escapeRe(scope.country)}|`), 'i');
+    genericLocations.set(scope.code, re);
+  }
+  return re;
+}
 /**
  * An explicit location label line in the description ("Location: Bengaluru", "Office - Bangalore", "Work location:
  * Pune"), also "Available Locations: …", "Job location …" and "Office location — …" (a plural label, an em dash).
@@ -549,18 +598,18 @@ const LOCATION_HEADING = /^[ \t]*available[ \t]+locations?[ \t]*:?[ \t]*$/i;
 /** A sibling field run on after the value ("Location: Bengaluru, India — Hybrid Department: People"): the value ends there. */
 const NEXT_FIELD = /\s+[A-Z][\w&]*(?: [A-Z][\w&]*){0,2}:(?:\s|$)/;
 const LOCATION_BULLET = /^[ \t]*[-–—•*][ \t]+(.+)$/;
-const genericLocation = (p: Posting): boolean => p.locationText.trim() === '' || GENERIC_LOCATION.test(p.locationText.trim());
+const genericLocation = (p: Posting, scope: ResidenceScope): boolean => p.locationText.trim() === '' || genericLocationRe(scope).test(p.locationText.trim());
 /**
  * The first explicit label line anywhere in the description decides alone. `value` is its location list, or null when
  * its value is prose or names a place we do not list ("Office - San Francisco"): that label then names no office city,
  * and no later label or prose rule overrides it. `found` is false when the description has no label line at all.
  */
-function labelLine(description: string): { found: boolean; value: string | null } {
+function labelLine(description: string, scope: ResidenceScope): { found: boolean; value: string | null } {
   const lines = description.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i] ?? '';
     const value = LOCATION_LABEL.exec(line)?.[1]?.split(NEXT_FIELD)[0]?.trim();
-    if (value !== undefined && value !== '') return { found: true, value: isPlaceList(value) ? value : null };
+    if (value !== undefined && value !== '') return { found: true, value: isPlaceList(value, scope.table) ? value : null };
     if (!LOCATION_HEADING.test(line)) continue;
     const bullets: string[] = [];
     for (let j = i + 1; j < lines.length; j++) {
@@ -570,7 +619,7 @@ function labelLine(description: string): { found: boolean; value: string | null 
       if (bullet === undefined) break;
       bullets.push(bullet);
     }
-    if (bullets.length > 0) return { found: true, value: bullets.every((b) => isPlaceList(b)) ? bullets.join('; ') : null };
+    if (bullets.length > 0) return { found: true, value: bullets.every((b) => isPlaceList(b, scope.table)) ? bullets.join('; ') : null };
   }
   return { found: false, value: null };
 }
@@ -582,37 +631,39 @@ const namesOurOffice = (description: string, aliases: readonly string[]): boolea
  * Rule 5e: the office-city note for an onsite or hybrid posting located in one of the pack's office cities, or null.
  * See the header for what counts and what keeps the reject.
  */
-function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
-  const cities = (pack.eligibility.officeCities ?? []).map((c) => officeCity(c));
+function officeCityNote(p: Posting, pack: EligibilityPack, scope: ResidenceScope): string | null {
+  const cities = (pack.eligibility.officeCities ?? []).map((c) => officeCity(c, scope.table));
   if (cities.length === 0) return null;
-  const { countries, signals } = p.remote;
+  const { signals } = p.remote;
+  const countries = countriesOf(p, scope);
   const allAliases = new Set(cities.flatMap((c) => c.aliases));
   const head = [p.title, p.locationText, p.descriptionText.slice(0, HEAD)].join('\n');
-  // Nothing may exclude India.
-  if (signals.includes('location:excludes:india') || excludedPlaces(p.locationText).includes('india')) return null;
-  if (countries.length > 0 && !countries.includes('india') && !countries.some((c) => allAliases.has(cityKey(c)))) return null;
-  if (exclusionRule(head) !== undefined || timezoneExcludesIndia(head)) return null;
-  // A relocation or residence requirement naming another city keeps the reject.
+  // Nothing may exclude the residence country.
+  if (signals.includes(`location:excludes:${scope.country}`) || excludedPlaces(p.locationText, scope.table).includes(scope.country)) return null;
+  if (countries.length > 0 && !countries.includes(scope.country) && !countries.some((c) => allAliases.has(cityKey(c)))) return null;
+  if (exclusionRule(head, scope) !== undefined || timezoneExcludes(head, scope)) return null;
+  // A relocation or residence requirement naming another city keeps the reject; a state of the residence country
+  // ("Pune, Maharashtra") names no other city.
   const jd = p.descriptionText;
   for (const sentence of jd.split(/[.!?;\n]+/)) {
     if (!RELOCATION.test(sentence)) continue;
-    const named = citiesIn(sentence).filter((c) => !INDIAN_STATES.has(c));
+    const named = citiesIn(sentence, scope.table).filter((c) => !scope.table.states.has(c));
     if (named.some((c) => !namesAlias(c, [...allAliases]))) return null;
   }
-  const label = genericLocation(p) ? labelLine(p.descriptionText) : { found: false, value: null };
+  const label = genericLocation(p, scope) ? labelLine(p.descriptionText, scope) : { found: false, value: null };
   const where = label.value ?? p.locationText;
-  if (excludedPlaces(where).includes('india')) return null;
-  const excluded = excludedParts(where);
+  if (excludedPlaces(where, scope.table).includes(scope.country)) return null;
+  const excluded = excludedParts(where, scope.table);
   const segments = where.split(LOCATION_SPLIT).filter((seg) => {
-    const places = countriesIn(seg);
-    return places.length === 0 || places.includes('india');
+    const places = countriesIn(seg, scope.table);
+    return places.length === 0 || places.includes(scope.country);
   });
   for (const city of cities) {
     if (city.aliases.some((a) => excluded.includes(a))) continue;
     if (segments.some((seg) => namesAlias(seg, city.aliases)) || countries.some((c) => namesAlias(c, city.aliases))) return officeNote(city.display);
   }
   // The prose rule runs only when no label line was found: a label line decides alone.
-  if (genericLocation(p) && !label.found) for (const city of cities) if (!city.aliases.some((a) => excluded.includes(a)) && namesOurOffice(p.descriptionText, city.aliases)) return officeNote(city.display);
+  if (genericLocation(p, scope) && !label.found) for (const city of cities) if (!city.aliases.some((a) => excluded.includes(a)) && namesOurOffice(p.descriptionText, city.aliases)) return officeNote(city.display);
   return null;
 }
 
@@ -637,6 +688,7 @@ function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | {
 
 /** The verdict for one posting under the pack's rules. Pure. It trusts `pack` to be well formed: the agent validates it first (a malformed pack here throws a TypeError, not a KernelError). */
 export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
+  const scope = residenceScope(pack.eligibility.residence ?? 'IN');
   if (p.title.trim() === '' || p.url.trim() === '') return reject('closed');
   // A blank pattern would match every title: it matches nothing instead (blank deny words likewise, in `hasTerm`).
   const role = pack.filters.roleDeny.find((pattern) => pattern.trim() !== '' && compileSafePattern(pattern).test(p.title));
@@ -646,17 +698,17 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const employment = employmentReason(p, pack);
   if (employment.reason !== null) return reject(employment.reason);
 
-  const decided = remoteDecision(p, pack);
-  const office = decided === 'onsite' || decided === 'hybrid' || decided === ONSITE_UNSTATED ? officeCityNote(p, pack) : null;
+  const decided = remoteDecision(p, pack, scope);
+  const office = decided === 'onsite' || decided === 'hybrid' || decided === ONSITE_UNSTATED ? officeCityNote(p, pack, scope) : null;
   const remote = office !== null ? null : decided;
   const reasons: string[] = [];
-  const notes: string[] = employment.b2b ? [NOTE_B2B] : [];
+  const notes: string[] = employment.b2b ? [scope.benefitsNote] : [];
   if (office !== null) notes.push(office);
   const review = remote === 'review' || remote === 'review-timezone' || remote === ONSITE_UNSTATED;
   if (review) {
     reasons.push('remote-unclear');
     notes.push(NOTE_REMOTE_UNCLEAR);
-    if (remote === 'review-timezone') notes.push(NOTE_TIMEZONE);
+    if (remote === 'review-timezone') notes.push(scope.isDefault ? NOTE_TIMEZONE : `time zone may exclude ${scope.display} - verify`);
     if (remote === ONSITE_UNSTATED) reasons.push(REASON_FREEHIRE_LEAD);
   } else if (remote !== null) {
     return reject(remote);
