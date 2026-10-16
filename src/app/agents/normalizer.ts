@@ -430,7 +430,7 @@ function greenhouse(raw: RawPosting, r: Rec): Posting {
     url: str(r.absolute_url),
     locationText,
     structured: null,
-    countries: [...countriesIn(locationText), ...offices.flatMap(countriesIn)],
+    countries: [...countriesIn(locationText), ...offices.flatMap((o) => countriesIn(o))],
     signals: [],
     employmentType: isRec(employment) ? listText(employment.value) : null,
     descriptionText,

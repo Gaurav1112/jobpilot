@@ -1,0 +1,19 @@
+# India: the city and state spellings that name India, and the office cities a pack may list. Public geography.
+# Edit here, then run `node --run geo:gen` to rewrite src/app/geo/data.generated.ts (a drift test checks they agree).
+code: IN
+country: india          # the canonical place name (a PLACES key)
+display: India
+regions: [apac, asia, south asia]
+utcOffsets: [5.5]
+zoneWords: [IST]
+cities: [bangalore, bengaluru, hyderabad, pune, chennai, mumbai, bombay, delhi, new delhi, ncr, delhi ncr, gurgaon, gurugram, noida, kolkata, calcutta, ahmedabad, kochi, cochin, trivandrum, thiruvananthapuram, jaipur, chandigarh, indore, coimbatore, mysore, mysuru, nagpur, vadodara, bhubaneswar, visakhapatnam, lucknow, mohali]
+states: [karnataka, maharashtra, telangana, tamil nadu, kerala, haryana, uttar pradesh, west bengal, gujarat]
+offices:
+  bengaluru: { display: Bengaluru, aliases: [bengaluru, bangalore, blr] }
+  pune: { display: Pune, aliases: [pune] }
+  hyderabad: { display: Hyderabad, aliases: [hyderabad] }
+  mumbai: { display: Mumbai, aliases: [mumbai, bombay] }
+  delhi ncr: { display: Delhi NCR, aliases: [delhi, new delhi, gurgaon, gurugram, noida, ncr] }
+  chennai: { display: Chennai, aliases: [chennai, madras] }
+  mysuru: { display: Mysuru, aliases: [mysuru, mysore] }
+benefitsNote: "B2B contractor: no PF/benefits"

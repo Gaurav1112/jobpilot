@@ -3,6 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
+import { DEFAULT_PLACES } from '../geo/places.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
 import { citiesIn, cityKey, countriesIn, excludedParts, excludedPlaces, isPlaceList, officeCity } from '../text/norm.js';
@@ -523,8 +524,8 @@ function remoteDecision(p: Posting, pack: EligibilityPack): string | 'review' | 
 /** remoteDecision's onsite-by-absence for a freehire lead: decided like `onsite` (the office rule), else review, never a reject. */
 const ONSITE_UNSTATED = 'onsite-unstated';
 
-/** Indian states: a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
-const INDIAN_STATES: ReadonlySet<string> = new Set(['karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat']);
+/** Indian states (India's country file): a relocation sentence naming one ("Pune, Maharashtra") names no other city. */
+const INDIAN_STATES: ReadonlySet<string> = DEFAULT_PLACES.states;
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const namesAlias = (text: string, aliases: readonly string[]): boolean =>
@@ -569,7 +570,7 @@ function labelLine(description: string): { found: boolean; value: string | null 
       if (bullet === undefined) break;
       bullets.push(bullet);
     }
-    if (bullets.length > 0) return { found: true, value: bullets.every(isPlaceList) ? bullets.join('; ') : null };
+    if (bullets.length > 0) return { found: true, value: bullets.every((b) => isPlaceList(b)) ? bullets.join('; ') : null };
   }
   return { found: false, value: null };
 }
@@ -582,7 +583,7 @@ const namesOurOffice = (description: string, aliases: readonly string[]): boolea
  * See the header for what counts and what keeps the reject.
  */
 function officeCityNote(p: Posting, pack: EligibilityPack): string | null {
-  const cities = (pack.eligibility.officeCities ?? []).map(officeCity);
+  const cities = (pack.eligibility.officeCities ?? []).map((c) => officeCity(c));
   if (cities.length === 0) return null;
   const { countries, signals } = p.remote;
   const allAliases = new Set(cities.flatMap((c) => c.aliases));

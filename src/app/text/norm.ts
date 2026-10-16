@@ -1,4 +1,6 @@
 import { sha256Hex } from '../agents/sources/sha256.js';
+import type { OfficeCity } from '../geo/base.js';
+import { DEFAULT_PLACES, type PlaceTable } from '../geo/places.js';
 import { isCalendarDate } from '../types.js';
 
 /**
@@ -12,101 +14,10 @@ const collapse = (s: string): string => s.replace(/\s+/g, ' ').trim();
 // ---- places ----
 
 /**
- * Canonical lowercase names, each with the spellings that mean it. Regions are tokens of their own: `worldwide`,
- * `apac`, `emea`, `europe`, `americas`, `latam`, `north america`, `asia`, `south asia`, `southeast asia`,
- * `middle east`, `africa`, `oceania`. Matching is whole-word and longest-first, so "Southeast Asia" is not "asia"
- * and "Indiana" is nothing; a capitalised code glued to a tier number ("USA1", final fix I6) is its country.
+ * The places (countries and regions with their spellings) are `BASE_PLACES` (`../geo/base.ts`); a residence's cities
+ * and states join its country's entry in its `PlaceTable` (`../geo/places.ts`). Every function here that reads places
+ * takes an optional last `table`, by default `DEFAULT_PLACES` (India's).
  */
-const PLACES: Readonly<Record<string, readonly string[]>> = {
-  worldwide: ['worldwide', 'world wide', 'anywhere', 'anywhere in the world', 'global', 'globally'],
-  apac: ['apac', 'apj', 'asia pacific', 'asia-pacific', 'asia/pacific', 'asiapac'],
-  emea: ['emea'],
-  europe: ['europe', 'eu', 'european union', 'eea', 'european economic area'],
-  americas: ['americas', 'the americas'],
-  latam: ['latam', 'latin america', 'south america'],
-  'north america': ['north america', 'northern america'],
-  asia: ['asia'],
-  'south asia': ['south asia'],
-  'southeast asia': ['southeast asia', 'south east asia', 'south-east asia', 'sea region'],
-  'middle east': ['middle east', 'mena'],
-  africa: ['africa'],
-  oceania: ['oceania', 'anz'],
-  india: [
-    'india', 'bharat', 'bangalore', 'bengaluru', 'hyderabad', 'pune', 'chennai', 'mumbai', 'bombay', 'delhi', 'new delhi', 'ncr', 'delhi ncr',
-    'gurgaon', 'gurugram', 'noida', 'kolkata', 'calcutta', 'ahmedabad', 'kochi', 'cochin', 'trivandrum', 'thiruvananthapuram', 'jaipur',
-    'chandigarh', 'indore', 'coimbatore', 'mysore', 'mysuru', 'nagpur', 'vadodara', 'bhubaneswar', 'visakhapatnam', 'lucknow', 'mohali',
-    'karnataka', 'maharashtra', 'telangana', 'tamil nadu', 'kerala', 'haryana', 'uttar pradesh', 'west bengal', 'gujarat',
-  ],
-  'united states': ['united states', 'united states of america', 'usa', 'us', 'u.s.', 'u.s.a.', 'u.s', 'new mexico', 'new england'],
-  'united kingdom': ['united kingdom', 'uk', 'u.k.', 'great britain', 'britain', 'england', 'scotland', 'wales', 'northern ireland'],
-  canada: ['canada'],
-  mexico: ['mexico'],
-  brazil: ['brazil', 'brasil'],
-  argentina: ['argentina'],
-  chile: ['chile'],
-  colombia: ['colombia'],
-  peru: ['peru'],
-  uruguay: ['uruguay'],
-  'costa rica': ['costa rica'],
-  germany: ['germany', 'deutschland'],
-  france: ['france'],
-  spain: ['spain'],
-  portugal: ['portugal'],
-  italy: ['italy'],
-  netherlands: ['netherlands', 'the netherlands', 'holland'],
-  belgium: ['belgium'],
-  luxembourg: ['luxembourg'],
-  ireland: ['ireland'],
-  switzerland: ['switzerland'],
-  austria: ['austria'],
-  poland: ['poland'],
-  'czech republic': ['czech republic', 'czechia'],
-  slovakia: ['slovakia'],
-  hungary: ['hungary'],
-  romania: ['romania'],
-  bulgaria: ['bulgaria'],
-  greece: ['greece'],
-  croatia: ['croatia'],
-  serbia: ['serbia'],
-  slovenia: ['slovenia'],
-  ukraine: ['ukraine'],
-  estonia: ['estonia'],
-  latvia: ['latvia'],
-  lithuania: ['lithuania'],
-  sweden: ['sweden'],
-  norway: ['norway'],
-  denmark: ['denmark'],
-  finland: ['finland'],
-  iceland: ['iceland'],
-  cyprus: ['cyprus'],
-  malta: ['malta'],
-  turkey: ['turkey', 'türkiye', 'turkiye'],
-  israel: ['israel'],
-  'united arab emirates': ['united arab emirates', 'uae', 'dubai', 'abu dhabi'],
-  'saudi arabia': ['saudi arabia', 'ksa'],
-  qatar: ['qatar'],
-  egypt: ['egypt'],
-  'south africa': ['south africa'],
-  nigeria: ['nigeria'],
-  kenya: ['kenya'],
-  australia: ['australia', 'new south wales'],
-  'new zealand': ['new zealand'],
-  japan: ['japan'],
-  china: ['china', 'prc'],
-  'hong kong': ['hong kong'],
-  taiwan: ['taiwan'],
-  'south korea': ['south korea', 'korea', 'republic of korea'],
-  singapore: ['singapore'],
-  malaysia: ['malaysia'],
-  indonesia: ['indonesia'],
-  philippines: ['philippines'],
-  thailand: ['thailand'],
-  vietnam: ['vietnam', 'viet nam'],
-  pakistan: ['pakistan'],
-  bangladesh: ['bangladesh'],
-  'sri lanka': ['sri lanka'],
-  nepal: ['nepal'],
-};
 
 /** ISO 3166 alpha-2 codes of the places above (Lever `country`, JSON-LD and Himalayas `alpha2`). */
 const ISO2: Readonly<Record<string, string>> = {
@@ -123,35 +34,44 @@ const ISO2: Readonly<Record<string, string>> = {
 
 /** Canonical names that are countries (not regions): an address's last one names its country. */
 const ISO_NAMES: ReadonlySet<string> = new Set(Object.values(ISO2));
-const ALIAS = new Map<string, string>(Object.entries(PLACES).flatMap(([name, spellings]) => spellings.map((s) => [s, name] as const)));
-const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-/** Longest spelling first, so "south east asia" wins over "asia" and "united states of america" over "united states". */
-const PLACE_RE = new RegExp(
-  `(?<![\\p{L}\\p{N}])(${[...ALIAS.keys()].sort((a, b) => b.length - a.length || (a < b ? -1 : 1)).map(escapeRe).join('|')})(?![\\p{L}\\p{N}])`,
-  'giu',
-);
+/** Every ISO alpha-2 code the table knows (`UK` as well as `GB`). */
+export const ISO2_CODES: readonly string[] = Object.keys(ISO2);
 
 const sortedUnique = (xs: Iterable<string>): string[] => [...new Set(xs)].sort();
 
-/** India named by a city or state rather than the country: a city of that name elsewhere must not add India. */
-const INDIA_BY_NAME = new Set(['india', 'bharat']);
-/**
- * Spellings that name a part of a country (a city, a state, a constituent country) rather than the country or a
- * region. Excluding one excludes that part only: "India (excluding Mumbai)" is still India.
- */
-const SUB_PLACES: ReadonlySet<string> = new Set([
-  ...(PLACES.india ?? []).filter((a) => !INDIA_BY_NAME.has(a)),
-  'new mexico', 'new england', 'new south wales', 'england', 'scotland', 'wales', 'northern ireland', 'dubai', 'abu dhabi',
-]);
+/** Parts of countries every table knows: constituent countries, states and cities spelled in `BASE_PLACES`. */
+const BASE_SUB_PLACES = ['new mexico', 'new england', 'new south wales', 'england', 'scotland', 'wales', 'northern ireland', 'dubai', 'abu dhabi'];
+
+/** What a table's place scan derives from it, built once per table. */
+interface TableScan {
+  /**
+   * Spellings that name a part of a country (a city, a state, a constituent country) rather than the country or a
+   * region: the residence country's spellings that are not `byName`, plus `BASE_SUB_PLACES`. Excluding one excludes
+   * that part only: "India (excluding Mumbai)" is still India.
+   */
+  readonly subPlaces: ReadonlySet<string>;
+  /** After "anywhere"/"global": "in|within|across [the] <listed place>". */
+  readonly scopedAnywhere: RegExp;
+}
+const scans = new WeakMap<PlaceTable, TableScan>();
+function tableScan(table: PlaceTable): TableScan {
+  let s = scans.get(table);
+  if (s !== undefined) return s;
+  // The residence country is the one its by-name spellings (India's: india, bharat) name.
+  const country = [...table.byName].map((a) => table.alias.get(a)).find((n) => n !== undefined);
+  s = {
+    subPlaces: new Set([...(country === undefined ? [] : (table.places[country] ?? [])).filter((a) => !table.byName.has(a)), ...BASE_SUB_PLACES]),
+    scopedAnywhere: new RegExp(`^\\s+(?:in|within|across)\\s+(?:the\\s+)?${table.re.source}`, 'iu'),
+  };
+  scans.set(table, s);
+  return s;
+}
 /** Words that turn the places after them (to the end of the clause) into exclusions. */
 const EXCLUDING = /\b(?:except|excluding|excl\.?|outside(?: of)?|not(?: in| from)?|anywhere but|but not|other than)\b/i;
 /** A clause ends at these; commas do not end it ("except India, Pakistan" excludes both). */
 const CLAUSE_END = /[;|()[\]\n]/g;
 /** One place: separate locations are joined by these ("Bengaluru or Singapore", "Pune; Austin"). */
 const SEGMENT_SPLIT = /[;|\n/&]|\bor\b|\band\b/gi;
-
-/** After "anywhere"/"global": "in|within|across [the] <listed place>". */
-const SCOPED_ANYWHERE = new RegExp(`^\\s+(?:in|within|across)\\s+(?:the\\s+)?${PLACE_RE.source}`, 'iu');
 
 interface PlaceScan {
   places: string[];
@@ -167,7 +87,8 @@ interface PlaceScan {
  */
 const TIER_CODE = /(?<![\p{L}\p{N}])(USA|US|UK|EU)(?=\d{1,2}(?![\p{L}\p{N}]))/gu;
 
-function scanPlaces(text: string): PlaceScan {
+function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES): PlaceScan {
+  const { subPlaces, scopedAnywhere } = tableScan(table);
   const t = text.normalize('NFKC').replace(TIER_CODE, '$1 ');
   const out: string[] = [];
   const excluded: string[] = [];
@@ -177,21 +98,21 @@ function scanPlaces(text: string): PlaceScan {
     const segStart = bounds[k] ?? 0;
     const segment = t.slice(segStart, bounds[k + 1] ?? t.length);
     const found: { name: string; byCity: boolean }[] = [];
-    for (const m of segment.matchAll(PLACE_RE)) {
+    for (const m of segment.matchAll(table.re)) {
       const alias = (m[1] ?? '').toLowerCase();
-      const name = ALIAS.get(alias);
+      const name = table.alias.get(alias);
       if (name === undefined) continue;
       const at = segStart + (m.index ?? 0);
       // "Anywhere in India", "anywhere within APAC": the place scopes the anywhere, so it is not worldwide.
-      if (name === 'worldwide' && SCOPED_ANYWHERE.test(t.slice(at + (m[1] ?? '').length))) continue;
+      if (name === 'worldwide' && scopedAnywhere.test(t.slice(at + (m[1] ?? '').length))) continue;
       const before = t.slice(0, at);
       const clauseStart = Math.max(-1, ...[...before.matchAll(CLAUSE_END)].map((c) => c.index ?? -1)) + 1;
       if (EXCLUDING.test(before.slice(clauseStart))) {
-        if (SUB_PLACES.has(alias)) excludedParts.push(alias.replace(/\s+/g, ' '));
+        if (subPlaces.has(alias)) excludedParts.push(alias.replace(/\s+/g, ' '));
         else excluded.push(name);
         continue;
       }
-      found.push({ name, byCity: name === 'india' && !INDIA_BY_NAME.has(alias) });
+      found.push({ name, byCity: name === 'india' && !table.byName.has(alias) });
     }
     // "Hyderabad, Sindh, Pakistan": an address ending in another country is in that country.
     const lastCountry = [...found].reverse().find((f) => ISO_NAMES.has(f.name));
@@ -217,20 +138,20 @@ export function withoutExcluded(places: Iterable<string>, excluded: readonly str
  * A place after "except", "excluding", "outside", "not", "anywhere but" (to the end of its clause) is left out; see
  * `hasPlaceExclusion`.
  */
-export const countriesIn = (text: string): string[] => scanPlaces(text).places;
+export const countriesIn = (text: string, table: PlaceTable = DEFAULT_PLACES): string[] => scanPlaces(text, table).places;
 
 /**
  * The cities and states (parts of a country, not the country or a region) named in `text`, as written, lower-cased,
  * in order: "near Pune" gives ['pune'], "in India" gives [].
  */
-export const citiesIn = (text: string): string[] =>
-  [...text.normalize('NFKC').matchAll(PLACE_RE)].map((m) => (m[1] ?? '').toLowerCase().replace(/\s+/g, ' ')).filter((a) => SUB_PLACES.has(a));
+export const citiesIn = (text: string, table: PlaceTable = DEFAULT_PLACES): string[] =>
+  [...text.normalize('NFKC').matchAll(table.re)].map((m) => (m[1] ?? '').toLowerCase().replace(/\s+/g, ' ')).filter((a) => tableScan(table).subPlaces.has(a));
 
 /** The places the text excludes ("Remote (except India)" gives ['india']), sorted; `countriesIn` leaves them out. */
-export const excludedPlaces = (text: string): string[] => scanPlaces(text).excluded;
+export const excludedPlaces = (text: string, table: PlaceTable = DEFAULT_PLACES): string[] => scanPlaces(text, table).excluded;
 
 /** The cities or states the text excludes ("India (excluding Mumbai)" gives ['mumbai']); their country stays. */
-export const excludedParts = (text: string): string[] => scanPlaces(text).excludedParts;
+export const excludedParts = (text: string, table: PlaceTable = DEFAULT_PLACES): string[] => scanPlaces(text, table).excludedParts;
 
 /**
  * One entry of a structured place list (a Himalayas restriction, a JSON-LD country, an Ashby address country): its
@@ -238,14 +159,14 @@ export const excludedParts = (text: string): string[] => scanPlaces(text).exclud
  * ("USA & Canada"), else the entry itself lower-cased. An unlisted restriction is kept verbatim rather than dropped,
  * because an empty list means "no restriction".
  */
-export function placeOf(entry: string): string[] {
+export function placeOf(entry: string, table: PlaceTable = DEFAULT_PLACES): string[] {
   const t = collapse(entry.normalize('NFKC'));
   if (t === '') return [];
   const code = ISO2[t.toUpperCase()];
   if (/^[A-Za-z]{2}$/.test(t) && code !== undefined) return [code];
-  const whole = ALIAS.get(t.toLowerCase());
+  const whole = table.alias.get(t.toLowerCase());
   if (whole !== undefined) return [whole];
-  const found = countriesIn(t);
+  const found = countriesIn(t, table);
   return found.length > 0 ? found : [t.toLowerCase()];
 }
 
@@ -260,7 +181,7 @@ const GENDER = /\(\s*(?:[mfwdhx*]\s*\/\s*){1,3}[mfwdhx*]{1,3}\s*\)|\(\s*(?:all g
 const LOCATION_WORDS = /\b(?:remote|hybrid|on-?site|in-?office|wfh|work from home|fully|only|based|first|friendly|or|and|in|from|within|anywhere)\b/gi;
 
 function isLocationParen(inner: string): boolean {
-  const rest = inner.normalize('NFKC').replace(PLACE_RE, ' ').replace(LOCATION_WORDS, ' ').replace(/[\s,;/|&+–—-]+/g, '');
+  const rest = inner.normalize('NFKC').replace(DEFAULT_PLACES.re, ' ').replace(LOCATION_WORDS, ' ').replace(/[\s,;/|&+–—-]+/g, '');
   return rest === '' && inner.trim() !== '';
 }
 
@@ -272,8 +193,8 @@ const LABEL_VALUE_WORDS = /\b(?:mode|ka|excluding|except|outside|office|offices)
  * in-office, ...) separated by , / ; | ( ) & - and dashes. Any other word ("our", "is", "closing", "snacks") makes it
  * prose, not a list.
  */
-export function isPlaceList(text: string): boolean {
-  const rest = text.normalize('NFKC').replace(PLACE_RE, ' ').replace(LOCATION_WORDS, ' ').replace(LABEL_VALUE_WORDS, ' ').replace(/[\s,;/|&+()–—-]+/g, '');
+export function isPlaceList(text: string, table: PlaceTable = DEFAULT_PLACES): boolean {
+  const rest = text.normalize('NFKC').replace(table.re, ' ').replace(LOCATION_WORDS, ' ').replace(LABEL_VALUE_WORDS, ' ').replace(/[\s,;/|&+()–—-]+/g, '');
   return rest === '' && text.trim() !== '';
 }
 
@@ -469,34 +390,21 @@ export function postedAtOf(v: unknown, unit?: 'ms' | 's'): string | null {
 // ---- office cities ----
 
 /**
- * Office city keys (the pack's `eligibility.officeCities`) and the spellings each one matches, with the name documents
- * and notes show. Generic place data: which cities count is the pack's choice. An unknown key matches only itself and
- * shows title-cased ("kochi" shows "Kochi").
+ * Office city keys (the pack's `eligibility.officeCities`) and the spellings each one matches come from the residence's
+ * country file (`table.offices`). Generic place data: which cities count is the pack's choice. An unknown key matches
+ * only itself and shows title-cased ("kochi" shows "Kochi").
  */
-export interface OfficeCity {
-  readonly display: string;
-  readonly aliases: readonly string[];
-}
-
-const OFFICE_CITY_ALIASES: Readonly<Record<string, OfficeCity>> = {
-  bengaluru: { display: 'Bengaluru', aliases: ['bengaluru', 'bangalore', 'blr'] },
-  pune: { display: 'Pune', aliases: ['pune'] },
-  hyderabad: { display: 'Hyderabad', aliases: ['hyderabad'] },
-  mumbai: { display: 'Mumbai', aliases: ['mumbai', 'bombay'] },
-  'delhi ncr': { display: 'Delhi NCR', aliases: ['delhi', 'new delhi', 'gurgaon', 'gurugram', 'noida', 'ncr'] },
-  chennai: { display: 'Chennai', aliases: ['chennai', 'madras'] },
-  mysuru: { display: 'Mysuru', aliases: ['mysuru', 'mysore'] },
-};
+export type { OfficeCity } from '../geo/base.js';
 
 /** A city key in canonical form: trimmed, lower-cased, inner spaces collapsed. */
 export const cityKey = (raw: string): string => raw.trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** The office city for one pack entry. */
-export function officeCity(raw: string): OfficeCity {
+export function officeCity(raw: string, table: PlaceTable = DEFAULT_PLACES): OfficeCity {
   const key = cityKey(raw);
-  const known = Object.hasOwn(OFFICE_CITY_ALIASES, key) ? OFFICE_CITY_ALIASES[key] : undefined;
+  const known = Object.hasOwn(table.offices, key) ? table.offices[key] : undefined;
   return known ?? { display: key.replace(/(^|\s)\p{L}/gu, (c) => c.toUpperCase()), aliases: [key] };
 }
 
 /** The display names for the pack's office cities, in pack order, each once. */
-export const officeCityDisplays = (raw: readonly string[]): string[] => [...new Set(raw.map((r) => officeCity(r).display))];
+export const officeCityDisplays = (raw: readonly string[], table: PlaceTable = DEFAULT_PLACES): string[] => [...new Set(raw.map((r) => officeCity(r, table).display))];

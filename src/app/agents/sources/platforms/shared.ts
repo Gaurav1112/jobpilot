@@ -216,7 +216,7 @@ export function namesOffice(location: string, officeCities: readonly string[]): 
   const text = w(location);
   const places = countriesIn(location);
   if (places.length > 0 && !places.includes('india')) return false;
-  return officeCities.map(officeCity).some((c) => c.aliases.some((a) => text.includes(w(a))));
+  return officeCities.map((c) => officeCity(c)).some((c) => c.aliases.some((a) => text.includes(w(a))));
 }
 
 /**

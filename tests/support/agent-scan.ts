@@ -43,6 +43,11 @@ export const APP_ALLOWED = [
   'src/app/text/xml-lite.ts',
   // Career-sites Task 10: the pure ATS job id reader (no imports) the normalizer and the Posting type use.
   'src/app/text/ats-id.ts',
+  // Profiles Task 12: the pure place tables norm.ts reads (base places, per-country tables, and the data compiled from
+  // src/app/geo/data/**.yaml by scripts/gen-geo.ts; no file I/O at run time).
+  'src/app/geo/base.ts',
+  'src/app/geo/places.ts',
+  'src/app/geo/data.generated.ts',
 ];
 
 /**

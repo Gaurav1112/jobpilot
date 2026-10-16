@@ -450,7 +450,7 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
 
   const offices: (WorkdayScope & { display: string; labels: string[] })[] = [];
   const words = (d: string): string[] => d.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w !== '');
-  for (const city of officeCities.map(officeCity)) {
+  for (const city of officeCities.map((c) => officeCity(c))) {
     if (offices.some((o) => o.display === city.display)) continue;
     const names = (d: string): boolean => {
       const w = ' ' + words(d).join(' ') + ' ';
