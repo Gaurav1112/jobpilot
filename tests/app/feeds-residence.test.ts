@@ -151,3 +151,17 @@ describe('src-jobicy follows the seed', () => {
     expect(s.urls).toEqual(['germany', 'europe', 'emea', 'anywhere'].map(url));
   });
 });
+
+describe('the seed residence is the canonical code (Task 15 review)', () => {
+  const base = { watchlist: [{ ats: 'greenhouse' as const, slug: 'acme', company: 'Acme' }], feeds: { enabled: ['himalayas'] } };
+  it('UK rides as GB, so both spellings share step keys', () => {
+    const uk = dailySeeds({ ...(base as object), eligibility: { residence: 'UK' } } as never, '2026-10-15');
+    const gb = dailySeeds({ ...(base as object), eligibility: { residence: 'GB' } } as never, '2026-10-15');
+    expect(uk).toEqual(gb);
+    expect(uk.length).toBeGreaterThan(0);
+    expect(uk.every((s) => s.residence === 'GB')).toBe(true);
+  });
+  it('a lower-case in is India: no residence on the seeds, India\'s step keys unchanged', () => {
+    expect(JSON.stringify(dailySeeds({ ...(base as object), eligibility: { residence: 'in' } } as never, '2026-10-15'))).not.toContain('residence');
+  });
+});

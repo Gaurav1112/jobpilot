@@ -1,3 +1,4 @@
+import { residenceScope } from './geo/residence.js';
 import type { AnyAgent } from '../kernel/agent.js';
 import type { EgressSets } from '../kernel/broker.js';
 import type { GuardrailRegistry } from '../kernel/guardrails/index.js';
@@ -452,6 +453,15 @@ export function pacingProblems(
  * pack's `eligibility.residence`) is set on every seed only when it is not `IN`, for the same reason. An unknown feed cannot get here
  * (`loadPack` refuses it) and throws.
  */
+/** A residence code as the scope knows it: upper-cased, UK as GB; an unknown code is kept as written (the agents refuse it). */
+function canonicalResidence(code: string): string {
+  try {
+    return residenceScope(code.toUpperCase()).code;
+  } catch {
+    return code;
+  }
+}
+
 export function dailySeeds(
   pack: { readonly watchlist: readonly Pick<WatchEntry, 'ats' | 'slug' | 'company'>[]; readonly feeds: Pick<Feeds, 'enabled'>; readonly eligibility?: { readonly residence?: string } },
   runDate: string,
@@ -462,7 +472,8 @@ export function dailySeeds(
   const seeds: DiscoveryRequest[] = [];
   const seen = new Set<string>();
   // profiles Task 15: the residence rides on every seed when it is not IN, so IN's seeds and step keys are unchanged
-  const home = pack.eligibility?.residence;
+  // the canonical code (upper-cased; UK is GB), so spellings of one residence share step keys and `in` stays India's
+  const home = pack.eligibility?.residence === undefined ? undefined : canonicalResidence(pack.eligibility.residence);
   const extra = { ...(attempt !== undefined && attempt >= 2 ? { attempt } : {}), ...(home !== undefined && home !== 'IN' ? { residence: home } : {}) };
   const add = (s: DiscoveryRequest) => {
     const k = `${s.ats}\u0000${s.slug}\u0000${s.company}`;
