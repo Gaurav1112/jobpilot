@@ -1,6 +1,9 @@
 import { join } from 'node:path';
+import { z } from 'zod';
 import { loadJsonl, type EvalSpec } from '../evals/runner.js';
 import { defineAgent, type AnyAgent } from '../kernel/agent.js';
+import { defineContract } from '../kernel/contract.js';
+import { defineType } from '../kernel/types.js';
 import { freezePack, issueContext } from '../kernel/broker.js';
 import { fixedClock } from '../kernel/clock.js';
 import { hashOf } from '../kernel/canonical.js';
@@ -17,6 +20,8 @@ import { detectorEgressSets, makePlatformDetector, platformDetectorContract } fr
 import { memoryHostStateStore } from './coverage/gate.js';
 import { freehireRowClassifier } from './coverage/freehire-api.js';
 import { companyNameMatcher } from './coverage/names.js';
+import { CURRENCY_CODES } from './comp/currencies.js';
+import { PAY_LOCALES, parsePay } from './comp/locale.js';
 import { gigEligibility } from './freelance/gig-eligibility.js';
 import { gigNormalizer } from './freelance/gig-normalizer.js';
 import { gigRisk } from './freelance/gig-risk.js';
@@ -143,6 +148,45 @@ async function gigCoverGrounding(scored: ScoredGig, pack: unknown): Promise<unkn
   const trips = plan.trips;
   return trips.length === 0 && failed.length === 0 ? { pass: true, cover: p.cover !== undefined } : { pass: false, cover: p.cover !== undefined, trips, failed };
 }
+
+/** One description sentence with the profile's pay locale and home currency (the `pay-locale` eval's input). */
+const PayText = defineType('PayText', 1, z.object({ text: z.string(), locale: z.enum(PAY_LOCALES), home: z.enum(CURRENCY_CODES) }).strict());
+/** The pay read from it, or null. */
+const PayRead = defineType(
+  'PayRead',
+  1,
+  z
+    .object({
+      comp: z
+        .object({ min: z.number().nullable(), max: z.number().nullable(), currency: z.enum(CURRENCY_CODES), period: z.literal('year'), basis: z.enum(['base', 'unknown']) })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+);
+/**
+ * Fixed fictional rates for the `pay-locale` eval: the fixture pack's four plus made-up rates for the other currencies
+ * its cases use (KRW has none on purpose). Only the plausibility bounds read them.
+ */
+const PAY_EVAL_FX = { toINR: { USD: 83.5, EUR: 90.2, GBP: 106.4, INR: 1, CAD: 61.2, CHF: 94.1, JPY: 0.56, SEK: 7.9, PLN: 21, BRL: 16.5 } };
+/** The eval-only wrapper of `parsePay` (Task 18); not a pipeline agent, so it is not in the contract registry. */
+const payLocaleReader = defineAgent(
+  defineContract({
+    id: 'pay-locale',
+    version: '1.0.0',
+    description: 'Reads the yearly pay a description states, in the profile\'s locale',
+    skills: ['pay-locale'],
+    team: 'evaluation',
+    kind: 'deterministic',
+    consumes: PayText,
+    produces: PayRead,
+    capabilities: {},
+    dataClasses: { in: ['P0'], out: ['P0'] },
+    budget: { usdPerCall: 0, usdPerRun: 0 },
+    timeoutMs: 10_000,
+  }),
+  async (i) => [{ comp: parsePay(i.text, { locale: i.locale, home: i.home, fx: PAY_EVAL_FX }) }],
+);
 
 /**
  * The app's golden-set evals. They run on the fictional fixture pack (`tests/fixtures/pack`), never the user's own:
@@ -296,6 +340,16 @@ export function appEvalSpecs(datasetDir: string, packDir: string): EvalSpec[] {
       agent: freehireRowClassifier,
       cases: loadJsonl(join(datasetDir, 'freehire-rows.jsonl')),
       project: (outs) => one(outs, (o: { class: RowClass }) => ({ class: o.class })),
+      metric: 'exactMatch',
+      min: 1,
+    },
+    {
+      // Task 18: a description's pay read per locale (8 locales x range, single, up to, from, monthly, hourly, headcount,
+      // OTE, plus adversarial figures), on fixed fictional rates; the comp, or null when nothing is read.
+      name: 'pay-locale',
+      agent: payLocaleReader,
+      cases: loadJsonl(join(datasetDir, 'pay-locale.jsonl')),
+      project: (outs) => one(outs, (o: { comp: unknown }) => o.comp),
       metric: 'exactMatch',
       min: 1,
     },

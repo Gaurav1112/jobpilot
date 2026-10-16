@@ -1,8 +1,9 @@
+import type { CurrencyCode } from './currencies.js';
 import type { CompRange } from './parse.js';
 
 /**
- * Pure (it imports only a type from `parse.ts`), so agent code may use it: the containment scan reads this file like
- * agent code. The pack's `Fx` and `Offers['floor']` fit these shapes structurally.
+ * Pure (it imports only types from `parse.ts` and `currencies.ts`), so agent code may use it: the containment scan
+ * reads this file like agent code. The pack's `Fx` and `Offers['floor']` fit these shapes structurally.
  */
 type Currency = CompRange['currency'];
 
@@ -22,9 +23,13 @@ export interface InrRange {
   max: number;
 }
 
-/** Convert an annual range into whole INR per year using the pack's fx table. */
-export function toInrPerYear(range: CompRange, fx: FxRates): InrRange {
+/**
+ * Convert an annual range into whole INR per year using the pack's fx table. A posting's range is in one of the four
+ * currencies the normalizer reads; a range read in a profile's locale (Task 18) may be in any currency with a rate.
+ */
+export function toInrPerYear(range: Omit<CompRange, 'currency'> & { currency: Currency | CurrencyCode }, fx: FxRates): InrRange {
   const rate = fx.toINR[range.currency];
+  if (rate === undefined) throw new Error(`fx has no toINR rate for ${range.currency}`);
   return { min: Math.round(range.min * rate), max: Math.round(range.max * rate) };
 }
 

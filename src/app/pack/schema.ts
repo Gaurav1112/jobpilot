@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
 import { CURRENCY_CODES, isCurrencyCode } from '../comp/currencies.js';
+import { PAY_LOCALES } from '../comp/locale.js';
 import { countryOfCode } from '../text/norm.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
@@ -88,6 +89,9 @@ export const OffersSchema = z.strictObject({
       basis: z.literal('base'),
     })
     .nullable(),
+  // Profiles Task 18: how this profile's postings write pay (`de`: 60.000 €). Absent, pay is read as the normalizer
+  // reads it; for a home currency outside INR/USD/EUR/GBP, descriptions are then read in `en`.
+  payLocale: z.enum(PAY_LOCALES).optional(),
 });
 
 export const FxSchema = z.strictObject({

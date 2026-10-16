@@ -3,6 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { belowFloor, toInrPerYear } from '../comp/floor.js';
+import { effectiveComp, PAY_LOCALES } from '../comp/locale.js';
 import { inScope, residenceScope, type ResidenceScope } from '../geo/residence.js';
 import { hasTerm } from '../lexicon.js';
 import { compileSafePattern } from '../pack/regex.js';
@@ -80,7 +81,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       reject. Rule 6 then applies unchanged.
  * 6. comp: only a `base` basis with a stated maximum is judged: its maximum in INR (`toInrPerYear`) below
  *    `offers.floor` → `below-floor:<maxInr>`. No comp adds the note `pay not disclosed`; an unknown basis adds
- *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor.
+ *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor. The comp is
+ *    `effectiveComp` (Task 18): the posting's own, or for a profile with `offers.payLocale` or a home currency outside
+ *    INR/USD/EUR/GBP and no posting comp, the pay its description states in that locale (`comp/locale.ts`).
  * 7. experience is not checked here: the scorer applies the years penalty.
  * 8. a freehire lead (`ats: 'freehire'`, found on a platform jobpilot cannot read) that would be `eligible` is `review`
  *    with the reason `REASON_FREEHIRE_LEAD`; a rejected one stays rejected and a review one stays as it is. Uncertain ->
@@ -107,7 +110,8 @@ const PackView = z.object({
   eligibility: z.object({ residence: z.string().optional(), employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   // Profiles Task 17: the floor may be in any currency the pack has a rate for; the extra rates are kept (catchall).
-  offers: z.object({ floor: z.object({ amount: z.number(), currency: z.string() }).nullable() }),
+  // Task 18: `payLocale` is how the profile's postings write pay (absent for the default profile).
+  offers: z.object({ floor: z.object({ amount: z.number(), currency: z.string() }).nullable(), payLocale: z.enum(PAY_LOCALES).optional() }),
   fx: z.object({ toINR: z.object({ INR: z.number(), USD: z.number(), EUR: z.number(), GBP: z.number() }).catchall(z.number()) }),
 });
 export type EligibilityPack = z.infer<typeof PackView>;
@@ -684,7 +688,9 @@ function officeCityNote(p: Posting, pack: EligibilityPack, scope: ResidenceScope
  * the normalizer skips them. A kept posting with an unknown basis gets the note `pay basis unclear`.
  */
 function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | { note: string | null } {
-  const c = p.comp;
+  // Task 18: the posting's comp, or (for a profile with a payLocale or a currency the normalizer does not read) the pay
+  // read from its description in the profile's locale. The default profile always gets `p.comp` itself.
+  const c = effectiveComp(p, pack);
   if (c === null) return { note: NOTE_PAY_UNDISCLOSED };
   const floor = pack.offers.floor;
   if (floor !== null && c.max !== null) {

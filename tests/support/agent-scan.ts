@@ -50,6 +50,10 @@ export const APP_ALLOWED = [
   'src/app/geo/data.generated.ts',
   // Profiles Task 13: the pure residence scope (country, regions, offsets, notes) eligibility derives from the pack.
   'src/app/geo/residence.ts',
+  // Profiles Task 18: the pure currency table (no imports) and the per-locale pay reader eligibility uses for a profile
+  // outside the default currencies (it imports only the normalizer's pay wording, the posting type and the table).
+  'src/app/comp/currencies.ts',
+  'src/app/comp/locale.ts',
 ];
 
 /**

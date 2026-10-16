@@ -157,3 +157,22 @@ describe('a description that excludes the residence (Task 16 review)', () => {
     expect(decideEligibility(p, living('DE')).verdict).toBe('review');
   });
 });
+
+describe('pay stated in the profile\'s locale (Task 18)', () => {
+  const text = 'Gehalt: 45.000 – 50.000 € brutto pro Jahr';
+  const germanEur = { ...living('DE'), offers: { floor: { amount: 60000, currency: 'EUR', period: 'year' as const, basis: 'base' as const }, payLocale: 'de' as const } };
+  it('a DE profile reading de pay rejects a range below its EUR floor', () => {
+    const d = decideEligibility(posting({ locationText: 'Remote - Germany', remote: { structured: 'remote', countries: ['germany'], signals: [] }, descriptionText: text }), germanEur);
+    expect(d.reasons).toEqual([`below-floor:${Math.round(50000 * 90.2)}`]);
+  });
+  it('the unchanged fixture pack keeps "pay not disclosed"', () => {
+    const d = decideEligibility(posting({ descriptionText: text }), pub);
+    expect(d.notes).toContain('pay not disclosed');
+    expect(d.reasons.some((r) => r.startsWith('below-floor'))).toBe(false);
+  });
+  it('an EUR floor without a payLocale is untouched too', () => {
+    const { payLocale: _l, ...offers } = germanEur.offers;
+    const d = decideEligibility(posting({ locationText: 'Remote - Germany', remote: { structured: 'remote', countries: ['germany'], signals: [] }, descriptionText: text }), { ...germanEur, offers });
+    expect(d.notes).toContain('pay not disclosed');
+  });
+});
