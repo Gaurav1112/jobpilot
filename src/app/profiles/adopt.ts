@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, cpSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import Database from 'better-sqlite3';
 import { z } from 'zod';
@@ -33,7 +33,18 @@ export const NO_LAUNCHD: AdoptLaunchd = { before: () => [], after: () => {}, res
 export const NO_UNADOPT_LAUNCHD: UnadoptLaunchd = { before: () => {}, after: () => {} };
 
 const DB = 'jobpilot.db';
-const sha = (p: string): string => createHash('sha256').update(readFileSync(p)).digest('hex');
+/** sha256 of a file, read in 1 MiB chunks: a real home's DB is several GB, past readFileSync's 2 GiB limit. */
+function sha(p: string): string {
+  const h = createHash('sha256');
+  const buf = Buffer.allocUnsafe(1 << 20);
+  const fd = openSync(p, 'r');
+  try {
+    for (let n = readSync(fd, buf, 0, buf.length, null); n > 0; n = readSync(fd, buf, 0, buf.length, null)) h.update(buf.subarray(0, n));
+  } finally {
+    closeSync(fd);
+  }
+  return h.digest('hex');
+}
 
 /** `"<posix relPath> <size> <sha256>"` for every file under `names` (relative to `base`), sorted. */
 export function treeManifest(base: string, names: readonly string[]): string[] {
