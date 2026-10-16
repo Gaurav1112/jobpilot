@@ -26,8 +26,9 @@ beforeAll(() => {
 afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 describe('--profile', () => {
-  it('every leaf command outside the profile group documents --profile', () => {
-    const missing = leaves().filter((p) => p[0] !== 'profile').filter((p) => !cli([...p, '--help'], {}).stdout.includes('--profile <id>'));
+  // the profile and privacy groups work across every profile of the root, so they take no --profile
+  it('every leaf command outside the profile and privacy groups documents --profile', () => {
+    const missing = leaves().filter((p) => p[0] !== 'profile' && p[0] !== 'privacy').filter((p) => !cli([...p, '--help'], {}).stdout.includes('--profile <id>'));
     expect(missing).toEqual([]);
   }, 300_000);
   it('pack check reads the named profile', () => {

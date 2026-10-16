@@ -31,6 +31,7 @@ import { createProfile, removeProfile, useProfile } from './app/profiles/command
 import { adoptLaunchd, unadoptLaunchd } from './app/profiles/adopt-launchd.js';
 import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
 import { listProfiles } from './app/profiles/meta.js';
+import { privacyHomes, privacyTermsOf, scanForTerms } from './app/privacy.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -849,8 +850,24 @@ profileCmd.command('unadopt').description('Undo "profile adopt": move the adopte
 const PROFILE_HELP = 'the profile to use (default: the active one, see "jobpilot profile use"); not together with JOBPILOT_HOME';
 const leafCommands = (c: Command): Command[] => (c.commands.length === 0 ? [c] : c.commands.flatMap(leafCommands));
 for (const c of program.commands.filter((c) => c.name() !== 'profile').flatMap(leafCommands)) c.option('--profile <id>', PROFILE_HELP);
+program
+  .command('privacy')
+  .description('Privacy checks')
+  .command('scan [dir]')
+  .description("Scan a folder (default: this repo) for any profile's forbidden terms, contact details or pay floor; names file, profile and term number only")
+  .action((dir: string | undefined) =>
+    guarded(() => {
+      const homes = privacyHomes();
+      const hits = scanForTerms(dir ?? root, homes);
+      for (const h of hits) console.log(h);
+      if (hits.length > 0) process.exitCode = 1;
+      else console.log(`privacy scan: clean (${homes.length} profiles, ${homes.reduce((n, h) => n + privacyTermsOf(h.home).length, 0)} terms)`);
+    }),
+  );
+
 program.hook('preAction', (_program, action) => {
   if (action.parent?.name() === 'profile') return; // the profile group works on the root, never on one home
+  if (action.parent?.name() === 'privacy') return; // privacy checks read every profile's home, never needing an active one
   const id = action.opts()['profile'] as string | undefined;
   selectProfile(id);
   if (action.name() === 'serve' && profilesRootToServe() !== undefined) return; // serving a whole root needs no active profile
