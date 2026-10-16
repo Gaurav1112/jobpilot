@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { hostDenied, PRODUCT_POLICY_V1 } from '../../kernel/policy.js';
 import { CURRENCY_CODES, isCurrencyCode, PAY_LOCALES } from '../comp/currencies.js';
+import { ROLE_FAMILY_IDS } from '../profiles/families.js';
 import { countryOfCode } from '../text/norm.js';
 import { isCalendarDate } from '../types.js';
 import { compileSafePattern } from './regex.js';
@@ -53,6 +54,11 @@ export const TargetsSchema = z.strictObject({
   minFit: z.number(),
   maxYearsRequired: z.number(),
   yearsPenalty: z.number(),
+  /**
+   * Profiles Task 19: the role family (spec §6). Its starter titles and bonus words fill `titles` and `titleBonusWords`
+   * only where the person left them empty (`effectiveTargets`). Absent: nothing changes (the parsed value and its hash).
+   */
+  roleFamily: z.enum(ROLE_FAMILY_IDS).optional(),
 });
 
 const RegexSource = z.string().superRefine((s, ctx) => {

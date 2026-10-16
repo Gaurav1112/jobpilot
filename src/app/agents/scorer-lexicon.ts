@@ -3,6 +3,7 @@ import { defineAgent } from '../../kernel/agent.js';
 import { defineContract } from '../../kernel/contract.js';
 import { KernelError } from '../../kernel/errors.js';
 import { anyTermIn, termsIn } from '../lexicon.js';
+import { effectiveTargets, ROLE_FAMILY_IDS } from '../profiles/families.js';
 import { EligibilityVerdict, Scored } from '../types.js';
 
 /**
@@ -12,7 +13,7 @@ import { EligibilityVerdict, Scored } from '../types.js';
  * |---|---|---|
  * | base | 30 | `base` |
  * | the first `targets.seniority` group with a word in the title (staff, lead, principal, sde-3, sde iii: 10; else senior: 8) | its points | `title:seniority` |
- * | a `targets.titleBonusWords` word in the title (backend, platform, java, distributed) | `titleBonusPoints` | `title:family` |
+ * | a `targets.titleBonusWords` word in the title (backend, platform, java, distributed; empty: the role family's) | `titleBonusPoints` | `title:family` |
  * | each strong lexicon group in the description | +4 | `strong:<key>` |
  * | each medium group | +1.5 | `medium:<key>` |
  * | each gap group | −4 | `gap:<key>` |
@@ -36,6 +37,8 @@ const PackView = z.object({
     titleBonusPoints: z.number(),
     maxYearsRequired: z.number(),
     yearsPenalty: z.number(),
+    // profiles Task 19: the role family whose bonus words apply when `titleBonusWords` is empty
+    roleFamily: z.enum(ROLE_FAMILY_IDS).optional(),
   }),
 });
 export type ScorerPack = z.infer<typeof PackView>;
@@ -56,7 +59,8 @@ export function scoreText(title: string, text: string, yearsRequired: number | n
   const breakdown: Scored['breakdown'] = [{ label: 'base', points: BASE }];
   const seniority = pack.targets.seniority.find((g) => anyTermIn(title, g.words));
   if (seniority !== undefined) breakdown.push({ label: 'title:seniority', points: seniority.points });
-  if (anyTermIn(title, pack.targets.titleBonusWords)) breakdown.push({ label: 'title:family', points: pack.targets.titleBonusPoints });
+  const { titleBonusWords } = effectiveTargets({ titles: [], ...pack.targets });
+  if (anyTermIn(title, titleBonusWords)) breakdown.push({ label: 'title:family', points: pack.targets.titleBonusPoints });
   const all = [...pack.lexicon.strong, ...pack.lexicon.medium, ...pack.lexicon.gap];
   const jdTerms = {
     strong: termsIn(text, pack.lexicon.strong, all),

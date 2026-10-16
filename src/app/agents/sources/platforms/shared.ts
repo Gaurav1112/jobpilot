@@ -3,6 +3,7 @@ import type { AgentContext } from '../../../../kernel/agent.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import { compileSafePattern } from '../../../pack/regex.js';
 import { countryDisplayOfToken, DEFAULT_RESIDENCE, residenceScope, type ResidenceScope } from '../../../geo/residence.js';
+import { effectiveTargets, ROLE_FAMILY_IDS } from '../../../profiles/families.js';
 import { countriesIn, officeCity } from '../../../text/norm.js';
 import type { RawPosting } from '../../../types.js';
 import { finish } from '../common.js';
@@ -130,7 +131,8 @@ export function shapeError(what: string, r: { error: z.ZodError }): KernelError 
 /** The parts of the pack the adapters read: the title rules, and the office cities. */
 export const TitlePack = z.object({
   filters: z.object({ roleDeny: z.array(z.string()) }),
-  targets: z.object({ titles: z.array(z.string()) }),
+  // the target titles, and the role family that fills them when they are empty (profiles Task 19)
+  targets: z.object({ titles: z.array(z.string()), roleFamily: z.enum(ROLE_FAMILY_IDS).optional() }),
   // the residence (profiles Task 14: any ISO country, default IN) and the office cities (eligibility rule 5e)
   eligibility: z.object({ residence: z.string().optional(), officeCities: z.array(z.string()).optional() }).optional(),
 });
@@ -162,14 +164,15 @@ const words = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}+#]+/u
 
 /**
  * The cheap title pre-filter: no `filters.roleDeny` pattern matches (eligibility rule 2, the same compiled patterns),
- * and, when `targets.titles` is not empty, every word of one target title is a word of the title ("senior engineer"
+ * and, when the target titles are not empty, every word of one target title is a word of the title ("senior engineer"
  * passes "Senior DevOps Engineer"). It only decides which jobs get a detail; eligibility still judges every job.
  */
 export function titlePasses(title: string, pack: TitlePack): boolean {
   if (pack.filters.roleDeny.some((p) => p.trim() !== '' && compileSafePattern(p).test(title))) return false;
-  if (pack.targets.titles.length === 0) return true;
+  const { titles } = effectiveTargets({ titleBonusWords: [], ...pack.targets });
+  if (titles.length === 0) return true;
   const have = new Set(words(title));
-  return pack.targets.titles.some((t) => {
+  return titles.some((t) => {
     const want = words(t);
     return want.length > 0 && want.every((w) => have.has(w));
   });

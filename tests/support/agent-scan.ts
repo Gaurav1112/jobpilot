@@ -54,6 +54,10 @@ export const APP_ALLOWED = [
   // outside the default currencies (it imports only the normalizer's pay wording, the posting type and the table).
   'src/app/comp/currencies.ts',
   'src/app/comp/locale.ts',
+  // Profiles Task 19: the pure role families (ids, starter titles and bonus words; no I/O) the title pre-filter and the
+  // scorer read, and the data compiled from src/app/profiles/data/role-families.yaml by scripts/gen-role-families.ts.
+  'src/app/profiles/families.ts',
+  'src/app/profiles/families.generated.ts',
 ];
 
 /**
