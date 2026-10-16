@@ -104,6 +104,20 @@ export function loadRunPack(dir: string, overrides: Readonly<Record<string, Fact
   return { pack, publicPack, packHash: hash, fullPack, fullPackHash: hashOf(withoutFreelance(fullPack)), freelancePackHash, freelanceFullPackHash: hashOf(fullPack), companies, companiesHash, asOf, nonce, warnings };
 }
 
+/**
+ * The pack's `eligibility.residence` as a run would load it (`loadRunPack`, daily mode, no overrides: they never
+ * touch the residence), or undefined when the pack cannot be loaded. Lenient on purpose (profiles Task 21): `schedule
+ * install` reads it to leave out the jobs a profile outside India cannot run, and a broken pack installs every job,
+ * as before, so the daily job's own run names the problem.
+ */
+export function residenceAt(dir: string, asOf: string): string | undefined {
+  try {
+    return loadRunPack(dir, {}, asOf, undefined, 'daily').pack.eligibility.residence;
+  } catch {
+    return undefined;
+  }
+}
+
 export interface AppKernelOptions {
   readonly store: Store;
   readonly loaded: RunPack;

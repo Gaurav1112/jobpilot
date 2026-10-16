@@ -4,6 +4,7 @@ import { policyHash } from '../../kernel/policy.js';
 import type { FetchLike } from '../../kernel/providers.js';
 import { codeHash } from '../code-hash.js';
 import { coverageWeek, otherRunOwed } from '../due.js';
+import { residenceScope } from '../geo/residence.js';
 import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
@@ -12,6 +13,7 @@ import { readFileSync } from 'node:fs';
 import { createHostPacer, type HostPacer } from '../../kernel/broker.js';
 import type { PacerFactory } from '../pacer.js';
 import { httpsOnline, pacedFetch } from '../net.js';
+import { PackError } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
 import { fullChainCheck } from '../chain-status.js';
 import { runProblems, type Problem } from '../problems.js';
@@ -25,6 +27,31 @@ import { COVERAGE_PIPELINE, coveragePolicy, coverageSeeds, runCoverageStages, ST
 import { coverageNotification, deferralHosts, deferralLine, projectCoverage, registryCounts, type CoverageProjection, type RegistryCounts } from './project.js';
 import { registryPickItems, seedItemsFromJobs } from './seed.js';
 import type { CandidateSource, CareersSite, PlatformGuess } from './types.js';
+
+/**
+ * The residences coverage discovery serves in this version: its discovery queries (`discoveryQueries`) and the freehire
+ * evidence (`freehire-api.ts`) read India's city table and India's words only, so elsewhere it would collect India's
+ * leads every week. Real coverage for other countries is a later feature.
+ */
+export const COVERAGE_RESIDENCES: ReadonlySet<string> = new Set(['IN']);
+
+/**
+ * Why the weekly coverage run (and the coverage tools) do not run for a profile living in `residence`, or null when
+ * they do (`IN`). The code is read as eligibility reads it (upper-cased, UK as GB).
+ */
+export function coverageRefusal(residence: string): string | null {
+  const asked = residence.toUpperCase();
+  let code = asked;
+  let place = asked;
+  try {
+    const scope = residenceScope(asked);
+    code = scope.code;
+    place = scope.display;
+  } catch {
+    // a code norm.ts does not know (the pack schema refuses it first): named as given
+  }
+  return COVERAGE_RESIDENCES.has(code) ? null : `coverage discovery is India-only for now; this profile lives in ${place} (residence ${code}); nothing ran`;
+}
 
 /** The umbrella run's pipeline label in the `runs` table; each stage runs as `<runId>.<stage>` (see pipeline.ts). */
 const PIPELINE = COVERAGE_PIPELINE.id;
@@ -360,6 +387,9 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const runDate = istDate(now);
       const week = coverageWeek(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
+      // India-only discovery: a PackError, so the run exits 2 through the usual path (redacted, notified) with nothing written
+      const refused = coverageRefusal(loaded.pack.eligibility.residence);
+      if (refused !== null) throw new PackError(refused);
       const policy = coveragePolicy(loaded.pack);
       const pHash = policyHash(policy);
       const rolled = closeEarlierWeeks(app, week, now);

@@ -8,7 +8,7 @@ import { PLATFORM_AGENT, ROBOTS_OFF } from '../freelance/pipeline.js';
 import { presetTierUsd } from '../freelance/gig-eligibility.js';
 import { NOTE_ONE_SKILL } from '../freelance/project.js';
 import { rankGigs } from '../freelance/rank.js';
-import { rankable } from '../freelance/run.js';
+import { freelanceRefusal, rankable, refusalNotice } from '../freelance/run.js';
 import { Platform, type GigRendered } from '../freelance/types.js';
 import { COVER_PLATFORMS } from '../freelance/writing/gig-cover.js';
 import { FreelanceFile } from '../pack/freelance-schema.js';
@@ -269,6 +269,9 @@ export function mountFreelance(app: Hono<Env>, d: FreelanceDeps): void {
     if (tabAsked === 'sources') return sourcesPage(c);
     const at = d.now();
     const ps = d.packState(at);
+    // Task 21: a profile living outside India has no freelance run (India-scoped in this version): one line, no list
+    const refused = ps.pack === undefined ? null : freelanceRefusal(ps.pack.eligibility.residence);
+    if (refused !== null) return d.page(c, 'freelance', 'Freelance', packBanner(ps), html`<div class="page-head"><h1>Freelance</h1></div>\n<p class="note" role="status">${refusalNotice(refused)}</p>`);
     const r = d.redactor(ps.naming);
     const fitFloor = rulesOf(ps.pack).fitFloor;
     const pageRaw = c.req.query('page') ?? '1';

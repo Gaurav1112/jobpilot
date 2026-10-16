@@ -9,10 +9,12 @@ import { freelanceKernel, loadRunPack, resolvePdftotext } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { homePaths } from '../pack/paths.js';
+import { PackError } from '../pack/load.js';
 import { forbiddenTermStrict } from '../pack/rules.js';
 import type { Naming } from '../pack/schema.js';
 import { runProblems, safeLine, skipNoteProblems, sourceSkipWarnings, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts, type RunCounts } from '../project.js';
+import { residenceScope } from '../geo/residence.js';
 import { exitCodeOf, istDate, istMonth, nonceOf, pickRunId, sourcesAllReplayed } from '../run.js';
 import { AppStore, BOARD_SEED_DAYS, type GigView } from '../store/app-store.js';
 import { foreignSourceStep, recordSourceHealth } from './health.js';
@@ -36,6 +38,31 @@ export function halfOf(now: string): 'am' | 'pm' {
   const minutes = new Date(t + IST_OFFSET_MS).getUTCHours() * 60 + new Date(t + IST_OFFSET_MS).getUTCMinutes();
   return minutes >= PM_FROM_MINUTES ? 'pm' : 'am';
 }
+
+/** The residences the freelance pipeline serves in this version (profiles Decision 12: India-scoped in P1). */
+export const FREELANCE_RESIDENCES: ReadonlySet<string> = new Set(['IN']);
+
+/** The residence code as eligibility reads it: upper-cased, UK as GB; a code `norm.ts` does not know stays as given. */
+export function canonicalResidence(residence: string): string {
+  const code = residence.toUpperCase();
+  try {
+    return residenceScope(code).code;
+  } catch {
+    return code;
+  }
+}
+
+/**
+ * Why the freelance pipeline does not run for a profile living in `residence` (Decision 12), or null when it does
+ * (`IN`). The gig rules (rates, regions, the vetted networks) are India's, so a profile elsewhere is refused by name.
+ */
+export function freelanceRefusal(residence: string): string | null {
+  const code = canonicalResidence(residence);
+  return FREELANCE_RESIDENCES.has(code) ? null : `the freelance pipeline is India-scoped in this version (residence is ${code}); nothing ran`;
+}
+
+/** The dashboard's one line for a refusal: the sentence without "nothing ran", capitalised. */
+export const refusalNotice = (refusal: string): string => `${refusal.charAt(0).toUpperCase()}${refusal.slice(1).replace(/; nothing ran$/, '')}.`;
 
 export const FREELANCE_REPLAY_HINT = 'All gig sources were already fetched in this half; the next half fetches again';
 
@@ -199,6 +226,9 @@ export function runFreelance(o: FreelanceRunOptions): Promise<FreelanceSummary> 
       const runDate = istDate(now);
       const half = halfOf(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'freelance');
+      // Decision 12: a PackError, so the run exits 2 through the usual path (redacted, notified) with nothing written
+      const refused = freelanceRefusal(loaded.pack.eligibility.residence);
+      if (refused !== null) throw new PackError(refused);
       const rules = loaded.pack.freelance;
       let gmail: GmailRunAccess = GMAIL_OFF;
       if (rules.platforms.gmail.enabled && o.gmail !== undefined) {

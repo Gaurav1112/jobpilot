@@ -3,6 +3,7 @@ import { hostDenied, mergePolicy, PRODUCT_POLICY_V1 } from '../../kernel/policy.
 import type { FetchLike } from '../../kernel/providers.js';
 import { GENERIC_LABELS, normalCompanyName } from '../coverage/names.js';
 import { resolveCompany, type ResolveResult } from '../coverage/resolve.js';
+import { coverageRefusal } from '../coverage/run.js';
 import type { RunGate } from '../coverage/gate.js';
 import { registrableDomain, resolveWebsite, seedItemsFromJobs, SHARED_HOSTS } from '../coverage/seed.js';
 import { coverageWeek } from '../due.js';
@@ -12,7 +13,7 @@ import { readsDaily, registryBoardOf } from '../pipeline.js';
 import { istDate } from '../run.js';
 import type { AppStore, Band, Company } from '../store/app-store.js';
 import { companyKeys, jobKeys, type CompanyJobs } from '../coverage/company-jobs.js';
-import type { Html } from './html.js';
+import { html, type Html } from './html.js';
 import { u } from './paths.js';
 import { companiesBody, companyPlatformName, deferWhy, skippedBody, type AddFormView, type CompaniesPageData, type CompanyRowView } from './views/companies.js';
 import type { Banner, Nav } from './views/layout.js';
@@ -194,9 +195,22 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     }
   };
 
+  /**
+   * The Companies tab of a profile living outside India (coverage discovery is India-only for now): the one-line
+   * notice instead of the lists and the add form; undefined for IN (or when the pack cannot be read).
+   */
+  const refusedPage = (c: Context<Env>, ps: ReturnType<CompaniesDeps['packState']>, title: string, status: 200 | 409 = 200) => {
+    const refused = ps.pack === undefined ? null : coverageRefusal(ps.pack.eligibility.residence);
+    if (refused === null) return undefined;
+    const line = `${refused.charAt(0).toUpperCase()}${refused.slice(1).replace(/; nothing ran$/, '')}.`;
+    return d.page(c, 'companies', title, [], html`<div class="page-head"><h1>Companies</h1></div>\n<p class="note" role="status">${line}</p>`, status);
+  };
+
   const render = (c: Context<Env>, add: AddFormView, flash: CompaniesPageData['flash'], status: 200 | 400 | 409 = 200) => {
     const at = d.now();
     const ps = d.packState(at);
+    const refused = refusedPage(c, ps, 'Companies', status === 200 ? 200 : 409);
+    if (refused !== undefined) return refused;
     const r = d.redactor(ps.naming);
     const data = d.withStore((s) => {
       const companies = s.listCompanies();
@@ -256,6 +270,8 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
   app.get('/companies/skipped', (c) => {
     const at = d.now();
     const ps = d.packState(at);
+    const refused = refusedPage(c, ps, 'Skipped sites');
+    if (refused !== undefined) return refused;
     const r = d.redactor(ps.naming);
     const pageRaw = c.req.query('page') ?? '1';
     const asked = /^\d{1,6}$/.test(pageRaw) ? Math.max(1, Number(pageRaw)) : 1;
@@ -383,6 +399,8 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
     const echo: AddFormView = { name: rawName.slice(0, MAX_NAME + 1), website: rawWebsite.slice(0, MAX_WEBSITE + 1), error: null };
     const at = d.now();
     const ps = d.packState(at);
+    const refused = refusedPage(c, ps, 'Companies', 409);
+    if (refused !== undefined) return refused;
     const policy = mergePolicy(PRODUCT_POLICY_V1, ps.pack?.policyUser ?? {});
     const jobSites = rawWebsite.trim() === '' ? d.withStore((s) => seedItemsFromJobs(s)) : [];
     const v = validateAdd(rawName, rawWebsite, { text: d.redactor(ps.naming).text, policy, jobSites });
@@ -410,6 +428,8 @@ export function mountCompanies(app: Hono<Env>, d: CompaniesDeps): void {
   app.post('/companies/:key/resolve', async (c) => {
     const key = c.req.param('key');
     if (!COMPANY_KEY.test(key)) return c.text('Bad request', 400);
+    const refused = refusedPage(c, d.packState(d.now()), 'Companies', 409);
+    if (refused !== undefined) return refused;
     if (d.resolve === undefined) return c.redirect(back('resolve-off'), 303);
     const res: ResolveResult = await resolveCompany({
       home: d.home, clock: d.clock, fetch: d.resolve.fetch, companyKey: key,

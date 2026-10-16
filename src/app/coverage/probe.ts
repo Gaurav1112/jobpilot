@@ -11,6 +11,7 @@ import { WORKDAY_MAX_REQUESTS } from '../agents/sources/platforms/workday.js';
 import { ensureHome } from '../home.js';
 import { loadRunPack } from '../kernel.js';
 import { withLock } from '../lock.js';
+import { coverageRefusal } from './run.js';
 import { homePaths } from '../pack/paths.js';
 import { registryBoards } from '../pipeline.js';
 import { safeLine } from '../problems.js';
@@ -408,6 +409,8 @@ export interface CoverageProbeOptions {
   readonly days?: number;
   readonly clock: Clock;
   readonly out: (line: string) => void;
+  /** Where a refusal is said (the CLI's stderr); absent: `out`. */
+  readonly err?: (line: string) => void;
 }
 
 /** Validates `--days`: a whole number from 1 to 90. */
@@ -416,7 +419,11 @@ export function parseDays(v: string): number {
   return Number(v);
 }
 
-/** `jobpilot coverage probe`: takes the run lock (a held lock refuses with the holder named), reads, prints. Exit 0. */
+/**
+ * `jobpilot coverage probe`: takes the run lock (a held lock refuses with the holder named), reads, prints. Exit 0; 2
+ * for a profile living outside India (`coverageRefusal`: coverage is India-only for now), with nothing printed but the
+ * refusal.
+ */
 export async function coverageProbeCommand(o: CoverageProbeOptions): Promise<number> {
   const days = o.days ?? DEFAULT_DAYS;
   if (!Number.isSafeInteger(days) || days < 1 || days > MAX_DAYS) throw new Error(`--days must be a whole number from 1 to ${MAX_DAYS}`);
@@ -429,6 +436,11 @@ export async function coverageProbeCommand(o: CoverageProbeOptions): Promise<num
     const app = AppStore.open(paths.db);
     try {
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(o.clock.now()), undefined, 'daily');
+      const refused = coverageRefusal(loaded.pack.eligibility.residence);
+      if (refused !== null) {
+        (o.err ?? o.out)(`error: ${refused}`);
+        return 2;
+      }
       const watchlist = new Set(loaded.pack.watchlist.map((w) => `${w.ats} ${w.slug.toLowerCase()}`));
       const report = buildReport({ app, now: o.clock.now(), days, minFit: loaded.pack.targets.minFit, watchlist, naming: loaded.pack.naming });
       o.out(o.json ? JSON.stringify(report, null, 2) : formatReport(report));
