@@ -58,11 +58,20 @@ export function createRootDashboard(deps: RootDeps): Hono {
     const active = readActiveProfile(deps.root);
     return c.redirect(`/p/${active !== undefined && all.includes(active) ? active : all[0]}/`, 302);
   });
-  app.get('/p/:id', (c) => c.redirect(`/p/${c.req.param('id')}/`, 301));
+  // The id is the raw (undecoded) path segment and must equal a profile id exactly: an encoded or unknown id is refused
+  // here, before any redirect or slicing, so the Location and the sub-path are always built from a known id.
+  const known = (url: URL): string | undefined => {
+    const raw = url.pathname.split('/')[2] ?? '';
+    return ids().includes(raw) ? raw : undefined;
+  };
+  app.get('/p/:id', (c) => {
+    const id = known(new URL(c.req.url));
+    return id === undefined ? c.text('no such profile', 404) : c.redirect(`/p/${id}/`, 301);
+  });
   app.all('/p/:id/*', (c) => {
-    const id = c.req.param('id');
-    if (!ids().includes(id)) return c.text('no such profile', 404);
     const url = new URL(c.req.url);
+    const id = known(url);
+    if (id === undefined) return c.text('no such profile', 404);
     url.pathname = url.pathname.slice(`/p/${id}`.length) || '/';
     return sub(id).fetch(new Request(url, c.req.raw));
   });

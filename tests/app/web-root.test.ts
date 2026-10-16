@@ -61,6 +61,26 @@ describe('the root dashboard', () => {
     expect((await post(ashaToken)).status).toBe(403);
     expect([200, 303]).toContain((await post(lenaToken)).status);
   });
+  it('/p/<id> redirects only a known id; anything else is 404, never a 500 or a redirect to nowhere', async () => {
+    const app = createRootDashboard({ root, clock });
+    const r = await get(app, '/p/lena');
+    expect(r.status).toBe(301);
+    expect(r.headers.get('location')).toBe('/p/lena/');
+    for (const p of ['/p/Asha', '/p/sam', '/p/a%0d%0aSet-Cookie:x=1', '/p/%2F%2Fevil.example']) {
+      const x = await get(app, p);
+      expect(x.status, p).toBe(404);
+      expect(x.headers.get('location'), p).toBeNull();
+    }
+  });
+  it('a percent-encoded profile id is not a profile: 404, never a sliced path', async () => {
+    const app = createRootDashboard({ root, clock });
+    expect((await get(app, '/p/asha/facts')).status).toBe(200);
+    for (const p of ['/p/%61sha/facts', '/p/%61sha/', '/p/asha%2Flena/']) {
+      const x = await get(app, p);
+      expect(x.status, p).toBe(404);
+      expect(await x.text(), p).toBe('no such profile'); // refused at the root, never handed to a profile's dashboard
+    }
+  });
   it('a foreign Host is refused before routing', async () => {
     const app = createRootDashboard({ root, clock, port: 4317 });
     expect((await app.request('http://evil.example/', { headers: { host: 'evil.example' } })).status).toBe(403);
