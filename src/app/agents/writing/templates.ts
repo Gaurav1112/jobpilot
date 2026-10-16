@@ -238,25 +238,54 @@ export const availabilityClause = (notice: string): string =>
 export const joinOr = (items: readonly string[]): string =>
   items.length <= 1 ? items.join('') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1] as string}`;
 
+/** How the profile is willing to work (`eligibility.workModes`, profiles spec §1). The pack schema declares the same three. */
+export type WorkMode = 'remote' | 'office' | 'hybrid';
+const allModes = (modes: readonly WorkMode[] | undefined): boolean =>
+  modes === undefined || (['remote', 'office', 'hybrid'] as const).every((m) => modes.includes(m));
+
+/**
+ * The role the letter asks for (spec §6), from the work modes and the office cities' display names. Modes absent or
+ * all three: today's clauses ("a fully remote role" with no offices, else "a remote role, or an office or hybrid role
+ * in A or B"). Otherwise only the listed modes are named; office or hybrid without offices is refused (the pack schema
+ * already refuses it).
+ */
+export function roleClause(modes: readonly WorkMode[] | undefined, offices: readonly string[]): string {
+  if (modes === undefined || allModes(modes)) return offices.length === 0 ? FULLY_REMOTE : `a remote role, or an office or hybrid role in ${joinOr(offices)}`;
+  const office = modes.includes('office');
+  const hybrid = modes.includes('hybrid');
+  const onsite = offices.length === 0 ? '' : office && hybrid ? 'an office or hybrid role' : office ? 'an office role' : hybrid ? 'a hybrid role' : '';
+  const place = onsite === '' ? '' : `${onsite} in ${joinOr(offices)}`;
+  if (modes.includes('remote')) return place === '' ? FULLY_REMOTE : `a remote role, or ${place}`;
+  if (place === '') throw new Error('eligibility.yaml workModes names office or hybrid, but officeCities is empty');
+  return place;
+}
+
 /**
  * The filled p4: the city clause only with a city, the notice clause only with a notice, then `COVER_P4_THANKS`. An
  * immediate notice (`isImmediateNotice`) reads "available to start immediately". With office cities (display names,
  * from `eligibility.officeCities`) the role reads "a remote role, or an office or hybrid role in A, B or C"; with none
  * the paragraph is exactly the template. `homeIsOffice` (the home city is the only office city) names the city once:
- * "I'm based in {city} and open to remote, office or hybrid roles".
+ * "I'm based in {city} and open to remote, office or hybrid roles"; only when `modes` (`eligibility.workModes`) is
+ * absent or lists all three, since that sentence names all three. Other modes ask for the role `roleClause` builds.
  */
-export function renderP4(city: string | undefined, notice: string | undefined, officeCities: readonly string[] = [], homeIsOffice = false): string {
+export function renderP4(
+  city: string | undefined,
+  notice: string | undefined,
+  officeCities: readonly string[] = [],
+  homeIsOffice = false,
+  modes?: readonly WorkMode[],
+): string {
   const immediate = notice !== undefined && isImmediateNotice(notice);
   const n = notice === undefined ? undefined : noticePhrase(notice);
-  if (homeIsOffice && city !== undefined && officeCities.length === 1) {
+  if (homeIsOffice && city !== undefined && officeCities.length === 1 && allModes(modes)) {
     const first = n === undefined ? fill(COVER_P4_HOME_OFFICE, { city }) : fill(immediate ? COVER_P4_HOME_OFFICE_NOTICE.replace(AVAILABLE_AFTER, COVER_P4_IMMEDIATE) : COVER_P4_HOME_OFFICE_NOTICE, { city, notice: n });
     return `${first} ${COVER_P4_THANKS}`;
   }
+  const role = roleClause(modes, officeCities);
   const shape = (t: string): string => {
     const timed = immediate ? t.replace(AVAILABLE_AFTER, COVER_P4_IMMEDIATE) : t;
-    if (officeCities.length === 0) return timed;
-    const role = `a remote role, or an office or hybrid role in ${joinOr(officeCities)}`;
-    // "… role and available …" gains a comma once the role clause has one of its own.
+    if (role === FULLY_REMOTE) return timed;
+    // "… role and available …" gains a comma before "and": the role clause may have one of its own.
     return timed.replace(`${FULLY_REMOTE} and `, `${role}, and `).replace(FULLY_REMOTE, role);
   };
   const first =

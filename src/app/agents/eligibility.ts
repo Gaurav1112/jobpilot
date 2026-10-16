@@ -80,6 +80,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
  *       (rule b) or a time-zone restriction (b1). A relocation, "must be located/based in" or "work(ing) from / based
  *       in|at / report(ing) to our <City> office" sentence in the first 1500 characters naming another city keeps the
  *       reject. Rule 6 then applies unchanged.
+ *    f. work modes (Task 20, `eligibility.workModes`; absent → rules a–e unchanged), checked before e: a remote
+ *       decision (eligible, or review as remote-unclear) when `remote` is not listed → `remote-not-wanted`; `onsite`
+ *       when `office` is not listed → `onsite`, `hybrid` when `hybrid` is not listed → `hybrid`, whatever the city.
  * 6. comp: only a `base` basis with a stated maximum is judged: its maximum in INR (`toInrPerYear`) below
  *    `offers.floor` → `below-floor:<maxInr>`. No comp adds the note `pay not disclosed`; an unknown basis adds
  *    `pay basis unclear` and is never rejected on pay; "from X" (no maximum) is never below the floor. The comp is
@@ -103,6 +106,8 @@ export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
 export const NOTE_B2B = 'B2B contractor: no PF/benefits';
 export const NOTE_OFFICE_PREFIX = 'office/hybrid: ';
+/** Task 20: a remote role for a profile whose `workModes` do not list remote. */
+export const REASON_REMOTE_NOT_WANTED = 'remote-not-wanted';
 /** The note for an onsite or hybrid role in an office city: `office/hybrid: Pune`. */
 export const officeNote = (display: string): string => `${NOTE_OFFICE_PREFIX}${display}`;
 
@@ -111,7 +116,13 @@ const PackView = z.object({
   // `filters.employmentDeny` are the words that reject when bare in the title (fix round 2); the description uses the
   // fixed EMPLOYMENT_PHRASES instead, because bare words there are mostly not about employment (fix round 1, I1).
   filters: z.object({ roleDeny: z.array(z.string()), companyDeny: z.array(z.string()), employmentDeny: z.array(z.string()) }),
-  eligibility: z.object({ residence: z.string().optional(), employmentTypes: z.array(z.string()), officeCities: z.array(z.string()).optional() }),
+  eligibility: z.object({
+    residence: z.string().optional(),
+    employmentTypes: z.array(z.string()),
+    officeCities: z.array(z.string()).optional(),
+    // Profiles Task 20: absent for the default profile (today's rules).
+    workModes: z.array(z.string()).optional(),
+  }),
   watchlist: z.array(z.object({ company: z.string(), ats: z.string(), slug: z.string(), hiresInIndia: z.boolean(), allRemote: z.boolean() })),
   // Profiles Task 17: the floor may be in any currency the pack has a rate for; the extra rates are kept (catchall).
   // Task 18: `payLocale` is how the profile's postings write pay (absent for the default profile).
@@ -730,6 +741,13 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   if (employment.reason !== null) return reject(employment.reason);
 
   const decided = remoteDecision(p, pack, scope);
+  // Work modes (Task 20), before the office rule so an onsite job in an office city is still rejected without `office`.
+  const modes = pack.eligibility.workModes;
+  if (modes !== undefined) {
+    if ((decided === null || decided === 'review' || decided === 'review-timezone') && !modes.includes('remote')) return reject(REASON_REMOTE_NOT_WANTED);
+    if (decided === 'onsite' && !modes.includes('office')) return reject('onsite');
+    if (decided === 'hybrid' && !modes.includes('hybrid')) return reject('hybrid');
+  }
   const office = decided === 'onsite' || decided === 'hybrid' || decided === ONSITE_UNSTATED ? officeCityNote(p, pack, scope) : null;
   const remote = office !== null ? null : decided;
   const reasons: string[] = [];

@@ -179,6 +179,10 @@ export const ContactSchema = z.strictObject({
   links: z.array(z.string()),
 });
 
+/** How the profile is willing to work (profiles spec §1); the writing templates declare the same three. */
+export const WORK_MODES = ['remote', 'office', 'hybrid'] as const;
+export type WorkMode = (typeof WORK_MODES)[number];
+
 export const EligibilitySchema = z.strictObject({
   /** ISO 3166 alpha-2 country of residence (profiles spec §6); remote scopes derive from it (`residenceScope`). */
   residence: z.string().regex(/^[A-Z]{2}$/, 'expected an ISO 3166 alpha-2 code').refine((c) => countryOfCode(c) !== null, 'unknown country code'),
@@ -191,7 +195,17 @@ export const EligibilitySchema = z.strictObject({
    * field keeps its pack hash.
    */
   officeCities: z.array(z.string().trim().min(1)).optional(),
+  /**
+   * Profiles Task 20: the work modes the profile accepts. Absent (the default): today's behaviour, remote everywhere
+   * plus office or hybrid in `officeCities`. `office` or `hybrid` needs a non-empty `officeCities`. Absent stays absent,
+   * so a pack without the field keeps its pack hash.
+   */
+  workModes: z.array(z.enum(WORK_MODES)).min(1).optional(),
   employmentTypes: z.tuple([z.literal('full-time')]),
+}).superRefine((e, ctx) => {
+  if (e.workModes?.some((m) => m !== 'remote') === true && (e.officeCities ?? []).length === 0) {
+    ctx.addIssue({ code: 'custom', path: ['officeCities'], message: 'officeCities must name a city when workModes lists office or hybrid' });
+  }
 });
 
 /**

@@ -1,4 +1,4 @@
-import { COVER_P4, renderP4, sanitisePostingText, unsafePostingText } from '../agents/writing/templates.js';
+import { COVER_P4, renderP4, sanitisePostingText, unsafePostingText, type WorkMode } from '../agents/writing/templates.js';
 import { z } from 'zod';
 import { DEFAULT_PLACES, type PlaceTable } from '../geo/places.js';
 import { residenceScope } from '../geo/residence.js';
@@ -14,6 +14,8 @@ import { coverModel, type DocModel, resumeModel } from './model.js';
  * immediate notice ("immediately", "0", "none", ...) reads "available to start immediately". `eligibility.officeCities`,
  * when set, turns "a fully remote role" into "a remote role, or an office or hybrid role in <cities>"; each key resolves
  * through the residence country's office table (`eligibility.residence`, default India's; an unknown key is itself).
+ * `eligibility.workModes`, when set, names only the listed modes in that role (`roleClause`); absent, the letter is
+ * today's.
  * `available_from` is never read: a calendar date goes stale and would make the letter untrue. G-FILL and G-GROUND
  * re-run this from the full pack and compare. Pure.
  */
@@ -66,7 +68,14 @@ export function unsafeCity(city: string): string | null {
  * the posting-slot rules (no markup, braces, URL, pronoun, sentence break, or more than 14 words); the city likewise,
  * except that any glyph the pack scan accepts (₹, say) may stay.
  */
-export function fillP4(p4: string, answers: Readonly<Record<string, unknown>>, city: string, officeCities: readonly string[] = [], table: PlaceTable = DEFAULT_PLACES): string {
+export function fillP4(
+  p4: string,
+  answers: Readonly<Record<string, unknown>>,
+  city: string,
+  officeCities: readonly string[] = [],
+  table: PlaceTable = DEFAULT_PLACES,
+  modes?: readonly WorkMode[],
+): string {
   if (p4 !== COVER_P4) throw new Error('the last cover paragraph is not the availability template, so it cannot be filled');
   const notice = noticeAnswer(answers);
   const place = city.trim();
@@ -81,16 +90,23 @@ export function fillP4(p4: string, answers: Readonly<Record<string, unknown>>, c
   }
   // The home city is the only office city (by any of its spellings): it is named once.
   const homeIsOffice = place !== '' && offices.length === 1 && officeCities.some((k) => officeCity(k, table).aliases.includes(cityKey(place)));
-  return renderP4(place === '' ? undefined : place, notice, offices, homeIsOffice);
+  return renderP4(place === '' ? undefined : place, notice, offices, homeIsOffice, modes);
 }
 
 /** The cover plan with its last paragraph filled; every other paragraph, and the resume, unchanged. */
-export function fillCover(cover: CoverPlan, answers: Readonly<Record<string, unknown>>, city: string, officeCities: readonly string[] = [], table: PlaceTable = DEFAULT_PLACES): CoverPlan {
+export function fillCover(
+  cover: CoverPlan,
+  answers: Readonly<Record<string, unknown>>,
+  city: string,
+  officeCities: readonly string[] = [],
+  table: PlaceTable = DEFAULT_PLACES,
+  modes?: readonly WorkMode[],
+): CoverPlan {
   const last = cover.paragraphs.length - 1;
   if (last < 0) throw new Error('the cover plan has no paragraphs');
   return {
     ...cover,
-    paragraphs: cover.paragraphs.map((p, i) => (i === last ? { text: fillP4(p.text, answers, city, officeCities, table), factIds: [...p.factIds] } : { text: p.text, factIds: [...p.factIds] })),
+    paragraphs: cover.paragraphs.map((p, i) => (i === last ? { text: fillP4(p.text, answers, city, officeCities, table, modes), factIds: [...p.factIds] } : { text: p.text, factIds: [...p.factIds] })),
   };
 }
 
@@ -102,7 +118,9 @@ export const RenderPack = z.object({
   contact: z.object({ name: z.string().min(1), email: z.string(), phone: z.string(), city: z.string(), links: z.array(z.string()) }),
   answers: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
   naming: z.object({ forbiddenTerms: z.array(z.string()) }),
-  eligibility: z.object({ officeCities: z.array(z.string()).optional(), residence: z.string().optional() }).optional(),
+  eligibility: z
+    .object({ officeCities: z.array(z.string()).optional(), residence: z.string().optional(), workModes: z.array(z.enum(['remote', 'office', 'hybrid'])).optional() })
+    .optional(),
 });
 export type RenderPack = z.infer<typeof RenderPack>;
 
@@ -111,6 +129,7 @@ export type RenderPack = z.infer<typeof RenderPack>;
  * library), so the guardrail module never loads pdfkit or docx.
  */
 export function renderModels(cover: CoverPlan, pack: RenderPack): { plan: CoverPlan; resume: DocModel; cover: DocModel } {
-  const plan = fillCover(cover, pack.answers, pack.contact.city, pack.eligibility?.officeCities ?? [], residenceScope(pack.eligibility?.residence ?? 'IN').table);
+  const e = pack.eligibility;
+  const plan = fillCover(cover, pack.answers, pack.contact.city, e?.officeCities ?? [], residenceScope(e?.residence ?? 'IN').table, e?.workModes);
   return { plan, resume: resumeModel(plan.resume, pack.contact), cover: coverModel(plan, pack.contact) };
 }
