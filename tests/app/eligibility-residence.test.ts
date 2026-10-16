@@ -77,7 +77,7 @@ describe('a residence without a country file (NZ)', () => {
 describe('reason text and named skips', () => {
   it('reason sentences name the residence country', () => {
     expect(reasonText('remote-excludes-germany:us-only')).toBe('Remote, but not open to people in Germany');
-    expect(reasonText('location-outside-united-states')).toBe('The posting names only places outside United States');
+    expect(reasonText('location-outside-united-states')).toBe('The posting names only places outside the United States');
     expect(reasonText('timezone-excludes-new-zealand')).toBe('Working hours are limited to time zones that exclude New Zealand');
   });
   it('a facet skip for any residence is a named skip', () => {
@@ -96,5 +96,44 @@ describe('India is unchanged', () => {
     expect(reasonText('remote-excludes-india:us-only')).toBe('Remote, but not open to people in India');
     expect(reasonText('location-outside-india')).toBe('The posting names only places outside India');
     expect(reasonText('timezone-excludes-india')).toBe('Working hours are limited to time zones that exclude India');
+  });
+});
+
+describe('named time zones (Task 13 review)', () => {
+  const de = living('DE');
+  const ca = living('CA');
+  const zoneVerdict = (p: typeof de, text: string) => decideEligibility(posting({ descriptionText: text }), p);
+  it.each(['European or US time zones only.', 'US or EU time zones only.', 'Candidates in US or European time zones only.', 'US and European time zones only.', 'US, EU time zones only.'])(
+    'every zone a restriction names counts: %s',
+    (t) => {
+      expect(zoneVerdict(de, t).verdict).not.toBe('rejected');
+      expect(zoneVerdict(ca, t).verdict).not.toBe('rejected');
+    },
+  );
+  it('a restriction naming only zones that miss the residence still excludes it', () => {
+    expect(zoneVerdict(de, 'US or Pacific time zones only.').reasons).toEqual(['timezone-excludes-germany']);
+    expect(zoneVerdict(ca, 'European or UK time zones only.').reasons).toEqual(['timezone-excludes-canada']);
+  });
+  it('zone ranges: Eastern is -5..-4, CET is +1..+2, and Asia Pacific is not the Pacific', () => {
+    // Pacific-only Canada resident is never in Eastern; a Germany-only CET restriction needs +1/+2
+    expect(zoneVerdict(living('CA'), 'Eastern time zones only.').verdict).not.toBe('rejected'); // CA spans Eastern
+    expect(zoneVerdict(ca, 'Asia Pacific time zones only.').reasons).toEqual(['timezone-excludes-canada']);
+    expect(zoneVerdict(de, 'Asia Pacific time zones only.').reasons).toEqual(['timezone-excludes-germany']);
+    expect(zoneVerdict(de, 'CET time zones only.').verdict).not.toBe('rejected');
+  });
+});
+
+describe('the residence code reaching the agent (Task 13 review)', () => {
+  it('a lower-case code is the same residence, so in keeps India\'s defaults', () => {
+    const p = posting({ descriptionText: 'US time zones only.' });
+    expect(decideEligibility(p, living('in'))).toEqual(decideEligibility(p, living('IN')));
+  });
+  it('an unknown code is a clear error naming the field', () => {
+    expect(() => decideEligibility(posting({}), living('XX'))).toThrow(/residence/);
+  });
+  it('copy reads "the" before country names that take it', () => {
+    expect(reasonText('location-outside-united-states')).toMatch(/the United States/);
+    expect(reasonText('timezone-excludes-united-kingdom')).toMatch(/exclude the United Kingdom/);
+    expect(reasonText('timezone-excludes-germany')).toMatch(/exclude Germany/);
   });
 });

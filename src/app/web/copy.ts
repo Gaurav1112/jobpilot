@@ -72,13 +72,19 @@ export function docsReason(j: Pick<JobView, 'docsState' | 'docsDetail' | 'compan
 }
 
 /** Readable eligibility reason codes; the code itself is shown beside it. */
+/** Country names read with "the" in a sentence ("outside the United States"). */
+const THE_COUNTRY = /^(?:united |netherlands$|philippines$|czech republic$|dominican republic$|bahamas$|gambia$|maldives$)/i;
+
 export function reasonText(code: string): string {
   if (code === 'remote-unclear') return 'The posting does not say clearly where remote work is allowed';
   if (code === 'onsite') return 'On-site only';
   if (code === 'hybrid') return 'Hybrid only, outside the cities you accept';
   if (code === 'onsite-only') return 'On-site only, outside the cities you accept';
   // Profiles Task 13: the token after the prefix is the residence country ('india', 'united-states').
-  const reasonPlace = (prefix: string): string => countryDisplayOfToken(code.slice(prefix.length).split(':')[0] ?? '');
+  const reasonPlace = (prefix: string): string => {
+    const name = countryDisplayOfToken(code.slice(prefix.length).split(':')[0] ?? '');
+    return THE_COUNTRY.test(name) ? `the ${name}` : name;
+  };
   if (code.startsWith('remote-excludes-')) return `Remote, but not open to people in ${reasonPlace('remote-excludes-')}`;
   if (code.startsWith('location-outside-')) return `The posting names only places outside ${reasonPlace('location-outside-')}`;
   if (code.startsWith('timezone-excludes-')) return `Working hours are limited to time zones that exclude ${reasonPlace('timezone-excludes-')}`;

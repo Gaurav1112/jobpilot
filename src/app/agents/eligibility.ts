@@ -416,17 +416,23 @@ const TZ_STRICT =
  * zones only" does not exclude Germany); India keeps today's rule (every zone word excludes it, as none covers +5:30).
  */
 const TZ_ZONE_OFFSETS: readonly (readonly [RegExp, number, number])[] = [
-  [/^(?:european|eu|cet|central european)$/i, 0, 3],
+  [/^(?:european|eu)$/i, 0, 3],
+  [/^(?:cet|central european)$/i, 1, 2],
   [/^emea$/i, -1, 4],
   [/^(?:uk|gmt)$/i, 0, 1],
-  [/^(?:us|usa|u\.s\.|american|eastern|est)$/i, -10, -4],
+  [/^(?:us|usa|u\.s\.|american)$/i, -10, -4],
+  [/^(?:eastern|est)$/i, -5, -4],
   [/^americas$/i, -10, -2],
   [/^(?:pacific|pst)$/i, -8, -7],
 ];
 const TZ_ZONE_WORD = new RegExp(`(?<![\\p{L}\\p{N}])${TZ_ZONE}(?![\\p{L}\\p{N}])`, 'giu');
 /** True when the zones named in `text` cover none of the residence's offsets. */
+const ASIA_PACIFIC = /\basia[\s-]*pacific\b/gi;
 const zonesExclude = (text: string, offsets: readonly number[]): boolean => {
-  const spans = [...text.matchAll(TZ_ZONE_WORD)].flatMap((m) => TZ_ZONE_OFFSETS.filter(([re]) => re.test(m[0])));
+  // "Asia Pacific" is its own span (+5..+13), never the North American Pacific zone
+  const apac = [...text.matchAll(ASIA_PACIFIC)].map(() => [/./, 5, 13] as const);
+  const rest = text.replace(ASIA_PACIFIC, ' ');
+  const spans = [...apac, ...[...rest.matchAll(TZ_ZONE_WORD)].flatMap((m) => TZ_ZONE_OFFSETS.filter(([re]) => re.test(m[0])))];
   return !offsets.some((o) => spans.some(([, lo, hi]) => o >= lo && o <= hi));
 };
 const offsetOf = (sign: string | undefined, h: string | undefined, m: string | undefined): number =>
@@ -443,7 +449,8 @@ function timezoneExcludes(head: string, scope: ResidenceScope): boolean {
   const strict = (at: number, len: number): boolean => TZ_STRICT.test(sentenceAt(s, at, len)) && counts(at, len);
   for (const re of [TZ_ONLY, TZ_MUST_WORK, TZ_CANDIDATES]) {
     for (const m of s.matchAll(new RegExp(re.source, 'gi'))) {
-      if (counts(m.index ?? 0, m[0].length) && (scope.isDefault || zonesExclude(m[0], offsets))) return true;
+      // every zone the sentence names counts ("European or US time zones only"), not only the matched words
+      if (counts(m.index ?? 0, m[0].length) && (scope.isDefault || zonesExclude(sentenceAt(s, m.index ?? 0, m[0].length), offsets))) return true;
     }
   }
   for (const m of s.matchAll(TZ_RANGE)) {
@@ -688,7 +695,13 @@ function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | {
 
 /** The verdict for one posting under the pack's rules. Pure. It trusts `pack` to be well formed: the agent validates it first (a malformed pack here throws a TypeError, not a KernelError). */
 export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
-  const scope = residenceScope(pack.eligibility.residence ?? 'IN');
+  const code = (pack.eligibility.residence ?? 'IN').toUpperCase();
+  let scope: ResidenceScope;
+  try {
+    scope = residenceScope(code);
+  } catch {
+    throw new Error(`eligibility.residence: unknown country code ${code}`);
+  }
   if (p.title.trim() === '' || p.url.trim() === '') return reject('closed');
   // A blank pattern would match every title: it matches nothing instead (blank deny words likewise, in `hasTerm`).
   const role = pack.filters.roleDeny.find((pattern) => pattern.trim() !== '' && compileSafePattern(pattern).test(p.title));
