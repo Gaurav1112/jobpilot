@@ -31,7 +31,7 @@ import { createProfile, removeProfile, useProfile } from './app/profiles/command
 import { adoptLaunchd, unadoptLaunchd } from './app/profiles/adopt-launchd.js';
 import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
 import { listProfiles } from './app/profiles/meta.js';
-import { privacyHomes, privacyTermsOf, scanForTerms } from './app/privacy.js';
+import { PrivacyScanError, privacyHomes, privacyProblemsOf, privacyTermsOf, scanFolder } from './app/privacy.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -858,9 +858,22 @@ program
   .action((dir: string | undefined) =>
     guarded(() => {
       const homes = privacyHomes();
-      const hits = scanForTerms(dir ?? root, homes);
-      for (const h of hits) console.log(h);
-      if (hits.length > 0) process.exitCode = 1;
+      // a home that cannot be fully checked fails the gate (exit 2): an unchecked profile is never reported "clean"
+      const problems = homes.flatMap((h) => privacyProblemsOf(h.home).map((p) => `${h.label}: ${p}`));
+      for (const p of problems) console.error(`privacy scan: ${p}`);
+      let scan;
+      try {
+        scan = scanFolder(dir ?? root, homes);
+      } catch (e) {
+        if (!(e instanceof PrivacyScanError)) throw e;
+        console.error(`privacy scan: could not read ${e.message}`);
+        process.exitCode = 2;
+        return;
+      }
+      for (const h of scan.hits) console.log(h);
+      for (const n of scan.notScanned) console.error(`privacy scan: not scanned: ${n}`);
+      if (problems.length > 0) process.exitCode = 2;
+      else if (scan.hits.length > 0) process.exitCode = 1;
       else console.log(`privacy scan: clean (${homes.length} profiles, ${homes.reduce((n, h) => n + privacyTermsOf(h.home).length, 0)} terms)`);
     }),
   );

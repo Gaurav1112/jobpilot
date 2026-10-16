@@ -1,31 +1,69 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { basename, dirname, join, relative, sep } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import { parse } from 'yaml';
 import { REMOVED_DIR } from './profiles/commands.js';
 import { listProfiles } from './profiles/meta.js';
 import { isProfilesRoot, jobpilotRoot, profileHome } from './profiles/root.js';
 
+/**
+ * The privacy gate (profiles spec §8): before anything is pushed to the public repo, no profile's forbidden terms,
+ * contact details or pay floor may appear in it. A miss is the failure that matters, so every term is matched in the
+ * forms people actually write it, and a home that cannot be checked is a problem, never "clean".
+ */
+
 /** Every home whose data must stay private; never needs an active profile. */
 export function privacyHomes(env: NodeJS.ProcessEnv = process.env): { label: string; home: string }[] {
   const explicit = env['JOBPILOT_HOME'];
-  if (explicit !== undefined && explicit !== '' && !(isProfilesRoot(explicit) && !existsSync(join(explicit, 'pack')))) return [{ label: 'home', home: explicit }];
-  const root = explicit !== undefined && explicit !== '' ? explicit : jobpilotRoot(env);
-  if (!isProfilesRoot(root)) return [{ label: 'home', home: root }];
-  const out = listProfiles(root).map((p) => ({ label: p.id, home: profileHome(root, p.id) }));
+  const named = explicit !== undefined && explicit !== '';
+  // a home that is one profile of a profiles root widens to the whole root: the other profiles must not be skipped
+  if (named && basename(dirname(explicit)) === 'profiles' && isProfilesRoot(dirname(dirname(explicit)))) return rootHomes(dirname(dirname(explicit)));
+  if (named && !(isProfilesRoot(explicit) && !existsSync(join(explicit, 'pack')))) return [{ label: 'home', home: explicit }];
+  const root = named ? explicit : jobpilotRoot(env);
+  return isProfilesRoot(root) ? rootHomes(root) : [{ label: 'home', home: root }];
+}
+
+function rootHomes(root: string): { label: string; home: string }[] {
+  const out = listProfiles(root).map((p) => {
+    try {
+      return { label: p.id, home: profileHome(root, p.id) };
+    } catch {
+      return { label: p.id, home: join(root, 'profiles', p.id) }; // an odd id still counts; its problems are reported
+    }
+  });
   const removed = join(root, REMOVED_DIR);
-  if (existsSync(removed)) for (const d of readdirSync(removed).sort()) out.push({ label: `removed:${d.replace(/-\d{8}T\d{6}Z$/, '')}`, home: join(removed, d) });
+  if (existsSync(removed))
+    for (const d of readdirSync(removed).sort()) {
+      if (d.startsWith('.') || !lstatSync(join(removed, d)).isDirectory()) continue;
+      out.push({ label: `removed:${d.replace(/-\d{8}T\d{6}Z$/, '')}`, home: join(removed, d) });
+    }
   return out;
 }
 
-const yamlAt = (home: string, file: string): Record<string, unknown> => {
-  try {
-    const v = parse(readFileSync(join(home, 'pack', file), 'utf8')) as unknown;
-    return typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
-  } catch {
-    return {};
+const PACK_FILES = ['naming.yaml', 'contact.yaml', 'offers.yaml'] as const;
+type PackFile = (typeof PACK_FILES)[number];
+
+function readPack(home: string): { docs: Record<PackFile, Record<string, unknown>>; problems: string[] } {
+  const docs = { 'naming.yaml': {}, 'contact.yaml': {}, 'offers.yaml': {} } as Record<PackFile, Record<string, unknown>>;
+  if (!existsSync(join(home, 'pack'))) return { docs, problems: ['no pack folder'] };
+  const problems: string[] = [];
+  for (const f of PACK_FILES) {
+    const p = join(home, 'pack', f);
+    if (!existsSync(p)) continue;
+    try {
+      const v = parse(readFileSync(p, 'utf8')) as unknown;
+      if (v === null || v === undefined) continue;
+      if (typeof v !== 'object' || Array.isArray(v)) problems.push(`${f} is not a mapping`);
+      else docs[f] = v as Record<string, unknown>;
+    } catch {
+      problems.push(`${f} does not parse`);
+    }
   }
-};
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : typeof v === 'string' ? [v] : []);
+  return { docs, problems };
+}
+
+const scalars = (v: unknown): string[] =>
+  (Array.isArray(v) ? v : [v]).flatMap((x) => (typeof x === 'string' ? [x] : typeof x === 'number' && Number.isFinite(x) ? [String(x)] : []));
 const group = (n: number, indian: boolean): string => {
   const s = String(n);
   if (!indian) return s.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
@@ -34,65 +72,214 @@ const group = (n: number, indian: boolean): string => {
   return rest === '' ? last3 : `${rest.replace(/\B(?=(\d{2})+(?!\d))/g, ',')},${last3}`;
 };
 
+/** The pack phone without any extension; '' when absent. */
+const rawPhone = (home: string): string => scalars(readPack(home).docs['contact.yaml']['phone'])[0]?.replace(/\s*(?:ext\.?|extn\.?|x|#)\s*\d+\s*$/i, '').trim() ?? '';
+
 /** The contact phone as digits only ('' when absent). */
 export function phoneOf(home: string): string {
-  const v = yamlAt(home, 'contact.yaml')['phone'];
-  return typeof v === 'string' ? v.replace(/\D/g, '') : '';
+  return rawPhone(home).replace(/\D/g, '');
 }
 
+/** The phone without its country code: the digits after a written `+CC`/`00CC` group, else the last ten; '' if none. */
+function nationalOf(raw: string): string {
+  const digits = raw.replace(/\D/g, '');
+  const intl = /^\s*(?:\+|00)\s*(\d{1,3})[^\d]/.exec(raw);
+  const national = intl !== null ? digits.slice((raw.trim().startsWith('00') ? 2 : 0) + (intl[1] as string).length) : digits.length > 10 ? digits.slice(-10) : digits.replace(/^0+/, '');
+  return national.replace(/^0+/, '');
+}
+
+const floorOf = (home: string): { amount?: number; problem?: string } => {
+  const f = readPack(home).docs['offers.yaml']['floor'];
+  const raw = typeof f === 'object' && f !== null ? (f as { amount?: unknown }).amount : undefined;
+  if (raw === undefined || raw === null) return {};
+  const n = typeof raw === 'number' ? raw : typeof raw === 'string' && /^\s*\d[\d,_ ]*\s*$/.test(raw) ? Number(raw.replace(/[,_ ]/g, '')) : Number.NaN;
+  return Number.isSafeInteger(n) && n > 0 ? { amount: n } : { problem: 'the pay floor is not a whole number, so it is not checked' };
+};
+
+/** Lower-cased, de-duplicated terms, in a fixed order: forbidden terms, name, email, phone, links, floor forms. */
 export function privacyTermsOf(home: string): string[] {
-  const naming = yamlAt(home, 'naming.yaml');
-  const contact = yamlAt(home, 'contact.yaml');
-  const floor = (yamlAt(home, 'offers.yaml')['floor'] as { amount?: unknown } | null | undefined)?.amount;
+  const { docs } = readPack(home);
+  const contact = docs['contact.yaml'];
   const phone = phoneOf(home);
+  const { amount } = floorOf(home);
   const terms = [
-    ...strings(naming['forbiddenTerms']),
-    ...strings(contact['name']),
-    ...strings(contact['email']),
+    ...scalars(docs['naming.yaml']['forbiddenTerms']),
+    ...scalars(contact['name']),
+    ...scalars(contact['email']),
     ...(phone.length >= 7 ? [phone] : []),
-    ...strings(contact['links']),
-    ...(typeof floor === 'number' && Number.isSafeInteger(floor) ? [String(floor), group(floor, false), group(floor, true)] : []),
+    ...scalars(contact['links']).map((l) => l.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '')),
+    ...(amount !== undefined ? [String(amount), group(amount, false), group(amount, true)] : []),
   ].map((t) => t.trim().toLowerCase());
-  return [...new Set(terms)].filter((t) => t.length >= 4);
+  return [...new Set(terms)].filter((t) => t.length >= 2);
 }
 
-/**
- * How one term is found in lower-cased text. Words are substrings. Numbers stand alone: a pay floor never counts inside
- * a longer number, an id or a decimal (`1200000` in `71200000098`), and the phone is its digits with any separators
- * between them (`+49-30 000 0000`), never digits glued across lines or found inside a longer number.
- */
-function matcherOf(term: string, phone: string): (text: string) => boolean {
-  if (term === phone) {
-    const re = new RegExp(`(?<!\\d)${[...term].join('[ \\t\\-.()+]*')}(?!\\d)`);
-    return (text) => re.test(text);
-  }
-  if (/^[\d,]+$/.test(term)) {
-    const re = new RegExp(`(?<!\\d|\\d[.,])${term}(?![.,]?\\d)`);
-    return (text) => re.test(text);
-  }
-  return (text) => text.includes(term);
+/** Why a home cannot be fully checked ('' problems = fully checked). Never names a value. */
+export function privacyProblemsOf(home: string): string[] {
+  const { problems } = readPack(home);
+  if (problems.includes('no pack folder')) return problems;
+  const out = [...problems];
+  if (phoneOf(home).length > 20) out.push('the phone has more than 20 digits, so it is not checked');
+  const floor = floorOf(home).problem;
+  if (floor !== undefined) out.push(floor);
+  if (out.length === 0 && privacyTermsOf(home).length === 0) out.push('no terms to check');
+  return out;
 }
 
-export function scanForTerms(dir: string, homes: readonly { label: string; home: string }[]): string[] {
-  const sets = homes.map((h) => {
-    const phone = phoneOf(h.home);
-    return { label: h.label, matchers: privacyTermsOf(h.home).map((t) => matcherOf(t, phone)) };
+// --- matching -------------------------------------------------------------------------------------------------------
+
+const esc = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/-]/g, '\\$&');
+const NOT_WORD = '(?<![\\p{L}\\p{N}])';
+const END_WORD = '(?![\\p{L}\\p{N}])';
+/** Up to 3 separators between phone digits: any non-alphanumeric character (not a line break), or an HTML space. */
+const PHONE_SEP = '(?:[^\\p{L}\\p{N}\\n]|&nbsp;){0,3}';
+/** Between the words of a name: whitespace (a line break too), a slug's - or ., markdown emphasis, an HTML space or a short tag. */
+const WORD_SEP = '(?:[\\s*_~`|>.-]|&nbsp;|<[^>\\n]{0,20}>)+';
+/** Group separators in a written amount (NFKC has already folded no-break and thin spaces into plain spaces). */
+const GROUP_SEP = "[,. _']";
+/** After an amount: no more digits, except a decimal part that is all zeros. */
+const AMOUNT_END = `(?=[.,]0{1,2}(?!\\d)|(?![.,_' ]?\\d))`;
+const AMOUNT_START = `(?<!\\d|\\d${GROUP_SEP})`;
+
+const digitsWith = (d: string, between: string): string => [...d].join(between);
+
+/** A number as written in words: 12 lakh / 12L / 12 LPA, 1.2 crore, 1.2M / 1.2 million, 1200k (exact values only). */
+function amountWords(n: number): string[] {
+  // A whole-word unit (lakh, LPA, million, crore) needs only the number to stand alone. A one- or two-letter unit
+  // (12L, 1.2M, 1200k) is two or three characters that occur by chance in base64 and binary files, so its number must
+  // also open the text or follow a space, a currency sign or code, or opening punctuation.
+  const CURRENCY = '(?:inr|rs\\.?|usd|eur|gbp)';
+  const longStart = `(?:(?<=${CURRENCY})|(?<![\\p{L}\\p{N}.]))`;
+  const shortStart = `(?<=^|[\\s₹$€£¥(\\[:="'*~>]|${CURRENCY})`;
+  const unit = (div: number, long: string, short: string): string[] => {
+    const v = n / div;
+    if (v < 1 || Math.round(v * 100) !== v * 100) return [];
+    const num = `${esc(String(v))}(?:\\.0+)?\\s*-?\\s*`;
+    return [`${longStart}${num}(?:${long})${END_WORD}`, ...(short === '' ? [] : [`${shortStart}${num}(?:${short})${END_WORD}`])];
+  };
+  return [...unit(1e5, 'lakhs?|lacs?|lpa', 'l'), ...unit(1e7, 'crores?', 'cr'), ...unit(1e6, 'millions?', 'mn|m'), ...(n % 1000 === 0 ? unit(1e3, 'thousand', 'k') : [])];
+}
+
+type Matcher = (text: string) => boolean;
+const anyOf = (patterns: string[]): Matcher => {
+  const re = new RegExp(patterns.map((p) => `(?:${p})`).join('|'), 'u');
+  return (text) => re.test(text);
+};
+
+/** How each term is found in normalised, lower-cased text; one matcher per term, in privacyTermsOf's order. */
+function matchersOf(home: string): Matcher[] {
+  const { docs } = readPack(home);
+  const contact = docs['contact.yaml'];
+  const name = scalars(contact['name'])[0]?.trim().toLowerCase();
+  const email = scalars(contact['email'])[0]?.trim().toLowerCase();
+  const phone = phoneOf(home);
+  const national = nationalOf(rawPhone(home));
+  const { amount } = floorOf(home);
+  return privacyTermsOf(home).map((t): Matcher => {
+    if (phone.length >= 7 && phone.length <= 20 && t === phone) {
+      const forms = [`(?<!\\d)(?:00${PHONE_SEP})?${digitsWith(phone, PHONE_SEP)}(?!\\d)`];
+      if (national.length >= 7 && national !== phone) forms.push(`(?<!\\d)(?:0${PHONE_SEP})?${digitsWith(national, PHONE_SEP)}(?!\\d)`);
+      return anyOf(forms);
+    }
+    if (amount !== undefined && t === String(amount)) return anyOf([`${AMOUNT_START}${t}${AMOUNT_END}`, ...amountWords(amount)]);
+    if (amount !== undefined && (t === group(amount, false) || t === group(amount, true))) return anyOf([`${AMOUNT_START}${t.split(',').join(GROUP_SEP)}${AMOUNT_END}`]);
+    if (t === email && t.includes('@')) {
+      const [local, domain] = [t.slice(0, t.lastIndexOf('@')), t.slice(t.lastIndexOf('@') + 1)];
+      const at = '(?:@|%40|&#0*64;|&#x0*40;|\\\\u0040|\\s*[[(]\\s*at\\s*[\\])]\\s*|\\s+at\\s+)';
+      const dot = '(?:\\.|\\s*[[(]\\s*dot\\s*[\\])]\\s*|\\s+dot\\s+)';
+      return anyOf([`${esc(local)}${at}${domain.split('.').map(esc).join(dot)}`]);
+    }
+    const words = t.split(/\s+/);
+    if (words.length > 1) {
+      const forms = [words.map(esc).join(WORD_SEP)];
+      if (t === name) forms.push(`${esc(words.at(-1) as string)},?${WORD_SEP}${words.slice(0, -1).map(esc).join(WORD_SEP)}`);
+      return anyOf(forms);
+    }
+    if (t.length < 4) return anyOf([`${NOT_WORD}${esc(t)}${END_WORD}`]); // a short term only as a whole word
+    return (text) => text.includes(t);
   });
-  const hits: string[] = [];
+}
+
+/** One text form for matching: NFKC (full-width digits, no-break spaces), no zero-width characters, ASCII digits. */
+const DEVANAGARI_ZERO = 0x966;
+export function normaliseForScan(text: string): string {
+  return text
+    .normalize('NFKC')
+    .replace(/[\u200B-\u200D\u2060\uFEFF\u00AD]/g, '')
+    .replace(/[\u0966-\u096F]/g, (c) => String(c.charCodeAt(0) - DEVANAGARI_ZERO))
+    .toLowerCase();
+}
+
+function decode(buf: Buffer, name: string): string {
+  let b = buf;
+  if (b[0] === 0x1f && b[1] === 0x8b) {
+    try {
+      b = gunzipSync(b);
+    } catch {
+      /* not really gzip: read the bytes as they are */
+    }
+  }
+  if (b[0] === 0xff && b[1] === 0xfe) return b.subarray(2).toString('utf16le');
+  if (b[0] === 0xfe && b[1] === 0xff) return Buffer.from(b.subarray(2)).swap16().toString('utf16le');
+  void name;
+  return b.toString('utf8');
+}
+
+const DOCUMENT_EXT = /\.(?:pdf|docx?|xlsx?|pptx?|odt|ods|odp|rtf|zip|jar|7z|rar|tar|tgz|bz2|xz)$/i;
+
+export interface FolderScan {
+  /** `<path> (<label>, term #<n>)`, or `… in the path)`; a path segment that matches any term is shown as [hidden]. */
+  readonly hits: string[];
+  /** Files the scan could not read as text: symlinks (not followed) and document/archive formats. */
+  readonly notScanned: string[];
+}
+
+export class PrivacyScanError extends Error {}
+
+export function scanFolder(dir: string, homes: readonly { label: string; home: string }[]): FolderScan {
+  const sets = homes.map((h) => ({ label: h.label, matchers: matchersOf(h.home) }));
+  const anyTerm = (s: string): boolean => sets.some((x) => x.matchers.some((m) => m(s)));
+  const shown = (rel: string): string => rel.split('/').map((seg) => (anyTerm(normaliseForScan(seg)) ? '[hidden]' : seg)).join('/');
+  const hits = new Set<string>();
+  const notScanned: string[] = [];
   const walk = (p: string): void => {
     for (const name of readdirSync(p).sort()) {
       if (name === 'node_modules' || name === '.git') continue;
       const f = join(p, name);
-      if (statSync(f).isDirectory()) {
+      const rel = relative(dir, f).split(sep).join('/');
+      let st;
+      try {
+        st = lstatSync(f);
+      } catch (e) {
+        throw new PrivacyScanError(`${shown(rel)}: ${(e as NodeJS.ErrnoException).code ?? 'unreadable'}`);
+      }
+      for (const s of sets) s.matchers.forEach((m, i) => {
+        if (m(normaliseForScan(name))) hits.add(`${shown(rel)} (${s.label}, term #${i + 1}, in the path)`);
+      });
+      if (st.isSymbolicLink()) {
+        notScanned.push(`${shown(rel)} (a symlink, not followed)`);
+        continue;
+      }
+      if (st.isDirectory()) {
         walk(f);
         continue;
       }
-      const text = readFileSync(f, 'utf8').toLowerCase();
-      for (const s of sets) s.matchers.forEach((matches, i) => {
-        if (matches(text)) hits.push(`${relative(dir, f).split(sep).join('/')} (${s.label}, term #${i + 1})`);
+      if (!st.isFile()) continue;
+      if (DOCUMENT_EXT.test(name)) notScanned.push(`${shown(rel)} (a document format whose text may be compressed)`);
+      let text: string;
+      try {
+        text = normaliseForScan(decode(readFileSync(f), name));
+      } catch (e) {
+        throw new PrivacyScanError(`${shown(rel)}: ${(e as NodeJS.ErrnoException).code ?? 'unreadable'}`);
+      }
+      for (const s of sets) s.matchers.forEach((m, i) => {
+        if (m(text)) hits.add(`${shown(rel)} (${s.label}, term #${i + 1})`);
       });
     }
   };
   walk(dir);
-  return hits;
+  return { hits: [...hits].sort(), notScanned: notScanned.sort() };
+}
+
+export function scanForTerms(dir: string, homes: readonly { label: string; home: string }[]): string[] {
+  return scanFolder(dir, homes).hits;
 }

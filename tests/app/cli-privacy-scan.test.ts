@@ -47,3 +47,15 @@ describe('privacy scan takes no --profile', () => {
     expect(r.stderr).toMatch(/unknown option '--profile'/);
   }, 60_000);
 });
+
+describe('privacy scan fails closed', () => {
+  it('a profile whose pack cannot be read exits 2 and names the profile, never "clean"', () => {
+    writeFileSync(join(root, 'profiles/asha/pack/contact.yaml'), 'name: [unclosed\n');
+    const dir = join(root, 'repo');
+    mkdirSync(dir);
+    const r = scan(dir);
+    expect(r.status).toBe(2);
+    expect(r.stderr).toContain('privacy scan: asha: contact.yaml does not parse');
+    expect(r.stdout).not.toMatch(/clean/);
+  }, 60_000);
+});
