@@ -3,17 +3,19 @@ import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/a
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import { hasChallengeMarker, isChallenge } from '../../../challenge.js';
+import { DEFAULT_RESIDENCE, type ResidenceScope } from '../../../geo/residence.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { onlySeenBefore } from '../common.js';
 import {
   chooseDetails,
   goneNote,
   hostRequest,
-  namesIndia,
   namesOffice,
+  namesResidence,
   preferPostings,
   refusal,
   REMOTE_TYPE,
+  residenceOf,
   scopeMiss,
   scopeNotApplied,
   shapeError,
@@ -471,11 +473,12 @@ export interface EightfoldScopes {
 /**
  * The scopes of a board from its unscoped first page's facets: India from the `locations` values naming India (their
  * counts the bounds; a sentinel count is no count), remote from the first other facet holding a remote-type value with
- * a count (v2 only: PCSX has none). Deterministic: facets and values in served order.
+ * a count (v2 only: PCSX has none). Deterministic: facets and values in served order. Profiles Task 14: India is the
+ * residence `scope` (default IN), searched by its display name (`location=Germany`).
  */
-export function eightfoldScopes(api: EightfoldApi, page: EightfoldListPage): EightfoldScopes {
+export function eightfoldScopes(api: EightfoldApi, page: EightfoldListPage, scope: ResidenceScope = DEFAULT_RESIDENCE): EightfoldScopes {
   const locations = page.facets.find((f) => f.name.toLowerCase() === 'locations');
-  const india = (locations?.values ?? []).filter((v) => v.count !== null && namesIndia(v.value));
+  const india = (locations?.values ?? []).filter((v) => v.count !== null && namesResidence(v.value, scope));
   const counts = india.map((v) => v.count as number);
   let remote: EightfoldScope | null = null;
   if (api === 'v2') {
@@ -491,7 +494,7 @@ export function eightfoldScopes(api: EightfoldApi, page: EightfoldListPage): Eig
   // PCSX shows only its top location values (10 counted, seen live): a full list of them may hide smaller Indian ones
   const truncated = api === 'pcsx' && (locations?.values ?? []).filter((v) => v.count !== null).length >= PCSX_FACET_TOP;
   return {
-    india: india.length === 0 ? null : { query: { location: 'India' }, expected: counts.reduce((a, n) => a + n, 0), largest: Math.max(...counts), ...(truncated ? { truncated: true } : {}) },
+    india: india.length === 0 ? null : { query: { location: scope.display }, expected: counts.reduce((a, n) => a + n, 0), largest: Math.max(...counts), ...(truncated ? { truncated: true } : {}) },
     remote,
     located: locations !== undefined,
   };
@@ -531,8 +534,8 @@ type AdapterOptions = { readonly hosts: EightfoldHosts; readonly maxPages: numbe
 
 const rawOf = (p: RawPosting): EightfoldRaw => p.raw as EightfoldRaw;
 const placesOf = (r: EightfoldRaw): readonly string[] => [...r.locations, ...r.standardizedLocations];
-/** Rank 0 for details: a listed location naming India (India-remote included). */
-const indiaNamed = (p: RawPosting): boolean => placesOf(rawOf(p)).some(namesIndia);
+/** Rank 0 for details: a listed location naming the residence (India-remote included). */
+const residenceNamed = (p: RawPosting, scope: ResidenceScope): boolean => placesOf(rawOf(p)).some((l) => namesResidence(l, scope));
 
 /** Pages one list from start 0, its first page already read: at most `maxPages` pages, never truncated silently. */
 async function readList(http: HttpTool, o: AdapterOptions, b: EightfoldBoard, api: EightfoldApi, req: DiscoveryRequest, query: EightfoldQuery, first: EightfoldListPage, ctx: AgentContext, label: string): Promise<RawPosting[]> {
@@ -565,16 +568,19 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: AdapterOp
   const b = parseEightfoldRef(req.slug);
   if (b === null) throw new KernelError('invalid_output', `eightfold: ${req.slug} is not <host>/<domain>`);
   const pack = titlePackOf(ctx.pack, 'src-eightfold');
+  const residence = residenceOf(pack, 'src-eightfold');
   const offices = pack.eligibility?.officeCities ?? [];
+  const indiaNamed = (p: RawPosting): boolean => residenceNamed(p, residence);
   try {
-    const key = `${b.host}/${b.domain}`;
+    // the scopes depend on the residence (India's key is today's)
+    const key = `${b.host}/${b.domain}${residence.isDefault ? '' : ` ${residence.code}`}`;
     let found = o.hosts.scopes?.get(key);
     let first: EightfoldListPage | undefined;
     if (found === undefined) {
       // the stored variant (the coverage verifier's weekly detection); a row from before it: the careers page, once
       const api = b.api ?? (await fetchApi(http, o.hosts, b, req.company));
       first = await fetchListPage(http, o.hosts, b, api, 0);
-      found = { api, scopes: eightfoldScopes(api, first) };
+      found = { api, scopes: eightfoldScopes(api, first, residence) };
       o.hosts.scopes?.set(key, found);
     }
     const { api, scopes } = found;
@@ -582,23 +588,24 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: AdapterOp
     const maxPages = Math.min(o.maxPages, eightfoldPagesPerList(api, lists.length));
     const all: RawPosting[] = [];
     if (lists.length > 0) {
-      for (const [name, sc] of lists) {
+      for (const [key, sc] of lists) {
+        const name = key === 'india' ? residence.token : key;
         const page1 = await fetchListPage(http, o.hosts, b, api, 0, sc.query);
         const miss = scopeMiss(page1.count, sc);
         if (miss !== null) throw scopeNotApplied(req.company, name, miss, 'Eightfold');
         all.push(...(await readList(http, { ...o, maxPages }, b, api, req, sc.query, page1, ctx, ` (${name} list)`)));
       }
     } else if (scopes.located) {
-      ctx.skipped([`no-india-or-remote-facet ${req.company}: its locations facet names neither India nor a remote type`]);
+      ctx.skipped([`no-${residence.token}-or-remote-facet ${req.company}: its locations facet names neither ${residence.display} nor a remote type`]);
       return [];
     } else {
       first ??= await fetchListPage(http, o.hosts, b, api, 0);
       all.push(...(await readList(http, { ...o, maxPages: Math.min(o.maxPages, eightfoldPagesPerList(api, 1)) }, b, api, req, {}, first, ctx, '')));
     }
     // one posting per job id: the one naming an office city, then one naming India, then the first seen
-    const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices)) ? 0 : indiaNamed(p) ? 1 : 2));
+    const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices, residence)) ? 0 : indiaNamed(p) ? 1 : 2));
 
-    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails ?? eightfoldMaxDetails(api), company: req.company, ctx });
+    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails ?? eightfoldMaxDetails(api), company: req.company, ctx, residence });
     const details = new Map<string, EightfoldDetailRaw | null>();
     for (const p of chosen) details.set(p.sourceId, await fetchDetail(http, o.hosts, b, api, p.sourceId));
     const gone = [...details.entries()].filter(([, d]) => d === null).map(([id]) => id);

@@ -2,12 +2,13 @@ import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/a
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import { hasChallengeMarker, isChallenge } from '../../../challenge.js';
+import { DEFAULT_RESIDENCE, type ResidenceScope } from '../../../geo/residence.js';
 import { decodeEntities } from '../../../text/html.js';
 import { countriesIn } from '../../../text/norm.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { finish } from '../common.js';
 import { memoryPageState, PAGE_MAX_FETCHES, PAGE_MAX_HOPS, PAGE_MIN_INTERVAL_MS, prefilter, readJobPages, type ListedJob } from './pages.js';
-import { hostRequest, memoryPageLedger, refusal, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
+import { hostRequest, memoryPageLedger, refusal, residenceOf, titlePackOf, type HttpTool, type PlatformHosts } from './shared.js';
 import type { SrcPageOptions } from './icims.js';
 
 /**
@@ -236,13 +237,16 @@ export async function readSitemal(http: HttpTool, hosts: PlatformHosts, host: st
   return res;
 }
 
-/** Whether a `g:location` names India (`IN`, or an Indian place), another country, or nothing known. */
-export function sitemalCountry(location: string | null): 'india' | 'other' | 'unknown' {
+/**
+ * Whether a `g:location` names the residence country (`home`: its ISO code, or a place of it; India by default), another
+ * country, or nothing known.
+ */
+export function sitemalCountry(location: string | null, scope: ResidenceScope = DEFAULT_RESIDENCE): 'home' | 'other' | 'unknown' {
   if (location === null || location.trim() === '') return 'unknown';
   const last = location.split(',').map((p) => p.trim()).pop() ?? '';
-  if (/^[A-Z]{2}$/u.test(last)) return last === 'IN' ? 'india' : 'other';
-  const named = countriesIn(location);
-  return named.includes('india') ? 'india' : named.length > 0 ? 'other' : 'unknown';
+  if (/^[A-Z]{2}$/u.test(last)) return last === scope.code ? 'home' : 'other';
+  const named = countriesIn(location, scope.table);
+  return named.includes(scope.country) ? 'home' : named.length > 0 ? 'other' : 'unknown';
 }
 
 export interface SuccessFactorsRaw {
@@ -284,18 +288,19 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   const host = parseSuccessFactorsRef(req.slug);
   if (host === null) throw new KernelError('invalid_output', `successfactors: ${req.slug} is not a Career Site Builder host`);
   const pack = titlePackOf(ctx.pack, 'src-successfactors');
+  const residence = residenceOf(pack, 'src-successfactors');
   try {
     const feed = await readSitemal(http, o.hosts, host, req.company, { maxBytes: o.maxBytes, timeoutMs: SF_STREAM_TIMEOUT_MS });
     if (feed.malformed > 0) ctx.skipped([`malformed-entries ${req.company}: ${feed.malformed} sitemal items without a title or a link`]);
     const byId = new Map<string, SitemalItem>();
     let outside = 0;
     for (const i of feed.items) {
-      if (sitemalCountry(i.location) === 'other') outside++;
+      if (sitemalCountry(i.location, residence) === 'other') outside++;
       else if (!byId.has(i.id)) byId.set(i.id, i);
     }
     const listed: ListedJob[] = [...byId.values()].map((i) => ({ url: i.link, title: i.title, sourceId: i.id, fetchUrl: i.link }));
     const passing = prefilter(listed, pack, req.company, ctx);
-    if (outside > 0) ctx.skipped([`not-india ${req.company}: ${outside} listed jobs located outside India not read`]);
+    if (outside > 0) ctx.skipped([`not-${residence.token} ${req.company}: ${outside} listed jobs located outside ${residence.display} not read`]);
     const fromFeed: RawPosting[] = [];
     const needPage: ListedJob[] = [];
     for (const j of passing) {

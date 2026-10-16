@@ -2,18 +2,21 @@ import { z } from 'zod';
 import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/agent.js';
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
+import { DEFAULT_RESIDENCE, type ResidenceScope } from '../../../geo/residence.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { onlySeenBefore } from '../common.js';
 import {
   chooseDetails,
+  exactCountryRe,
   goneNote,
   hostRequest,
-  namesIndia,
   memoryPageLedger,
   namesOffice,
+  namesResidence,
   preferPostings,
   refusal,
   REMOTE_TYPE,
+  residenceOf,
   scopeMiss,
   scopeNotApplied,
   shapeError,
@@ -364,9 +367,10 @@ export interface OracleScopes {
   readonly located: boolean;
 }
 
-/** The scopes of a site from its unscoped first page's facets (served order; the first match). */
-export function oracleScopes(page: OracleListPage): OracleScopes {
-  const india = page.locations.find((v) => /^\s*india\s*$/iu.test(v.name) && FILTER.test(v.id));
+/** The scopes of a site from its unscoped first page's facets (served order; the first match); India is the residence `scope` (profiles Task 14, default IN). */
+export function oracleScopes(page: OracleListPage, scope: ResidenceScope = DEFAULT_RESIDENCE): OracleScopes {
+  const exact = exactCountryRe(scope);
+  const india = page.locations.find((v) => exact.test(v.name) && FILTER.test(v.id));
   const remote = page.workplaceTypes.find((v) => (REMOTE_TYPE.test(v.name) || v.id === 'ORA_REMOTE') && FILTER.test(v.id));
   return {
     india: india === undefined ? null : { query: { locationId: india.id }, expected: india.count, largest: india.count },
@@ -409,10 +413,10 @@ export interface SrcOracleOptions {
 
 const rawOf = (p: RawPosting): OracleRaw => p.raw as OracleRaw;
 const placesOf = (r: OracleRaw): string[] => [...(r.primaryLocation === null ? [] : [r.primaryLocation]), ...r.secondaryLocations.map((l) => l.name)];
-/** Rank 0 for details: a location (or its country code) naming India. */
-const indiaNamed = (p: RawPosting): boolean => {
+/** Rank 0 for details: a location (or its country code) naming the residence. */
+const residenceNamed = (p: RawPosting, scope: ResidenceScope): boolean => {
   const r = rawOf(p);
-  return r.primaryCountry === 'IN' || r.secondaryLocations.some((l) => l.country === 'IN') || placesOf(r).some(namesIndia);
+  return r.primaryCountry === scope.code || r.secondaryLocations.some((l) => l.country === scope.code) || placesOf(r).some((l) => namesResidence(l, scope));
 };
 
 /**
@@ -460,37 +464,41 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   const b = parseOracleRef(req.slug);
   if (b === null) throw new KernelError('invalid_output', `oracle: ${req.slug} is not <host>/<siteNumber>`);
   const pack = titlePackOf(ctx.pack, 'src-oracle');
+  const residence = residenceOf(pack, 'src-oracle');
   const offices = pack.eligibility?.officeCities ?? [];
+  const indiaNamed = (p: RawPosting): boolean => residenceNamed(p, residence);
   const budget: PageBudget = { ledger: o.ledger, day: req.runDate, board: oracleRef(b), max: o.maxPages };
   const what = `oracle ${req.company}`;
   try {
-    const key = oracleRef(b);
+    // the scopes depend on the residence (India's key is today's)
+    const key = `${oracleRef(b)}${residence.isDefault ? '' : ` ${residence.code}`}`;
     let scopes = o.hosts.scopes?.get(key);
     let first: OracleListPage | undefined;
     if (scopes === undefined) {
       first = await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before discovery (${budget.max} list pages per company per day, all used today)`);
-      scopes = oracleScopes(first);
+      scopes = oracleScopes(first, residence);
       o.hosts.scopes?.set(key, scopes);
     }
     const lists = ([['india', scopes.india], ['remote', scopes.remote]] as const).filter((x): x is readonly ['india' | 'remote', OracleScope] => x[1] !== null);
     const all: RawPosting[] = [];
     if (lists.length > 0) {
-      for (const [name, sc] of lists) {
+      for (const [key, sc] of lists) {
+        const name = key === 'india' ? residence.token : key;
         const page1 = await nextPage(http, o.hosts, b, 0, sc.query, budget, `${what} (${name} list): page cap reached before its first page (${budget.max} list pages per company per day, discovery included)`);
         const miss = scopeMiss(page1.total, sc);
         if (miss !== null) throw scopeNotApplied(req.company, name, miss, 'Oracle');
         all.push(...(await readList(http, o.hosts, b, req, sc.query, page1, budget, ctx, ` (${name} list)`)));
       }
     } else if (scopes.located) {
-      ctx.skipped([`no-india-or-remote-facet ${req.company}: its location facets name neither India nor a remote workplace type`]);
+      ctx.skipped([`no-${residence.token}-or-remote-facet ${req.company}: its location facets name neither ${residence.display} nor a remote workplace type`]);
       return [];
     } else {
       first ??= await nextPage(http, o.hosts, b, 0, {}, budget, `${what}: page cap reached before the unscoped list (${budget.max} list pages per company per day, all used today)`);
       all.push(...(await readList(http, o.hosts, b, req, {}, first, budget, ctx, '')));
     }
-    const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices)) ? 0 : indiaNamed(p) ? 1 : 2));
+    const postings = preferPostings(all, (p) => (placesOf(rawOf(p)).some((l) => namesOffice(l, offices, residence)) ? 0 : indiaNamed(p) ? 1 : 2));
 
-    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails, company: req.company, ctx });
+    const chosen = chooseDetails(postings, { pack, title: (p) => rawOf(p).title, rank0: indiaNamed, max: o.maxDetails, company: req.company, ctx, residence });
     const details = new Map<string, OracleDetailRaw | null>();
     for (const p of chosen) details.set(p.sourceId, await fetchDetail(http, o.hosts, b, p.sourceId));
     const gone = [...details.entries()].filter(([, d]) => d === null).map(([id]) => id);

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Clock } from '../../kernel/clock.js';
-import { PLATFORM_NOTE_PREFIXES } from '../agents/sources/platforms/shared.js';
+import { PLATFORM_NOTE_PREFIXES, residenceSkipLabel } from '../agents/sources/platforms/shared.js';
 import { eightfoldMaxRequests } from '../agents/sources/platforms/eightfold.js';
 import { FEED_MAX_REQUESTS } from '../agents/sources/platforms/feed-board.js';
 import { ORACLE_MAX_PAGES } from '../agents/sources/platforms/oracle.js';
@@ -139,9 +139,14 @@ interface JobRow {
   board: string | null;
 }
 
-/** The reason label of a problem or skip text: a named platform skip, `host-disabled`, `listing-cap`, else the kind. */
+/**
+ * The reason label of a problem or skip text: a named platform skip (the residence-named ones for any residence:
+ * `no-germany-or-remote-facet`, `not-germany`), `host-disabled`, `listing-cap`, else the kind.
+ */
 export function reasonLabel(text: string, fallback: string): string {
   for (const p of PLATFORM_NOTE_PREFIXES) if (text.startsWith(p)) return p.trim();
+  const residence = residenceSkipLabel(text);
+  if (residence !== null) return residence;
   const m = /(?:^|[\s:(])(host-disabled|listing-cap|robots-disallow|scope-not-applied)\b/u.exec(text);
   return m === null ? fallback : (m[1] as string);
 }

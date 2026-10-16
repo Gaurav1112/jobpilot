@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { AgentContext } from '../../../../kernel/agent.js';
 import { KernelError } from '../../../../kernel/errors.js';
 import { compileSafePattern } from '../../../pack/regex.js';
+import { countryDisplayOfToken, DEFAULT_RESIDENCE, residenceScope, type ResidenceScope } from '../../../geo/residence.js';
 import { countriesIn, officeCity } from '../../../text/norm.js';
 import type { RawPosting } from '../../../types.js';
 import { finish } from '../common.js';
@@ -130,10 +131,23 @@ export function shapeError(what: string, r: { error: z.ZodError }): KernelError 
 export const TitlePack = z.object({
   filters: z.object({ roleDeny: z.array(z.string()) }),
   targets: z.object({ titles: z.array(z.string()) }),
-  // the office cities (eligibility rule 5e)
-  eligibility: z.object({ officeCities: z.array(z.string()).optional() }).optional(),
+  // the residence (profiles Task 14: any ISO country, default IN) and the office cities (eligibility rule 5e)
+  eligibility: z.object({ residence: z.string().optional(), officeCities: z.array(z.string()).optional() }).optional(),
 });
 export type TitlePack = z.infer<typeof TitlePack>;
+
+/**
+ * The residence scope of the pack (profiles Task 14): `eligibility.residence`, upper-cased as eligibility reads it,
+ * default `IN`. A code `norm.ts` does not know is `invalid_output` naming the adapter.
+ */
+export function residenceOf(pack: TitlePack, agent: string): ResidenceScope {
+  const code = (pack.eligibility?.residence ?? 'IN').toUpperCase();
+  try {
+    return residenceScope(code);
+  } catch {
+    throw new KernelError('invalid_output', `${agent}: eligibility.residence: unknown country code ${code}`);
+  }
+}
 
 const words = (s: string): string[] => s.toLowerCase().split(/[^\p{L}\p{N}+#]+/u).filter((w) => w !== '');
 
@@ -200,23 +214,34 @@ export const scopeNotApplied = (company: string, list: string, why: string, plat
 export const REMOTE_TYPE = /^\s*(?:fully\s+)?(?:remote|virtual|work\s+from\s+home|wfh|home[\s-]based)\s*$/iu;
 
 /**
- * Whether a location value names India: a country name or an Indian place, or the ISO code `IN` as the last of three or
- * more parts ("Bengaluru, KA, IN", PCSX's standardized form). A two-part "Indianapolis, IN" is a US state, never India;
- * a platform's own country field (Oracle `PrimaryLocationCountry`) is checked by the adapter itself.
+ * Whether a location value names the residence country: its name or one of its places (in the residence's own place
+ * table), or its ISO code as the last of three or more parts ("Bengaluru, KA, IN", PCSX's standardized form). A
+ * two-part "Indianapolis, IN" is a US state, never India; a platform's own country field (Oracle
+ * `PrimaryLocationCountry`) is checked by the adapter itself.
  */
-export function namesIndia(location: string): boolean {
-  if (countriesIn(location).includes('india')) return true;
+export function namesResidence(location: string, scope: ResidenceScope): boolean {
+  if (countriesIn(location, scope.table).includes(scope.country)) return true;
   const parts = location.split(',').map((p) => p.trim());
-  return parts.length >= 3 && parts[parts.length - 1] === 'IN';
+  return parts.length >= 3 && parts[parts.length - 1] === scope.code;
 }
 
-/** Whether a location value names one of the pack's office cities (by its aliases, word-bounded), and no country but India. */
-export function namesOffice(location: string, officeCities: readonly string[]): boolean {
+/** A facet value that is exactly the residence country's display name ("India", "Germany"), any case. India's is today's regex. */
+export function exactCountryRe(scope: ResidenceScope): RegExp {
+  if (scope.isDefault) return /^\s*india\s*$/iu;
+  const name = scope.display.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^\\s*${name}\\s*$`, 'iu');
+}
+
+/** `namesResidence` for India, today's residence. */
+export const namesIndia = (location: string): boolean => namesResidence(location, DEFAULT_RESIDENCE);
+
+/** Whether a location value names one of the pack's office cities (by its aliases, word-bounded), and no country but the residence's (default India). */
+export function namesOffice(location: string, officeCities: readonly string[], scope: ResidenceScope = DEFAULT_RESIDENCE): boolean {
   const w = (d: string): string => ' ' + d.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((x) => x !== '').join(' ') + ' ';
   const text = w(location);
-  const places = countriesIn(location);
-  if (places.length > 0 && !places.includes('india')) return false;
-  return officeCities.map((c) => officeCity(c)).some((c) => c.aliases.some((a) => text.includes(w(a))));
+  const places = countriesIn(location, scope.table);
+  if (places.length > 0 && !places.includes(scope.country)) return false;
+  return officeCities.map((c) => officeCity(c, scope.table)).some((c) => c.aliases.some((a) => text.includes(w(a))));
 }
 
 /**
@@ -237,14 +262,15 @@ export const bySourceId = (a: RawPosting, b: RawPosting): number => (a.sourceId 
 
 /**
  * The detail choice: rank-0 title-passing jobs, ties by sourceId, at most `max`; the named note for the rest
- * (`detail-budget <company>: N jobs without detail (k over the budget, m not India-named)`), never silent.
+ * (`detail-budget <company>: N jobs without detail (k over the budget, m not India-named)`, the residence's display
+ * name in place of India), never silent.
  */
-export function chooseDetails(postings: readonly RawPosting[], o: { pack: TitlePack; title: (p: RawPosting) => string; rank0: (p: RawPosting) => boolean; max: number; company: string; ctx: AgentContext }): RawPosting[] {
+export function chooseDetails(postings: readonly RawPosting[], o: { pack: TitlePack; title: (p: RawPosting) => string; rank0: (p: RawPosting) => boolean; max: number; company: string; ctx: AgentContext; residence?: ResidenceScope }): RawPosting[] {
   const wanted = postings.filter((p) => titlePasses(o.title(p), o.pack));
   const rank0 = wanted.filter(o.rank0).sort(bySourceId);
   const chosen = rank0.slice(0, o.max);
   if (wanted.length > chosen.length) {
-    o.ctx.skipped([`detail-budget ${o.company}: ${wanted.length - chosen.length} jobs without detail (${rank0.length - chosen.length} over the budget, ${wanted.length - rank0.length} not India-named)`]);
+    o.ctx.skipped([`detail-budget ${o.company}: ${wanted.length - chosen.length} jobs without detail (${rank0.length - chosen.length} over the budget, ${wanted.length - rank0.length} not ${(o.residence ?? DEFAULT_RESIDENCE).display}-named)`]);
   }
   return chosen;
 }
@@ -289,3 +315,14 @@ export const PLATFORM_NOTE_PREFIXES = [
  */
 const FACET_SKIP = /^no-[a-z]+(?:-[a-z]+)*-or-remote-facet /;
 export const isPlatformFacetSkip = (note: string): boolean => FACET_SKIP.test(note);
+
+/**
+ * Profiles Task 14: the label of a residence-named platform skip, else null: the facet skip for any residence
+ * (`no-germany-or-remote-facet`), and SuccessFactors' outside-the-residence skip for any residence country
+ * (`not-india`, `not-germany`: the token must be a known country's).
+ */
+export function residenceSkipLabel(note: string): string | null {
+  if (isPlatformFacetSkip(note)) return note.slice(0, note.indexOf(' '));
+  const m = /^not-([a-z]+(?:-[a-z]+)*) /.exec(note);
+  return m !== null && countryDisplayOfToken(m[1] as string) !== m[1] ? `not-${m[1] as string}` : null;
+}

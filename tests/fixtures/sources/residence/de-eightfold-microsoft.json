@@ -1,0 +1,500 @@
+{
+ "board": "apply.careers.microsoft.com/microsoft.com",
+ "api": "pcsx",
+ "recorded": "2026-10-14",
+ "note": "One polite request each (honest UA; Microsoft answered 429 at 2.5 s and 4 s spacing, 200 at 6 s and more). Trimmed to the fields the adapter reads; the PCSX locations facet (its top values, as served) kept whole; the careers page reduced to its configuration marker.",
+ "robots": "User-agent: *\nDisallow: /\nAllow: /$\nAllow: /careers\nAllow: /api/apply\nAllow: /api/pcsx\nAllow: /candidate/login\nAllow: /login\nAllow: /events/candidate\nAllow: /events/open\nAllow: /api/events\nAllow: /careerhub/explore/jobs\nAllow: /api/career_hub\nAllow: /static/gen\nAllow: /gen\n\n",
+ "careersPage": "<html><body><code id=\"pcsx-data\" style=\"display:none\">{\"domain\": \"microsoft.com\"}</code></body></html>",
+ "discovery": {
+  "status": 200,
+  "data": {
+   "count": 2369,
+   "positions": [
+    {
+     "id": 1970393556874679,
+     "displayJobId": "200040212",
+     "name": "ISD ASEAN Partner Commercial Lead",
+     "locations": [
+      "Singapore, Singapore, Singapore"
+     ],
+     "standardizedLocations": [
+      "SG"
+     ],
+     "postedTs": 1783408321,
+     "department": "Business Program Management",
+     "workLocationOption": "onsite",
+     "atsJobId": "200040212",
+     "positionUrl": "/careers/job/1970393556874679"
+    },
+    {
+     "id": 1970393556978238,
+     "displayJobId": "200050116",
+     "name": "Technical Support Engineer - Endpoint Configuration Manager",
+     "locations": [
+      "Japan, Multiple Locations, Multiple Locations"
+     ],
+     "standardizedLocations": [
+      "JP"
+     ],
+     "postedTs": 1790226228,
+     "department": "Technical Support Engineering",
+     "workLocationOption": "onsite",
+     "atsJobId": "200050116",
+     "positionUrl": "/careers/job/1970393556978238"
+    },
+    {
+     "id": 1970393556983893,
+     "displayJobId": "200052772",
+     "name": "Backend Software Engineer II and Senior Software Engineer- Microsoft Security - Multiple roles",
+     "locations": [
+      "Israel, Multiple Locations, Multiple Locations"
+     ],
+     "standardizedLocations": [
+      "IL"
+     ],
+     "postedTs": 1790245466,
+     "department": "Software Engineering",
+     "workLocationOption": "onsite",
+     "atsJobId": "200052772",
+     "positionUrl": "/careers/job/1970393556983893"
+    }
+   ],
+   "filterDef": {
+    "facets": {
+     "locations": [
+      [
+       "Remote",
+       999999
+      ],
+      [
+       "Redmond, WA, United States",
+       769
+      ],
+      [
+       "United States",
+       282
+      ],
+      [
+       "Mountain View, CA, United States",
+       233
+      ],
+      [
+       "Berlin, KA, Germany",
+       131
+      ],
+      [
+       "Munich, TS, Germany",
+       117
+      ],
+      [
+       "Atlanta, GA, United States",
+       114
+      ],
+      [
+       "Tokyo, Japan",
+       98
+      ],
+      [
+       "Austin, TX, United States",
+       83
+      ],
+      [
+       "New York, NY, United States",
+       80
+      ],
+      [
+       "Reston, VA, United States",
+       76
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "scoped": {
+  "india": [
+   {
+    "status": 200,
+    "data": {
+     "count": 253,
+     "positions": [
+      {
+       "id": 1970393556994911,
+       "displayJobId": "200055323",
+       "name": "Principal Software Engineering Manager",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1789642649,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200055323",
+       "positionUrl": "/careers/job/1970393556994911"
+      },
+      {
+       "id": 1970393557007501,
+       "displayJobId": "200057824",
+       "name": "Senior Software Engineer",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790246788,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057824",
+       "positionUrl": "/careers/job/1970393557007501"
+      },
+      {
+       "id": 1970393557025685,
+       "displayJobId": "200060074",
+       "name": "Solution Area Specialist - AIWF",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1791868521,
+       "department": "Solution Area Specialists",
+       "workLocationOption": "onsite",
+       "atsJobId": "200060074",
+       "positionUrl": "/careers/job/1970393557025685"
+      },
+      {
+       "id": 1970393557006507,
+       "displayJobId": "200057489",
+       "name": "Partner Development Management",
+       "locations": [
+        "Germany, North Rhine-Westphalia, Cologne"
+       ],
+       "standardizedLocations": [
+        "Cologne, HR, DE"
+       ],
+       "postedTs": 1790225435,
+       "department": "Partner Development Management",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057489",
+       "positionUrl": "/careers/job/1970393557006507"
+      },
+      {
+       "id": 1970393557014716,
+       "displayJobId": "200058441",
+       "name": "Senior Software Engineer",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1791876969,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200058441",
+       "positionUrl": "/careers/job/1970393557014716"
+      },
+      {
+       "id": 1970393556983855,
+       "displayJobId": "200052766",
+       "name": "Software Engineering IC2",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1791867773,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200052766",
+       "positionUrl": "/careers/job/1970393556983855"
+      },
+      {
+       "id": 1970393557007747,
+       "displayJobId": "200057886",
+       "name": "Principal Software Engineer",
+       "locations": [
+        "Germany, Bavaria, Munich"
+       ],
+       "standardizedLocations": [
+        "Munich, TS, DE"
+       ],
+       "postedTs": 1790317151,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057886",
+       "positionUrl": "/careers/job/1970393557007747"
+      },
+      {
+       "id": 1970393556911401,
+       "displayJobId": "200041062",
+       "name": "Principal Product Manager",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790149247,
+       "department": "Product Management",
+       "workLocationOption": "onsite",
+       "atsJobId": "200041062",
+       "positionUrl": "/careers/job/1970393556911401"
+      },
+      {
+       "id": 1970393557005288,
+       "displayJobId": "200057392",
+       "name": "Director Services Account Executive",
+       "locations": [
+        "Germany, Hesse, Frankfurt",
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Frankfurt, MH, DE",
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790155398,
+       "department": "Services Account Management",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057392",
+       "positionUrl": "/careers/job/1970393557005288"
+      },
+      {
+       "id": 1970393556657253,
+       "displayJobId": "200019877",
+       "name": "Senior Consultant - Full Stack Apps A2",
+       "locations": [
+        "Germany, Bavaria, Munich",
+        "Germany, Berlin, Berlin",
+        "Germany, Baden-Württemberg, Stuttgart"
+       ],
+       "standardizedLocations": [
+        "Munich, TS, DE",
+        "Berlin, KA, DE",
+        "Stuttgart, UP, DE"
+       ],
+       "postedTs": 1791865688,
+       "department": "Technology Consulting",
+       "workLocationOption": "onsite",
+       "atsJobId": "200019877",
+       "positionUrl": "/careers/job/1970393556657253"
+      }
+     ],
+     "appliedFilters": {
+      "includeRemote": [
+       "1"
+      ],
+      "includeRelocation": [
+       "0"
+      ]
+     }
+    }
+   },
+   {
+    "status": 200,
+    "data": {
+     "count": 253,
+     "positions": [
+      {
+       "id": 1970393557006396,
+       "displayJobId": "200057443",
+       "name": "Account Technology",
+       "locations": [
+        "Germany, North Rhine-Westphalia, Cologne"
+       ],
+       "standardizedLocations": [
+        "Cologne, HR, DE"
+       ],
+       "postedTs": 1790274600,
+       "department": "Account Technology",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057443",
+       "positionUrl": "/careers/job/1970393557006396"
+      },
+      {
+       "id": 1970393557001423,
+       "displayJobId": "200056661",
+       "name": "Senior Applied Scientist - Ads Ranking & Retrieval",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790228788,
+       "department": "Applied Sciences",
+       "workLocationOption": "onsite",
+       "atsJobId": "200056661",
+       "positionUrl": "/careers/job/1970393557001423"
+      },
+      {
+       "id": 1970393556992351,
+       "displayJobId": "200054823",
+       "name": "Digital Account Management",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1789630630,
+       "department": "Digital Account Management",
+       "workLocationOption": "onsite",
+       "atsJobId": "200054823",
+       "positionUrl": "/careers/job/1970393556992351"
+      },
+      {
+       "id": 1970393557007450,
+       "displayJobId": "200057797",
+       "name": "Senior Software Engineer",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790248627,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057797",
+       "positionUrl": "/careers/job/1970393557007450"
+      },
+      {
+       "id": 1970393557007507,
+       "displayJobId": "200057830",
+       "name": "Senior Software Engineer",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790248166,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057830",
+       "positionUrl": "/careers/job/1970393557007507"
+      },
+      {
+       "id": 1970393557007510,
+       "displayJobId": "200057831",
+       "name": "Principal Software Engineer",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1790247482,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200057831",
+       "positionUrl": "/careers/job/1970393557007510"
+      },
+      {
+       "id": 1970393556958015,
+       "displayJobId": "200047377",
+       "name": "Digital Solution Engineering",
+       "locations": [
+        "Germany"
+       ],
+       "standardizedLocations": [
+        "DE"
+       ],
+       "postedTs": 1790579788,
+       "department": "Digital Solution Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200047377",
+       "positionUrl": "/careers/job/1970393556958015"
+      },
+      {
+       "id": 1970393557026236,
+       "displayJobId": "200060281",
+       "name": "Software Engineer II",
+       "locations": [
+        "Germany, Bavaria, Munich"
+       ],
+       "standardizedLocations": [
+        "Munich, TS, DE"
+       ],
+       "postedTs": 1791518800,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200060281",
+       "positionUrl": "/careers/job/1970393557026236"
+      },
+      {
+       "id": 1970393556657600,
+       "displayJobId": "200020109",
+       "name": "Principal Apps AI Consultant",
+       "locations": [
+        "Germany, Bavaria, Munich",
+        "Germany, Berlin, Berlin",
+        "Germany, Baden-Württemberg, Stuttgart"
+       ],
+       "standardizedLocations": [
+        "Munich, TS, DE",
+        "Berlin, KA, DE",
+        "Stuttgart, UP, DE"
+       ],
+       "postedTs": 1788866102,
+       "department": "Technology Consulting",
+       "workLocationOption": "onsite",
+       "atsJobId": "200020109",
+       "positionUrl": "/careers/job/1970393556657600"
+      },
+      {
+       "id": 1970393556997609,
+       "displayJobId": "200055581",
+       "name": "Software Engineer II - AI/ML Infrastructure CoreAI",
+       "locations": [
+        "Germany, Berlin, Berlin"
+       ],
+       "standardizedLocations": [
+        "Berlin, KA, DE"
+       ],
+       "postedTs": 1791875522,
+       "department": "Software Engineering",
+       "workLocationOption": "onsite",
+       "atsJobId": "200055581",
+       "positionUrl": "/careers/job/1970393556997609"
+      }
+     ]
+    }
+   }
+  ]
+ },
+ "details": {
+  "1970393556994911": {
+   "status": 200,
+   "data": {
+    "id": 1970393556994911,
+    "displayJobId": "200055323",
+    "name": "Principal Software Engineering Manager",
+    "locations": [
+     "Germany, Berlin, Berlin"
+    ],
+    "standardizedLocations": [
+     "Berlin, KA, DE"
+    ],
+    "postedTs": 1789642649,
+    "department": "Software Engineering",
+    "jobDescription": "<b>Overview</b><br><p>#MSC #MSCIDC<br><br></p><p><span>Microsoft Specialized Clouds combines the power of Azure, edge platforms, devices and services to deliver comprehensive solutions across sovereign, disconnected, edge, enterprise and hybrid scenarios. Our organization extends Azure’s native capabilities to the customer edge, enabling customers to run mission-critical and infrastructure-intensive workloads with enterprise-grade resiliency, security, observability, manageability and performance.Microsoft is leading the way in bringing Azure capabilities to sovereign, disconnected, hybrid and edge environments. Delivering hyperscale cloud technologies into these environments introduces unique engineering challenges across resource management, infrastructure orchestration, networking, compute, storage, security and lifecycle management.We are looking for a <strong>Principal Engineering Manager</strong> who combines strong technical leadership, people leadership and execution excellence. You will lead a team building critical Azure Local capabilities while partnering with engineering and product teams across Azure to deliver cohesive end-to-end customer experiences.Microsoft’s mission is to empower every person and every organization on the planet to achieve more. As employees, we come together with a growth mindset, innovate to empower others, and collaborate to realize our shared goals.</span></p><br><br><b>Responsibilities</b><br><p><span><strong>Responsibilities</strong>As a Principal Engineering Manager, you will own the technical direction, engineering execution and people leadership of a team delivering critical Azure Local capabilities. You will work across organizational boundaries to translate product strategy into engineering plans and drive complex initiatives from architecture through production deployment and operations.You will:</span></p><ul><li><span>Lead, grow and develop a high-performing engineering team through technical direction, coaching, career development and a culture of engineering excellence.</span></li><li><span>Own engineering strategy and execution for key areas of Azure Local, translating customer and business requirements into architecture, technical investments and measurable outcomes.</span></li><li><span>Drive complex initiatives from ideation to production, including architecture, implementation, integration, validation, rollout and operational readiness.</span></li><li><span>Provide strong technical leadership across distributed systems and cloud infrastructure, driving architecture and design decisions for scalable, reliable, secure and maintainable solutions.</span></li><li><span>Partner with Product Management and engineering teams across Azure to make technical trade-offs, manage cross-team dependencies, resolve blockers and deliver end-to-end solutions.</span></li><li><span>Partner with multiple stakeholders geographically distributed, contribute to design, planning, execution and influence overall outcomes with your team. </span></li><li><span>Drive engineering and operational excellence across development, testing, automation, CI/CD, observability, security, live-site operations and service reliability.</span></li><li><span>Develop technical leaders within the team through mentoring, delegation and ownership of increasingly complex initiatives.</span></li><li><span>Partner with customers and field teams to understand real-world scenarios and translate feedback into engineering priorities and product improvements.</span></li><li><span>Champion data-driven engineering and responsible adoption of AI-assisted development practices to improve engineering productivity and quality.</span></li></ul><br><br><b>Qualifications</b><br><p><span><strong>Qualifications:</strong></span></p><ul><li><span>Bachelor's Degree in Computer Science or related technical field AND 15+ years of technical engineering experience with coding in languages including, but not limited to, C#, .NET, Go, Java or Python.</span></li><li><span>12+ years of experience in commercial software development and 3+ years of experience managing engineering teams.</span></li><li><span>Experience designing, building, shipping and operating reliable, large-scale distributed systems.</span></li><li><span>Experience with cloud-native technologies, microservices, Kubernetes and containers.</span></li><li><span>Experience with Azure or another major public cloud platform.</span></li><li><span>Experience on Azure platform, key platform services on Azure is a definite plus.</span></li><li><span>Experience with site reliability engineering, observability and operational readiness practices.</span></li><li><span>Understanding of networking fundamentals; data center networking experience is an added advantage.</span></li><li><span>Knowledge of security and compliance requirements for public cloud services.</span></li><li><span>Strong problem-solving, collaboration and stakeholder management skills, with demonstrated ability to deliver through influence.</span></li><li><span>Advanced technical degree (MS/PhD) is a plus.</span></li></ul><p><span>Ability to meet Microsoft security screening requirements is required for this role. </span><span>These requirements include, but are not limited to, the Microsoft Cloud Background Check upon hire/transfer and every two years thereafter. This position will be open for a minimum of 5 days, with applications accepted on an ongoing basis until the position is filled.Microsoft is an equal opportunity employer. All qualified applicants will receive consideration for employment without regard to characteristics protected by applicable local laws, regulations and ordinances. </span></p> <br><p>This position will be open for a minimum of 5 days, with applications accepted on an ongoing basis until the position is filled.</p><br><hr><br><p>Microsoft is an equal opportunity employer. All qualified applicants will receive consideration for employment without regard to age, ancestry, citizenship, color, family or medical care leave, gender identity or expression, genetic information, immigration status, marital status, medical condition, national origin, physical or mental disability, political affiliation, protected veteran or military status, race, ethnicity, religion, sex (including pregnancy), sexual orientation, or any other characteristic protected by applicable local laws, regulations and ordinances. If you need assistance with religious accommodations and/or a reasonable accommodation due to a disability during the application process, read more about <a href=\"https://careers.microsoft.com/v2/global/en/accessibility.html\"><b><u>requesting accommodations.</u></b></a></p> ",
+    "workLocationOption": "onsite",
+    "atsJobId": "200055323",
+    "publicUrl": "https://apply.careers.microsoft.com/careers/job/1970393556994911",
+    "efcustomTextWorkSite": [
+     "3 days / week in-office"
+    ],
+    "efcustomTextEmploymentType": [
+     "Full-Time"
+    ]
+   }
+  }
+ }
+}

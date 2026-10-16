@@ -1,0 +1,1184 @@
+{
+ "recorded": "2026-10-14",
+ "board": "nvidia.wd5.myworkdayjobs.com/nvidia/NVIDIAExternalCareerSite",
+ "robots": "Sitemap: https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/siteMap.xml\n\nUser-agent: *\nAllow: /NVIDIAExternalCareerSite/\nDisallow: /NVIDIAExternalCareerSiteResearch/\nDisallow: /talentcommunity/\nDisallow: /refreshFacet/",
+ "pages": [
+  {
+   "total": 2000,
+   "jobPostings": [
+    {
+     "title": "Senior Full-Stack Software Engineer, Storage Management Platform - DGX Cloud",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2007944"
+     ]
+    },
+    {
+     "title": "Enterprise Platform Technical Marketing Engineer Intern - Summer 2027",
+     "externalPath": "/job/US-CA-Santa-Clara/Enterprise-Platform-Technical-Marketing-Engineer-Intern---Summer-2027_JR2025907",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2025907"
+     ]
+    },
+    {
+     "title": "Data Processing Developer Technology Intern - 2027",
+     "externalPath": "/job/Germany-Munich/Data-Processing-Developer-Technology-Intern---2027_JR2024708",
+     "locationsText": "4 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024708"
+     ]
+    },
+    {
+     "title": "Formal Verification Engineer - New College Grad 2026",
+     "externalPath": "/job/US-CA-Santa-Clara/Formal-Verification-Engineer---New-College-Grad-2026_JR2007627",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2007627"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer, Metrics and Evaluation - Autonomous Vehicles",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Metrics-and-Evaluation---Autonomous-Vehicles_JR2014651",
+     "locationsText": "5 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2014651"
+     ]
+    },
+    {
+     "title": "Senior Systems Software Engineer - GPU Diagnostics",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Systems-Software-Engineer---GPU-Diagnostics_JR2012287",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2012287"
+     ]
+    },
+    {
+     "title": "Director, EMEA AI Initiatives",
+     "externalPath": "/job/Germany-Remote/Director--Global-AI-Initiatives---EMEA_JR2008022",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2008022"
+     ]
+    },
+    {
+     "title": "Developer Technology Engineering Intern - Compute Performance",
+     "externalPath": "/job/Germany-Munich/Developer-Technology-Engineering-Intern---Compute-Performance_JR2026775",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026775"
+     ]
+    },
+    {
+     "title": "Hardware Validation Engineer",
+     "externalPath": "/job/Israel-Yokneam/Hardware-Validation-Engineer_JR2027271",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027271"
+     ]
+    },
+    {
+     "title": "ML and AI Physical Design Methodology Engineer",
+     "externalPath": "/job/US-CA-Santa-Clara/ML-and-AI-Physical-Design-Methodology-Engineer_JR2027645",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027645"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer – Infrastructure & Network Automation",
+     "externalPath": "/job/Israel-Yokneam/Senior-Software-Engineer---Infrastructure---Network-Automation_JR2027535",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027535"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer, RDMA Transport",
+     "externalPath": "/job/Israel-Tel-Aviv/Senior-Software-Engineer--RDMA-Transport_JR2027514",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027514"
+     ]
+    },
+    {
+     "title": "Senior Board Design Hardware Engineer",
+     "externalPath": "/job/Israel-Yokneam/Senior-Board-Design-Hardware-Engineer_JR2027490-1",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027490"
+     ]
+    },
+    {
+     "title": "Senior Chip Design Verification Engineer",
+     "externalPath": "/job/Israel-Yokneam/Senior-Chip-Design-Verification-Engineer_JR2027111",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027111"
+     ]
+    },
+    {
+     "title": "Senior Physical Layer Firmware Architecture Engineer",
+     "externalPath": "/job/Israel-Yokneam/Senior-Physical-Layer-Firmware-Architecture-Engineer_JR2027805",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027805"
+     ]
+    },
+    {
+     "title": "Senior Account Manager",
+     "externalPath": "/job/Hong-Kong-Remote/Senior-Account-Manager_JR2027625",
+     "locationsText": "Hong Kong, Remote",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027625"
+     ]
+    },
+    {
+     "title": "Mask Design Engineer – Hardware",
+     "externalPath": "/job/US-CA-Santa-Clara/Mask-Design-Engineer---Hardware_JR2027632",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027632"
+     ]
+    },
+    {
+     "title": "Senior Systems Software Engineer - Advanced Technology Group",
+     "externalPath": "/job/US-OR-Hillsboro/Senior-Systems-Software-Engineer---Advanced-Technology-Group_JR2014995",
+     "locationsText": "US, OR, Hillsboro",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2014995"
+     ]
+    },
+    {
+     "title": "Senior Director, Industry Analyst Relations and Market Intelligence",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Director--Industry-Analyst-Relations-and-Market-Intelligence_JR2023144-1",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2023144"
+     ]
+    },
+    {
+     "title": "Manager, CUDA Systems Software",
+     "externalPath": "/job/US-CA-Santa-Clara/Manager--CUDA-Driver_JR2025632",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2025632"
+     ]
+    }
+   ],
+   "facets": [
+    {
+     "facetParameter": "locationMainGroup",
+     "values": [
+      {
+       "facetParameter": "locationHierarchy2",
+       "descriptor": "Location Type",
+       "values": [
+        {
+         "descriptor": "Office",
+         "id": "0c3f5f117e9a0101f6422f0fe79d0000",
+         "count": 2560
+        },
+        {
+         "descriptor": "Remote",
+         "id": "0c3f5f117e9a0101f63dc469c3010000",
+         "count": 576
+        }
+       ]
+      },
+      {
+       "facetParameter": "locationHierarchy1",
+       "descriptor": "Locations",
+       "values": [
+        {
+         "descriptor": "Armenia",
+         "id": "d21cf68980ad0128000fd2c6b107c000",
+         "count": 2
+        },
+        {
+         "descriptor": "Australia",
+         "id": "2fcb99c455831013ea528dce556b3224",
+         "count": 14
+        },
+        {
+         "descriptor": "Germany",
+         "id": "2fcb99c455831013ea52b82135ba3266",
+         "count": 253
+        }
+       ]
+      },
+      {
+       "facetParameter": "locations",
+       "descriptor": "Sites",
+       "values": [
+        {
+         "descriptor": "Armenia, Remote",
+         "id": "d21cf68980ad01f2f9f0b1bdb5075e07",
+         "count": 2
+        },
+        {
+         "descriptor": "Armenia, Yerevan",
+         "id": "c0ed409f79231000eaff724467330000",
+         "count": 2
+        },
+        {
+         "descriptor": "Germany, Berlin",
+         "id": "91336993fab910af6d6fb9748af4c1df",
+         "count": 204
+        },
+        {
+         "descriptor": "Germany, Cologne",
+         "id": "f28ae3c49d2601aff203e114d301695f",
+         "count": 13
+        },
+        {
+         "descriptor": "Germany, Munich",
+         "id": "91336993fab910af6d6fb2be0974c1d0",
+         "count": 38
+        },
+        {
+         "descriptor": "Germany, Frankfurt",
+         "id": "91336993fab910af6d6fabbb968cc1c1",
+         "count": 13
+        },
+        {
+         "descriptor": "Germany, Hamburg",
+         "id": "91336993fab910af6d6fb0782884c1cb",
+         "count": 71
+        },
+        {
+         "descriptor": "Germany, Remote",
+         "id": "91336993fab910af6d6fb4ee7634c1d5",
+         "count": 16
+        }
+       ]
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "total": 0,
+   "jobPostings": [
+    {
+     "title": "Network Solution Verification Engineer",
+     "externalPath": "/job/Israel-Raanana/Network-Solution-Verification-Engineer_JR2021397",
+     "locationsText": "Israel, Raanana",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2021397"
+     ]
+    },
+    {
+     "title": "Network Solution Verification Manager",
+     "externalPath": "/job/Israel-Raanana/Network-Solution-Verification-Manager_JR2021399",
+     "locationsText": "Israel, Raanana",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2021399"
+     ]
+    },
+    {
+     "title": "Senior Compute Platform Engineer, LSF - EDA Infrastructure",
+     "externalPath": "/job/US-CA-Remote/Senior-Compute-Platform-Engineer--LSF-_JR2023960",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2023960"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer, Applied AI",
+     "externalPath": "/job/Germany-Munich/Senior-Software-Engineer--Applied-AI_JR2019145",
+     "locationsText": "Germany, Munich",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2019145"
+     ]
+    },
+    {
+     "title": "Manager, Performance Engineering",
+     "externalPath": "/job/Canada-Toronto/Manager--Performance-Engineering_JR2026340",
+     "locationsText": "Canada, Toronto",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026340"
+     ]
+    },
+    {
+     "title": "Senior Software Verification Engineer",
+     "externalPath": "/job/Israel-Yokneam/Senior-Software-Verification-Engineer_JR2020974",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2020974"
+     ]
+    },
+    {
+     "title": "Senior Applied AI Researcher, Digital Biology",
+     "externalPath": "/job/Israel-Tel-Aviv/Senior-Applied-AI-Researcher--Digital-Biology_JR2016711-1",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2016711"
+     ]
+    },
+    {
+     "title": "Senior Chip Design Verification Engineer",
+     "externalPath": "/job/Israel-Tel-Aviv/Chip-Design-Verification-Engineer_JR2011728",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2011728"
+     ]
+    },
+    {
+     "title": "Senior Mechanical Engineer",
+     "externalPath": "/job/Israel-Yokneam/Senior-Mechanical-Engineer_JR2002154",
+     "locationsText": "Israel, Yokneam",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2002154"
+     ]
+    },
+    {
+     "title": "Senior Verification Engineer, Switch SoC",
+     "externalPath": "/job/Germany-Berlin/Senior-Verification-Engineer--Switch-SoC_JR2027283",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027283"
+     ]
+    },
+    {
+     "title": "Senior SoC Software Engineer",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-SoC-Software-Engineer_JR2027778",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027778"
+     ]
+    },
+    {
+     "title": "Senior Technical Program Manager - Nemotron",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Technical-Program-Manager---Nemotron_JR2027696",
+     "locationsText": "US, CA, Santa Clara",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027696"
+     ]
+    },
+    {
+     "title": "System Software Engineer - Performance",
+     "externalPath": "/job/US-CA-Santa-Clara/System-Software-Engineer---Performance_JR2027451",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027451"
+     ]
+    },
+    {
+     "title": "PCB Design Engineer - New College Grad 2027",
+     "externalPath": "/job/Taiwan-Taipei/PCB-Design-Engineer---New-College-Grad-2027_JR2027612",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027612"
+     ]
+    },
+    {
+     "title": "Software QA Engineer",
+     "externalPath": "/job/Germany-Hamburg/Software-QA-Engineer_JR2027627",
+     "locationsText": "Germany, Hamburg",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027627"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Berlin/ASIC-Verification-Engineer_JR2024390-1",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024390"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Berlin/ASIC-Verification-Engineer_JR2024391",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024391"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Munich/ASIC-Verification-Engineer_JR2027791",
+     "locationsText": "Germany, Munich",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027791"
+     ]
+    },
+    {
+     "title": "Solutions Architect - MEP",
+     "externalPath": "/job/Australia-Remote/Solutions-Architect---MEP_JR2027601",
+     "locationsText": "Australia, Remote",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027601"
+     ]
+    },
+    {
+     "title": "Senior DevOps Engineer",
+     "externalPath": "/job/Germany-Berlin/Senior-DevOps-Engineer_JR2026776",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026776"
+     ]
+    }
+   ]
+  }
+ ],
+ "details": {
+  "/job/Germany-Berlin/Senior-DevOps-Engineer_JR2026776": {
+   "jobPostingInfo": {
+    "title": "Senior DevOps Engineer",
+    "jobDescription": "<p>NVIDIA is looking for an exceptional engineer to grow and thrive alongside our HPC Infrastructure team that designs, evaluates, and optimizes the compute inrastructure powering NVIDIA&#39;s next-generation silicon design and AI</p><p>workloads. You will own the automation platform underneath VLSI infrastructure - the tooling, services and pipelines that turn manual infrastructure work into something that runs itself</p><br /><p><b>What you&#39;ll be doing:</b></p><ul><li> In this position, you will own the automation platform underneath VLSI infrastructure - the tooling, services and pipelines that turn manual infrastructure work into something that runs itself.</li><li>Design and build internal services and command-line tooling used daily by design and infrastructure engineers, with real attention to interface design and reliability.</li><li>Build event-driven automation around source control - reacting to repository events, keeping workspaces and client mappings healthy, and removing the manual maintenance around them.</li><li>Own CI, release and deployment mechanics for the team&#39;s internal tooling, and instrument what you build so it is observable and debuggable by the rest of the team.</li><li>This is a hands-on technical role. You will write and run the code yourself, work with the scheduling team on the automation layer beneath job submission, and reduce the operational load on senior engineers by turning their recurring manual work into services.</li></ul><br /><p><b>What we need to see:</b></p><ul><li>B.E./B.Tech/M.Tech in Computer Science, Electrical Engineering, or equivalent experience.</li><li>8&#43; years in DevOps, platform, or infrastructure software engineering.</li><li>Strong software engineering in Python - you write production-quality, tested code rather than one-off scripts, and you have delivered tooling that other engineers depend on daily.</li><li>Hands-on experience automating against source control management at scale, Perforce preferred and Git acceptable, including its APIs and event streams.</li><li>Solid CI/CD experience (GitLab CI, Jenkins, or equivalent) and container-based packaging and deployment.</li><li>Strong Linux systems knowledge and shell fluency, with experience building and operating internal developer platforms or engineering tooling.</li><li>Familiarity with batch compute environments and how engineering workloads are submitted, tracked and debugged, and comfort owning what you build in production. Semiconductor/EDA or HPC exposure is a plus.</li></ul><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>",
+    "location": "Germany, Berlin",
+    "postedOn": "Posted Today",
+    "startDate": "2026-10-13",
+    "timeType": "Full time",
+    "jobReqId": "JR2026776",
+    "jobPostingId": "Senior-DevOps-Engineer_JR2026776",
+    "jobPostingSiteId": "NVIDIAExternalCareerSite",
+    "country": {
+     "descriptor": "Germany"
+    },
+    "jobRequisitionLocation": {
+     "descriptor": "Germany, Berlin",
+     "country": {
+      "descriptor": "Germany",
+      "alpha2Code": "DE"
+     }
+    },
+    "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/Germany-Berlin/Senior-DevOps-Engineer_JR2026776",
+    "canApply": true
+   }
+  },
+  "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944": {
+   "jobPostingInfo": {
+    "title": "Senior Full-Stack Software Engineer, Storage Management Platform - DGX Cloud",
+    "jobDescription": "<p><span>We are looking for a </span>Senior Software Engineer<span> to become part of our storage management plane team. The management plane is a web-based application crafted to provide our storage customers the capabilities to handle and supervise our distributed storage infrastructure. Our team is continually dedicated to acquiring and implementing ground breaking technologies to overcome obstacles and innovate solutions for improving our ability to handle large clusters of machines efficiently.</span></p><p></p><p><b>What You Will Be Doing:</b></p><ul><li><p><span>Maintain and develop Kubernetes operators and our Container Storage Interface (CSI) plugin.</span></p></li><li><p><span>Develop a web-based solution that manages, operates and monitors our distributed storage.</span></p></li><li><p><span>Work closely with other teams to define and implement new APIs.</span></p></li></ul><p></p><p><b>What We Need to See:</b></p><ul><li><p><span>B.Sc., M.Sc. or Ph.D. in Computer Science, or related discipline, or equivalent experience.</span></p></li><li><p><span>8&#43; years of experience in web development (</span>both client and server<span>)</span></p></li><li><p><span>Proven experience with Kubernetes (K8s), including developing or maintaining operators and/or CSI plugins.</span></p></li><li><p><span>Experience scripting with </span>Python, Bash<span> or similar. </span>Experience with nodejs is a must</p></li><li><p><span>At least 5 years of experience working in a </span>Linux OS<span> environment</span></p></li><li><p><span>You’re smart and a quick learner</span></p></li><li><p><span>You do what it takes to get the job done</span></p></li><li><p><span>Passionate about coding and big challenges</span></p></li></ul><p></p><p><b>Ways to stand out from the crowd:</b></p><ul><li><p>NodeJS<span> for the server side: dominant modules are async &amp; express</span>. Kafka, MongoDB, K8s</p></li><li><p>JavaScript<span> frameworks: </span>React, jQuery, c3j</p></li><li><p>HTML5, CSS3, Bootstrap and Websockets; <span>Scripting (</span>Python and Bash) as well as Git and Linux</p></li></ul><p></p><p><span>NVIDIA has continuously reinvented itself over two decades. NVIDIA’s invention of the GPU in 1999 sparked the growth of the PC gaming market, redefined modern computer graphics, and revolutionized parallel computing. More recently, GPU deep learning ignited modern AI — the next era of computing — with the GPU acting as the brain of computers, robots, and self-driving cars that can perceive and understand the world. This is our life’s work — to amplify human imagination and intelligence.</span></p><p></p><p><span>With highly competitive salaries and a comprehensive benefits package, NVIDIA is widely considered to be one of the technology world’s most desirable employers. We have some of the most brilliant and talented people in the world working for us and, due to extraordinary growth, our elite engineering teams are fast-growing fast. If you&#39;re a creative and autonomous manager with a sincere real passion for technology, we want to hear from you.</span></p><p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>Your base salary will be determined based on your location, experience, and the pay of employees in similar positions. The base salary range is 184,000 USD - 287,500 USD for Level 4, and 224,000 USD - 356,500 USD for Level 5.<div><div><div><div><div><div><div><p></p><p><span>You will also be eligible for equity and <a href=\"https://www.nvidia.com/en-us/benefits/\" target=\"_blank\">benefits</a>.</span></p><p></p></div></div></div></div></div></div></div>Applications for this job will be accepted at least until October 17, 2026.<p></p><p>This posting is for an existing vacancy. </p><p>NVIDIA uses AI tools in its recruiting processes.</p><p></p>NVIDIA is committed to fostering an inclusive work environment and proud to be an equal opportunity employer. As we highly value diversity in our current and future employees, we do not discriminate (including in our hiring and promotion practices) on the basis of race, religion, color, national origin, gender, gender expression, sexual orientation, age, marital status, veteran status, disability status or any other characteristic protected by law.<p style=\"text-align:inherit\"></p><p style=\"text-align:inherit\"></p>",
+    "location": "US, CA, Santa Clara",
+    "additionalLocations": [
+     "US, Remote"
+    ],
+    "postedOn": "Posted Today",
+    "startDate": "2026-10-13",
+    "timeType": "Full time",
+    "jobReqId": "JR2007944",
+    "jobPostingId": "Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944",
+    "jobPostingSiteId": "NVIDIAExternalCareerSite",
+    "country": {
+     "descriptor": "United States of America"
+    },
+    "jobRequisitionLocation": {
+     "descriptor": "US, CA, Santa Clara",
+     "country": {
+      "descriptor": "United States of America",
+      "alpha2Code": "US"
+     }
+    },
+    "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944",
+    "canApply": true
+   }
+  }
+ },
+ "discovery": {
+  "total": 2000,
+  "jobPostings": [
+   {
+    "title": "Senior Developer Technology Engineer, CPU Performance",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Developer-Technology-Engineer--CPU-Performance_JR2013483",
+    "locationsText": "3 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2013483"
+    ]
+   },
+   {
+    "title": "Product Management MBA Intern, Data Center GPU - Summer 2027",
+    "externalPath": "/job/US-CA-Santa-Clara/Product-Management-MBA-Intern--Data-Center-GPU---Summer-2027_JR2025670-1",
+    "locationsText": "US, CA, Santa Clara",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2025670"
+    ]
+   },
+   {
+    "title": "Senior Manager, Engineering - Data Center Firmware",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Manager--Engineering---Data-Center-Firmware_JR2019986",
+    "locationsText": "2 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2019986"
+    ]
+   },
+   {
+    "title": "Senior Network Reliability Engineer - DGX Cloud",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Network-Reliability-Engineer---DGX-Cloud_JR2018113",
+    "locationsText": "2 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2018113"
+    ]
+   },
+   {
+    "title": "Package Layout Engineer - Hardware",
+    "externalPath": "/job/US-CA-Santa-Clara/Package-Layout-Engineer---Hardware_JR2027542-1",
+    "locationsText": "6 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027542"
+    ]
+   },
+   {
+    "title": "Senior Full-Stack Software Engineer, Storage Management Platform - DGX Cloud",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944",
+    "locationsText": "2 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2007944"
+    ]
+   },
+   {
+    "title": "Enterprise Platform Technical Marketing Engineer Intern - Summer 2027",
+    "externalPath": "/job/US-CA-Santa-Clara/Enterprise-Platform-Technical-Marketing-Engineer-Intern---Summer-2027_JR2025907",
+    "locationsText": "US, CA, Santa Clara",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2025907"
+    ]
+   },
+   {
+    "title": "Data Processing Developer Technology Intern - 2027",
+    "externalPath": "/job/Germany-Munich/Data-Processing-Developer-Technology-Intern---2027_JR2024708",
+    "locationsText": "4 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2024708"
+    ]
+   },
+   {
+    "title": "Formal Verification Engineer - New College Grad 2026",
+    "externalPath": "/job/US-CA-Santa-Clara/Formal-Verification-Engineer---New-College-Grad-2026_JR2007627",
+    "locationsText": "US, CA, Santa Clara",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2007627"
+    ]
+   },
+   {
+    "title": "Senior Software Engineer, Metrics and Evaluation - Autonomous Vehicles",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Metrics-and-Evaluation---Autonomous-Vehicles_JR2014651",
+    "locationsText": "5 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2014651"
+    ]
+   },
+   {
+    "title": "Senior Systems Software Engineer - GPU Diagnostics",
+    "externalPath": "/job/US-CA-Santa-Clara/Senior-Systems-Software-Engineer---GPU-Diagnostics_JR2012287",
+    "locationsText": "US, CA, Santa Clara",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2012287"
+    ]
+   },
+   {
+    "title": "Director, EMEA AI Initiatives",
+    "externalPath": "/job/Germany-Remote/Director--Global-AI-Initiatives---EMEA_JR2008022",
+    "locationsText": "3 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2008022"
+    ]
+   },
+   {
+    "title": "Developer Technology Engineering Intern - Compute Performance",
+    "externalPath": "/job/Germany-Munich/Developer-Technology-Engineering-Intern---Compute-Performance_JR2026775",
+    "locationsText": "3 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2026775"
+    ]
+   },
+   {
+    "title": "Hardware Validation Engineer",
+    "externalPath": "/job/Israel-Yokneam/Hardware-Validation-Engineer_JR2027271",
+    "locationsText": "Israel, Yokneam",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027271"
+    ]
+   },
+   {
+    "title": "ML and AI Physical Design Methodology Engineer",
+    "externalPath": "/job/US-CA-Santa-Clara/ML-and-AI-Physical-Design-Methodology-Engineer_JR2027645",
+    "locationsText": "3 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027645"
+    ]
+   },
+   {
+    "title": "Senior Software Engineer – Infrastructure & Network Automation",
+    "externalPath": "/job/Israel-Yokneam/Senior-Software-Engineer---Infrastructure---Network-Automation_JR2027535",
+    "locationsText": "Israel, Yokneam",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027535"
+    ]
+   },
+   {
+    "title": "Senior Software Engineer, RDMA Transport",
+    "externalPath": "/job/Israel-Tel-Aviv/Senior-Software-Engineer--RDMA-Transport_JR2027514",
+    "locationsText": "2 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027514"
+    ]
+   },
+   {
+    "title": "Senior Board Design Hardware Engineer",
+    "externalPath": "/job/Israel-Yokneam/Senior-Board-Design-Hardware-Engineer_JR2027490-1",
+    "locationsText": "Israel, Yokneam",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027490"
+    ]
+   },
+   {
+    "title": "Senior Chip Design Verification Engineer",
+    "externalPath": "/job/Israel-Yokneam/Senior-Chip-Design-Verification-Engineer_JR2027111",
+    "locationsText": "2 Locations",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027111"
+    ]
+   },
+   {
+    "title": "Senior Physical Layer Firmware Architecture Engineer",
+    "externalPath": "/job/Israel-Yokneam/Senior-Physical-Layer-Firmware-Architecture-Engineer_JR2027805",
+    "locationsText": "Israel, Yokneam",
+    "postedOn": "Posted Today",
+    "bulletFields": [
+     "JR2027805"
+    ]
+   }
+  ],
+  "facets": [
+   {
+    "facetParameter": "locationMainGroup",
+    "values": [
+     {
+      "facetParameter": "locationHierarchy2",
+      "descriptor": "Location Type",
+      "values": [
+       {
+        "descriptor": "Office",
+        "id": "0c3f5f117e9a0101f6422f0fe79d0000",
+        "count": 2557
+       },
+       {
+        "descriptor": "Remote",
+        "id": "0c3f5f117e9a0101f63dc469c3010000",
+        "count": 576
+       }
+      ]
+     },
+     {
+      "facetParameter": "locationHierarchy1",
+      "descriptor": "Locations",
+      "values": [
+       {
+        "descriptor": "Armenia",
+        "id": "d21cf68980ad0128000fd2c6b107c000",
+        "count": 2
+       },
+       {
+        "descriptor": "Australia",
+        "id": "2fcb99c455831013ea528dce556b3224",
+        "count": 14
+       },
+       {
+        "descriptor": "Germany",
+        "id": "2fcb99c455831013ea52b82135ba3266",
+        "count": 253
+       }
+      ]
+     },
+     {
+      "facetParameter": "locations",
+      "descriptor": "Sites",
+      "values": [
+       {
+        "descriptor": "Armenia, Remote",
+        "id": "d21cf68980ad01f2f9f0b1bdb5075e07",
+        "count": 2
+       },
+       {
+        "descriptor": "Armenia, Yerevan",
+        "id": "c0ed409f79231000eaff724467330000",
+        "count": 2
+       },
+       {
+        "descriptor": "Australia, Remote",
+        "id": "91336993fab910af6d70362ab49cc2f7",
+        "count": 14
+       },
+       {
+        "descriptor": "Australia, Sydney",
+        "id": "0d86a8e04eda011538f0ac5d90019611",
+        "count": 1
+       },
+       {
+        "descriptor": "Brazil, Remote",
+        "id": "91336993fab910af6d7115f6c23cc357",
+        "count": 1
+       },
+       {
+        "descriptor": "Germany, Berlin",
+        "id": "91336993fab910af6d6fb9748af4c1df",
+        "count": 204
+       },
+       {
+        "descriptor": "Germany, Cologne",
+        "id": "f28ae3c49d2601aff203e114d301695f",
+        "count": 13
+       },
+       {
+        "descriptor": "Germany, Munich",
+        "id": "91336993fab910af6d6fb2be0974c1d0",
+        "count": 38
+       },
+       {
+        "descriptor": "Germany, Frankfurt",
+        "id": "91336993fab910af6d6fabbb968cc1c1",
+        "count": 13
+       },
+       {
+        "descriptor": "Germany, Hamburg",
+        "id": "91336993fab910af6d6fb0782884c1cb",
+        "count": 71
+       },
+       {
+        "descriptor": "Germany, Remote",
+        "id": "91336993fab910af6d6fb4ee7634c1d5",
+        "count": 16
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "scoped": {
+  "india": {
+   "total": 253,
+   "jobPostings": [
+    {
+     "title": "Senior Verification Engineer, Switch SoC",
+     "externalPath": "/job/Germany-Berlin/Senior-Verification-Engineer--Switch-SoC_JR2027283",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027283"
+     ]
+    },
+    {
+     "title": "Software QA Engineer",
+     "externalPath": "/job/Germany-Hamburg/Software-QA-Engineer_JR2027627",
+     "locationsText": "Germany, Hamburg",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027627"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Berlin/ASIC-Verification-Engineer_JR2024390-1",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024390"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Berlin/ASIC-Verification-Engineer_JR2024391",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024391"
+     ]
+    },
+    {
+     "title": "ASIC Verification Engineer",
+     "externalPath": "/job/Germany-Munich/ASIC-Verification-Engineer_JR2027791",
+     "locationsText": "Germany, Munich",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027791"
+     ]
+    },
+    {
+     "title": "Senior DevOps Engineer",
+     "externalPath": "/job/Germany-Berlin/Senior-DevOps-Engineer_JR2026776",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026776"
+     ]
+    },
+    {
+     "title": "Senior Linux Administrator",
+     "externalPath": "/job/Germany-Berlin/Senior-Linux-Administrator_JR2026778-1",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026778"
+     ]
+    },
+    {
+     "title": "Senior HPC Cloud Engineer",
+     "externalPath": "/job/Germany-Berlin/Senior-HPC-Cloud-Engineer_JR2026768",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026768"
+     ]
+    },
+    {
+     "title": "Senior Slurm Administrator",
+     "externalPath": "/job/Germany-Berlin/Senior-Slurm-Administrator_JR2026779-1",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026779"
+     ]
+    },
+    {
+     "title": "SOX IT Compliance Analyst",
+     "externalPath": "/job/Germany-Hamburg/SOX-IT-Compliance-Analyst_JR2008881",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2008881"
+     ]
+    },
+    {
+     "title": "Senior GPU System/Fabrics Architect",
+     "externalPath": "/job/Germany-Berlin/Senior-GPU-System-Architect_JR2008149",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2008149"
+     ]
+    },
+    {
+     "title": "Senior Solution Architect — Sales AI Applications",
+     "externalPath": "/job/Germany-Hamburg/Senior-Solution-Architect---Sales-AI-Applications_JR2024207-1",
+     "locationsText": "Germany, Hamburg",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2024207"
+     ]
+    },
+    {
+     "title": "Business Systems Analyst, Anaplan",
+     "externalPath": "/job/Germany-Remote/Business-Systems-Analyst--Anaplan_JR2025980",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2025980"
+     ]
+    },
+    {
+     "title": "Senior Physical Design Engineer",
+     "externalPath": "/job/Germany-Berlin/Senior-Physical-Design-Engineer_JR2026183",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2026183"
+     ]
+    },
+    {
+     "title": "Senior Software Solutions Engineer",
+     "externalPath": "/job/Germany-Hamburg/Senior-Software-Solutions-Engineer_JR2027697",
+     "locationsText": "Germany, Hamburg",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027697"
+     ]
+    },
+    {
+     "title": "Senior System Software Engineer - Local AI Automation",
+     "externalPath": "/job/Germany-Hamburg/Senior-System-Software-Engineer---Local-AI-Automation_JR2027704",
+     "locationsText": "Germany, Hamburg",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027704"
+     ]
+    },
+    {
+     "title": "Power Architecture Engineer",
+     "externalPath": "/job/Germany-Berlin/Power-Architecture-Engineer_JR2027560",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027560"
+     ]
+    },
+    {
+     "title": "CPU Compiler Intern - 2027",
+     "externalPath": "/job/Germany-Hamburg/CPU-Compiler-Intern---2027_JR2027260-1",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027260"
+     ]
+    },
+    {
+     "title": "ASIC Design Engineer - Performance Monitoring",
+     "externalPath": "/job/Germany-Berlin/ASIC-Design-Engineer---Performance-Monitoring_JR2027619",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027619"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer - IT Infrastructure",
+     "externalPath": "/job/Germany-Berlin/Senior-Software-Engineer---IT-Infrastructure_JR2027113",
+     "locationsText": "Germany, Berlin",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027113"
+     ]
+    }
+   ]
+  },
+  "remote": {
+   "total": 576,
+   "jobPostings": [
+    {
+     "title": "Senior Developer Technology Engineer, CPU Performance",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Developer-Technology-Engineer--CPU-Performance_JR2013483",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2013483"
+     ]
+    },
+    {
+     "title": "Senior Manager, Engineering - Data Center Firmware",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Manager--Engineering---Data-Center-Firmware_JR2019986",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2019986"
+     ]
+    },
+    {
+     "title": "Senior Network Reliability Engineer - DGX Cloud",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Network-Reliability-Engineer---DGX-Cloud_JR2018113",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2018113"
+     ]
+    },
+    {
+     "title": "Package Layout Engineer - Hardware",
+     "externalPath": "/job/US-CA-Santa-Clara/Package-Layout-Engineer---Hardware_JR2027542-1",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027542"
+     ]
+    },
+    {
+     "title": "Senior Full-Stack Software Engineer, Storage Management Platform - DGX Cloud",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Kubernetes-and-Virtualization---DGX-Cloud_JR2007944",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2007944"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer, Metrics and Evaluation - Autonomous Vehicles",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--Metrics-and-Evaluation---Autonomous-Vehicles_JR2014651",
+     "locationsText": "5 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2014651"
+     ]
+    },
+    {
+     "title": "Director, EMEA AI Initiatives",
+     "externalPath": "/job/Germany-Remote/Director--Global-AI-Initiatives---EMEA_JR2008022",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2008022"
+     ]
+    },
+    {
+     "title": "Senior Account Manager",
+     "externalPath": "/job/Hong-Kong-Remote/Senior-Account-Manager_JR2027625",
+     "locationsText": "Hong Kong, Remote",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027625"
+     ]
+    },
+    {
+     "title": "Mask Design Engineer – Hardware",
+     "externalPath": "/job/US-CA-Santa-Clara/Mask-Design-Engineer---Hardware_JR2027632",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027632"
+     ]
+    },
+    {
+     "title": "Senior Compute Platform Engineer, LSF - EDA Infrastructure",
+     "externalPath": "/job/US-CA-Remote/Senior-Compute-Platform-Engineer--LSF-_JR2023960",
+     "locationsText": "3 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2023960"
+     ]
+    },
+    {
+     "title": "System Software Engineer - Performance",
+     "externalPath": "/job/US-CA-Santa-Clara/System-Software-Engineer---Performance_JR2027451",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027451"
+     ]
+    },
+    {
+     "title": "Solutions Architect - MEP",
+     "externalPath": "/job/Australia-Remote/Solutions-Architect---MEP_JR2027601",
+     "locationsText": "Australia, Remote",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2027601"
+     ]
+    },
+    {
+     "title": "Senior Cloud Infrastructure and Reliability Solutions Architect",
+     "externalPath": "/job/France-Courbevoie/Senior-Cloud-Infrastructure-and-Reliability-Solutions-Architect_JR2025838",
+     "locationsText": "4 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2025838"
+     ]
+    },
+    {
+     "title": "Senior Automotive Software Program Manager",
+     "externalPath": "/job/Sweden-Gothenburg/Senior-Automotive-Software-Program-Manager_JR2026537",
+     "locationsText": "4 Locations",
+     "postedOn": "Posted Today",
+     "bulletFields": [
+      "JR2026537"
+     ]
+    },
+    {
+     "title": "Senior Developer Relations Manager - Telecom",
+     "externalPath": "/job/US-CA-Santa-Clara/Developer-Relations-Manager--Telecom_JR2003375",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2003375"
+     ]
+    },
+    {
+     "title": "OEM Field Enablement Manager, HPE and HPI",
+     "externalPath": "/job/US-CA-Santa-Clara/OEM-Field-Enablement-Manager--HPE-and-HPI_JR2027634",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027634"
+     ]
+    },
+    {
+     "title": "Senior Software Engineer, PyTorch - Deep Learning",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Engineer--PyTorch---Deep-Learning_JR2027669",
+     "locationsText": "6 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027669"
+     ]
+    },
+    {
+     "title": "Senior Technical Product Manager, Infrastructure Resilience",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Technical-Product-Manager--Infrastructure-Resilience_JR2027685",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027685"
+     ]
+    },
+    {
+     "title": "Developer Relations Manager, Higher Education and Research – AI for Science",
+     "externalPath": "/job/US-CA-Santa-Clara/Developer-Relations-Manager--Higher-Education-and-Research---AI-for-Science_JR2027756",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2027756"
+     ]
+    },
+    {
+     "title": "Senior Systems Engineer - Autonomous Driving",
+     "externalPath": "/job/US-CA-Santa-Clara/Senior-Software-Systems-Engineer--L3-and-L4---Autonomous-Driving_JR2013922",
+     "locationsText": "2 Locations",
+     "postedOn": "Posted Yesterday",
+     "bulletFields": [
+      "JR2013922"
+     ]
+    }
+   ]
+  }
+ }
+}

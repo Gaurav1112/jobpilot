@@ -2,11 +2,13 @@ import { z } from 'zod';
 import { defineAgent, type Agent, type AgentContext } from '../../../../kernel/agent.js';
 import { defineContract } from '../../../../kernel/contract.js';
 import { KernelError } from '../../../../kernel/errors.js';
+import { DEFAULT_RESIDENCE, type ResidenceScope } from '../../../geo/residence.js';
 import { countriesIn, officeCity } from '../../../text/norm.js';
 import { DiscoveryRequest, knownAts, RawPosting } from '../../../types.js';
 import { finish, onlySeenBefore } from '../common.js';
 import {
   chooseDetails,
+  exactCountryRe,
   goneNote,
   HostRefused,
   hostRequest,
@@ -14,6 +16,7 @@ import {
   preferPostings as preferBy,
   refusal,
   REMOTE_TYPE,
+  residenceOf,
   scopeMiss,
   scopeNotApplied,
   shapeError,
@@ -406,8 +409,9 @@ const LOCATION_LIKE = /location|countr|site/iu;
  *   from the parameter with the most such values;
  * - located: any location-like parameter.
  * Deterministic: facet order as served, values in order. `expected` feeds the scope-not-applied check.
+ * Profiles Task 14: India is the residence `scope` (default IN): its display name, its places, its office table.
  */
-export function workdayScopes(page: WorkdayListPage, officeCities: readonly string[] = []): WorkdayScopes {
+export function workdayScopes(page: WorkdayListPage, officeCities: readonly string[] = [], scope: ResidenceScope = DEFAULT_RESIDENCE): WorkdayScopes {
   const groups: { param: string; values: FacetNode[] }[] = [];
   const walk = (nodes: readonly FacetNode[], param: string | undefined): void => {
     for (const n of nodes) {
@@ -424,7 +428,7 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
   };
   walk(page.facets ?? [], undefined);
   const countOf = (v: FacetNode): number => (typeof v.count === 'number' && Number.isFinite(v.count) ? v.count : 0);
-  const scope = (param: string, vs: readonly FacetNode[]): WorkdayScope => ({
+  const scopeOf = (param: string, vs: readonly FacetNode[]): WorkdayScope => ({
     facets: { [param]: vs.map((v) => v.id as string) },
     expected: vs.reduce((n, v) => n + countOf(v), 0),
     largest: vs.reduce((n, v) => Math.max(n, countOf(v)), 0),
@@ -433,29 +437,30 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
   const known = (param: string): boolean => KNOWN_LOCATION_PARAMS.includes(param);
 
   const remoteGroup = groups.find((g) => g.values.some(isRemote));
-  const remote = remoteGroup === undefined ? null : scope(remoteGroup.param, remoteGroup.values.filter(isRemote));
+  const remote = remoteGroup === undefined ? null : scopeOf(remoteGroup.param, remoteGroup.values.filter(isRemote));
 
+  const exactRe = exactCountryRe(scope);
   const candidates: WorkdayScope[] = [];
   for (const g of groups) {
-    const exact = g.values.filter((v) => !isRemote(v) && /^\s*india\s*$/iu.test(v.descriptor ?? ''));
-    if (exact.length > 0) candidates.push(scope(g.param, exact));
+    const exact = g.values.filter((v) => !isRemote(v) && exactRe.test(v.descriptor ?? ''));
+    if (exact.length > 0) candidates.push(scopeOf(g.param, exact));
   }
   for (const g of groups) {
     if (!known(g.param)) continue;
-    const named = g.values.filter((v) => !isRemote(v) && !/^\s*india\s*$/iu.test(v.descriptor ?? '') && countriesIn(v.descriptor ?? '').includes('india'));
-    if (named.length > 0) candidates.push(scope(g.param, named));
+    const named = g.values.filter((v) => !isRemote(v) && !exactRe.test(v.descriptor ?? '') && countriesIn(v.descriptor ?? '', scope.table).includes(scope.country));
+    if (named.length > 0) candidates.push(scopeOf(g.param, named));
   }
   let india: WorkdayScope | null = null;
   for (const c of candidates) if (india === null || c.expected > india.expected) india = c;
 
   const offices: (WorkdayScope & { display: string; labels: string[] })[] = [];
   const words = (d: string): string[] => d.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w !== '');
-  for (const city of officeCities.map((c) => officeCity(c))) {
+  for (const city of officeCities.map((c) => officeCity(c, scope.table))) {
     if (offices.some((o) => o.display === city.display)) continue;
     const names = (d: string): boolean => {
       const w = ' ' + words(d).join(' ') + ' ';
-      const places = countriesIn(d);
-      return city.aliases.some((a) => w.includes(' ' + words(a).join(' ') + ' ')) && (places.length === 0 || places.includes('india'));
+      const places = countriesIn(d, scope.table);
+      return city.aliases.some((a) => w.includes(' ' + words(a).join(' ') + ' ')) && (places.length === 0 || places.includes(scope.country));
     };
     let best: FacetNode[] = [];
     let param = '';
@@ -467,7 +472,7 @@ export function workdayScopes(page: WorkdayListPage, officeCities: readonly stri
         param = g.param;
       }
     }
-    if (best.length > 0) offices.push({ display: city.display, ...scope(param, best), labels: best.map((v) => v.descriptor as string) });
+    if (best.length > 0) offices.push({ display: city.display, ...scopeOf(param, best), labels: best.map((v) => v.descriptor as string) });
   }
   return { india, remote, located: groups.some((g) => known(g.param) || LOCATION_LIKE.test(g.param)), offices };
 }
@@ -503,11 +508,11 @@ export interface SrcWorkdayOptions {
   readonly maxDetails?: number;
 }
 
-/** The detail order by listed location: 0 when it names India (or an Indian place) or is listed under an office city, 1 for "N Locations", 2 for the rest. */
-const locationRank = (p: RawPosting): number => {
+/** The detail order by listed location: 0 when it names the residence (India: or an Indian place) or is listed under an office city, 1 for "N Locations", 2 for the rest. */
+const locationRank = (p: RawPosting, scope: ResidenceScope): number => {
   const raw = p.raw as WorkdayRaw;
   const text = raw.locationsText;
-  if (countriesIn(text).includes('india') || (raw.officeLocations ?? []).length > 0) return 0;
+  if (countriesIn(text, scope.table).includes(scope.country) || (raw.officeLocations ?? []).length > 0) return 0;
   return /^\s*\d+\s+locations?\s*$/iu.test(text) ? 1 : 2;
 };
 
@@ -525,11 +530,11 @@ function byPath(postings: readonly RawPosting[]): RawPosting[] {
  * One posting per req id (a req posted twice, "_JR1" in Pune and "_JR1-1" in Bengaluru, is one job): the office-listed
  * one wins, then one whose listed location names India, then the first seen; sorted by sourceId (as `finish`).
  */
-function preferPostings(postings: readonly RawPosting[]): RawPosting[] {
+function preferPostings(postings: readonly RawPosting[], scope: ResidenceScope): RawPosting[] {
   const pref = (p: RawPosting): number => {
     const raw = p.raw as WorkdayRaw;
     if ((raw.officeLocations ?? []).length > 0) return 0;
-    return countriesIn(raw.locationsText).includes('india') ? 1 : 2;
+    return countriesIn(raw.locationsText, scope.table).includes(scope.country) ? 1 : 2;
   };
   return preferBy(byPath(postings), pref);
 }
@@ -578,20 +583,22 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
   const b = parseWorkdayRef(req.slug);
   if (b === null) throw new KernelError('invalid_output', `workday: ${req.slug} is not <host>/<tenant>/<site>`);
   const titles = { data: titlePackOf(ctx.pack, 'src-workday') };
+  const residence = residenceOf(titles.data, 'src-workday');
   const what = `workday ${req.company}`;
   try {
     const ref = workdayRef(b);
     const cities = titles.data.eligibility?.officeCities ?? [];
-    const cacheKey = `${ref} ${cities.join(',')}`;
+    // the scopes depend on the residence (India's key is today's)
+    const cacheKey = `${ref} ${cities.join(',')}${residence.isDefault ? '' : ` ${residence.code}`}`;
     let scopes = o.hosts.scopes?.get(cacheKey);
     let first: WorkdayListPage | undefined;
     if (scopes === undefined) {
       first = await fetchListPage(http, o.hosts, b, 0);
-      scopes = workdayScopes(first, cities);
+      scopes = workdayScopes(first, cities, residence);
       o.hosts.scopes?.set(cacheKey, scopes);
     }
     let postings: RawPosting[];
-    const maxPages = Math.min(o.maxPages, workdayPagesPerList(new Set(cities.map((c) => officeCity(c).display)).size));
+    const maxPages = Math.min(o.maxPages, workdayPagesPerList(new Set(cities.map((c) => officeCity(c, residence.table).display)).size));
     /** Page 1 of a scoped list (`list`: "the india scoped list"; `name`: "india"), refused when Workday did not apply the scope or reports its ceiling. */
     const scopedFirst = async (list: string, name: string, sc: WorkdayScope): Promise<WorkdayListPage> => {
       const page1 = await fetchListPage(http, o.hosts, b, 0, sc.facets);
@@ -606,10 +613,12 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
     if (lists.length > 0) {
       const all: RawPosting[] = [];
       const indiaRead = new Set<string>();
-      for (const [name, sc] of lists) {
+      for (const [key, sc] of lists) {
+        // the residence list's name in requests' notes is the residence token ('india' for IN)
+        const name = key === 'india' ? residence.token : key;
         const page1 = await scopedFirst(`the ${name} scoped list`, name, sc);
         const read = (await readList(http, o.hosts, b, req, sc.facets, page1, maxPages, ctx, ` (${name} list)`)).postings;
-        if (name === 'india') for (const p of read) indiaRead.add((p.raw as WorkdayRaw).externalPath);
+        if (key === 'india') for (const p of read) indiaRead.add((p.raw as WorkdayRaw).externalPath);
         all.push(...read);
       }
       // the office-city lists: which postings (by externalPath, unique per posting) Workday lists under an office value.
@@ -621,7 +630,7 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
         const listed = (await readList(http, o.hosts, b, req, office.facets, page1, maxPages, ctx, ` (${office.display} list)`)).postings;
         const outside = listed.filter((p) => !indiaRead.has((p.raw as WorkdayRaw).externalPath)).length;
         if (outside > 0) {
-          ctx.skipped([`scope-not-applied ${req.company} ${office.display} office list: ${outside} of its ${listed.length} jobs are not in the India list; nothing stamped`]);
+          ctx.skipped([`scope-not-applied ${req.company} ${office.display} office list: ${outside} of its ${listed.length} jobs are not in the ${residence.display} list; nothing stamped`]);
           continue;
         }
         for (const p of listed) {
@@ -634,18 +643,19 @@ async function runCompany(req: DiscoveryRequest, ctx: AgentContext, o: Required<
           const labels = offices.get((p.raw as WorkdayRaw).externalPath);
           return labels === undefined ? p : { ...p, raw: { ...(p.raw as WorkdayRaw), officeLocations: labels } };
         }),
+        residence,
       );
     } else if (scopes.located) {
-      ctx.skipped([`no-india-or-remote-facet ${req.company}: its location facets name neither India nor a remote type`]);
+      ctx.skipped([`no-${residence.token}-or-remote-facet ${req.company}: its location facets name neither ${residence.display} nor a remote type`]);
       return [];
     } else {
       first ??= await fetchListPage(http, o.hosts, b, 0);
       if (first.total >= WORKDAY_TOTAL_CEILING) throw new KernelError('input_rejected', `${what}: total ${first.total} is Workday's reporting ceiling and the board has no location facets to scope by; its list cannot be read in full`);
-      postings = preferPostings((await readList(http, o.hosts, b, req, {}, first, maxPages, ctx)).postings);
+      postings = preferPostings((await readList(http, o.hosts, b, req, {}, first, maxPages, ctx)).postings, residence);
     }
 
     // details: rank-0 title-passing jobs only (India-named, India-remote, office-listed), ties by sourceId, at most the budget
-    const chosen = chooseDetails(postings, { pack: titles.data, title: (p) => (p.raw as WorkdayRaw).title, rank0: (p) => locationRank(p) === 0, max: o.maxDetails, company: req.company, ctx });
+    const chosen = chooseDetails(postings, { pack: titles.data, title: (p) => (p.raw as WorkdayRaw).title, rank0: (p) => locationRank(p, residence) === 0, max: o.maxDetails, company: req.company, ctx, residence });
     const details = new Map<string, WorkdayDetailRaw | null>();
     for (const p of chosen) {
       const raw = p.raw as WorkdayRaw;
