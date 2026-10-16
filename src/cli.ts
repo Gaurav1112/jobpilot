@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
@@ -31,7 +32,7 @@ import { createProfile, removeProfile, useProfile } from './app/profiles/command
 import { adoptLaunchd, unadoptLaunchd } from './app/profiles/adopt-launchd.js';
 import { adoptProfile, NO_LAUNCHD, NO_UNADOPT_LAUNCHD, unadoptProfile } from './app/profiles/adopt.js';
 import { listProfiles } from './app/profiles/meta.js';
-import { PrivacyScanError, privacyHomes, privacyProblemsOf, privacyTermsOf, scanFolder } from './app/privacy.js';
+import { PrivacyScanError, privacyHomes, privacyProblemsOf, privacyTermsOf, scanFolder, scanGit } from './app/privacy.js';
 import type { Fact } from './app/pack/schema.js';
 import { diskDocCheck } from './app/docs-check.js';
 import { overrideFact } from './app/project.js';
@@ -855,7 +856,8 @@ program
   .description('Privacy checks')
   .command('scan [dir]')
   .description("Scan a folder (default: this repo) for any profile's forbidden terms, contact details or pay floor; names file, profile and term number only")
-  .action((dir: string | undefined) =>
+  .option('--git [range]', 'also scan what a push would publish: the commits in range (default origin/main..HEAD, or all of HEAD without origin/main), their messages and every file version they add')
+  .action((dir: string | undefined, o: { git?: string | boolean }) =>
     guarded(() => {
       const homes = privacyHomes();
       // a home that cannot be fully checked fails the gate (exit 2): an unchecked profile is never reported "clean"
@@ -863,18 +865,34 @@ program
       for (const p of problems) console.error(`privacy scan: ${p}`);
       let scan;
       try {
-        scan = scanFolder(dir ?? root, homes);
+        scan = scanFolder(dir ?? root, homes, { skipIgnored: true }); // git-ignored files are never pushed
       } catch (e) {
         if (!(e instanceof PrivacyScanError)) throw e;
         console.error(`privacy scan: could not read ${e.message}`);
         process.exitCode = 2;
         return;
       }
-      for (const h of scan.hits) console.log(h);
+      let history: { hits: string[]; commits: number } | undefined;
+      if (o.git !== undefined) {
+        const repoDir = dir ?? root;
+        const hasOrigin = spawnSync('git', ['-C', repoDir, 'rev-parse', '--verify', '-q', 'origin/main'], { stdio: 'ignore' }).status === 0;
+        const range = typeof o.git === 'string' ? o.git : hasOrigin ? 'origin/main..HEAD' : 'HEAD';
+        try {
+          history = scanGit(repoDir, range, homes);
+        } catch (e) {
+          if (!(e instanceof PrivacyScanError)) throw e;
+          console.error(`privacy scan: ${e.message}`);
+          process.exitCode = 2;
+          return;
+        }
+      }
+      const hits = [...scan.hits, ...(history?.hits ?? [])];
+      for (const h of hits) console.log(h);
       for (const n of scan.notScanned) console.error(`privacy scan: not scanned: ${n}`);
+      if (scan.ignoredSkipped > 0) console.error(`privacy scan: ${scan.ignoredSkipped} git-ignored files and folders not scanned (never pushed)`);
       if (problems.length > 0) process.exitCode = 2;
-      else if (scan.hits.length > 0) process.exitCode = 1;
-      else console.log(`privacy scan: clean (${homes.length} profiles, ${homes.reduce((n, h) => n + privacyTermsOf(h.home).length, 0)} terms)`);
+      else if (hits.length > 0) process.exitCode = 1;
+      else console.log(`privacy scan: clean (${homes.length} profiles, ${homes.reduce((n, h) => n + privacyTermsOf(h.home).length, 0)} terms${history !== undefined ? `, ${history.commits} commits` : ''})`);
     }),
   );
 

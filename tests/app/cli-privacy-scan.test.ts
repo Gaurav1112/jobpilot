@@ -14,11 +14,11 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
-const scan = (dir: string) => {
+const scan = (dir: string, ...extra: string[]) => {
   const env: NodeJS.ProcessEnv = { ...process.env, JOBPILOT_ROOT: root };
   delete env['JOBPILOT_HOME'];
   delete env['JOBPILOT_PROFILE'];
-  return spawnSync(process.execPath, ['--import', 'tsx', join(repo, 'src/bin.ts'), 'privacy', 'scan', dir], { cwd: repo, env, encoding: 'utf8' });
+  return spawnSync(process.execPath, ['--import', 'tsx', join(repo, 'src/bin.ts'), 'privacy', 'scan', dir, ...extra], { cwd: repo, env, encoding: 'utf8' });
 };
 
 describe('jobpilot privacy scan', () => {
@@ -57,5 +57,27 @@ describe('privacy scan fails closed', () => {
     expect(r.status).toBe(2);
     expect(r.stderr).toContain('privacy scan: asha: contact.yaml does not parse');
     expect(r.stdout).not.toMatch(/clean/);
+  }, 60_000);
+});
+
+describe('privacy scan --git', () => {
+  it('finds a term committed and later deleted, and counts the commits when clean', () => {
+    const g = join(root, 'g');
+    mkdirSync(g);
+    const git = (...a: string[]) => spawnSync('git', ['-C', g, ...a], { encoding: 'utf8' });
+    git('init', '-q', '-b', 'main');
+    writeFileSync(join(g, 'n.md'), 'Initech\n');
+    git('add', 'n.md');
+    git('-c', 'user.name=x', '-c', 'user.email=x@example.com', 'commit', '-q', '-m', 'a');
+    rmSync(join(g, 'n.md'));
+    writeFileSync(join(g, 'ok.md'), 'fine\n');
+    git('add', '-A');
+    git('-c', 'user.name=x', '-c', 'user.email=x@example.com', 'commit', '-q', '-m', 'b');
+    const dirty = scan(g, '--git');
+    expect(dirty.status).toBe(1);
+    expect(dirty.stdout).toMatch(/^[0-9a-f]{7} n\.md \(asha, term #1\)$/m);
+    const clean = scan(g, '--git', 'HEAD~1..HEAD');
+    expect(clean.status).toBe(0);
+    expect(clean.stdout).toMatch(/clean \(1 profiles, \d+ terms, 1 commits\)/);
   }, 60_000);
 });

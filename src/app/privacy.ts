@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, dirname, join, relative, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -231,30 +232,71 @@ export interface FolderScan {
   readonly hits: string[];
   /** Files the scan could not read as text: symlinks (not followed) and document/archive formats. */
   readonly notScanned: string[];
+  /** Git-ignored files and folders left out (skipIgnored): git never publishes them. */
+  readonly ignoredSkipped: number;
+}
+
+/** Paths git ignores under a work tree, relative to it (folders end in /); empty when `dir` is not in a work tree. */
+function gitIgnored(dir: string): Set<string> {
+  try {
+    const out = execFileSync('git', ['-C', dir, 'ls-files', '--others', '--ignored', '--exclude-standard', '--directory', '-z'], { maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'ignore'] });
+    return new Set(out.toString('utf8').split('\0').filter((l) => l !== ''));
+  } catch {
+    return new Set();
+  }
 }
 
 export class PrivacyScanError extends Error {}
 
-export function scanFolder(dir: string, homes: readonly { label: string; home: string }[]): FolderScan {
+type Homes = readonly { label: string; home: string }[];
+
+/** The matchers of every home, and how a hit is written: file, profile and term number, never the term. */
+function scanner(homes: Homes) {
   const sets = homes.map((h) => ({ label: h.label, matchers: matchersOf(h.home) }));
   const anyTerm = (s: string): boolean => sets.some((x) => x.matchers.some((m) => m(s)));
+  /** A path with every segment that matches any term shown as [hidden], so a hit never prints the term. */
   const shown = (rel: string): string => rel.split('/').map((seg) => (anyTerm(normaliseForScan(seg)) ? '[hidden]' : seg)).join('/');
+  const textHits = (where: string, text: string, out: Set<string>): void => {
+    const t = normaliseForScan(text);
+    for (const s of sets) s.matchers.forEach((m, i) => {
+      if (m(t)) out.add(`${where} (${s.label}, term #${i + 1})`);
+    });
+  };
+  /** Hits in the path's own segments, each reported at the first segment that holds it. */
+  const pathHits = (prefix: string, rel: string, out: Set<string>): void => {
+    const segs = rel.split('/');
+    segs.forEach((seg, k) => {
+      const at = `${prefix}${shown(segs.slice(0, k + 1).join('/'))}`;
+      for (const s of sets) s.matchers.forEach((m, i) => {
+        if (m(normaliseForScan(seg))) out.add(`${at} (${s.label}, term #${i + 1}, in the path)`);
+      });
+    });
+  };
+  return { shown, textHits, pathHits };
+}
+
+export function scanFolder(dir: string, homes: Homes, opts: { skipIgnored?: boolean } = {}): FolderScan {
+  const { shown, textHits, pathHits } = scanner(homes);
   const hits = new Set<string>();
   const notScanned: string[] = [];
+  const ignored = opts.skipIgnored === true ? gitIgnored(dir) : new Set<string>();
+  let ignoredSkipped = 0;
   const walk = (p: string): void => {
     for (const name of readdirSync(p).sort()) {
       if (name === 'node_modules' || name === '.git') continue;
       const f = join(p, name);
       const rel = relative(dir, f).split(sep).join('/');
+      if (ignored.has(rel) || ignored.has(`${rel}/`)) {
+        ignoredSkipped++;
+        continue;
+      }
       let st;
       try {
         st = lstatSync(f);
       } catch (e) {
         throw new PrivacyScanError(`${shown(rel)}: ${(e as NodeJS.ErrnoException).code ?? 'unreadable'}`);
       }
-      for (const s of sets) s.matchers.forEach((m, i) => {
-        if (m(normaliseForScan(name))) hits.add(`${shown(rel)} (${s.label}, term #${i + 1}, in the path)`);
-      });
+      pathHits('', rel, hits);
       if (st.isSymbolicLink()) {
         notScanned.push(`${shown(rel)} (a symlink, not followed)`);
         continue;
@@ -267,19 +309,54 @@ export function scanFolder(dir: string, homes: readonly { label: string; home: s
       if (DOCUMENT_EXT.test(name)) notScanned.push(`${shown(rel)} (a document format whose text may be compressed)`);
       let text: string;
       try {
-        text = normaliseForScan(decode(readFileSync(f), name));
+        text = decode(readFileSync(f), name);
       } catch (e) {
         throw new PrivacyScanError(`${shown(rel)}: ${(e as NodeJS.ErrnoException).code ?? 'unreadable'}`);
       }
-      for (const s of sets) s.matchers.forEach((m, i) => {
-        if (m(text)) hits.add(`${shown(rel)} (${s.label}, term #${i + 1})`);
-      });
+      textHits(shown(rel), text, hits);
     }
   };
   walk(dir);
-  return { hits: [...hits].sort(), notScanned: notScanned.sort() };
+  return { hits: [...hits].sort(), notScanned: notScanned.sort(), ignoredSkipped };
 }
 
-export function scanForTerms(dir: string, homes: readonly { label: string; home: string }[]): string[] {
+/**
+ * What a push would publish: every commit in `range` (git rev-list syntax; the root commit included), its message,
+ * and every file version (blob) it adds or changes, scanned once per blob. A term added in one commit and deleted in
+ * the next is still found, in the commit that added it. Author and committer are not scanned: they are the public
+ * identity the repo is published under. Hits read `<sha7> <path>|message (<label>, term #<n>)`.
+ */
+export function scanGit(repoDir: string, range: string, homes: Homes): { hits: string[]; commits: number } {
+  const git = (args: string[]): Buffer => {
+    try {
+      return execFileSync('git', ['-C', repoDir, ...args], { maxBuffer: 1 << 30, stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (e) {
+      const why = String((e as { stderr?: Buffer }).stderr ?? '').split('\n')[0] || 'failed';
+      throw new PrivacyScanError(`git ${args[0]}: ${why}`);
+    }
+  };
+  const { shown, textHits, pathHits } = scanner(homes);
+  const hits = new Set<string>();
+  const seen = new Set<string>();
+  const shas = git(['rev-list', '--reverse', range, '--']).toString('utf8').split('\n').filter((l) => l !== '');
+  for (const sha of shas) {
+    const short = sha.slice(0, 7);
+    textHits(`${short} message`, git(['log', '-1', '--format=%B', sha]).toString('utf8'), hits);
+    // -m --first-parent: a merge is compared with its first parent, so a conflict resolution's new blobs count too
+    const fields = git(['diff-tree', '-r', '--root', '--no-commit-id', '--no-renames', '-m', '--first-parent', '-z', sha]).toString('utf8').split('\0');
+    for (let i = 0; i + 1 < fields.length; i += 2) {
+      const [, , newMode, , blob, status] = /^:(\d+) (\d+) ([0-9a-f]+) ([0-9a-f]+) ([A-Z])/.exec(fields[i] as string) ?? [];
+      const path = fields[i + 1] as string;
+      if (status === undefined || status === 'D' || blob === undefined || newMode === '160000') continue;
+      pathHits(`${short} `, path, hits);
+      if (seen.has(blob)) continue;
+      seen.add(blob);
+      textHits(`${short} ${shown(path)}`, decode(git(['cat-file', 'blob', blob]), path), hits);
+    }
+  }
+  return { hits: [...hits].sort(), commits: shas.length };
+}
+
+export function scanForTerms(dir: string, homes: Homes): string[] {
   return scanFolder(dir, homes).hits;
 }
