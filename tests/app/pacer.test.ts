@@ -45,12 +45,15 @@ describe('machinePacer', () => {
     await br.wait('x.example.com');
     expect(time.waits).toEqual([5000, 2000]);
   });
-  it('real processes on one file never come closer than the interval', async () => {
+  it('real processes on one file never claim slots closer than the interval', async () => {
     const file = join(dir, 'pacer.db');
+    // Each child records the slot every wait() claimed (the clock's now, plus the sleep it asked for), not the moment its
+    // timer woke: wake-up lateness under a loaded suite is scheduler noise, while the slot is what the pacer guarantees.
     const child = (): Promise<number[]> => new Promise((resolve, reject) => {
       const code = `import { machinePacer } from ${JSON.stringify(join(import.meta.dirname, '../../src/app/pacer.ts'))};
-const p = machinePacer(${JSON.stringify(file)}, 300, 'http', { now: () => new Date().toISOString() }, (ms) => new Promise((r) => setTimeout(r, ms)));
-const at = []; for (let i = 0; i < 3; i++) { await p.wait('h.example.com'); at.push(Date.now()); }
+let now = 0, slot = 0;
+const p = machinePacer(${JSON.stringify(file)}, 300, 'http', { now: () => new Date((now = slot = Date.now())).toISOString() }, (ms) => { slot = now + ms; return new Promise((r) => setTimeout(r, ms)); });
+const at = []; for (let i = 0; i < 3; i++) { await p.wait('h.example.com'); at.push(slot); }
 console.log(JSON.stringify(at));`;
       const c = spawn(process.execPath, ['--import', 'tsx', '--input-type=module', '-e', code], { stdio: ['ignore', 'pipe', 'inherit'] });
       let out = '';
@@ -59,7 +62,7 @@ console.log(JSON.stringify(at));`;
     });
     const [x, y] = await Promise.all([child(), child()]);
     const all = [...(x as number[]), ...(y as number[])].sort((a, b) => a - b);
-    for (let i = 1; i < all.length; i++) expect((all[i] as number) - (all[i - 1] as number)).toBeGreaterThanOrEqual(290);
+    for (let i = 1; i < all.length; i++) expect((all[i] as number) - (all[i - 1] as number)).toBeGreaterThanOrEqual(300);
   }, 30_000);
   it('the file: JOBPILOT_PACER_FILE, else the root, else an explicit home', () => {
     expect(pacerFile({ JOBPILOT_PACER_FILE: '/p/x.db', HOME: '/Users/x' })).toBe('/p/x.db');
