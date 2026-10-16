@@ -19,8 +19,8 @@ import { demoEvalSpecs } from './demo/evals.js';
 import { appEvalSpecs } from './app/evals.js';
 import { demoKernel } from './demo/kernel.js';
 import { exportedAgents } from './exported-agents.js';
-import { loadRunPack, preparePipeline, residenceAt, resolvePdftotext } from './app/kernel.js';
-import { freelanceRefusal } from './app/freelance/run.js';
+import { loadRunPack, preparePipeline, resolvePdftotext } from './app/kernel.js';
+import { profileScheduleRule } from './app/freelance/run.js';
 import { coverageScheduleLine } from './app/coverage/run.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
@@ -775,8 +775,7 @@ schedule
       // Task 21: a profile living outside India gets no freelance job (India-scoped in this version); its coverage job
       // stays (the same plist), because it runs the weekly full audit, but only that (coverage discovery is India-only).
       // Read leniently: a broken pack installs every job, as before, and the daily job's own run names the problem.
-      const residence = so.profile === undefined ? undefined : residenceAt(homePaths(so.home).pack, istMonth(systemClock.now()));
-      const freelanceOff = residence === undefined ? null : freelanceRefusal(residence);
+      const { residence, freelanceOff } = so.profile === undefined ? { residence: undefined, freelanceOff: null } : profileScheduleRule(so.home, systemClock.now());
       const auditOnlyLine = residence === undefined ? null : coverageScheduleLine(residence);
       const r = installSchedule({ ...so, coverageNow: opts.coverageNow === true, ...(freelanceOff !== null ? { freelance: false } : {}) });
       for (const p of r.plists) console.log(`wrote ${p}`);

@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -77,5 +77,28 @@ describe('adopt hands the launchd jobs over', () => {
     installSchedule({ node, repo, home: join(tmp, 'elsewhere'), uid: 501, agentsDir: agents }, lc.run);
     await expect(adoptProfile({ root, id: 'owner', clock: { now: () => '2026-10-15T08:00:00.000Z' }, launchd: adoptLaunchd({ root, node, repo, uid: 501, agentsDir: agents, run: lc.run }) })).rejects.toThrow(/installed schedule runs .*elsewhere.*use --no-launchd/);
     expect(existsSync(join(root, 'profiles'))).toBe(false);
+  });
+});
+
+// I1 re-review 6: the Task 21 rule. A profile living outside India gets no freelance job from the hand-over either,
+// exactly as "schedule install --profile" decides it from the home's pack.
+describe('a profile living outside India', () => {
+  const abroad = (dir: string) => writeFileSync(join(dir, 'pack', 'eligibility.yaml'), readFileSync(join(dir, 'pack', 'eligibility.yaml'), 'utf8').replace('residence: IN', 'residence: DE'));
+  it('adopt loads its jobs without the freelance one', async () => {
+    abroad(root);
+    const lc = launchctl();
+    installSchedule({ node, repo, home: root, uid: 501, agentsDir: agents }, lc.run);
+    await adoptProfile({ root, id: 'owner', clock: { now: () => '2026-10-15T08:00:00.000Z' }, launchd: adoptLaunchd({ root, node, repo, uid: 501, agentsDir: agents, run: lc.run }) });
+    expect([...lc.loaded].sort()).toEqual(['com.jobpilot.dashboard', 'com.jobpilot.owner.coverage', 'com.jobpilot.owner.daily']);
+  });
+  it('a failed unadopt loads its jobs back without the freelance one', async () => {
+    abroad(root);
+    const lc = launchctl();
+    const target = { root, node, repo, uid: 501, agentsDir: agents, run: lc.run };
+    installSchedule({ node, repo, home: root, uid: 501, agentsDir: agents }, lc.run);
+    await adoptProfile({ root, id: 'owner', clock: { now: () => '2026-10-15T08:00:00.000Z' }, launchd: adoptLaunchd(target) });
+    writeFileSync(join(root, 'pack'), 'a clash'); // pack/ moved into the home; a root file of that name blocks the unadopt
+    await expect(unadoptProfile({ root, clock: { now: () => '2026-10-15T09:00:00.000Z' }, launchd: unadoptLaunchd(target) })).rejects.toThrow(/cannot unadopt: pack/);
+    expect([...lc.loaded].sort()).toEqual(['com.jobpilot.dashboard', 'com.jobpilot.owner.coverage', 'com.jobpilot.owner.daily']);
   });
 });

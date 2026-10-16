@@ -5,7 +5,7 @@ import type { FetchLike } from '../../kernel/providers.js';
 import type { RunReport } from '../../kernel/supervisor.js';
 import { diskDocCheck } from '../docs-check.js';
 import { ensureHome } from '../home.js';
-import { freelanceKernel, loadRunPack, resolvePdftotext } from '../kernel.js';
+import { freelanceKernel, loadRunPack, residenceAt, resolvePdftotext } from '../kernel.js';
 import { withLock } from '../lock.js';
 import type { Notifier } from '../notify.js';
 import { homePaths } from '../pack/paths.js';
@@ -59,6 +59,17 @@ export function canonicalResidence(residence: string): string {
 export function freelanceRefusal(residence: string): string | null {
   const code = canonicalResidence(residence);
   return FREELANCE_RESIDENCES.has(code) ? null : `the freelance pipeline is India-scoped in this version (residence is ${code}); nothing ran`;
+}
+
+/**
+ * Task 21, for installing a profile's launchd jobs: the residence in the home's pack this month and, when the freelance
+ * pipeline refuses it, why (the freelance job is then left out). Read leniently: a broken pack gives undefined and null,
+ * so every job is installed, as before, and the daily job's own run names the problem. `schedule install` and the
+ * adopt/unadopt hand-over both decide through this one function.
+ */
+export function profileScheduleRule(home: string, now: string): { residence: string | undefined; freelanceOff: string | null } {
+  const residence = residenceAt(homePaths(home).pack, istMonth(now));
+  return { residence, freelanceOff: residence === undefined ? null : freelanceRefusal(residence) };
 }
 
 /** The dashboard's one line for a refusal: the sentence without "nothing ran", capitalised. */
