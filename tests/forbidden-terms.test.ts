@@ -29,11 +29,11 @@ describe('forbidden terms never appear in the repo', () => {
     it.skip('skipped: no profile has a pack/naming.yaml (the real pack is not installed on this machine)', () => {});
     return;
   }
-  it('src, tests, docs and evals are clean', () => {
+  it('src, tests, docs, evals and examples are clean', () => {
     const sets = homes.map((h) => ({ label: h.label, terms: termsOf(h.home) }));
     expect(sets.some((s) => s.terms.length > 0), 'no profile naming.yaml has forbiddenTerms').toBe(true);
     const hits: string[] = [];
-    for (const top of ['src', 'tests', 'docs', 'evals']) {
+    for (const top of ['src', 'tests', 'docs', 'evals', 'examples']) {
       const dir = join(root, top);
       if (!existsSync(dir)) continue;
       for (const file of walk(dir)) {

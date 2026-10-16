@@ -1,0 +1,73 @@
+# Example only. Copy to the PRIVATE data repo as .github/workflows/daily.yml and replace example-user.
+# Nothing in this file is a secret; the values come from the data repo's Actions secrets.
+name: jobpilot daily
+on:
+  schedule:
+    - cron: '37 7 * * *'    # 07:37 IST: daily owed from 07:00, freelance "am" from 07:30
+      timezone: Asia/Kolkata
+    - cron: '37 10 * * *'   # catch-up for a dropped or delayed 07:37 trigger (the cheap check exits in about a minute)
+      timezone: Asia/Kolkata
+  workflow_dispatch: {}
+concurrency:
+  group: jobpilot-state
+  cancel-in-progress: false
+permissions:
+  contents: write
+  issues: write
+  actions: read
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    env:
+      TZ: Asia/Kolkata
+      JOBPILOT_RUN_ENV: hosted
+    steps:
+      - name: data repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: read code.lock
+        id: lock
+        run: echo "sha=$(tr -d '[:space:]' < code.lock)" >> "$GITHUB_OUTPUT"
+      - name: public code at code.lock
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: example-user/jobpilot
+          ref: ${{ steps.lock.outputs.sha }}
+          path: code
+          fetch-depth: 0
+          persist-credentials: false
+      - name: node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.15.0'
+      - name: pnpm and pdftotext
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.28.2 --activate
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq poppler-utils
+      - name: install
+        working-directory: code
+        run: pnpm install --frozen-lockfile
+      - name: chromium cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-1.63.0-chromium
+      - name: chromium
+        working-directory: code
+        run: node_modules/.bin/playwright install --with-deps chromium
+      - name: jobpilot hosted run
+        working-directory: code
+        run: node --run jobpilot -- hosted run daily
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOBPILOT_TRIGGER: ${{ github.event_name == 'workflow_dispatch' && 'dispatch' || (github.event.schedule == '37 10 * * *' && 'catch-up' || 'primary') }}
+          JOBPILOT_JOB_TIMEOUT_MINUTES: '150'
+          JOBPILOT_SECRET_HOSTED_STATE_KEY: ${{ secrets.STATE_KEY }}
+          JOBPILOT_SECRET_HOSTED_PACK_KEY: ${{ secrets.PACK_KEY }}
+          JOBPILOT_SECRET_GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+          JOBPILOT_SECRET_GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+          JOBPILOT_SECRET_GMAIL_REFRESH: ${{ secrets.GMAIL_REFRESH }}

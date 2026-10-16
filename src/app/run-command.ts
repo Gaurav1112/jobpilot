@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml';
 import type { Clock } from '../kernel/clock.js';
 import { type FetchLike, nodeFetch } from '../kernel/providers.js';
 import type { PlaywrightBrowserProvider } from './browser/playwright-provider.js';
+import { problemTally, writeRunSummaryJson } from './run-summary.js';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { CATALOGUE_SEED } from './coverage/catalogue.js';
@@ -18,7 +19,8 @@ import { offlineProviders } from './offline.js';
 import type { PacerFactory } from './pacer.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
-import { failureNotification, formatSummary, runDaily } from './run.js';
+import { failureNotification, formatSummary, HOME_NETWORK_NOTE, runDaily } from './run.js';
+import { AppStore } from './store/app-store.js';
 
 export interface RunCommandOptions {
   readonly offlineFixtures?: string;
@@ -30,6 +32,12 @@ export interface RunCommandOptions {
    * 0; another jobpilot holding the lock is also a quiet 0. A run that could not run is recorded for the retry rule.
    */
   readonly ifDue?: boolean;
+  /** Hosted (spec S11): a cooperative stop between steps (`sigtermStop()`); the run pauses and the attempt is `paused`. */
+  readonly stop?: () => string | null;
+  /** Hosted only: sources not run on the runner (`<ats>`, `<ats>:<slug>`, `freelance:<platform>`). */
+  readonly skipSources?: readonly string[];
+  /** Hosted: write the machine-readable `RunSummaryJson` here after the run. */
+  readonly summaryJson?: string;
 }
 
 export interface RunCommandDeps {
@@ -52,6 +60,16 @@ export interface RunCommandDeps {
    * starts. Absent, or an offline run: Gmail is not read.
    */
   readonly gmail?: () => GmailRunAccess;
+}
+
+/** The run's problem tally (`problemTally`), read with a short-lived handle on the home's store. */
+function tallyOf(home: string, runId: string, problems: Parameters<typeof problemTally>[0]): Record<string, number> {
+  const app = AppStore.open(homePaths(home).db);
+  try {
+    return problemTally(problems, app.kernel, runId);
+  } finally {
+    app.close();
+  }
 }
 
 /** An offline run never reads Gmail (the fixtures have no mailbox). */
@@ -182,6 +200,8 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
         browser: offline?.browser ?? (live as PlaywrightBrowserProvider),
         ...(o.notify ? { notifier: d.notifier } : {}),
         ...(o.refresh ? { refresh: true } : {}),
+        ...(o.stop !== undefined ? { stop: o.stop } : {}),
+        ...(o.skipSources !== undefined ? { skipSources: o.skipSources } : {}),
         ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
         ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
         // a live run's steps that fail while offline are asked again once HTTPS works (the wake rule)
@@ -190,7 +210,13 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
         ...(offline === undefined && d.pacerFactory !== undefined ? { pacerFactory: d.pacerFactory } : {}),
         ...hooks,
       });
-      return { text: formatSummary(summary), exitCode: summary.exitCode };
+      if (o.summaryJson !== undefined) {
+        writeRunSummaryJson(o.summaryJson, {
+          v: 1, pipeline: 'daily', runId: summary.runId, status: summary.report.status, exitCode: summary.exitCode, items: summary.projection.jobs,
+          problems: tallyOf(d.home, summary.runId, summary.problems), skippedSources: summary.warnings.filter((w) => w.startsWith(HOME_NETWORK_NOTE)).length,
+        });
+      }
+      return { text: formatSummary(summary), exitCode: summary.exitCode, ...(summary.report.status === 'paused' ? { paused: true } : {}) };
     } finally {
       await live?.close();
     }
@@ -203,8 +229,12 @@ export async function runCommand(o: RunCommandOptions, d: RunCommandDeps): Promi
  * case `jobpilot run-freelance failed: <reason>` is posted (unless `--no-notify`). `--if-due` follows `FREELANCE_DUE`
  * (from 07:30 and 19:30 IST, `freelance-attempts.json`). No browser: no freelance source renders a page.
  */
-export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>, d: RunCommandDeps): Promise<0 | 1 | 2> {
-  return runWithDue(FREELANCE_DUE, o, d, async (hooks) => {
+export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'> & { readonly windows?: readonly ('am' | 'pm')[] }, d: RunCommandDeps): Promise<0 | 1 | 2> {
+  // `--windows`: the due spec keeps only the listed windows, and one window also fixes the half the run is for
+  // (a late start of the am window still runs am).
+  const spec: DueSpec = o.windows === undefined ? FREELANCE_DUE : { ...FREELANCE_DUE, windows: FREELANCE_DUE.windows.filter((w) => (o.windows as readonly string[]).includes(w.id)) };
+  const half = o.windows?.length === 1 ? o.windows[0] : undefined;
+  return runWithDue(spec, o, d, async (hooks) => {
     const offline = o.offlineFixtures === undefined ? undefined : offlineProviders(o.offlineFixtures);
     // Asked only by the run, and only when gmail is enabled: a Keychain problem never stops the other sources.
     const gmail = offline !== undefined ? () => GMAIL_OFFLINE : d.gmail;
@@ -213,6 +243,9 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
       clock: d.clock,
       fetch: offline?.fetch ?? d.fetch ?? nodeFetch,
       ...(gmail !== undefined ? { gmail } : {}),
+      ...(half !== undefined ? { half } : {}),
+      ...(o.stop !== undefined ? { stop: o.stop } : {}),
+      ...(o.skipSources !== undefined ? { skipSources: o.skipSources } : {}),
       ...(o.notify ? { notifier: d.notifier } : {}),
       ...(d.pdftotext !== undefined ? { pdftotext: d.pdftotext } : {}),
       ...(d.sleep !== undefined ? { sleep: d.sleep } : {}),
@@ -220,7 +253,13 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'>,
       ...(offline === undefined && d.pacerFactory !== undefined ? { pacerFactory: d.pacerFactory } : {}),
       ...hooks,
     });
-    return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode };
+    if (o.summaryJson !== undefined) {
+      writeRunSummaryJson(o.summaryJson, {
+        v: 1, pipeline: 'freelance', runId: summary.runId, status: summary.report.status, exitCode: summary.exitCode, items: summary.projection.gigs,
+        problems: tallyOf(d.home, summary.runId, summary.problems), skippedSources: summary.warnings.filter((w) => w.startsWith(HOME_NETWORK_NOTE)).length, gmail: summary.gmail,
+      });
+    }
+    return { text: formatFreelanceSummary(summary), exitCode: summary.exitCode, ...(summary.report.status === 'paused' ? { paused: true } : {}) };
   });
 }
 

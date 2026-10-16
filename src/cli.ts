@@ -24,7 +24,10 @@ import { freelanceRefusal } from './app/freelance/run.js';
 import { coverageRefusal } from './app/coverage/run.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
-import { osascriptNotifier } from './app/notify.js';
+import { fileNotifier, osascriptNotifier, type Notifier } from './app/notify.js';
+import { runEnv } from './app/run-env.js';
+import { sigtermStop } from './app/stop.js';
+import { cliClock } from './app/test-clock.js';
 import { ForbiddenTermError, type LoadMode } from './app/pack/load.js';
 import { assertNoForbiddenStrict } from './app/pack/rules.js';
 import { formatImportReport, importPack, planImport } from './app/pack/import.js';
@@ -51,8 +54,9 @@ import { coverageProbeCommand, parseDays } from './app/coverage/probe.js';
 import { connectGmail, disconnectGmail, gmailStatus, openInBrowser } from './app/freelance/mail/connect.js';
 import { gmailRunAccess, realFormPost } from './app/freelance/mail/oauth.js';
 import { SECRET } from './app/freelance/mail/google.js';
-import { keychain, realSecretsRunner } from './app/secrets.js';
+import { keychain, realSecretsRunner, secretsFor } from './app/secrets.js';
 import { keychainServiceOf, profileKeychainService } from './app/profiles/keychain.js';
+import { registerHosted, registerShadow } from './app/hosted/cli.js';
 
 const root = join(import.meta.dirname, '..');
 const allAgents = () => {
@@ -298,6 +302,22 @@ function todaysPack(mode: LoadMode) {
 }
 
 const cliPacerFactory = (): PacerFactory => machinePacerFactory(pacerFile(process.env, selectedProfile()), systemClock, (ms) => new Promise((r) => setTimeout(r, ms)));
+/** The hosted run options (`--skip-source` is refused outside hosted runs, before anything starts). */
+const collectRepeat = (v: string, prev: string[] = []): string[] => [...prev, v];
+function hostedOptions(o: { skipSource?: string[]; summaryJson?: string }): { skipSources?: string[]; summaryJson?: string; stop?: () => string | null } {
+  const hosted = runEnv() === 'hosted';
+  if (o.skipSource !== undefined && !hosted) throw new InvalidArgumentError('--skip-source is for hosted runs only');
+  return { ...(o.skipSource !== undefined ? { skipSources: o.skipSource } : {}), ...(o.summaryJson !== undefined ? { summaryJson: o.summaryJson } : {}), ...(hosted ? { stop: sigtermStop() } : {}) };
+}
+/** Hosted runs queue their notifications in a file the wrapper reads back; the Mac posts them. */
+function notifierForRun(home: string, clock: ReturnType<typeof cliClock>): Notifier {
+  return runEnv() === 'hosted' ? fileNotifier(join(homePaths(home).logs, 'notifications.jsonl'), clock) : osascriptNotifier;
+}
+function parseWindows(v: string): ('am' | 'pm')[] {
+  const parts = v.split(',');
+  if (parts.length === 0 || !parts.every((p) => p === 'am' || p === 'pm') || new Set(parts).size !== parts.length) throw new InvalidArgumentError(`--windows must be am, pm or am,pm, not ${v}`);
+  return parts as ('am' | 'pm')[];
+}
 
 program
   .command('run')
@@ -306,10 +326,15 @@ program
   .option('--refresh', 'fetch every source again even if today\'s run already did (career listings are re-read; unchanged career job pages still replay)')
   .option('--no-notify', 'do not post the macOS notification (nothing is marked announced)')
   .option('--if-due', "run only if today's run is owed (from 07:00 IST, none completed today, failed attempts spaced an hour and at most 3); else print why and exit 0. The scheduled job uses this")
-  .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean; ifDue?: boolean }) => {
+  .option('--summary-json <file>', 'write a machine-readable summary (counts and codes only) to <file> after the run')
+  .option('--skip-source <id>', 'hosted runs only: do not run this source (<ats> or <ats>:<slug>); repeatable', collectRepeat)
+  .action(async (o: { offlineFixtures?: string; refresh?: boolean; notify: boolean; ifDue?: boolean; summaryJson?: string; skipSource?: string[] }) => {
+    const hosted = hostedOptions(o);
+    const clock = cliClock();
+    const home = jobpilotHome();
     process.exitCode = await runCommand(
-      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, pacerFactory: cliPacerFactory(), notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l) },
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), ...(o.refresh ? { refresh: true } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}), ...hosted },
+      { home, clock, pacerFactory: cliPacerFactory(), notifier: notifierForRun(home, clock), out: (l) => console.log(l), err: (l) => console.error(l) },
     );
   });
 
@@ -319,10 +344,16 @@ program
   .option('--offline-fixtures <dir>', 'answer every request from <dir>/index.json (URL -> file); nothing is fetched')
   .option('--no-notify', 'do not post the macOS notification (nothing is marked announced)')
   .option('--if-due', 'run only if this half-day\'s run is owed (from 07:30 and 19:30 IST, none completed in the window, failed attempts spaced an hour and at most 3); else print why and exit 0. The scheduled job uses this')
-  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean }) => {
+  .option('--summary-json <file>', 'write a machine-readable summary (counts and codes only) to <file> after the run')
+  .option('--skip-source <id>', 'hosted runs only: do not run this source (<ats>, <ats>:<slug> or freelance:<platform>); repeatable', collectRepeat)
+  .option('--windows <list>', 'the windows this run is for: am, pm or am,pm (default am,pm); with one window the run is for that half', parseWindows)
+  .action(async (o: { offlineFixtures?: string; notify: boolean; ifDue?: boolean; summaryJson?: string; skipSource?: string[]; windows?: ('am' | 'pm')[] }) => {
+    const hosted = hostedOptions(o);
+    const clock = cliClock();
+    const home = jobpilotHome();
     process.exitCode = await runFreelanceCommand(
-      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}) },
-      { home: jobpilotHome(), clock: systemClock, pacerFactory: cliPacerFactory(), notifier: osascriptNotifier, out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(keychain(realSecretsRunner, profileKeychainService())) },
+      { ...(o.offlineFixtures !== undefined ? { offlineFixtures: o.offlineFixtures } : {}), notify: o.notify, ...(o.ifDue ? { ifDue: true } : {}), ...(o.windows !== undefined ? { windows: o.windows } : {}), ...hosted },
+      { home, clock, pacerFactory: cliPacerFactory(), notifier: notifierForRun(home, clock), out: (l) => console.log(l), err: (l) => console.error(l), gmail: () => gmailRunAccess(secretsFor(runEnv(), realSecretsRunner, profileKeychainService())) },
     );
   });
 
@@ -814,6 +845,9 @@ schedule
       console.log(f ? 'it runs only when the window is owed; "jobpilot run-freelance" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'freelance.log') : 'it runs only when today\'s run is owed; "jobpilot run" always runs. Follow it with: tail -f ' + join(homePaths(jobpilotHome()).logs, 'daily.log'));
     }),
   );
+
+registerShadow(program);
+registerHosted(program);
 
 const profileCmd = program.command('profile').description('Profiles: several people on one machine, each with a complete, separate home under ~/.jobpilot/profiles/<id>');
 profileCmd.command('list').description('The profiles; * marks the active one').action(() =>

@@ -16,6 +16,8 @@ export default defineConfig({
     hookTimeout: 60_000,
     // fail closed on real network access (README "Development"): opt in per test with allowRealNetwork()
     setupFiles: ['tests/support/net-guard.ts'],
+    // one private temp root per run (TMPDIR), removed at the end: tests cannot leak into the real os.tmpdir()
+    globalSetup: ['tests/support/tmp-global-setup.ts'],
     projects: [
       { extends: true, test: { name: 'unit', include: ['tests/**/*.test.ts'], exclude: REAL_BROWSER, sequence: { groupOrder: 0 } } },
       { extends: true, test: { name: 'real-browser', include: REAL_BROWSER, fileParallelism: false, sequence: { groupOrder: 1 } } },

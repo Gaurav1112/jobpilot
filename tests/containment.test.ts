@@ -223,3 +223,13 @@ describe('G-NO-EVASION: anti-bot evasion tooling cannot be installed', () => {
     expect({ manifest, imports, locked }).toEqual({ manifest: [], imports: [], locked: [] });
   });
 });
+
+describe('G-NO-EVASION: the user agent has one source', () => {
+  it('keeps the literal in user-agent.ts and reads the run env only through runEnv()', () => {
+    const files = walk(join(root, 'src'));
+    const withUa = files.filter((f) => readFileSync(f, 'utf8').includes('jobpilot/0.1')).map(rel);
+    expect(withUa).toEqual(['src/kernel/user-agent.ts']);
+    const readers = files.filter((f) => readFileSync(f, 'utf8').includes('JOBPILOT_RUN_ENV')).map(rel).sort();
+    expect(readers).toEqual(['src/app/run-env.ts', 'src/kernel/user-agent.ts']);
+  });
+});

@@ -1,0 +1,9 @@
+version: 1
+owner: example-user                 # GitHub owner of the three repos
+view: { repo: jobpilot-view, url: https://example-user.github.io/jobpilot-view/ }
+budget: { monthlyMinutes: 2000, safetyMinutes: 100, cycleStartDay: 1, dailyEstimateMinutes: 46 }
+freelance: { windows: [am] }        # once a day (U-H2)
+coverage: { everyWeeks: 2, anchor: 2026-11-01, maxSliceMinutes: 330, endBy: "07:00" }
+state: { keepGenerations: 7, keepWeekly: 4, archiveDays: 30, warnCompressedMB: 600, hardCompressedMB: 1500 }
+snapshot: { budgetMB: 40, staleHours: 26 }
+skipSources: []                     # home-network-only sources (S11), filled from the shadow report

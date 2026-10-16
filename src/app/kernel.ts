@@ -133,6 +133,8 @@ export interface AppKernelOptions {
   readonly pdftotext: string;
   /** Test hook (the supervisor's): runs after each step; throwing simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** A cooperative stop between steps (the supervisor's `pauseBefore`): the hosted wrapper's deadline. Default: never. */
+  readonly pauseBefore?: () => string | null;
   /** `rebuild`: the renderer and qa-gate only (`docs rebuild`). Default `daily`. */
   readonly mode?: 'daily' | 'rebuild';
   /** The code fingerprint in every step key (review I4); default `codeHash()`, the hash of this checkout's sources and fonts. */
@@ -224,6 +226,7 @@ export function appKernel(o: AppKernelOptions): AppKernel {
     egressSets: { ...careersEgressSets(pack.watchlist), ...registryEgressSets(boards) },
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+    ...(o.pauseBefore ? { pauseBefore: o.pauseBefore } : {}),
     ...(o.online !== undefined ? { online: o.online } : {}),
     ...(o.pacerFactory !== undefined ? { hostPacer: o.pacerFactory(policy.minHostIntervalMs, 'http'), browserPacer: o.pacerFactory(policy.minBrowserIntervalMs, 'browser') } : {}),
   });
@@ -284,6 +287,7 @@ export function freelanceKernel(o: Omit<AppKernelOptions, 'browser' | 'mode'>): 
     fullPackHash: packs.fullPackHash,
     codeHash: o.codeHash ?? codeHash(),
     ...(o.afterStep ? { afterStep: o.afterStep } : {}),
+    ...(o.pauseBefore ? { pauseBefore: o.pauseBefore } : {}),
     ...(o.online !== undefined ? { online: o.online } : {}),
     ...(o.pacerFactory !== undefined ? { hostPacer: o.pacerFactory(policy.minHostIntervalMs, 'http'), browserPacer: o.pacerFactory(policy.minBrowserIntervalMs, 'browser') } : {}),
   });

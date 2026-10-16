@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { KernelError } from '../../../kernel/errors.js';
+import { USER_AGENT } from '../../../kernel/user-agent.js';
 import type { FetchLike, FetchResponse } from '../../../kernel/providers.js';
 import type { Secrets } from '../../secrets.js';
 import { AUTH_URL, GMAIL_HOST, GMAIL_LABEL_ID, GMAIL_NOT_CONNECTED, GMAIL_READ_PATH, GMAIL_SCOPE, SECRET, TOKEN_URL } from './google.js';
@@ -57,7 +58,7 @@ export const realFormPost: FormPost = async (url, form, signal) => {
   refuseRealNetwork(url);
   return fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'jobpilot/0.1 (+local)' },
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': USER_AGENT },
     body: new URLSearchParams({ ...form }).toString(),
     redirect: 'manual',
     signal: signal ?? AbortSignal.timeout(30_000),

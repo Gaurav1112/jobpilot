@@ -11,11 +11,12 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "perf": "vitest run --config vitest.perf.config.ts",
+    "check:tmp-leak": "node scripts/check-tmp-leak.mjs",
     "catalogue:freehire": "tsx scripts/freehire-catalogue.ts",
     "geo:gen": "tsx scripts/gen-geo.ts",
     "families:gen": "tsx scripts/gen-role-families.ts",
     "contracts:export": "tsx src/bin.ts contracts export",
-    "verify": "node --run typecheck && node --run test && node --run jobpilot -- contracts check && node --run jobpilot -- eval && node --run perf"
+    "verify": "node --run typecheck && node --run test && node --run jobpilot -- contracts check && node --run jobpilot -- eval && node --run perf && node --run check:tmp-leak"
   },
   "dependencies": {
     "@hono/node-server": "2.1.4",

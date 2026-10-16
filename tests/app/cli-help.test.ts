@@ -156,3 +156,20 @@ describe('the operator guide', () => {
     for (const p of phones) expect(p).toBe('+91 00000 00000');
   });
 });
+
+describe('the hosted and shadow command groups', () => {
+  it('are listed in --help and every subcommand answers --help', () => {
+    const top = subcommands(help([]).out);
+    expect(top).toContain('hosted');
+    expect(top).toContain('shadow');
+    const hostedSubs = subcommands(help(['hosted']).out);
+    for (const c of ['run', 'seed', 'pull', 'push', 'status', 'verify', 'rollback', 'bump', 'doctor', 'keys', 'secrets', 'pack']) expect(hostedSubs, c).toContain(c);
+    const paths: string[][] = [['shadow', 'digest']];
+    for (const c of hostedSubs) {
+      const nested = subcommands(help(['hosted', c]).out);
+      if (nested.length === 0) paths.push(['hosted', c]);
+      else for (const n of nested) paths.push(['hosted', c, n]);
+    }
+    for (const p of paths) expect(help(p).status, p.join(' ')).toBe(0);
+  }, 300_000);
+});

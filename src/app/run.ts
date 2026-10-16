@@ -5,7 +5,7 @@ import { KernelError } from '../kernel/errors.js';
 import type { BrowserProvider, FetchLike } from '../kernel/providers.js';
 import type { Store } from '../kernel/store/store.js';
 import type { RunReport } from '../kernel/supervisor.js';
-import type { CoverPlan } from './types.js';
+import type { CoverPlan, DiscoveryRequest } from './types.js';
 import { diskDocCheck } from './docs-check.js';
 import { appKernel, loadRunPack, resolvePdftotext, type RunPack } from './kernel.js';
 import { withLock } from './lock.js';
@@ -146,6 +146,10 @@ export interface RunOptions {
   readonly pdftotext?: string;
   /** Test hook: runs after each step; throwing simulates a crash. */
   readonly afterStep?: (count: number) => void;
+  /** A cooperative stop between steps (hosted: SIGTERM at the deadline): the reason it stopped, or null to go on. The run pauses and a later run resumes it. */
+  readonly stop?: () => string | null;
+  /** Hosted only (spec S11): seeds whose `<ats>` or `<ats>:<slug>` is listed are not sent; one warning each. */
+  readonly skipSources?: readonly string[];
   /** Test hook: runs after the projection, before the notification; throwing simulates a crash there. */
   readonly afterProject?: () => void;
   /** Called once the lock is held, before anything else (`--if-due` records the attempt here). */
@@ -197,6 +201,14 @@ export function sourcesAllReplayed(counts: RunCounts): boolean {
   return steps > 0 && sources.every(([, c]) => c.replayed === c.done + c.quarantined && c.failed === 0);
 }
 
+/** The warning for a source the hosted runner does not run (followed by ` (<id>)`). */
+export const HOME_NETWORK_NOTE = 'home network only: not run on the hosted runner';
+
+/** Whether `skip` lists this seed's source: `<ats>` or `<ats>:<slug>` (`feed:<feed id>` for a feed). */
+export function skipSeed(seed: Pick<DiscoveryRequest, 'ats' | 'slug'>, skip: readonly string[]): boolean {
+  return skip.includes(seed.ats) || skip.includes(`${seed.ats}:${seed.slug}`);
+}
+
 /**
  * `jobpilot run`: one daily run under the lock (spec §1, §8).
  * 1. Load the pack with the user's fact overrides, `experience.asOf` = the IST month of `clock` and the kept
@@ -225,11 +237,14 @@ export function runDaily(o: RunOptions): Promise<DailySummary> {
       const boards = registryBoards(app.verifiedCompanies());
       // Sources expansion Task 9: the freehire leads the weekly discovery stored this coverage week or the one before (SELECT only)
       const leads = app.freehireLeads(leadsSince(now));
-      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), ...(o.pacerFactory !== undefined ? { pacerFactory: o.pacerFactory } : {}), boards, ...(leads.length > 0 ? { leads } : {}), pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
+      const k = appKernel({ store: app.kernel, loaded, outDir: paths.out, clock: o.clock, sleep: o.sleep ?? realSleep, fetch: o.fetch, ...(o.browser ? { browser: o.browser } : {}), pdftotext, ...(o.afterStep ? { afterStep: o.afterStep } : {}), ...(o.stop ? { pauseBefore: o.stop } : {}), ...(o.codeHash !== undefined ? { codeHash: o.codeHash } : {}), ...(o.online !== undefined ? { online: o.online } : {}), ...(o.pacerFactory !== undefined ? { pacerFactory: o.pacerFactory } : {}), boards, ...(leads.length > 0 ? { leads } : {}), pageLedger: appPageLedger(app), pageState: appPageState(app), jobPageLedger: appPageLedger(app, PAGE_LEDGER_PREFIX) });
       const prefix = `daily-${runDate}`;
       const { runId, n, resume, skipped } = pickRunId(app.kernel, prefix, k.policyHash);
       const warnings = [...loaded.warnings, ...skippedWarnings(skipped), ...staleRunWarnings(app.kernel, prefix, skipped)];
-      const seeds = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined, boards, leads.length > 0);
+      const all = dailySeeds(loaded.pack, runDate, o.refresh === true ? n : undefined, boards, leads.length > 0);
+      const skipList = o.skipSources ?? [];
+      const seeds = all.filter((s) => !skipSeed(s, skipList));
+      for (const s of all) if (skipSeed(s, skipList)) warnings.push(`${HOME_NETWORK_NOTE} (${s.ats}:${s.slug})`);
       if (seeds.length === 0) warnings.push('the watchlist and feeds are empty: nothing was fetched');
       const report = resume ? await k.supervisor.resume(runId) : await k.supervisor.start(runId, seeds);
       const projection = projectRun(app.kernel, app, runId, { minFit: loaded.pack.targets.minFit, fx: loaded.pack.fx, docOnDisk: diskDocCheck(paths.out) });

@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process';
+import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
+import type { Clock } from '../kernel/clock.js';
 import { forbiddenTermStrict } from './pack/rules.js';
 import type { Naming } from './pack/schema.js';
 
@@ -46,3 +49,12 @@ export const osascriptNotifier: Notifier = (text) =>
       err ? reject(err) : resolve(),
     );
   });
+
+/** Hosted runs: each notification is one JSON line `{at, text}` appended to `file` (0600), read back by the wrapper. */
+export function fileNotifier(file: string, clock: Clock): Notifier {
+  return async (text) => {
+    mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
+    appendFileSync(file, `${JSON.stringify({ at: clock.now(), text })}\n`, { mode: 0o600 });
+    chmodSync(file, 0o600);
+  };
+}

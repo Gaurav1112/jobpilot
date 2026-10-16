@@ -4,6 +4,7 @@ import { isSymbolicEgress, type AnyContract, type SymbolicEgress } from './contr
 import type { DataClass } from './data-class.js';
 import type { Cost } from './envelope.js';
 import { KernelError } from './errors.js';
+import { USER_AGENT } from './user-agent.js';
 import { egressAllowed, normalizeHost, type Policy } from './policy.js';
 import { challengeReason } from './challenge.js';
 import type { BrowserPage, FetchResponse, LlmResponse, Providers } from './providers.js';
@@ -99,7 +100,7 @@ export const POST_BODY_MAX_BYTES = 64 * 1024;
 /** Fixed request headers. The user-agent is honest and never configurable (G-NO-EVASION). */
 export const HTTP_HEADERS: Readonly<Record<string, string>> = Object.freeze({
   accept: 'application/json, text/plain;q=0.8, */*;q=0.1',
-  'user-agent': 'jobpilot/0.1 (+local)',
+  'user-agent': USER_AGENT,
 });
 
 /** `postJson`'s headers: the fixed GET headers plus the JSON content type, nothing configurable. */
