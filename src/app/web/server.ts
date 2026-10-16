@@ -32,6 +32,7 @@ import type { PayView } from './views/common.js';
 import { readRecorded, snapshotApplied, type ReadResult } from './files.js';
 import { COMPANY_KEY, companyJobsOf, mountCompanies, type ResolveDeps } from './companies.js';
 import type { CompanyJobs } from '../coverage/company-jobs.js';
+import { coverageRefusal } from '../coverage/run.js';
 import { liveHolder } from '../lock.js';
 import { SharedStore, UpgradePending } from './connection.js';
 import { mountFreelance } from './freelance.js';
@@ -766,13 +767,15 @@ export function buildDashboard(deps: DashboardDeps, hooks: DashboardTestHooks): 
     const { runs, chain, overrides } = withStore((s) => ({ runs: s.listRuns(14), chain: chainStatus(s.kernel, at), overrides: s.factOverrides() }));
     const banners = commonBanners(ps, istDate(at), overrides);
     if (!chain.ok) banners.unshift({ tone: 'critical', text: r.text(`The audit log is broken (${chain.reason}). Something changed the recorded history; run "jobpilot audit verify --db ${paths.db}" and keep a copy of the database before anything else.`) });
+    // outside India the weekly coverage job runs the full audit only (coverage discovery is India-only for now)
+    const auditBy = ps.pack !== undefined && coverageRefusal(ps.pack.eligibility.residence) !== null ? 'scheduled' : 'coverage';
     if (chain.ok && chain.check.kind === 'since') {
       const age = daysBetween(istDate(chain.check.fullAt), istDate(at));
       if (age > FULL_CHECK_STALE_DAYS) {
-        banners.push({ tone: 'warn', text: `The audit log's last full check was ${age} days ago (${dateText(istDate(chain.check.fullAt))}). Coverage runs it weekly; run "jobpilot audit verify" now.` });
+        banners.push({ tone: 'warn', text: `The audit log's last full check was ${age} days ago (${dateText(istDate(chain.check.fullAt))}). ${auditBy === 'scheduled' ? 'The scheduled job' : 'Coverage'} runs it weekly; run "jobpilot audit verify" now.` });
       }
     }
-    return page(c, 'runs', 'Runs', banners, runsBody({ runs: r.deep(runs), chain, istTime: istTimeText }));
+    return page(c, 'runs', 'Runs', banners, runsBody({ runs: r.deep(runs), chain, istTime: istTimeText, ...(auditBy === 'scheduled' ? { auditBy } : {}) }));
   });
 
   // --- freelance (Task 10): same middleware, same helpers ----------------------------------------------------------------

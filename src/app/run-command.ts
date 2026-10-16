@@ -9,7 +9,7 @@ import { problemTally, writeRunSummaryJson } from './run-summary.js';
 import { attemptsFor, COVERAGE_DUE, DAILY_DUE, due, FREELANCE_DUE, otherRunOwed, type DueSpec } from './due.js';
 import { GMAIL_OFF, type GmailRunAccess } from './freelance/mail/oauth.js';
 import { CATALOGUE_SEED } from './coverage/catalogue.js';
-import { formatCoverageSummary, runCoverage } from './coverage/run.js';
+import { coverageRefusal, formatCoverageSummary, runCoverageJob } from './coverage/run.js';
 import { formatFreelanceSummary, runFreelance } from './freelance/run.js';
 import { LockError } from './lock.js';
 import type { Notifier } from './notify.js';
@@ -17,9 +17,10 @@ import { checkOutage } from './check-outage.js';
 import { httpsOnline, pacedHttpsOnline, PROBE_HOSTS } from './net.js';
 import { offlineProviders } from './offline.js';
 import type { PacerFactory } from './pacer.js';
+import { residenceAt } from './kernel.js';
 import { homePaths } from './pack/paths.js';
 import { redactText } from './pack/rules.js';
-import { failureNotification, formatSummary, HOME_NETWORK_NOTE, runDaily } from './run.js';
+import { failureNotification, formatSummary, HOME_NETWORK_NOTE, istMonth, runDaily } from './run.js';
 import { AppStore } from './store/app-store.js';
 
 export interface RunCommandOptions {
@@ -128,6 +129,8 @@ export async function runWithDue(
   o: Pick<RunCommandOptions, 'ifDue' | 'notify' | 'offlineFixtures'>,
   d: RunCommandDeps,
   run: (hooks: { readonly onLocked?: () => void }) => Promise<DueRunResult>,
+  /** `network: false`: a run that asks no host (the audit-only coverage run) does not wait for the network. */
+  opts: { readonly network?: boolean } = {},
 ): Promise<0 | 1 | 2> {
   const attempts = attemptsFor(spec);
   const startedAt = d.clock.now();
@@ -145,7 +148,7 @@ export async function runWithDue(
       }
       // A run with every fetch failing would complete, count as the window's and block it (rereview of 8b49294):
       // wait for the network instead, quietly; the next half-hourly start tries again.
-      if (o.offlineFixtures === undefined && !(await (d.online ?? (() => httpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF[spec.pipeline])))())) {
+      if (opts.network !== false && o.offlineFixtures === undefined && !(await (d.online ?? (() => httpsOnline(d.fetch ?? nodeFetch, PROBE_HOSTS_OF[spec.pipeline])))())) {
         d.out('not due: the network is down (no source host answers over HTTPS); the next start tries again');
         return 0;
       }
@@ -268,6 +271,9 @@ export async function runFreelanceCommand(o: Omit<RunCommandOptions, 'refresh'> 
  * `run`: 0 clean; 1 when a step failed (other than gone, input-rejected or a host-disabled deferral) or was
  * quarantined; 2 when the run could not run. `--if-due` follows `COVERAGE_DUE` (owed from Sunday 06:00 IST through
  * Saturday, `coverage-attempts.json`). `--limit <n>` is for checks: every pick plus the first n other candidates.
+ * A profile living outside India (`coverageRefusal`) runs the weekly full audit only, when it is due (`runCoverage`):
+ * its scheduled start asks no host, so it does not wait for the network (the residence is read leniently here; the run
+ * reads it again, strictly, under its lock).
  */
 export async function runCoverageCommand(
   o: Omit<RunCommandOptions, 'refresh'> & { readonly limit?: number; readonly sliceMs?: number; readonly freehire?: boolean; readonly catalogueLimit?: number },
@@ -290,7 +296,7 @@ export async function runCoverageCommand(
     const fetch = outage === null ? live : outage.fetch(live);
     // the run's own online check goes through its per-host pacer (re-check m5): only a fixtures run or a caller's check is passed in
     const online = offline !== undefined ? async () => true : d.online;
-    const summary = await runCoverage({
+    const summary = await runCoverageJob({
       home: d.home,
       clock: d.clock,
       fetch,
@@ -306,7 +312,13 @@ export async function runCoverageCommand(
       ...hooks,
     });
     return { text: formatCoverageSummary(summary), exitCode: summary.exitCode, ...(summary.status === 'paused' ? { paused: true } : {}) };
-  });
+  }, o.ifDue === true && auditOnlyAt(d.home, d.clock.now()) ? { network: false } : {});
+}
+
+/** Whether the home's pack (read leniently: unreadable counts as IN) puts the profile outside coverage discovery. */
+function auditOnlyAt(home: string, now: string): boolean {
+  const residence = residenceAt(homePaths(home).pack, istMonth(now));
+  return residence !== undefined && coverageRefusal(residence) !== null;
 }
 
 /** The yield check of a scheduled coverage start: the daily or freelance run is owed on this home now or soon (`otherRunOwed`). */

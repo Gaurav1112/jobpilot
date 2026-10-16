@@ -21,7 +21,7 @@ import { demoKernel } from './demo/kernel.js';
 import { exportedAgents } from './exported-agents.js';
 import { loadRunPack, preparePipeline, residenceAt, resolvePdftotext } from './app/kernel.js';
 import { freelanceRefusal } from './app/freelance/run.js';
-import { coverageRefusal } from './app/coverage/run.js';
+import { coverageScheduleLine } from './app/coverage/run.js';
 import { withLock } from './app/lock.js';
 import { migrateDesk } from './app/migrate-desk.js';
 import { fileNotifier, osascriptNotifier, type Notifier } from './app/notify.js';
@@ -772,12 +772,13 @@ schedule
   .action((opts: { coverageNow?: boolean }) =>
     guarded(() => {
       const so = scheduleOpts();
-      // Task 21: a profile living outside India gets no freelance or coverage job (both India-scoped in this version).
-      // Read leniently: a broken pack installs both, as before, and the daily job's own run names the problem.
+      // Task 21: a profile living outside India gets no freelance job (India-scoped in this version); its coverage job
+      // stays (the same plist), because it runs the weekly full audit, but only that (coverage discovery is India-only).
+      // Read leniently: a broken pack installs every job, as before, and the daily job's own run names the problem.
       const residence = so.profile === undefined ? undefined : residenceAt(homePaths(so.home).pack, istMonth(systemClock.now()));
       const freelanceOff = residence === undefined ? null : freelanceRefusal(residence);
-      const coverageOff = residence === undefined ? null : coverageRefusal(residence);
-      const r = installSchedule({ ...so, coverageNow: opts.coverageNow === true, ...(freelanceOff !== null ? { freelance: false } : {}), ...(coverageOff !== null ? { coverage: false } : {}) });
+      const auditOnlyLine = residence === undefined ? null : coverageScheduleLine(residence);
+      const r = installSchedule({ ...so, coverageNow: opts.coverageNow === true, ...(freelanceOff !== null ? { freelance: false } : {}) });
       for (const p of r.plists) console.log(`wrote ${p}`);
       const owed = dueOrError(new Date().toISOString());
       console.log(`daily run: from 07:00 IST, checked at login and every half hour, so a Mac asleep at 07:00 runs soon after it wakes; next run ${owed.startsWith('owed') ? 'now (today\'s run is owed)' : r.nextRun}`);
@@ -786,7 +787,7 @@ schedule
         const fOwed = dueOrError(new Date().toISOString(), FREELANCE_DUE);
         console.log(`freelance run: from 07:30 and 19:30 IST, checked at login and every half hour; ${fOwed.includes('owed:') ? `a window is owed now (${fOwed})` : `now: ${fOwed}`}`);
       }
-      if (coverageOff !== null) console.log(`coverage run: not installed (India-only for now; this profile lives in ${/lives in (.+) \(residence /.exec(coverageOff)?.[1] ?? residence})`);
+      if (auditOnlyLine !== null) console.log(auditOnlyLine);
       else {
         const cOwed = dueOrError(new Date().toISOString(), COVERAGE_DUE);
         console.log(

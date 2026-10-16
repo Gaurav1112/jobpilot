@@ -14,6 +14,11 @@ export interface RunsPageData {
   readonly runs: readonly RunSummary[];
   readonly chain: ChainStatus;
   readonly istTime: (iso: string) => string;
+  /**
+   * What runs the weekly full audit: `coverage` (absent: the coverage run, for a profile in India) or `scheduled` (a
+   * profile living elsewhere: its weekly coverage job runs the audit only, `coverageRefusal`).
+   */
+  readonly auditBy?: 'coverage' | 'scheduled';
 }
 
 /** A last full check older than this many days gets a warning (coverage runs one weekly). */
@@ -25,7 +30,7 @@ function chainLine(d: RunsPageData): Html {
   const intact = html`Audit log intact: <span class="num">${countText(c.events)}</span> events, every one chained to the last.`;
   if (c.check === undefined) return intact;
   if (c.check.kind === 'full-now') return html`${intact} Full check: just now.`;
-  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${countText(c.check.through)}</span> (it runs weekly with coverage, or run <code>jobpilot audit verify</code>); the <span class="num">${countText(c.check.newer)}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.`;
+  return html`${intact} Last full check: ${d.istTime(c.check.fullAt)}, through event <span class="num">${countText(c.check.through)}</span> (it runs weekly with ${d.auditBy === 'scheduled' ? 'the scheduled job' : 'coverage'}, or run <code>jobpilot audit verify</code>); the <span class="num">${countText(c.check.newer)}</span> newer event${c.check.newer === 1 ? ' was' : 's were'} checked against it.`;
 }
 
 const BASE_COLUMNS: readonly (readonly [key: string, label: string])[] = [

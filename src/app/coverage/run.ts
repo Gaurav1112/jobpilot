@@ -15,7 +15,7 @@ import type { PacerFactory } from '../pacer.js';
 import { httpsOnline, pacedFetch } from '../net.js';
 import { PackError } from '../pack/load.js';
 import { homePaths } from '../pack/paths.js';
-import { fullChainCheck } from '../chain-status.js';
+import { fullChainCheck, readBroken, readCheckpoint } from '../chain-status.js';
 import { runProblems, type Problem } from '../problems.js';
 import { runCounts, type AgentCounts } from '../project.js';
 import { istDate, istMonth, nonceOf, pickRunId } from '../run.js';
@@ -36,10 +36,10 @@ import type { CandidateSource, CareersSite, PlatformGuess } from './types.js';
 export const COVERAGE_RESIDENCES: ReadonlySet<string> = new Set(['IN']);
 
 /**
- * Why the weekly coverage run (and the coverage tools) do not run for a profile living in `residence`, or null when
- * they do (`IN`). The code is read as eligibility reads it (upper-cased, UK as GB).
+ * Where a profile living outside the coverage residences lives (`code`, `place`), or null when coverage discovery
+ * serves it (`IN`). The code is read as eligibility reads it (upper-cased, UK as GB).
  */
-export function coverageRefusal(residence: string): string | null {
+function refusedResidence(residence: string): { readonly code: string; readonly place: string } | null {
   const asked = residence.toUpperCase();
   let code = asked;
   let place = asked;
@@ -50,7 +50,25 @@ export function coverageRefusal(residence: string): string | null {
   } catch {
     // a code norm.ts does not know (the pack schema refuses it first): named as given
   }
-  return COVERAGE_RESIDENCES.has(code) ? null : `coverage discovery is India-only for now; this profile lives in ${place} (residence ${code}); nothing ran`;
+  return COVERAGE_RESIDENCES.has(code) ? null : { code, place };
+}
+
+/**
+ * Why coverage discovery (the weekly coverage run's discovery and the coverage tools) does not run for a profile
+ * living in `residence`, or null when it does (`IN`). The code is read as eligibility reads it (upper-cased, UK as GB).
+ */
+export function coverageRefusal(residence: string): string | null {
+  const r = refusedResidence(residence);
+  return r === null ? null : `coverage discovery is India-only for now; this profile lives in ${r.place} (residence ${r.code}); nothing ran`;
+}
+
+/**
+ * `schedule install`'s coverage line for a profile living outside India, whose coverage job runs the weekly audit only
+ * (`runCoverage`), or null for `IN` (the usual line).
+ */
+export function coverageScheduleLine(residence: string): string | null {
+  const r = refusedResidence(residence);
+  return r === null ? null : `coverage run: weekly audit only (coverage discovery is India-only for now; this profile lives in ${r.place})`;
 }
 
 /** The umbrella run's pipeline label in the `runs` table; each stage runs as `<runId>.<stage>` (see pipeline.ts). */
@@ -217,6 +235,23 @@ export const AUDIT_RESERVE_MS = 5 * 60_000;
 /** app_settings: the coverage run whose full audit is owed (deferred for want of slice time). */
 export const AUDIT_PENDING_KEY = 'audit.full_check_pending';
 
+/**
+ * The audit-only coverage run (a profile living outside India, `coverageRefusal`): its weekly coverage job still runs,
+ * for the weekly full audit only, never any discovery. That audit is due when no full walk of the chain ran in the last
+ * AUDIT_INTERVAL_MS (7 days: the IN audit runs once per coverage week, and the dashboard warns after 8 days), counting
+ * the last passing walk (the checkpoint's `verifiedAt`) and the last failing one (the broken marker's `at`), so a
+ * broken chain is reported once a week, as IN reports it, not at every half-hourly start; or when a full audit is owed
+ * (`AUDIT_PENDING_KEY`, e.g. deferred by a coverage run before the residence changed). The job's half-hourly starts
+ * find it due within half an hour of the week passing; nothing is walked otherwise.
+ */
+export const AUDIT_INTERVAL_MS = 7 * 24 * 60 * 60_000;
+
+/** The time of the last full walk of the chain, passing or failing (ms), or undefined when none is recorded. */
+function lastFullCheck(app: AppStore): number | undefined {
+  const times = [readCheckpoint(app.kernel.db)?.verifiedAt, readBroken(app.kernel.db)?.at].map((t) => (t === undefined ? Number.NaN : Date.parse(t))).filter((t) => Number.isFinite(t));
+  return times.length === 0 ? undefined : Math.max(...times);
+}
+
 export type CoverageAudit =
   | { readonly status: 'ok'; readonly events: number }
   | { readonly status: 'broken'; readonly seq: number; readonly reason: string }
@@ -259,7 +294,29 @@ export interface CoverageSlice {
   readonly exitCode: 0 | 1;
 }
 
+/**
+ * The coverage run of a profile living outside India (`coverageRefusal`): no discovery, no run recorded; the weekly full
+ * audit when it is due (`AUDIT_INTERVAL_MS`), else none.
+ */
+export interface CoverageAuditOnly {
+  readonly status: 'audit-only';
+  /** Why no discovery ran (the refusal, for this run). */
+  readonly reason: string;
+  /** The full audit, when one was due; absent: not due. */
+  readonly audit?: CoverageAudit;
+  /** When no audit was due: the last full check's time (ISO). */
+  readonly lastFullCheck?: string;
+  readonly problems: readonly Problem[];
+  /** Present (and posted) only when the audit found the chain broken. */
+  readonly notification?: string;
+  readonly warnings: string[];
+  /** 1 only when the audit found the chain broken. */
+  readonly exitCode: 0 | 1;
+}
+
 export type CoverageResult = CoverageSummary | CoverageSlice;
+/** What the weekly coverage job's run (`runCoverageJob`) gives: a coverage run's result, or the audit-only run's. */
+export type CoverageJobResult = CoverageResult | CoverageAuditOnly;
 
 export interface CoverageSummary {
   readonly status: 'completed';
@@ -375,9 +432,23 @@ function coverageCounts(app: AppStore, outcome: CoverageStagesOutcome): { byAgen
  * 5. post the weekly line `Coverage: N verified (+k new) · p proposed · f failing` (plus the deferral line), record the
  *    run for the dashboard's runs view and a `coverage.summary` event, and complete the run.
  * Coverage only writes the registry: nothing here touches the daily pipeline, which reads whatever registry exists.
+ * A profile living outside India (`coverageRefusal`) is refused here with a PackError (nothing written); the weekly
+ * coverage job (`runCoverageJob`) runs its weekly full audit instead.
  */
 export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
-  return withLock(o.home, 'run-coverage', async () => {
+  return coverageRun(o, false) as Promise<CoverageResult>;
+}
+
+/**
+ * The weekly coverage job's run (`jobpilot run-coverage`): `runCoverage`, except that a profile living outside India
+ * gets the audit-only run (`CoverageAuditOnly`: the weekly full audit when due, no discovery, no run recorded).
+ */
+export function runCoverageJob(o: CoverageRunOptions): Promise<CoverageJobResult> {
+  return coverageRun(o, true);
+}
+
+function coverageRun(o: CoverageRunOptions, auditOnlyOutsideIndia: boolean): Promise<CoverageJobResult> {
+  return withLock(o.home, 'run-coverage', async (): Promise<CoverageJobResult> => {
     o.onLocked?.();
     const paths = homePaths(o.home);
     ensureHome(paths.home);
@@ -387,9 +458,13 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
       const runDate = istDate(now);
       const week = coverageWeek(now);
       const loaded = loadRunPack(paths.pack, app.factOverrides(), istMonth(now), nonceOf(app), 'strict');
-      // India-only discovery: a PackError, so the run exits 2 through the usual path (redacted, notified) with nothing written
+      // India-only discovery: a profile living elsewhere gets the weekly full audit only (when due), nothing else; a
+      // library caller's `runCoverage` is refused with a PackError (exit 2 through the usual path, nothing written)
       const refused = coverageRefusal(loaded.pack.eligibility.residence);
-      if (refused !== null) throw new PackError(refused);
+      if (refused !== null) {
+        if (!auditOnlyOutsideIndia) throw new PackError(refused);
+        return await auditOnly(app, o, now, refused, loaded.warnings);
+      }
       const policy = coveragePolicy(loaded.pack);
       const pHash = policyHash(policy);
       const rolled = closeEarlierWeeks(app, week, now);
@@ -592,6 +667,29 @@ export function runCoverage(o: CoverageRunOptions): Promise<CoverageResult> {
   });
 }
 
+/** The coverage run of a profile outside India (`CoverageAuditOnly`): the weekly full audit when due, under the run lock. */
+async function auditOnly(app: AppStore, o: CoverageRunOptions, now: string, refused: string, packWarnings: readonly string[]): Promise<CoverageAuditOnly> {
+  const reason = refused.replace(/; nothing ran$/, '; no discovery ran, only the weekly audit');
+  const warnings = [...packWarnings];
+  const owed = app.getSetting(AUDIT_PENDING_KEY) !== undefined;
+  const last = lastFullCheck(app);
+  if (!owed && last !== undefined && Date.parse(now) - last < AUDIT_INTERVAL_MS) {
+    return { status: 'audit-only', reason, lastFullCheck: new Date(last).toISOString(), problems: [], warnings, exitCode: 0 };
+  }
+  const audit = fullAudit(app, now);
+  if (owed) app.deleteSetting(AUDIT_PENDING_KEY);
+  if (audit.status !== 'broken') return { status: 'audit-only', reason, audit, problems: [], warnings, exitCode: 0 };
+  const notification = brokenLine(audit);
+  if (o.notifier !== undefined) {
+    try {
+      await o.notifier(notification);
+    } catch (e) {
+      warnings.push(`the notification could not be posted: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  return { status: 'audit-only', reason, audit, problems: [auditProblem(audit)], notification, warnings, exitCode: 1 };
+}
+
 const kv = (r: Readonly<Record<string, number>>): string =>
   Object.entries(r)
     .filter(([, n]) => n > 0)
@@ -599,11 +697,20 @@ const kv = (r: Readonly<Record<string, number>>): string =>
     .join(', ') || 'none';
 
 /** The coverage run summary as the CLI prints it (a paused slice: one line, and how it goes on). */
-export function formatCoverageSummary(s: CoverageResult): string {
+export function formatCoverageSummary(s: CoverageJobResult): string {
   if (s.status === 'paused') {
     return [
       `run ${s.runId} for ${s.runDate} (coverage week ${s.week})${s.resumed ? ', resumed' : ''}: paused in ${s.stage} (${s.reason}); the next run-coverage continues it`,
       ...(s.audit !== undefined ? [auditText(s.audit)] : []),
+      ...s.warnings.map((w) => `warning: ${w}`),
+    ].join('\n');
+  }
+  if (s.status === 'audit-only') {
+    return [
+      s.reason,
+      ...(s.problems.length > 0 ? [`problems: ${s.problems.length}`, ...s.problems.map((q) => `  ${q.kind.padEnd(14)} ${q.agent}  ${q.item}: ${q.reason}`)] : []),
+      s.audit !== undefined ? auditText(s.audit) : `audit: the full check of the event chain is not due (the last one ran at ${s.lastFullCheck ?? 'an unknown time'}; it runs weekly)`,
+      ...(s.notification !== undefined ? [`notification: ${s.notification}`] : []),
       ...s.warnings.map((w) => `warning: ${w}`),
     ].join('\n');
   }

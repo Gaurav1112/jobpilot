@@ -154,11 +154,6 @@ export interface ScheduleOpts extends PlistOpts {
   readonly agentsDir?: string;
   /** A profile's freelance job is installed unless false (Task 21 sets false for a non-`IN` residence). */
   readonly freelance?: boolean;
-  /**
-   * A profile's weekly coverage job is installed unless false (false for a non-`IN` residence: coverage discovery is
-   * India-only for now); then no first coverage week is owed either (no COVERAGE_START_FILE is written).
-   */
-  readonly coverage?: boolean;
   /** Uninstall: also unload the machine dashboard (always for the legacy jobs; default false for a profile). */
   readonly dashboard?: boolean;
 }
@@ -276,7 +271,7 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
       : [
           [labelOf(o, 'daily'), plistDaily(o), 'daily.log'],
           ...(o.freelance === false ? [] : [[labelOf(o, 'freelance'), plistFreelance(o), 'freelance.log'] as const]),
-          ...(o.coverage === false ? [] : [[labelOf(o, 'coverage'), plistCoverage(o), 'coverage.log'] as const]),
+          [labelOf(o, 'coverage'), plistCoverage(o), 'coverage.log'],
           [DASHBOARD_LABEL, plistDashboardRoot({ node: o.node, repo: o.repo, root: o.profile.root }), 'dashboard.log'],
         ];
 
@@ -287,7 +282,7 @@ export function installSchedule(o: InstallOpts, run: Runner = realRunner): Insta
   const logs = jobs.map(([label, , n]) => join(machineLogs !== undefined && label === DASHBOARD_LABEL ? machineLogs : logsDir, n));
   for (const l of logs) prepareLogFile(l);
   // before any job is loaded: the coverage job starts at load (RunAtLoad) and must already see the date
-  const coverageFrom = o.profile !== undefined && o.coverage === false ? null : scheduleFirstCoverage(o.home, now, o.coverageNow === true, () => coverageRanOn(o.home));
+  const coverageFrom = scheduleFirstCoverage(o.home, now, o.coverageNow === true, () => coverageRanOn(o.home));
   mkdirSync(agentsDirOf(o), { recursive: true });
 
   const plists: string[] = [];
