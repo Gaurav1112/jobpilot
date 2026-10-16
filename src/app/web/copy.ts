@@ -82,6 +82,7 @@ export function reasonText(code: string, pay?: { readonly home: CurrencyCode; re
   const below = pay === undefined ? null : /^below-floor:(\d+)$/.exec(code);
   if (below && pay !== undefined) return `Pay below your floor (max ${homeApproxText(Number(below[1]), pay.home, pay.fx)} a year)`;
   if (code === 'remote-unclear') return 'The posting does not say clearly where remote work is allowed';
+  if (code === 'pay-period-unstated') return 'The pay may be under your floor, but the posting does not say whether it is per month or per year';
   if (code === 'onsite') return 'On-site only';
   if (code === 'hybrid') return 'Hybrid only, outside the cities you accept';
   if (code === 'onsite-only') return 'On-site only, outside the cities you accept';

@@ -185,7 +185,13 @@ const payLocaleReader = defineAgent(
     budget: { usdPerCall: 0, usdPerRun: 0 },
     timeoutMs: 10_000,
   }),
-  async (i) => [{ comp: parsePay(i.text, { locale: i.locale, home: i.home, fx: PAY_EVAL_FX }) }],
+  async (i) => {
+    // the eval pins the figures; whether the period was guessed is pinned by the unit and eligibility tests
+    const r = parsePay(i.text, { locale: i.locale, home: i.home, fx: PAY_EVAL_FX });
+    if (r === null) return [{ comp: null }];
+    const { periodGuessed: _guessed, ...comp } = r;
+    return [{ comp }];
+  },
 );
 
 /**

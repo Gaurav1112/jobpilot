@@ -96,6 +96,9 @@ import { EligibilityVerdict, Posting } from '../types.js';
 const HEAD = 1500;
 export const NOTE_PAY_UNDISCLOSED = 'pay not disclosed';
 export const NOTE_PAY_BASIS = 'pay basis unclear';
+/** Task 18: pay read from the description whose period was not stated is never rejected on it, only reviewed. */
+export const NOTE_PAY_PERIOD = 'pay period not stated - verify';
+export const REASON_PAY_PERIOD = 'pay-period-unstated';
 export const NOTE_REMOTE_UNCLEAR = 'remote scope unclear - verify';
 export const NOTE_TIMEZONE = 'time zone may exclude India - verify';
 export const NOTE_B2B = 'B2B contractor: no PF/benefits';
@@ -687,8 +690,11 @@ function officeCityNote(p: Posting, pack: EligibilityPack, scope: ResidenceScope
  * a package, "compensation") is always at least the base inside it, so when its maximum is below the floor, the base
  * is too, and rejecting is sound. Pay components (variable, bonus, equity alone, allowances) never reach this point:
  * the normalizer skips them. A kept posting with an unknown basis gets the note `pay basis unclear`.
+ *
+ * Task 18: pay read from the description in the profile's locale with a guessed period (none stated; the currency's
+ * convention was assumed) is never rejected below the floor: it is `review` with `pay-period-unstated`.
  */
-function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | { note: string | null } {
+function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | { note: string | null; review?: true } {
   // Task 18: the posting's comp, or (for a profile with a payLocale or a currency the normalizer does not read) the pay
   // read from its description in the profile's locale. The default profile always gets `p.comp` itself.
   const c = effectiveComp(p, pack);
@@ -696,7 +702,11 @@ function compDecision(p: Posting, pack: EligibilityPack): { reject: string } | {
   const floor = pack.offers.floor;
   if (floor !== null && c.max !== null) {
     const inr = toInrPerYear({ min: c.min ?? c.max, max: c.max, currency: c.currency, period: 'year' }, pack.fx);
-    if (belowFloor(inr, floor, pack.fx)) return { reject: `below-floor:${inr.max}` };
+    if (belowFloor(inr, floor, pack.fx)) {
+      // a period the description did not state (assumed per currency) never rejects: per month or per year is a guess
+      if ('periodGuessed' in c && c.periodGuessed === true) return { note: NOTE_PAY_PERIOD, review: true };
+      return { reject: `below-floor:${inr.max}` };
+    }
   }
   return { note: c.basis === 'base' ? null : NOTE_PAY_BASIS };
 }
@@ -738,9 +748,11 @@ export function decideEligibility(p: Posting, pack: EligibilityPack): Decision {
   const pay = compDecision(p, pack);
   if ('reject' in pay) return reject(pay.reject);
   if (pay.note !== null) notes.push(pay.note);
+  const payReview = pay.review === true;
+  if (payReview) reasons.push(REASON_PAY_PERIOD);
   // Sources expansion Task 9: a posting found through freehire on a platform jobpilot cannot read is review only, never eligible
   if (!review && p.ats === 'freehire') return { verdict: 'review', reasons: [...reasons, REASON_FREEHIRE_LEAD], notes };
-  return { verdict: review ? 'review' : 'eligible', reasons, notes };
+  return { verdict: review || payReview ? 'review' : 'eligible', reasons, notes };
 }
 
 /** The pack view, or a loud failure: without the pack there are no rules, so nothing may pass. */

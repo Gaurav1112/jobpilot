@@ -7,8 +7,14 @@ import { homeCurrencyOf, isCurrencyCode, type CurrencyCode, type PayLocale } fro
  * comp: the default profile's path never reaches this file (`effectiveComp`).
  *
  * A figure is pay only when it follows a salary label ("Gehalt:", "Salary range", "| Salary |", "Our salary for this
- * role is"): a currency beside a number is not enough ("Hardware im Wert von 3.000 €", "a k bounty", "Competitive
+ * role is"): a currency beside a number is not enough ("Hardware im Wert von 3.000 €", "a $5k bounty", "Competitive
  * salary, learning budget, up to €2,000"), and a wrong figure could reject a job below the floor.
+ *
+ * Recall limit, by design: only labelled pay is read (about 60% of genuine pay in a blind holdout). Not read: prose
+ * ranges with no label ("zwischen … und", "mellan … och"), shorthand ("tys.", "tkr", "mil", "55k" without a
+ * currency), hourly pay, and Portuguese outside a locale that groups with dots. Each fails safe as "pay not disclosed".
+ * A figure with no stated period takes its currency's convention (`MONTHLY_PAID`) and is flagged `periodGuessed`:
+ * eligibility never rejects on it.
  *
  * Linear time on any input: one regex scan finds the labels (at most `MAX_LABELS`), only the line after each is
  * tokenised (at most `MAX_NUMBERS` figures per description), and every other regex runs on a window of at most a few
@@ -26,6 +32,11 @@ export interface LocalComp {
   currency: CurrencyCode;
   period: 'year';
   basis: 'base' | 'unknown';
+  /**
+   * Present (true) when a figure's period was not stated and the currency's default (`MONTHLY_PAID`) was assumed:
+   * eligibility then never rejects it below the floor, it asks for review.
+   */
+  periodGuessed?: true;
 }
 
 interface Fx {
@@ -383,6 +394,8 @@ function figuresOf(s: string, toks: readonly Tok[], locale: PayLocale, between: 
 interface LabelKind {
   /** The label names pay per month ("Monatsgehalt", "monthly salary"). */
   readonly month?: true;
+  /** The label names pay per year ("Jahresgehalt", "annual salary", "RAL"): the period is stated. */
+  readonly year?: true;
   /** The label names total pay (OTE, total compensation, Zielgehalt): never base. */
   readonly total?: true;
 }
@@ -395,30 +408,30 @@ interface LabelKind {
  */
 const LABELS: Readonly<Record<string, Readonly<Record<string, LabelKind>>>> = {
   en: {
-    salary: {}, 'base salary': {}, 'annual salary': {}, 'yearly salary': {}, 'monthly salary': { month: true }, 'salary range': {}, 'base salary range': {},
-    'pay range': {}, 'base pay': {}, compensation: {}, 'annual compensation': {}, 'total compensation': { total: true }, remuneration: {},
+    salary: {}, 'base salary': {}, 'annual salary': { year: true }, 'yearly salary': { year: true }, 'monthly salary': { month: true }, 'salary range': {}, 'base salary range': {},
+    'pay range': {}, 'base pay': {}, compensation: {}, 'annual compensation': { year: true }, 'total compensation': { total: true }, remuneration: {},
     ote: { total: true }, 'target earnings': { total: true }, ctc: {},
   },
   de: {
-    gehalt: {}, jahresgehalt: {}, bruttojahresgehalt: {}, bruttogehalt: {}, grundgehalt: {}, fixgehalt: {}, festgehalt: {}, zielgehalt: { total: true },
+    gehalt: {}, jahresgehalt: { year: true }, bruttojahresgehalt: { year: true }, bruttogehalt: {}, grundgehalt: {}, fixgehalt: {}, festgehalt: {}, zielgehalt: { total: true },
     zieleinkommen: { total: true }, gehaltsband: {}, gehaltsspanne: {}, gehaltsrahmen: {}, monatsgehalt: { month: true }, bruttomonatsgehalt: { month: true },
-    vergütung: {}, jahresvergütung: {}, salär: {}, lohn: {}, jahreslohn: {}, monatslohn: { month: true }, bruttolohn: {},
+    vergütung: {}, jahresvergütung: { year: true }, salär: {}, lohn: {}, jahreslohn: { year: true }, monatslohn: { month: true }, bruttolohn: {},
   },
   fr: {
-    salaire: {}, 'salaire annuel': {}, 'salaire brut': {}, 'salaire mensuel': { month: true }, rémunération: {}, 'rémunération annuelle': {},
+    salaire: {}, 'salaire annuel': { year: true }, 'salaire brut': {}, 'salaire mensuel': { month: true }, rémunération: {}, 'rémunération annuelle': { year: true },
     'rémunération totale': { total: true }, 'fourchette salariale': {}, 'fourchette de salaire': {},
   },
   nl: {
-    salaris: {}, salarisindicatie: {}, salarisrange: {}, salarisschaal: {}, jaarsalaris: {}, 'bruto jaarsalaris': {}, maandsalaris: { month: true },
+    salaris: {}, salarisindicatie: {}, salarisrange: {}, salarisschaal: {}, jaarsalaris: { year: true }, 'bruto jaarsalaris': { year: true }, maandsalaris: { month: true },
     'bruto maandsalaris': { month: true },
   },
-  es: { salario: {}, 'salario bruto anual': {}, sueldo: {}, 'banda salarial': {}, 'rango salarial': {}, remuneración: {}, retribución: {}, 'retribución total': { total: true } },
+  es: { salario: {}, 'salario bruto anual': { year: true }, sueldo: {}, 'banda salarial': {}, 'rango salarial': {}, remuneración: {}, retribución: {}, 'retribución total': { total: true } },
   pt: { salário: {}, remuneração: {}, 'faixa salarial': {} },
-  it: { stipendio: {}, retribuzione: {}, 'retribuzione annua lorda': {}, ral: {} },
+  it: { stipendio: {}, retribuzione: {}, 'retribuzione annua lorda': { year: true }, ral: { year: true } },
   pl: { wynagrodzenie: {}, widełki: {}, 'widełki płacowe': {}, pensja: {} },
-  sv: { lön: {}, månadslön: { month: true }, årslön: {}, grundlön: {} },
-  da: { løn: {}, månedsløn: { month: true }, årsløn: {} },
-  no: { lønn: {}, månedslønn: { month: true }, årslønn: {} },
+  sv: { lön: {}, månadslön: { month: true }, årslön: { year: true }, grundlön: {} },
+  da: { løn: {}, månedsløn: { month: true }, årsløn: { year: true } },
+  no: { lønn: {}, månedslønn: { month: true }, årslønn: { year: true } },
 };
 const LABEL_KIND = new Map<string, LabelKind>(Object.values(LABELS).flatMap((l) => Object.entries(l)));
 const escape = (w: string): string => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+');
@@ -607,7 +620,7 @@ const PERIOD = new RegExp(
     // week
     '(?<week>per week|a week|/\\s*w(?:ee)?k|weekly|pro woche|/\\s*woche|wöchentlich|par semaine|/\\s*semaine|hebdomadaire|por semana|/\\s*semana|a settimana|settimanal[ei]|tygodniowo|/\\s*tydz\\.?|i veckan|per vecka|om ugen)',
     // month
-    '(?<month>per month|a month|/\\s*mo(?:nth)?|/\\s*mth|monthly|p\\.\\s?m\\.|pro monat|/\\s*monat|monatlich|im monat|\\p{L}*monats(?:gehalt|gehält|lohn|brutto)\\p{L}*|par mois|/\\s*mois|mensu\\p{L}*|per maand|/\\s*maand|maandelijks|maandsalaris|bruto per maand|por mes|/\\s*mes|al mes|mensual\\p{L}*|al mese|/\\s*mese|mensil\\p{L}*|miesięcznie|/\\s*mies\\.?|na miesiąc|per månad|/\\s*mån|i månaden|månadslön|om måneden|pr\\.? måned|per måned|i måneden|/\\s*md|por mês|/\\s*mês|mensal|mensais)',
+    '(?<month>per month|a month|/\\s*mo(?:nth)?|/\\s*mth|monthly|p\\.\\s?m\\.|pro monat|/\\s*monat|monatlich|im monat|\\p{L}*monats(?:gehalt|gehält|lohn|brutto)\\p{L}*|par mois|/\\s*mois|mensu\\p{L}*|per maand|/\\s*maand|maandelijks|maandsalaris|bruto per maand|por mes|/\\s*mes|al mes|mensual\\p{L}*|al mese|/\\s*mese|mensil\\p{L}*|miesięcznie|/\\s*mies\\.?|na miesiąc|/\\s*miesiąc|per miesiąc|per månad|/\\s*månad|/\\s*mån|i månaden|månadslön|om måneden|pr\\.? måned|per måned|i måneden|/\\s*md|por mês|/\\s*mês|mensal|mensais)',
     // year
     '(?<year>per year|a year|/\\s*y(?:ea)?r|annual\\p{L}*|yearly|p\\.\\s?a\\.|per annum|pro jahr|/\\s*jahr|jährlich|im jahr|\\p{L}*jahres(?:gehalt|lohn|brutto)\\p{L}*|par an|/\\s*an|annuel\\p{L}*|per jaar|/\\s*jaar|jaarlijks|jaarsalaris|por año|/\\s*año|al año|anual\\p{L}*|all[\'’]anno|/\\s*anno|annu[ioa]|lordi annui|rocznie|/\\s*rok|na rok|per år|/\\s*år|om året|årlig\\p{L}*|årslön|por ano|/\\s*ano|anuais)',
   ].join('|')})(?![\\p{L}])`,
@@ -671,7 +684,16 @@ interface Read {
   max: number | null;
   currency: CurrencyCode;
   base: boolean;
+  periodGuessed: boolean;
 }
+
+/**
+ * The period assumed for a figure that states none, per currency (local convention): salaries in Poland, Brazil,
+ * Sweden, Norway, Denmark, the Czech Republic, Hungary and Romania are quoted per month; elsewhere per year. HUF and
+ * RON are listed for completeness: they have no rate here, so their figures are never read. A guessed period never
+ * rejects a job (`periodGuessed`).
+ */
+const MONTHLY_PAID: ReadonlySet<string> = new Set(['PLN', 'BRL', 'SEK', 'NOK', 'DKK', 'CZK', 'HUF', 'RON']);
 
 /** A labelled figure read in full: its yearly bounds, currency and basis, or null when it is not salary. */
 function readFigure(text: string, g: Figure, gap: Gap, kind: LabelKind, o: PayOptions): Read | null {
@@ -691,7 +713,9 @@ function readFigure(text: string, g: Figure, gap: Gap, kind: LabelKind, o: PayOp
   if (rate === undefined) return null;
   if (VETO.test(clause)) return null;
   // the period: in the figure's clause, else in the label's words, else a year
-  const period = periodIn(clause) ?? periodIn(gap.text) ?? (kind.month === true ? 'month' : 'year');
+  // stated: in the figure's clause, in the label's words, by the label itself, or as N payments a year; else guessed
+  const stated = periodIn(clause) ?? periodIn(gap.text) ?? (kind.month === true ? 'month' : kind.year === true || gap.payments > 1 ? 'year' : null);
+  const period = stated ?? (MONTHLY_PAID.has(code) ? 'month' : 'year');
   if (period !== 'year' && period !== 'month') return null;
   let factor = period === 'month' ? 12 : 1;
   if (gap.payments > 1) factor = gap.payments;
@@ -711,7 +735,7 @@ function readFigure(text: string, g: Figure, gap: Gap, kind: LabelKind, o: PayOp
   }
   const addOn = endMatch !== null && INCLUDES.test(endMatch[0].trim()) ? rest.slice(endMatch.index, endMatch.index + 60) : '';
   const base = kind.total !== true && !NOT_BASE_WORD.test(clause) && !NOT_BASE_WORD.test(gap.text.replace(/\((?:excl|exkl|zzgl|ohne|hors|sin)[^)]*\)/giu, '')) && !NOT_BASE_WORD.test(addOn.replace(/1[34]\.\s*monatsgehalt|weihnachtsgeld|urlaubsgeld/giu, ''));
-  return { min, max, currency: code, base };
+  return { min, max, currency: code, base, periodGuessed: stated === null };
 }
 
 /** Labels after a figure that name it as salary ("$170k to $230k Base", "€50,000 (base salary)"), at a line, bullet or cell start. */
@@ -799,7 +823,9 @@ export function parsePay(text: string, o: PayOptions): LocalComp | null {
   const min = use.some((r) => r.min === null) ? null : Math.min(...use.map((r) => r.min as number));
   const max = use.some((r) => r.max === null) ? null : Math.max(...use.map((r) => r.max as number));
   if (min === null && max === null) return null;
-  return { min, max, currency, period: 'year', basis: use.every((r) => r.base) ? 'base' : 'unknown' };
+  const comp: LocalComp = { min, max, currency, period: 'year', basis: use.every((r) => r.base) ? 'base' : 'unknown' };
+  if (use.some((r) => r.periodGuessed)) comp.periodGuessed = true;
+  return comp;
 }
 
 /** The currencies the normalizer reads: a profile in one of them with no `payLocale` keeps the posting's comp as is. */

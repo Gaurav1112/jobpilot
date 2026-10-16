@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { decideEligibility, NOTE_B2B, NOTE_TIMEZONE } from '../../src/app/agents/eligibility.js';
+import { parsePay } from '../../src/app/comp/locale.js';
 import { isPlatformFacetSkip } from '../../src/app/agents/sources/platforms/shared.js';
 import { DEFAULT_RESIDENCE, residenceScope } from '../../src/app/geo/residence.js';
 import { loadPack } from '../../src/app/pack/load.js';
@@ -261,27 +262,37 @@ describe('pay in the profile\'s locale end to end (Task 18 fix round 1)', () => 
     expect(d.notes).toContain('pay not disclosed');
   });
   it.each([
-    // item 3: the 13th month never makes the figure monthly; the base stays as written
-    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € (inkl. 13. Monatsgehalt)', 4510000],
-    ['DE', 'de', 60000, 'EUR', 'Gehalt 50.000 €, 13. Monatsgehalt', 4510000],
-    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € + 13. Monatsgehalt', 4510000],
-    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € zzgl. 13. Monatsgehalt', 4510000],
-    ['DE', 'de', 60000, 'EUR', 'Jahresgehalt 50.000 € inkl. Weihnachtsgeld', 4510000],
-    // item 4: headings with the figure on the next line
-    ['DE', 'fr', 60000, 'EUR', 'Rémunération\n45 000 € - 55 000 €', 4961000],
+    // a stated period still rejects: "kr/mån", N payments a year, a yearly label
     ['SE', 'sv', 600000, 'SEK', 'Lön\n40 000 kr/mån', 3792000],
-    ['DE', 'en', 60000, 'EUR', '- Salary range\n  €50,000 - €55,000', 4961000],
-    ['DE', 'en', 60000, 'EUR', '| Salary |\n| €50,000 |', 4510000],
-    // item 6: "+ €10,000 bonus" is an add-on, so the max stays 50,000
-    ['DE', 'en', 60000, 'EUR', 'Salary: €50,000 + €10,000 bonus', 4510000],
-    // item 7: Salär, N payments a year
-    ['CH', 'de', 60000, 'CHF', "Salär: CHF 50'000", 4705000],
     ['DE', 'de', 60000, 'EUR', 'Gehalt: 14 Gehälter à 3.500 €', 4419800],
     ['ES', 'es', 60000, 'EUR', 'Salario: 14 pagas de 2.500 € brutos', 3157000],
     ['DE', 'de', 60000, 'EUR', 'Gehalt: 13 x 4.000 €', 4690400],
+    ['DE', 'de', 60000, 'EUR', 'Jahresgehalt 50.000 € inkl. Weihnachtsgeld', 4510000],
   ] as const)('%s %s: "%s" is read and judged', (code, locale, amount, currency, text, inr) => {
     const d = decideEligibility(job(text), profile(code, locale, amount, currency));
     expect(belowFloor(d)).toEqual([`below-floor:${inr}`]);
+  });
+  // Task 18 final round: these read right (pinned in pay-locale.test.ts) but state no period, so below the floor they
+  // are review, never rejected (the year is only the currency's convention)
+  it.each([
+    // item 3: the 13th month never makes the figure monthly; the base stays as written
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € (inkl. 13. Monatsgehalt)'],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt 50.000 €, 13. Monatsgehalt'],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € + 13. Monatsgehalt'],
+    ['DE', 'de', 60000, 'EUR', 'Gehalt: 50.000 € zzgl. 13. Monatsgehalt'],
+    // item 4: headings with the figure on the next line
+    ['DE', 'fr', 60000, 'EUR', 'Rémunération\n45 000 € - 55 000 €'],
+    ['DE', 'en', 60000, 'EUR', '- Salary range\n  €50,000 - €55,000'],
+    ['DE', 'en', 60000, 'EUR', '| Salary |\n| €50,000 |'],
+    // item 6: "+ €10,000 bonus" is an add-on, so the max stays 50,000
+    ['DE', 'en', 60000, 'EUR', 'Salary: €50,000 + €10,000 bonus'],
+    ['CH', 'de', 60000, 'CHF', "Salär: CHF 50'000"],
+  ] as const)('%s %s: "%s" states no period: review, not rejected', (code, locale, amount, currency, text) => {
+    const d = decideEligibility(job(text), profile(code, locale, amount, currency));
+    expect(belowFloor(d)).toEqual([]);
+    expect(d.verdict).toBe('review');
+    expect(d.reasons).toContain('pay-period-unstated');
+    expect(d.notes).toContain('pay period not stated - verify');
   });
   it.each([
     ['DE', 'en', 'Salary\n€60,000 – €75,000'],
@@ -291,5 +302,47 @@ describe('pay in the profile\'s locale end to end (Task 18 fix round 1)', () => 
     const d = decideEligibility(job(text), profile(code, locale, 60000, 'EUR'));
     expect(belowFloor(d)).toEqual([]);
     expect(d.notes).not.toContain('pay not disclosed');
+  });
+});
+
+describe('a guessed pay period never rejects (Task 18 final round, blind holdout)', () => {
+  // the holdout's packs: a 60,000 floor in the home currency, its payLocale, fictional rates
+  const fxH = { ...pub.fx, toINR: { ...pub.fx.toINR, CAD: 61, SEK: 8, CHF: 94, PLN: 21, BRL: 15, SGD: 62 } };
+  const packH = (residence: string, payLocale: 'de' | 'es' | 'pl' | 'sv', home: string) => ({
+    ...pub, eligibility: { ...pub.eligibility, residence }, offers: { floor: { amount: 60000, currency: home, period: 'year' as const, basis: 'base' as const }, payLocale }, fx: fxH,
+  });
+  const job = (descriptionText: string) => posting({ descriptionText });
+  const below = (d: ReturnType<typeof decideEligibility>) => d.reasons.filter((r) => r.startsWith('below-floor'));
+  it.each([
+    // [id, residence, payLocale, home, text, yearly min, yearly max, period guessed]
+    ['P052', 'BR', 'es', 'BRL', 'Faixa salarial: R$ 12.000 - R$ 15.000 (CLT)', 144000, 180000, true],
+    ['P073', 'PL', 'pl', 'PLN', 'Widełki: 18 000 - 24 000 PLN netto + VAT (B2B)', 216000, 288000, true],
+    ['P074', 'PL', 'pl', 'PLN', 'Wynagrodzenie\n12 000 - 16 000 PLN brutto (UoP)', 144000, 192000, true],
+    ['P076', 'PL', 'pl', 'PLN', 'Wynagrodzenie od 10 000 zł brutto', 120000, null, true],
+    ['P087', 'SE', 'sv', 'SEK', 'Lön: från 38 000 kr/månad', 456000, null, false],
+  ] as const)('%s: never rejected below the floor; monthly by stated period or local convention', (_id, res, locale, home, text, min, max, guessed) => {
+    const pack = packH(res, locale, home);
+    expect(below(decideEligibility(job(text), pack))).toEqual([]);
+    const r = parsePay(text, { locale, home: home as never, fx: fxH });
+    expect(r).toMatchObject({ min, max, currency: home });
+    expect(r?.periodGuessed === true).toBe(guessed);
+  });
+  it.each([
+    // a guessed period below the floor is review, not rejected
+    ['PL', 'pl', 'PLN', 'Wynagrodzenie: 3 000 - 4 000 zł'],
+    ['DE', 'de', 'EUR', 'Gehalt: 40.000 €'],
+  ] as const)('%s: "%s" below the floor with no period is review', (res, locale, home, text) => {
+    const d = decideEligibility(job(text), packH(res, locale, home));
+    expect(below(d)).toEqual([]);
+    expect(d.verdict).toBe('review');
+    expect(d.reasons).toContain('pay-period-unstated');
+  });
+  it.each([
+    // a stated monthly period below the floor still rejects
+    ['PL', 'pl', 'PLN', 'Wynagrodzenie: 3 000 - 4 000 zł brutto miesięcznie', 48000 * 21],
+    ['SE', 'sv', 'SEK', 'Lön: 4 000 kr/månad', 48000 * 8],
+    ['DE', 'de', 'EUR', 'Gehalt: 4.000 € brutto/Monat', Math.round(48000 * 90.2)],
+  ] as const)('%s: "%s" states a monthly period below the floor: rejected', (res, locale, home, text, inr) => {
+    expect(below(decideEligibility(job(text), packH(res, locale, home)))).toEqual([`below-floor:${inr}`]);
   });
 });

@@ -361,3 +361,25 @@ describe('round 3: pay only after a salary label', () => {
     expect(parsePay('Salary: €70,000. On-call compensation: €5,000 per year.', en)).toMatchObject({ min: 70000, max: 70000 });
   });
 });
+
+describe('final round: spelled-out monthly words and the per-currency default', () => {
+  it.each([
+    ['Lön: 38 000 kr/månad', opt('sv', 'SEK'), 456000],
+    ['Wynagrodzenie: 12 000 zł/miesiąc', opt('pl', 'PLN'), 144000],
+    ['Wynagrodzenie: 12 000 zł/mies.', opt('pl', 'PLN'), 144000],
+    ['Salário: R$ 12.000/mês', opt('es', 'BRL'), 144000],
+    ['Salaris: € 4.500/maand', opt('nl', 'EUR'), 54000],
+  ] as const)('%s is monthly, stated', (text, o, min) => {
+    const r = parsePay(text, o);
+    expect(r).toMatchObject({ min });
+    expect(r?.periodGuessed).toBeUndefined();
+  });
+  it('no period: per month for PLN, BRL, SEK, NOK, DKK, CZK; per year elsewhere; both flagged as guessed', () => {
+    expect(parsePay('Wynagrodzenie: 12 000 zł', opt('pl', 'PLN'))).toMatchObject({ min: 144000, periodGuessed: true });
+    expect(parsePay('Lön: 40 000 kr', opt('sv', 'SEK'))).toMatchObject({ min: 480000, periodGuessed: true });
+    expect(parsePay('Gehalt: 60.000 €', opt('de', 'EUR'))).toMatchObject({ min: 60000, periodGuessed: true });
+    // a yearly label states the period
+    expect(parsePay('Årslön 600 000 kr', opt('sv', 'SEK'))).toMatchObject({ min: 600000 });
+    expect(parsePay('Årslön 600 000 kr', opt('sv', 'SEK'))?.periodGuessed).toBeUndefined();
+  });
+});
