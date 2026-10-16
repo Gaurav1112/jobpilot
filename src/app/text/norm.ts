@@ -52,6 +52,8 @@ interface TableScan {
   readonly subPlaces: ReadonlySet<string>;
   /** After "anywhere"/"global": "in|within|across [the] <listed place>". */
   readonly scopedAnywhere: RegExp;
+  /** The residence country's canonical name (India's table: `india`), or null when the table names none. */
+  readonly country: string | null;
 }
 const scans = new WeakMap<PlaceTable, TableScan>();
 function tableScan(table: PlaceTable): TableScan {
@@ -62,6 +64,7 @@ function tableScan(table: PlaceTable): TableScan {
   s = {
     subPlaces: new Set([...(country === undefined ? [] : (table.places[country] ?? [])).filter((a) => !table.byName.has(a)), ...BASE_SUB_PLACES]),
     scopedAnywhere: new RegExp(`^\\s+(?:in|within|across)\\s+(?:the\\s+)?${table.re.source}`, 'iu'),
+    country: country ?? null,
   };
   scans.set(table, s);
   return s;
@@ -88,7 +91,7 @@ interface PlaceScan {
 const TIER_CODE = /(?<![\p{L}\p{N}])(USA|US|UK|EU)(?=\d{1,2}(?![\p{L}\p{N}]))/gu;
 
 function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES): PlaceScan {
-  const { subPlaces, scopedAnywhere } = tableScan(table);
+  const { subPlaces, scopedAnywhere, country: home } = tableScan(table);
   const t = text.normalize('NFKC').replace(TIER_CODE, '$1 ');
   const out: string[] = [];
   const excluded: string[] = [];
@@ -112,12 +115,13 @@ function scanPlaces(text: string, table: PlaceTable = DEFAULT_PLACES): PlaceScan
         else excluded.push(name);
         continue;
       }
-      found.push({ name, byCity: name === 'india' && !table.byName.has(alias) });
+      found.push({ name, byCity: name === home && !table.byName.has(alias) });
     }
-    // "Hyderabad, Sindh, Pakistan": an address ending in another country is in that country.
+    // "Hyderabad, Sindh, Pakistan" (or "Berlin, NH, United States" for Germany): an address whose residence-country
+    // name comes only from a city or state and that ends in another country is in that country.
     const lastCountry = [...found].reverse().find((f) => ISO_NAMES.has(f.name));
-    const cityOnlyIndia = found.some((f) => f.name === 'india') && found.every((f) => f.name !== 'india' || f.byCity);
-    for (const f of found) if (!(f.name === 'india' && cityOnlyIndia && lastCountry !== undefined && lastCountry.name !== 'india')) out.push(f.name);
+    const cityOnlyHome = found.some((f) => f.name === home) && found.every((f) => f.name !== home || f.byCity);
+    for (const f of found) if (!(f.name === home && cityOnlyHome && lastCountry !== undefined && lastCountry.name !== home)) out.push(f.name);
   }
   const ex = sortedUnique(excluded);
   return { places: withoutExcluded(out, ex), excluded: ex, excludedParts: sortedUnique(excludedParts) };
