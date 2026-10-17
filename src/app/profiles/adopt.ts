@@ -36,6 +36,13 @@ export const NO_LAUNCHD: AdoptLaunchd = { before: () => [], after: () => {}, res
 export const NO_UNADOPT_LAUNCHD: UnadoptLaunchd = { before: () => [], after: () => {}, restore: () => {} };
 
 const DB = 'jobpilot.db';
+/** SQLite's transient files: folded into the DB by the checkpoint, never entries to move (they can vanish mid-walk). */
+const SIDECAR = /^jobpilot\.db-(wal|shm|journal)$/;
+/** After the checkpoint a WAL that still holds pages means another connection has the DB open: never move it then. */
+function checkNotInUse(dir: string): void {
+  const wal = join(dir, `${DB}-wal`);
+  if (existsSync(wal) && statSync(wal).size > 0) throw new AdoptError(`the database is still in use (${wal} holds data after the checkpoint); stop whatever has it open (a manual "jobpilot serve" or run) and try again`);
+}
 /** Free bytes on the volume holding `dir`. */
 export type FreeBytes = (dir: string) => number;
 const systemFreeBytes: FreeBytes = (dir) => {
@@ -181,7 +188,8 @@ export async function adoptProfile(o: { root: string; id: string; clock: Clock; 
     let manifest: string[];
     try {
       checkpoint(o.root);
-      names = readdirSync(o.root).filter((n) => !isMachineEntry(n)).sort();
+      checkNotInUse(o.root);
+      names = readdirSync(o.root).filter((n) => !isMachineEntry(n) && !SIDECAR.test(n)).sort();
       await backup(o.root, names, backupDir);
       manifest = treeManifest(o.root, names);
       writeFileSync(join(backupDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o600 });
@@ -347,7 +355,8 @@ export async function unadoptProfile(o: { root: string; clock: Clock; launchd?: 
     try {
       foldMachineLogs(o.root, home, fold);
       checkpoint(home);
-      const names = readdirSync(home).filter((n) => n !== META_FILE && !n.startsWith('jobpilot.lock') && !TEMP.test(n)).sort();
+      checkNotInUse(home);
+      const names = readdirSync(home).filter((n) => n !== META_FILE && !n.startsWith('jobpilot.lock') && !TEMP.test(n) && !SIDECAR.test(n)).sort();
       const clash = names.filter((n) => existsSync(join(o.root, n)));
       if (clash.length > 0) throw new AdoptError(`cannot unadopt: ${clash.join(', ')} already exist in ${o.root}`);
       await backup(home, names, backupDir);

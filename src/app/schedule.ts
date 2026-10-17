@@ -324,6 +324,8 @@ export interface JobStatus {
   readonly loaded: boolean;
   readonly state: string | null;
   readonly lastExitCode: number | null;
+  /** The running job's process id (`launchctl print` "pid = N"), else null. */
+  readonly pid: number | null;
   readonly plistPath: string;
   readonly logPath: string;
 }
@@ -335,11 +337,13 @@ export function scheduleStatus(o: ScheduleOpts, run: Runner = realRunner): JobSt
     const loaded = r.status === 0;
     const state = loaded ? (/^\s*state = (.+)$/m.exec(r.stdout)?.[1]?.trim() ?? null) : null;
     const code = loaded ? /^\s*last exit code = (-?\d+)/m.exec(r.stdout)?.[1] : undefined;
+    const pid = loaded ? /^\s*pid = (\d+)$/m.exec(r.stdout)?.[1] : undefined;
     return {
       label: label,
       loaded,
       state,
       lastExitCode: code === undefined ? null : Number(code),
+      pid: pid === undefined ? null : Number(pid),
       plistPath: plistPathOf(o, label),
       logPath: join(o.profile !== undefined && label === DASHBOARD_LABEL ? join(o.profile.root, 'logs') : homePaths(o.home).logs, log),
     };
